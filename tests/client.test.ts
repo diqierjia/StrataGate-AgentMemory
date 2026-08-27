@@ -639,7 +639,10 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState })')
+    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, useStructuredEffort, setEffort, resetEffort })')
+    expect(source).toContain("settingsScope.bind({ namespace: 'stratagate-memory' })")
+    expect(source).toContain("effortScope.set('structuredReasoningEffort', mode)")
+    expect(source).toContain("effortScope.unset('structuredReasoningEffort')")
     expect(source).toContain('const workspaceItems = useWorkspaces((state) => state.items)')
     expect(source).toContain('const sessionById = useSessions((state) => state.byId || {})')
     expect(source).toContain("String(session?.title || '').trim()")

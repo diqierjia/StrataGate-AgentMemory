@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Run folded-turn ingestion on a count-triggered, per-session background drain so the agent hot path does not wait for memory processing; failed and unprocessed turns are restored in order for a later retry or explicit flush.
+- Keep automatic long-term-memory retrieval keyed to the current user message, avoiding stale previous-topic context during consecutive conversations.
+- Safely omit `reasoningEffort` when model capability lookup fails or times out, and emit at most one fallback warning for each provider/model route.
+- Expose the `structuredReasoningEffort` policy (`auto` or `force-off`) as a user-editable plugin setting; unsupported `force-off` requests fall back to the model default instead of failing the structured call.
+
 ## 0.2.55 - 2026-09-07
 
 - Let the Agent unobtrusively offer a local feedback draft only for clear, unresolved or disruptive errors, with conversation-scoped suggestion and problem deduplication enforced by prompt instructions.

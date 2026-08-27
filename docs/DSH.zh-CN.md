@@ -144,6 +144,7 @@ config:
   blockDecayLambda: 0.3
   ingestSubagents: false
   maxOutputTokens: 10000
+  structuredReasoningEffort: auto # auto | force-off
   # 可选：为记忆处理指定专用模型。
   # provider: deepseek
   # model: deepseek-chat

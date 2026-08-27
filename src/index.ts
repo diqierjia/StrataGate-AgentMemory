@@ -2,7 +2,13 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Config, resolveConfig, type Config as StrataGateConfig } from './config.js'
+import {
+  Config,
+  resolveConfig,
+  StructuredReasoningEffortSettings,
+  type Config as StrataGateConfig,
+  type StructuredReasoningEffortSettings as EffortSettings,
+} from './config.js'
 import { DshModelBridge } from './llm.js'
 import { StrataGateRuntime } from './runtime.js'
 import { registerMemoryTools } from './tools.js'
@@ -11,11 +17,13 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 
 export const name = 'stratagate-memory'
 export const inject = ['tools', 'systemPrompt', 'llm', 'agentDefaultModel']
+export const STRATAGATE_SETTINGS_NAMESPACE = 'stratagate-memory'
 export { Config }
 export type { StrataGateConfig as PluginConfig }
 
@@ -62,6 +70,23 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     await ctx.sessions.flush(session)
   }, () => feedbackWebOrigin(ctx))
   await runtime.syncConfiguredSettings()
+
+  const effortEntry: EffortSettings = {
+    structuredReasoningEffort: resolved.structuredReasoningEffort ?? 'auto',
+  }
+  let effortSource = (): EffortSettings => effortEntry
+  ctx.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.installSection(
+      ctx,
+      STRATAGATE_SETTINGS_NAMESPACE,
+      StructuredReasoningEffortSettings,
+      effortEntry,
+      {
+        setSource: (current) => { effortSource = current },
+        onChange: () => models.setStructuredReasoningEffort(effortSource().structuredReasoningEffort),
+      },
+    )
+  })
 
   ctx.systemPrompt.section({ name: 'tool:stratagate-memory', order: 113, text: MEMORY_PROTOCOL })
   ctx.systemPrompt.section({ name: 'tool:stratagate-feedback', order: 114, text: FEEDBACK_PROTOCOL })
