@@ -2,7 +2,8 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Config, resolveConfig, type Config as StrataGateConfig } from './config.js'
+import z from '@deepseek-ai/schemastery'
+import { Config, resolveConfig, type Config as StrataGateConfig, type StructuredReasoningEffortMode } from './config.js'
 import { DshModelBridge } from './llm.js'
 import { StrataGateRuntime } from './runtime.js'
 import { registerMemoryTools } from './tools.js'
@@ -45,19 +46,20 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
   await runtime.syncConfiguredSettings()
 
   ctx.systemPrompt.section({ name: 'tool:stratagate-memory', order: 113, text: MEMORY_PROTOCOL })
+  // Synchronous cache fast path: the assemble hook reads the snapshot built by
+  // the background drain instead of doing flush + LLM retrieval inline, so the
+  // hot path never blocks on Stratagate ingestion. With no snapshot yet (or one
+  // marked stale) it returns '' and the memory context is simply skipped; a
+  // stale snapshot carries an explicit marker in its text.
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
     const assembled = await next()
     const session = context.agent?.session
     if (!session) return assembled
-    try {
-      const text = await runtime.buildAutoContext(session)
-      return {
-        ...assembled,
-        contexts: [...assembled.contexts, { name: 'stratagate:auto-memory', text }],
-      }
-    } catch (error) {
-      ctx.logger.warn(`stratagate-memory auto-context failed: ${renderError(error)}`)
-      return assembled
+    const text = runtime.buildAutoContext(session)
+    if (!text) return assembled
+    return {
+      ...assembled,
+      contexts: [...assembled.contexts, { name: 'stratagate:auto-memory', text }],
     }
   })
   ctx.on('agent/turn-stopping', ({ agent }) => {
