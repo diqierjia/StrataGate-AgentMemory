@@ -183,7 +183,7 @@ describe('DeepSeek Harness model JSON retries', () => {
     const result = await bridge.run(session, () => bridge.summarizer([]))
 
     expect(result.l0Title).toBe('text fallback')
-    expect(calls.mock.calls[0]?.[0].reasoningEffort).toBe('off')
+    expect(calls.mock.calls[0]?.[0]).not.toHaveProperty('reasoningEffort')
   })
 
   it('marks the target as the only source and limits neighbors to L2 context', async () => {
@@ -262,7 +262,7 @@ describe('DeepSeek Harness model JSON retries', () => {
       type: 'function',
       function: { name: 'stratagate_project_element_cards' },
     })
-    expect(calls.mock.calls[0]?.[0].reasoningEffort).toBe('off')
+    expect(calls.mock.calls[0]?.[0]).not.toHaveProperty('reasoningEffort')
     expect(calls.mock.calls[0]?.[0].system).toContain('Call stratagate_project_element_cards exactly once')
   })
 
@@ -298,8 +298,10 @@ describe('reasoningEffort off compatibility', () => {
   function bridgeWithCapability(
     resolveModelInfo: (...args: any[]) => Promise<any>,
     stream?: (options: any) => AsyncIterable<any>,
-  ): { bridge: DshModelBridge; session: Session; calls: ReturnType<typeof vi.fn>; adapterUpdated: () => void } {
+    structuredReasoningEffort: 'auto' | 'force-off' = 'auto',
+  ): { bridge: DshModelBridge; session: Session; calls: ReturnType<typeof vi.fn>; warnings: ReturnType<typeof vi.fn>; adapterUpdated: () => void } {
     const calls = vi.fn()
+    const warnings = vi.fn()
     let adapterUpdated = () => {}
     const ctx = {
       llm: {
@@ -313,15 +315,16 @@ describe('reasoningEffort off compatibility', () => {
         }),
       },
       on: (_event: string, listener: () => void) => { adapterUpdated = listener },
-      logger: { warn: vi.fn() },
+      logger: { warn: warnings },
     } as unknown as Context
     const bridge = new DshModelBridge(ctx, {
       database: ':memory:', namespaceMode: 'session', namespacePrefix: 'test', globalNamespace: 'global',
       blockTurnSize: 1, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 512,
       structuredTaskTimeoutMs: 50,
+      structuredReasoningEffort,
     })
     const session = { id: 'off-test', requestHeader: () => ({ config: { provider: 'provider-a', model: 'model-a' } }) } as unknown as Session
-    return { bridge, session, calls, adapterUpdated: () => adapterUpdated() }
+    return { bridge, session, calls, warnings, adapterUpdated: () => adapterUpdated() }
   }
 
   it('sends off when the exact model explicitly supports it', async () => {
@@ -339,15 +342,27 @@ describe('reasoningEffort off compatibility', () => {
   it.each([
     ['unknown capability', async () => ({})],
     ['failed capability lookup', async () => { throw new Error('lookup failed') }],
-  ])('tries off first for %s', async (_label, resolveModelInfo) => {
+  ])('omits off in auto mode for %s', async (_label, resolveModelInfo) => {
     const { bridge, session, calls } = bridgeWithCapability(resolveModelInfo)
     await bridge.run(session, () => bridge.summarizer([]))
-    expect(calls.mock.calls[0]?.[0].reasoningEffort).toBe('off')
+    expect(calls.mock.calls[0]?.[0]).not.toHaveProperty('reasoningEffort')
+  })
+
+  it('degrades conservatively and warns once when force-off capability lookup fails', async () => {
+    const lookup = vi.fn(async () => { throw new Error('lookup failed') })
+    const { bridge, session, calls, warnings } = bridgeWithCapability(lookup, undefined, 'force-off')
+    await bridge.run(session, () => bridge.summarizer([]))
+    await bridge.run(session, () => bridge.summarizer([]))
+    expect(lookup).toHaveBeenCalledTimes(1)
+    expect(calls).toHaveBeenCalledTimes(2)
+    expect(calls.mock.calls[0]?.[0]).not.toHaveProperty('reasoningEffort')
+    expect(calls.mock.calls[1]?.[0]).not.toHaveProperty('reasoningEffort')
+    expect(warnings).toHaveBeenCalledTimes(1)
   })
 
   it('removes rejected off once and caches the exact route as unsupported', async () => {
     const calls = vi.fn()
-    const { bridge, session } = bridgeWithCapability(async () => ({}), (options: any) => {
+    const { bridge, session, warnings } = bridgeWithCapability(async () => ({}), (options: any) => {
       calls(options)
       const index = calls.mock.calls.length
       return (async function* () {
@@ -358,7 +373,7 @@ describe('reasoningEffort off compatibility', () => {
         yield { type: 'tool-call-delta' as const, index: 0, id: 'call' as never, name: options.tools[0].name, argumentsDelta: JSON.stringify(summaryTool) }
         yield { type: 'finish' as const, reason: { kind: 'stop' as const } }
       })()
-    })
+    }, 'force-off')
 
     await bridge.run(session, () => bridge.summarizer([]))
     await bridge.run(session, () => bridge.summarizer([]))
@@ -366,6 +381,7 @@ describe('reasoningEffort off compatibility', () => {
     expect(calls.mock.calls[0]?.[0].reasoningEffort).toBe('off')
     expect(calls.mock.calls[1]?.[0]).not.toHaveProperty('reasoningEffort')
     expect(calls.mock.calls[2]?.[0]).not.toHaveProperty('reasoningEffort')
+    expect(warnings).toHaveBeenCalledTimes(1)
   })
 
   it('aborts an accepted off request that keeps reasoning past the deadline', async () => {
@@ -373,7 +389,7 @@ describe('reasoningEffort off compatibility', () => {
       yield { type: 'reasoning-delta' as const, index: 0, text: 'Deep diving' }
       await new Promise<void>((resolve) => options.signal.addEventListener('abort', () => resolve(), { once: true }))
       yield { type: 'finish' as const, reason: { kind: 'aborted' as const, failure: { code: 'ABORTED', message: 'aborted' } } }
-    })())
+    })(), 'force-off')
     await expect(bridge.run(session, () => bridge.summarizer([]))).rejects.toThrow('timed out after 50ms')
   })
 
