@@ -22,7 +22,7 @@ import type {
   SuccessfulModelResponseKind,
 } from '@diqier/stratagate'
 import { nowUtc8 } from '@diqier/stratagate'
-import type { ResolvedConfig } from './config.js'
+import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
 import { ModelJsonResponseError, parseJsonResponse } from './json-response.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 
@@ -231,8 +231,21 @@ function renderBlocksForDiagnostics(blocks: readonly ContentBlock[], finish: str
 export class DshModelBridge {
   private readonly sessions = new AsyncLocalStorage<Session>()
   private readonly successfulResponses: SuccessfulModelResponse[] = []
+  private structuredEffort: StructuredReasoningEffortMode
 
-  constructor(private readonly ctx: Context, private readonly config: ResolvedConfig) {}
+  constructor(private readonly ctx: Context, private readonly config: ResolvedConfig) {
+    this.structuredEffort = config.structuredReasoningEffort ?? 'auto'
+  }
+
+  /**
+   * Update the structured-call reasoning-effort policy at runtime, pushed by
+   * the settings section (`stratagate-memory` namespace) when the user edits
+   * `structuredReasoningEffort`. The next structured call reads the new mode.
+   * @param mode - the new policy mode.
+   */
+  setStructuredReasoningEffort(mode: StructuredReasoningEffortMode): void {
+    this.structuredEffort = mode
+  }
 
   run<T>(session: Session, operation: () => Promise<T>): Promise<T> {
     return this.sessions.run(session, operation)
@@ -375,9 +388,10 @@ export class DshModelBridge {
     if (!session) throw new Error('StrataGate model callback ran without a DSH session')
     // Structured memory jobs need a bounded machine-readable response. The
     // host adapters currently do not expose a provider-neutral tool_choice,
-    // so disable reasoning here instead of allowing a thinking pass to fill
-    // the budget before the JSON/tool payload is emitted.
-    const route = this.resolveRoute(session, true)
+    // so reasoning preference is delegated to the configured
+    // structuredReasoningEffort mode (auto probes the model's advertised
+    // efforts; force-off requires "off" and raises a notification otherwise).
+    const route = await this.resolveRoute(session, true)
     let lastError: ModelJsonResponseError | undefined
     let lastResponse = ''
     let retryMaxTokens = this.config.maxOutputTokens
@@ -474,22 +488,62 @@ export class DshModelBridge {
     )
   }
 
-  private resolveRoute(session: Session, structured = false): { provider: string; model: string; reasoningEffort?: ReasoningEffortId } {
+  /**
+   * Resolve the provider/model route for one LLM call.
+   *
+   * For non-structured calls the session's requested effort (or the model
+   * default) is preserved. For structured memory-processing calls the
+   * `structuredReasoningEffort` config selects the behavior:
+   * - `auto`: probe the exact model's advertised reasoning efforts and use
+   *   `off` only when supported; otherwise omit the effort so the adapter's
+   *   default (or the provider default) applies.
+   * - `force-off`: always request `off`. When the model does not advertise it,
+   *   fall back to the model default with a warning instead of throwing, so one
+   *   unsupported provider can never trigger an ingestion-failure storm.
+   */
+  private async resolveRoute(session: Session, structured = false): Promise<{ provider: string; model: string; reasoningEffort?: ReasoningEffortId }> {
     const request = session.requestHeader()?.config
     const requestedReasoningEffort = request?.reasoningEffort
     const withReasoningEffort = (route: { provider: string; model: string }): { provider: string; model: string; reasoningEffort?: ReasoningEffortId } => ({
       ...route,
-      ...(structured ? { reasoningEffort: 'off' as ReasoningEffortId } : requestedReasoningEffort !== undefined ? { reasoningEffort: requestedReasoningEffort } : {}),
+      ...(structured ? {} : requestedReasoningEffort !== undefined ? { reasoningEffort: requestedReasoningEffort } : {}),
     })
     if (this.config.provider && this.config.model) {
-      return withReasoningEffort({ provider: this.config.provider, model: this.config.model })
+      return this.applyStructuredEffort(withReasoningEffort({ provider: this.config.provider, model: this.config.model }), structured)
     }
-    if (request) return withReasoningEffort({ provider: request.provider, model: request.model })
+    if (request) return this.applyStructuredEffort(withReasoningEffort({ provider: request.provider, model: request.model }), structured)
     const fallback = this.ctx.agentDefaultModel.currentSelection()
-    return {
+    return this.applyStructuredEffort({
       provider: fallback.provider,
       model: fallback.model,
-      ...(structured ? { reasoningEffort: 'off' as ReasoningEffortId } : fallback.reasoningEffort !== undefined ? { reasoningEffort: fallback.reasoningEffort as ReasoningEffortId } : {}),
+      ...(fallback.reasoningEffort !== undefined ? { reasoningEffort: fallback.reasoningEffort as ReasoningEffortId } : {}),
+    }, structured)
+  }
+
+  /** Apply the configured structured-effort policy to a resolved route. */
+  private async applyStructuredEffort(route: { provider: string; model: string; reasoningEffort?: ReasoningEffortId }, structured: boolean): Promise<{ provider: string; model: string; reasoningEffort?: ReasoningEffortId }> {
+    if (!structured) return route
+    if (this.structuredEffort !== 'force-off') {
+      const supportsOff = await this.modelSupportsReasoningEffort(route.provider, route.model, 'off')
+      if (supportsOff) return { ...route, reasoningEffort: 'off' as ReasoningEffortId }
+      return route
+    }
+    const supportsOff = await this.modelSupportsReasoningEffort(route.provider, route.model, 'off')
+    if (supportsOff) return { ...route, reasoningEffort: 'off' as ReasoningEffortId }
+    this.ctx.logger.warn(`stratagate-memory force-off requested but provider "${route.provider}" model "${route.model}" does not support reasoning effort "off"; falling back to the model default`)
+    return route
+  }
+
+  /** Probe one exact model's advertised reasoning efforts through the DSH LLM service. */
+  private async modelSupportsReasoningEffort(provider: string, model: string, effortId: string): Promise<boolean> {
+    try {
+      const info = await this.ctx.llm.resolveModelInfo(provider, model)
+      const efforts = info.reasoning?.efforts ?? []
+      return efforts.some((effort) => effort.id === effortId)
+    } catch {
+      // Capability lookup is best-effort; if it fails, assume support so the
+      // request itself decides (a real rejection surfaces as a normal call error).
+      return true
     }
   }
 }
