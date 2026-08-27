@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import { Config, resolveConfig, type Config as StrataGateConfig, type StructuredReasoningEffortMode } from './config.js'
 import { DshModelBridge } from './llm.js'
@@ -19,6 +20,23 @@ export const name = 'stratagate-memory'
 export const inject = ['tools', 'systemPrompt', 'llm', 'agentDefaultModel']
 export { Config }
 export type { StrataGateConfig as PluginConfig }
+
+/** Settings namespace exposing the structured-call reasoning-effort policy. */
+export const STRATAGATE_SETTINGS_NS = settingsNamespace('stratagate-memory')
+
+/** Settings section schema: only the user-editable effort policy field. */
+const STRATAGATE_EFFORT_SCHEMA = z.object({
+  structuredReasoningEffort: z.union(['auto', 'force-off'] as const).default('auto')
+    .description('记忆处理结构化调用的推理档位策略')
+    .comment('auto：模型支持 off 时用 off，不支持则退化为模型默认档位；force-off：强制 off，模型不支持时降级为模型默认档位并告警一次。'),
+})
+
+/** The effort-policy section view a card edits over the settings wire. The
+ * schema's infer type keeps empty/unset values nullable, matching how the
+ * settings wire serializes an unset field. */
+interface EffortPolicySection {
+  structuredReasoningEffort: StructuredReasoningEffortMode
+}
 
 const MEMORY_PROTOCOL = `[StrataGate memory protocol]
 StrataGate provides durable, evidence-gated memory through memory_* tools.
@@ -44,6 +62,20 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     await ctx.sessions.flush(session)
   })
   await runtime.syncConfiguredSettings()
+
+  // Expose the structured-call reasoning-effort policy as a user-editable
+  // setting namespace. When the settings service is mounted, the plugin gets
+  // an ordinary card in the Plugins → Plugin configuration page; edits push the
+  // new mode into the model bridge immediately (the caller reads it per call).
+  let effortSource: () => EffortPolicySection = () => ({
+    structuredReasoningEffort: resolved.structuredReasoningEffort ?? 'auto',
+  })
+  installSettingsSection(ctx, STRATAGATE_SETTINGS_NS, STRATAGATE_EFFORT_SCHEMA, {
+    structuredReasoningEffort: resolved.structuredReasoningEffort ?? 'auto',
+  }, {
+    setSource: (current) => { effortSource = current as () => EffortPolicySection },
+    onChange: () => { models.setStructuredReasoningEffort(effortSource().structuredReasoningEffort ?? 'auto') },
+  })
 
   ctx.systemPrompt.section({ name: 'tool:stratagate-memory', order: 113, text: MEMORY_PROTOCOL })
   // Synchronous cache fast path: the assemble hook reads the snapshot built by

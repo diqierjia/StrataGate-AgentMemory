@@ -931,7 +931,7 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null, h(BackBar, { label: '更多', onBack }), h('div', { className: 'sg-intro' }, h('h2', null, '原始数据'), h('p', null, '供排查问题使用的内部字段与 JSON')), groups.map(([label, value]) => h('details', { key: label, className: 'sg-raw-group' }, h('summary', null, label + ' (' + (Array.isArray(value) ? value.length : ((value.nodes?.length || 0) + (value.edges?.length || 0))) + ')'), h('pre', { className: 'sg-raw-json sg-code' }, JSON.stringify(value, null, 2)))))
     }
 
-    function SettingsPage({ selected, namespace, onBack, updateLambda, savingLambda }) {
+    function SettingsPage({ selected, namespace, onBack, updateLambda, savingLambda, useStructuredEffort, setEffort, resetEffort }) {
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       React.useEffect(() => setLambda(String(selected.blockDecayLambda ?? 0.3)), [selected.blockDecayLambda])
       const changeLambda = (event) => {
@@ -940,18 +940,29 @@ window.__ModuleLoader__.load({
         const value = Number(raw)
         if (raw !== '' && Number.isFinite(value) && value >= 0) void updateLambda(value)
       }
+      const effortSnapshot = useStructuredEffort ? useStructuredEffort((state) => state) : null
+      const effortMode = effortSnapshot?.value?.structuredReasoningEffort
+      const effortOverridden = effortSnapshot?.user?.structuredReasoningEffort !== undefined
+      const effortWritable = effortSnapshot?.writable === true
+      const changeEffort = (event) => { if (setEffort) setEffort(event.target.value) }
       const rows = [['Schema 版本', 'v' + selected.schemaVersion], ['提取间隔', '每 ' + selected.blockTurnSize + ' 轮形成一个 Block'], ['模型', '由 DSH 当前模型配置提供'], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
       return h(React.Fragment, null,
         h(BackBar, { label: '更多', onBack }),
         h('div', { className: 'sg-intro' }, h('h2', null, '高级设置'), h('p', null, '修改后会立即应用到所有已有工作区，并作为新工作区的默认值。')),
         h('div', { className: 'sg-pipeline' },
+          h('div', { className: 'sg-stage' }, h('span', null, '结构化推理档位'), h('span', { className: 'sg-lambda-control' },
+            h('select', { className: 'sg-effort-select', value: effortMode || 'auto', disabled: !effortWritable, onChange: changeEffort, 'aria-label': '结构化推理档位策略' },
+              h('option', { value: 'auto' }, 'auto（自动）'),
+              h('option', { value: 'force-off' }, 'force-off（强制关闭）')),
+            effortOverridden ? h('button', { className: 'sg-effort-button', onClick: () => { if (resetEffort) resetEffort() } }, '恢复默认') : h('span', { className: 'sg-stage-value waiting' }, '默认'))),
+          h('p', { className: 'sg-setting-note' }, 'auto：模型支持 off 时用 off，不支持则退回模型默认档位；force-off：强制 off，模型不支持时退回模型默认档位并告警一次。'),
           h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: changeLambda, 'aria-label': 'Block 衰减系数 λ' }), h('span', { className: 'sg-stage-value waiting' }, savingLambda ? '保存中…' : '已保存'))),
           h('p', { className: 'sg-setting-note' }, '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。'),
           rows.map(([label, value]) => h('div', { key: label, className: 'sg-stage' }, h('span', null, label), h('span', { className: label === '内部空间 ID' ? 'sg-stage-value sg-code' : 'sg-stage-value' }, String(value)))))
       )
     }
 
-    function MemoryPage({ useWorkspaces, useSessions }) {
+    function MemoryPage({ useWorkspaces, useSessions, useStructuredEffort, setEffort, resetEffort }) {
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -1102,7 +1113,7 @@ window.__ModuleLoader__.load({
       else if (view.name === 'system') content = h(SystemPage, { selected, blocks: data.blocks, onBack: moreBack, refresh })
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, onBack: moreBack })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: moreBack })
-      else if (view.name === 'settings') content = h(SettingsPage, { selected, namespace, onBack: moreBack, updateLambda, savingLambda })
+      else if (view.name === 'settings') content = h(SettingsPage, { selected, namespace, onBack: moreBack, updateLambda, savingLambda, useStructuredEffort, setEffort, resetEffort })
       else if (view.name === 'support') content = h(SupportPage, { overview, selected, project, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         h(FailureAlert, { count: failedCount, onOpen: () => setView({ name: 'status' }) }),
@@ -1128,7 +1139,22 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       const slots = ctx.get('slots')
       if (!slots) return
-      slots.inject('settings.section', () => slots.register({ name: 'settings.section', id: 'stratagate-memory', order: 32, label: () => 'StrataGate-AgentMemory' }, (props) => h(MemoryPage, props)))
+      // Effort-policy switch bound through the plugin settings scope (when the
+      // settings service is mounted) so the memory UI can edit it from the
+      // settings page; the bound scope is injected through this section.
+      const settingsScope = ctx.get('settingsScope')
+      const effortScope = settingsScope ? settingsScope.bind({ namespace: 'stratagate-memory' }) : null
+      slots.inject('settings.section', () => slots.register({
+        name: 'settings.section',
+        id: 'stratagate-memory',
+        order: 32,
+        label: () => 'StrataGate-AgentMemory',
+        inject: () => ({
+          hooks: { structuredEffort: effortScope },
+          setEffort: effortScope ? (mode) => effortScope.set('structuredReasoningEffort', mode) : null,
+          resetEffort: effortScope ? () => effortScope.unset('structuredReasoningEffort') : null,
+        }),
+      }, (props) => h(MemoryPage, props)))
     }
 
     exports.name = 'stratagate-dsh'
