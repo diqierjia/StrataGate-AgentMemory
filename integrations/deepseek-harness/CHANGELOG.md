@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Run block ingestion and activated-memory retrieval on a count-triggered background drain (per-session serialization, unref'd timer, exponential backoff) so the agent hot path never blocks on Stratagate memory work.
+- Serve the assemble hook a synchronous auto-context snapshot cache refreshed by the background drain; an empty or stale snapshot is skipped or carries an explicit staleness marker instead of failing the request.
+- Degrade `force-off` reasoning effort to the model default with a single warning when the provider does not advertise `off`, instead of raising a desktop notification and failing the structured call.
+- Expose the `structuredReasoningEffort` policy (auto | force-off) as a user-editable plugin settings-page switch; the default is `auto`.
+
 ## 0.2.33 - 2026-08-27
 
 - Keep concurrent retrieval batches independently addressable through optional `batch_id` parameters on assessment and usage recording while preserving latest-batch defaults for sequential calls.

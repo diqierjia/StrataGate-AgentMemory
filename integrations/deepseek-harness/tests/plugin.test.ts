@@ -53,9 +53,45 @@ describe('DSH plugin composition', () => {
         session,
         steer: (message: unknown) => steered.push(message),
       } as unknown as Agent
-      const scopedPrompt = await ctx.systemPrompt.assemble({
+      const emptyPrompt = await ctx.systemPrompt.assemble({
         agent,
       })
+      // The assemble hook is a synchronous cache fast path: with no snapshot
+      // rendered yet, the memory context is simply skipped.
+      expect(emptyPrompt.contexts).not.toContainEqual(expect.objectContaining({
+        name: 'stratagate:auto-memory',
+      }))
+
+      // The cordis Context serial dispatch is typed against its own event table,
+      // which does not declare the dsh-session 'session/event' channel; route
+      // through a narrow untyped helper for the test.
+      const emitEvent = (type: string, ...args: unknown[]): Promise<unknown> =>
+        (ctx.serial as unknown as (type: string, ...args: unknown[]) => Promise<unknown>)(type, ...args)
+
+      // Feed three complete turns so the count-triggered eager drain (150 ms)
+      // runs off the hot path and refreshes the auto-context snapshot cache.
+      for (let turn = 1; turn <= 3; turn += 1) {
+        await emitEvent('session/event', session, { type: 'turn/start', seq: (turn - 1) * 4, time: turn * 10, data: { turn } })
+        await emitEvent('session/event', session, {
+          type: 'user/message', seq: (turn - 1) * 4 + 1, time: turn * 10 + 1,
+          data: { id: `u${turn}`, role: 'user', content: [{ type: 'text', text: `Memory turn ${turn}` }], source: { kind: 'user' } },
+        })
+        await emitEvent('session/event', session, {
+          type: 'assistant/message', seq: (turn - 1) * 4 + 2, time: turn * 10 + 2,
+          data: {
+            turn, step: 1,
+            message: { id: `a${turn}`, role: 'assistant', content: [{ type: 'text', text: 'OK.' }], source: { kind: 'model', provider: 'test', model: 'test' } },
+          },
+        })
+        await emitEvent('session/event', session, { type: 'turn/end', seq: (turn - 1) * 4 + 3, time: turn * 10 + 3, data: { turn, reason: { kind: 'completed' } } })
+      }
+      // Poll the assemble hook until the background drain refreshes the
+      // snapshot cache (eager drain starts at ~150 ms plus the drain itself).
+      let scopedPrompt = await ctx.systemPrompt.assemble({ agent })
+      for (let attempt = 0; attempt < 30 && !scopedPrompt.contexts.some(({ name }) => name === 'stratagate:auto-memory'); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        scopedPrompt = await ctx.systemPrompt.assemble({ agent })
+      }
       expect(scopedPrompt.contexts).toContainEqual(expect.objectContaining({
         name: 'stratagate:auto-memory',
         text: expect.stringContaining('[Activated long-term memory]'),

@@ -130,7 +130,8 @@ describe('DSH runtime ingestion', () => {
         event.id,
         [event.weight.mentionCount, event.weight.lastAdoptedTurn],
       ]))
-      const context = await runtime.buildAutoContext(activeSession)
+      await runtime.refreshAutoContext(activeSession)
+      const context = runtime.buildAutoContext(activeSession)
 
       expect(context).toContain('[Activated long-term memory]')
       expect(context).toContain('Historical memory context.')
@@ -207,7 +208,8 @@ describe('DSH runtime ingestion', () => {
       await memory.appendTurn({ user: 'A-only open tail.', assistant: 'A tail reply.', threadId: 'session-a' })
       await memory.appendTurn({ user: 'B-only open tail.', assistant: 'B tail reply.', threadId: 'session-b' })
 
-      const context = await runtime.buildAutoContext(sessionB)
+      await runtime.refreshAutoContext(sessionB)
+      const context = runtime.buildAutoContext(sessionB)
       expect(context).not.toContain('[Current conversation]')
       expect(context).not.toContain('[Decayed memory blocks]')
       expect(context).not.toContain('B-only open tail.')
@@ -456,7 +458,8 @@ describe('DSH runtime ingestion', () => {
       expect(derived.some((message) => message.content.some((block) => block.type === 'tool-call' && block.id === callId))).toBe(true)
       expect(derived.some((message) => message.content.some((block) => block.type === 'tool-result' && block.toolCallId === callId))).toBe(true)
 
-      const dynamicContext = await runtime.buildAutoContext(activeSession)
+      await runtime.refreshAutoContext(activeSession)
+      const dynamicContext = runtime.buildAutoContext(activeSession)
       expect(dynamicContext).toContain('[Activated long-term memory]')
       expect(dynamicContext).not.toContain('CURRENT USER SENTINEL')
       expect(dynamicContext).not.toContain('CURRENT_TOOL_PATH')
@@ -482,7 +485,7 @@ describe('DSH runtime ingestion', () => {
       expect(decayedRequest).toContain('Level: L5 (L5 raw transcript)')
 
       await nativeMemory.expandBlock(decayed[0]!.id, 'L4', 'user')
-      await runtime.buildAutoContext(activeSession)
+      await runtime.refreshAutoContext(activeSession)
       expect(JSON.stringify(activeSession.deriveMessages())).toContain('Level: L4 (L4 readable near-verbatim transcript)')
     } finally {
       await runtime.close().catch(() => {})
@@ -773,6 +776,96 @@ describe('DSH runtime ingestion', () => {
       })
       await runtime.recordUse(activeSession, 'sequential-compatible', sequential.evidenceRefs)
       expect(runtime.needsRecordUse(activeSession)).toBe(false)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('DSH runtime background drain and auto-context snapshot cache', () => {
+  const backgroundSession = {
+    ...session,
+    events: [],
+    deriveMessages: () => [{
+      id: 'background-current-user',
+      role: 'user',
+      content: [{ type: 'text', text: 'Any current question.' }],
+      source: { kind: 'user' },
+    }],
+  } as unknown as Session
+
+  function backgroundTurns(count: number): SessionEvent[] {
+    const events = [] as unknown[]
+    let seq = 0
+    for (let turn = 1; turn <= count; turn += 1) {
+      events.push(
+        { type: 'turn/start', seq: seq++, time: turn * 10, data: { turn } },
+        {
+          type: 'user/message', seq: seq++, time: turn * 10 + 1,
+          data: { id: `u${turn}`, role: 'user', content: [{ type: 'text', text: `Background turn ${turn}` }], source: { kind: 'user' } },
+        },
+        {
+          type: 'assistant/message', seq: seq++, time: turn * 10 + 2,
+          data: {
+            turn, step: 1,
+            message: { id: `a${turn}`, role: 'assistant', content: [{ type: 'text', text: 'OK.' }], source: { kind: 'model', provider: 'test', model: 'test' } },
+          },
+        },
+        { type: 'turn/end', seq: seq++, time: turn * 10 + 3, data: { turn, reason: { kind: 'completed' } } },
+      )
+    }
+    return events as SessionEvent[]
+  }
+
+  it('keeps the assemble hot path synchronous: empty snapshot until the background drain settles', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-bg-sync-'))
+    const database = join(directory, 'memory.db')
+    const runtime = new StrataGateRuntime({
+      database,
+      namespaceMode: 'project',
+      namespacePrefix: 'dsh',
+      globalNamespace: 'global',
+      blockTurnSize: 100,
+      blockDecayLambda: 0.3,
+      ingestSubagents: false,
+      maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      expect(runtime.buildAutoContext(backgroundSession)).toBe('')
+      for (const event of backgroundTurns(1)) runtime.acceptEvent(backgroundSession, event)
+      // Turn entry is queued and the hook returns without inline retrieval.
+      expect(runtime.buildAutoContext(backgroundSession)).toBe('')
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('serves a snapshot from the cache once the background drain settles', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-bg-cache-'))
+    const database = join(directory, 'memory.db')
+    const runtime = new StrataGateRuntime({
+      database,
+      namespaceMode: 'project',
+      namespacePrefix: 'dsh',
+      globalNamespace: 'global',
+      blockTurnSize: 100,
+      blockDecayLambda: 0.3,
+      ingestSubagents: false,
+      maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      for (const event of backgroundTurns(3)) runtime.acceptEvent(backgroundSession, event)
+      // 3 queued turns reach DRAIN_THRESHOLD, so the eager drain (150ms) runs
+      // off the hot path and refreshes the snapshot cache.
+      const deadline = Date.now() + 3_000
+      while (runtime.buildAutoContext(backgroundSession) === '' && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      const context = runtime.buildAutoContext(backgroundSession)
+      expect(context).not.toBe('')
+      expect(context).toContain('[Activated long-term memory]')
     } finally {
       await runtime.close()
       await rm(directory, { recursive: true, force: true })

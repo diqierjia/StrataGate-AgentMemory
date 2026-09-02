@@ -23,7 +23,7 @@ import {
 } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import type { ResolvedConfig } from './config.js'
-import { TurnFolder } from './fold.js'
+import { TurnFolder, type FoldedTurn } from './fold.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
 
@@ -46,10 +46,30 @@ interface RecordRefIssue {
   detail: string
 }
 
+/** A background-rendered auto-context snapshot served to the assemble hook. */
+interface CachedAutoContext {
+  text: string
+  /** Wall-clock time the snapshot was last rendered. */
+  at: number
+  /** True when the last background refresh failed and the snapshot is behind. */
+  stale: boolean
+}
+
 const AUTO_EVENT_LIMIT = 4
 const AUTO_ELEMENT_LIMIT = 4
 const AUTO_MEMORY_TOKEN_BUDGET = 900
 const COMPACTION_SOURCE_PLUGIN = 'stratagate-memory'
+
+// Background drain scheduler. Turns are only counted and queued on the runtime
+// path; actual LLM memory processing runs on an unref()'d timer so the agent
+// hot path never blocks on retrieval. Batch pressure triggers an eager drain;
+// otherwise the base backoff drains eventually, and failures back off
+// exponentially instead of causing a retry/token storm.
+const DRAIN_THRESHOLD = 3
+const DRAIN_EAGER_MS = 150
+const DRAIN_BASE_BACKOFF_MS = 2_000
+const DRAIN_MAX_BACKOFF_MS = 60_000
+const AUTO_CONTEXT_MAX_AGE_MS = 30_000
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -72,12 +92,22 @@ export class StrataGateRuntime {
   private readonly latestBatchIds = new Map<string, string>()
   private readonly workspaceNames = new Map<string, string>()
   private readonly migrationTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private ingestTail: Promise<void> = Promise.resolve()
   private settingsTail: Promise<void> = Promise.resolve()
   private batchSequence = 0
   private closed = false
   private ingestError: unknown
   private blockDecayLambda: number
+
+  // Background drain scheduler state (per session): queued folded turns, the
+  // pending timer, exponential backoff, the serial drain tail (one session's
+  // drains never overlap), live session handles for closedown drain, and the
+  // auto-context snapshot cache served to the assemble hook.
+  private readonly pendingTurns = new Map<string, FoldedTurn[]>()
+  private readonly drainTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly drainBackoffMs = new Map<string, number>()
+  private readonly drainsTail = new Map<string, Promise<void>>()
+  private readonly sessionsById = new Map<string, Session>()
+  private readonly autoContextCache = new Map<string, CachedAutoContext>()
 
   constructor(
     private readonly config: ResolvedConfig,
@@ -88,14 +118,91 @@ export class StrataGateRuntime {
     this.blockDecayLambda = config.blockDecayLambda
   }
 
+  /**
+   * Runtime-path entry. Turns are folded here — a turn/end with user content
+   * returns a FoldedTurn — then only counted and queued. The actual LLM memory
+   * processing runs on a background timer (drain/scheduleDrain), so this hook
+   * never blocks the agent event loop.
+   */
   acceptEvent(session: Session, event: SessionEvent): void {
     if (this.closed) return
     if (!this.config.ingestSubagents && session.header.origin === 'subagent') return
     const turn = this.folder.accept(session, event)
     if (!turn) return
-    this.ingestTail = this.ingestTail.catch(() => {}).then(async () => {
-      const memory = await this.space(session)
-      try {
+    const key = String(session.id)
+    this.sessionsById.set(key, session)
+    const queued = this.pendingTurns.get(key) ?? []
+    queued.push(turn)
+    this.pendingTurns.set(key, queued)
+    // Count-triggered scheduling: batch pressure drains eagerly; otherwise the
+    // base-backoff timer drains eventually so even a short session settles.
+    this.scheduleDrain(session)
+  }
+
+  /** Append one session's drain to its serial tail, so drains never overlap. */
+  private enqueueDrain(session: Session): Promise<void> {
+    const key = String(session.id)
+    const prior = this.drainsTail.get(key) ?? Promise.resolve()
+    const next = prior.catch(() => {}).then(() => this.drain(session))
+    this.drainsTail.set(key, next)
+    return next
+  }
+
+  /**
+   * Schedule a background drain for one session. An existing timer is reused so
+   * incoming turns aggregate into one batch; the timer is unref()'d and never
+   * keeps the process alive. Mirrors scheduleGraphMigration's failure
+   * discipline: a failed batch backs off exponentially and waits for the next
+   * wake-up instead of retrying in a storm.
+   */
+  private scheduleDrain(session: Session, overrideDelayMs?: number): void {
+    const key = String(session.id)
+    if (this.closed) return
+    const queued = this.pendingTurns.get(key)?.length ?? 0
+    const delay = overrideDelayMs
+      ?? (queued >= DRAIN_THRESHOLD ? DRAIN_EAGER_MS
+        : Math.min(this.drainBackoffMs.get(key) ?? DRAIN_BASE_BACKOFF_MS, DRAIN_MAX_BACKOFF_MS))
+    const pending = this.drainTimers.get(key)
+    if (pending) {
+      // Batch pressure while a timer is already pending: reschedule eagerly so
+      // the queued turns settle sooner instead of waiting out the base backoff.
+      if (delay >= DRAIN_BASE_BACKOFF_MS) return
+      clearTimeout(pending)
+      this.drainTimers.delete(key)
+    }
+    const timer = setTimeout(() => {
+      this.drainTimers.delete(key)
+      if (this.closed) return
+      void this.enqueueDrain(session).then(() => {
+        // Success: keep draining while turns arrived during the drain, then
+        // reset backoff. Failures back off exponentially below.
+        if ((this.pendingTurns.get(key)?.length ?? 0) > 0) {
+          this.drainBackoffMs.delete(key)
+          this.scheduleDrain(session, DRAIN_BASE_BACKOFF_MS)
+        } else {
+          this.drainBackoffMs.delete(key)
+        }
+      }).catch((error: unknown) => {
+        this.ingestError = error
+        this.onIngestError(error)
+        const backoff = this.drainBackoffMs.get(key) ?? DRAIN_BASE_BACKOFF_MS
+        this.drainBackoffMs.set(key, Math.min(backoff * 2, DRAIN_MAX_BACKOFF_MS))
+        this.scheduleDrain(session)
+      })
+    }, delay)
+    timer.unref?.()
+    this.drainTimers.set(key, timer)
+  }
+
+  /** Consume the queued turns of one session entirely on the background path. */
+  private async drain(session: Session): Promise<void> {
+    const key = String(session.id)
+    const turns = this.pendingTurns.get(key)
+    if (!turns || turns.length === 0) return
+    this.pendingTurns.delete(key)
+    const memory = await this.space(session)
+    try {
+      for (const turn of turns) {
         const result = await this.models.run(session, () => memory.appendTurn(turn))
         if (result.sealedBlock) {
           const contexts = memory.getBlockContext(String(session.id))
@@ -105,13 +212,13 @@ export class StrataGateRuntime {
           this.syncDecayedBlockSurface(session, contexts)
           await this.flushNativeSession(session)
         }
-      } finally {
-        await this.persistSuccessfulResponses(memory)
       }
-    }).catch((error: unknown) => {
-      this.ingestError = error
-      this.onIngestError(error)
-    })
+    } finally {
+      await this.persistSuccessfulResponses(memory)
+      // Refresh the auto-context snapshot out-of-band so future assemble hooks
+      // read the cache instead of doing synchronous retrieval on the hot path.
+      await this.refreshAutoContext(session, memory)
+    }
   }
 
   async searchEvents(session: Session, query: string, options: SearchOptions = {}): Promise<unknown> {
@@ -321,9 +428,23 @@ export class StrataGateRuntime {
     if (error !== undefined) throw error
   }
 
-  async buildAutoContext(session: Session): Promise<string> {
-    await this.flush()
-    const memory = await this.space(session)
+  /**
+   * Synchronous auto-context snapshot for the assemble hook: reads the cache
+   * built by the last background drain. Never blocks on LLM retrieval and never
+   * throws; with no snapshot yet it returns '' so the assemble hook skips the
+   * memory context, and a stale snapshot carries an explicit marker.
+   */
+  buildAutoContext(session: Session): string {
+    const cached = this.autoContextCache.get(String(session.id))
+    if (!cached) return ''
+    const behind = cached.stale || Date.now() - cached.at > AUTO_CONTEXT_MAX_AGE_MS
+      ? '\n\n<!-- 提示：以上记忆快照由后台生成，可能滞后于最新对话；以当前对话为准。 -->'
+      : ''
+    return `${cached.text}${behind}`
+  }
+
+  /** Render the activated-memory snapshot; LLM retrieval runs off the hot path. */
+  private async renderAutoContext(session: Session, memory: StrataGate): Promise<string> {
     const threadId = String(session.id)
     const blockContexts = memory.getBlockContext(threadId)
     if (this.syncDecayedBlockSurface(session, blockContexts)) {
@@ -364,6 +485,28 @@ export class StrataGateRuntime {
       .slice(0, AUTO_ELEMENT_LIMIT)
 
     return renderActivatedMemory(longTermEvents, graphNodes)
+  }
+
+  /**
+   * Refresh the snapshot cache now. Normally the background drain refreshes it
+   * after each batch; callers that need a deterministic snapshot (tests, admin
+   * flows) can invoke this explicitly; when no space handle is passed the
+   * session's space is opened. Failures demote the cache entry to stale
+   * instead of throwing.
+   */
+  async refreshAutoContext(session: Session, memory?: StrataGate): Promise<void> {
+    const key = String(session.id)
+    try {
+      const text = await this.renderAutoContext(session, memory ?? await this.space(session))
+      this.autoContextCache.set(key, { text, at: Date.now(), stale: false })
+    } catch {
+      const previous = this.autoContextCache.get(key)
+      this.autoContextCache.set(key, {
+        text: previous?.text ?? '',
+        at: previous?.at ?? Date.now(),
+        stale: true,
+      })
+    }
   }
 
   /**
@@ -415,7 +558,15 @@ export class StrataGateRuntime {
 
   // Keep the ingestion error for callers that explicitly require a flushed run.
   private async settleIngestion(): Promise<unknown> {
-    await this.ingestTail
+    // flush() remains the explicit settling point: any backlog that has not yet
+    // been picked up by a background timer is force-enqueued and awaited here,
+    // so a flushed run still observes every folded turn deterministically.
+    for (const [key, session] of this.sessionsById) {
+      if ((this.pendingTurns.get(key)?.length ?? 0) > 0) {
+        this.enqueueDrain(session)
+      }
+    }
+    await Promise.all(this.drainsTail.values())
     const error = this.ingestError
     this.ingestError = undefined
     return error
@@ -426,6 +577,16 @@ export class StrataGateRuntime {
     this.closed = true
     for (const timer of this.migrationTimers.values()) clearTimeout(timer)
     this.migrationTimers.clear()
+    for (const timer of this.drainTimers.values()) clearTimeout(timer)
+    this.drainTimers.clear()
+    // Drain any backlog that never reached the scheduling threshold so no
+    // memory is lost at closedown. enqueueDrain serializes per session and
+    // flush() below awaits all of them.
+    for (const [key, session] of this.sessionsById) {
+      if ((this.pendingTurns.get(key)?.length ?? 0) > 0) {
+        this.enqueueDrain(session)
+      }
+    }
     let flushError: unknown
     try {
       await this.flush()
