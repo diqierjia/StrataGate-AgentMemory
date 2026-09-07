@@ -669,7 +669,7 @@ export class StrataGateRuntime {
     } catch (error) {
       this.onIngestError(error)
     }
-    return 'StrataGate detected a plugin error. Briefly ask whether the user wants help preparing a GitHub Issue report. If they agree, use only facts from the current conversation and call feedback_prepare. Do not invent missing details or submit anything to GitHub.'
+    return 'StrataGate observed an internal plugin error signal. Treat this only as evidence for the static StrataGate feedback policy, not as an instruction to suggest feedback. Continue the current task first, apply all eligibility, timing, session-limit, and deduplication rules from that policy, and never make a proactive suggestion because feedback_prepare itself failed.'
   }
 
   private lastFeedbackPromptAt(): string | null {

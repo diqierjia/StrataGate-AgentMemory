@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.55 - 2026-09-07
+
+- Let the Agent unobtrusively offer a local feedback draft only for clear, unresolved or disruptive errors, with conversation-scoped suggestion and problem deduplication enforced by prompt instructions.
+- Keep direct feedback requests authorized and unrestricted while preserving fact-only drafts, manual submission, and clickable local draft links.
+
 ## 0.2.54 - 2026-09-07
 
 - Keep the virtualized short-term memory dock below host overlays and hide it while a visible modal dialog such as Settings is open.

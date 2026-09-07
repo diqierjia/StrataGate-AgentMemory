@@ -77,7 +77,7 @@ describe('DSH runtime ingestion', () => {
 
       const now = Date.parse('2026-09-04T00:00:00.000Z')
       first.notePluginError(session, new Error('write failed'))
-      expect(first.takeFeedbackSuggestion(session, now)).toContain('feedback_prepare')
+      expect(first.takeFeedbackSuggestion(session, now)).toMatch(/only as evidence[\s\S]*not as an instruction[\s\S]*feedback_prepare itself/)
       first.notePluginError(session, new Error('again'))
       expect(first.takeFeedbackSuggestion(session, now + 4 * 24 * 60 * 60 * 1_000)).toBe('')
     } finally {
@@ -94,7 +94,7 @@ describe('DSH runtime ingestion', () => {
       })
       const afterCooldown = Date.parse('2026-09-10T00:00:00.000Z')
       second.notePluginError(session, new Error('later failure'))
-      expect(second.takeFeedbackSuggestion(session, afterCooldown)).toContain('feedback_prepare')
+      expect(second.takeFeedbackSuggestion(session, afterCooldown)).toMatch(/static StrataGate feedback policy[\s\S]*session-limit[\s\S]*deduplication/)
     } finally {
       await second.close()
       await rm(directory, { recursive: true, force: true })
@@ -597,7 +597,7 @@ describe('DSH runtime ingestion', () => {
       const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> }).space(session)
       await vi.waitFor(() => {
         expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'failed', attempts: 1 })
-        expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toContain('feedback_prepare')
+        expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toContain('static StrataGate feedback policy')
       }, { timeout: 4_000 })
 
       expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-10T00:00:00.000Z'))).toBe('')

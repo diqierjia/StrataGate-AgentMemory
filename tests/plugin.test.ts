@@ -43,6 +43,10 @@ describe('DSH plugin composition', () => {
         name: 'tool:stratagate-memory',
         text: expect.stringMatching(/StrataGate provides durable, evidence-gated memory[\s\S]*independent batch[\s\S]*batch_id/),
       }))
+      expect(prompt.sections).toContainEqual(expect.objectContaining({
+        name: 'tool:stratagate-feedback',
+        text: expect.stringMatching(/clear error signal[\s\S]*at most one proactive feedback suggestion[\s\S]*namespace plus its substantive characteristics[\s\S]*feedback_prepare itself/),
+      }))
 
       const session = {
         id: 'auto-context-session',
@@ -69,6 +73,8 @@ describe('DSH plugin composition', () => {
       expect(search).toBeDefined()
       expect(feedbackPrepare).toBeDefined()
       expect(recordUse).toBeDefined()
+      expect(feedbackPrepare!.description).toMatch(/directly requests it[\s\S]*explicitly agrees/)
+      expect(feedbackPrepare!.description).toMatch(/Never submit anything to GitHub[\s\S]*feedbackUrl/)
       const feedback = await feedbackPrepare!.execute({
         title: 'Local draft',
         description: 'A real failure from this conversation.',
