@@ -3,7 +3,9 @@ import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   deterministicBlockLayers,
+  estimateTokens,
   EXTERNAL_MEMORY_EXPORT_PROMPT_ZH_CN,
+  formatRawTranscript,
   getDecayedBlockLevel,
   KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
   type ElementCard,
@@ -14,10 +16,10 @@ import {
   type StrataGateSnapshot,
   type UsageReceipt,
 } from '@diqier/stratagate'
-import type { AdminSnapshotEntry, StrataGateRuntime } from './runtime.js'
+import type { AdminSnapshotEntry, FeedbackDraftInput, StrataGateRuntime } from './runtime.js'
 import { clusterKnowledgeGraph } from './graph-clustering.js'
 
-const STRATAGATE_DSH_VERSION = '0.2.36'
+const STRATAGATE_DSH_VERSION = '0.2.52'
 const LEGACY_THREAD_ID = '__legacy__'
 const nodeRequire = createRequire(import.meta.url)
 
@@ -45,6 +47,7 @@ interface RecoveredSnapshotView {
   openMessages: Array<{ message: RawMessage; threadId: string }>
   receiptThreads: Map<string, string>
   receiptActivity: Map<string, string>
+  receiptTurns: Map<string, number>
 }
 
 export interface WebResponse {
@@ -123,22 +126,42 @@ function sourceMessages(snapshot: StrataGateSnapshot, ids?: ReadonlySet<string>)
   return output
 }
 
-function blockLayers(block: MemoryBlock): Array<{ level: number; content: string }> {
+interface DisplayLayer {
+  level: number
+  content: string
+  tokens: number
+  percentOfL5: number
+}
+
+function withLayerMetrics(layers: Array<{ level: number; content: string }>): DisplayLayer[] {
+  const tokenCounts = new Map(layers.map(({ level, content }) => [level, estimateTokens(content)]))
+  const l5Tokens = tokenCounts.get(5) ?? 0
+  return layers.map((layer) => {
+    const tokens = tokenCounts.get(layer.level) ?? 0
+    const percentOfL5 = layer.level === 5
+      ? 100
+      : l5Tokens > 0 ? Math.round(tokens / l5Tokens * 100) : 0
+    return { ...layer, tokens, percentOfL5 }
+  })
+}
+
+function blockLayers(block: MemoryBlock): DisplayLayer[] {
+  const deterministic = deterministicBlockLayers(block.l5Raw)
   if (block.processingStatus !== 'ready' || !block.l0Title || !block.l0Tags || !block.l1Summary || !block.l2Keypoints) {
-    return [
-      { level: 3, content: block.l3Condensed },
-      { level: 4, content: block.l4Readable },
-      { level: 5, content: block.l5Raw.map((message) => `${message.role}: ${message.content}`).join('\n\n') },
-    ]
+    return withLayerMetrics([
+      { level: 3, content: deterministic.l3Condensed },
+      { level: 4, content: deterministic.l4Readable },
+      { level: 5, content: formatRawTranscript(block.l5Raw) },
+    ])
   }
-  return [
-    { level: 0, content: `${block.l0Title}\n标签：${block.l0Tags.join('、') || '无'}` },
+  return withLayerMetrics([
+    { level: 0, content: `${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}` },
     { level: 1, content: block.l1Summary || block.l0Title },
-    { level: 2, content: block.l2Keypoints.map((point) => `• ${point}`).join('\n') || block.l1Summary || block.l0Title },
-    { level: 3, content: block.l3Condensed || block.l2Keypoints.join('\n') || block.l1Summary },
-    { level: 4, content: block.l4Readable || block.l3Condensed },
-    { level: 5, content: block.l5Raw.map((message) => `${message.role}: ${message.content}`).join('\n\n') },
-  ]
+    { level: 2, content: block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary || block.l0Title },
+    { level: 3, content: deterministic.l3Condensed || block.l2Keypoints.join('\n') || block.l1Summary },
+    { level: 4, content: deterministic.l4Readable || deterministic.l3Condensed },
+    { level: 5, content: formatRawTranscript(block.l5Raw) },
+  ])
 }
 
 function eventSummary(event: EventCard): unknown {
@@ -308,6 +331,46 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL): Promise<unk
   return result
 }
 
+async function feedback(runtime: StrataGateRuntime, req: WebRequest, url: URL): Promise<unknown> {
+  if (req.method === 'GET') {
+    const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+    if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+    return runtime.adminFeedbackDraft(namespace)
+  }
+  if (req.method !== 'PUT') throw new AdminHttpError(405, 'StrataGate feedback requires GET or PUT')
+  let suppliedBody = req.body
+  if (suppliedBody === undefined && typeof req[Symbol.asyncIterator] === 'function') {
+    const chunks: Buffer[] = []
+    let size = 0
+    for await (const chunk of req as AsyncIterable<Uint8Array | string>) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += value.length
+      if (size > 128 * 1024) throw new AdminHttpError(413, 'feedback draft cannot exceed 128 KB')
+      chunks.push(value)
+    }
+    suppliedBody = Buffer.concat(chunks).toString('utf8')
+  }
+  let body: Record<string, unknown>
+  if (typeof suppliedBody === 'string') {
+    try { body = JSON.parse(suppliedBody) as Record<string, unknown> } catch { throw new AdminHttpError(400, 'feedback draft must be valid JSON') }
+  } else if (suppliedBody && typeof suppliedBody === 'object' && !Array.isArray(suppliedBody)) {
+    body = suppliedBody as Record<string, unknown>
+  } else {
+    throw new AdminHttpError(400, 'feedback request requires a JSON body')
+  }
+  const namespace = typeof body.namespace === 'string' ? body.namespace.trim() : ''
+  if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+  const draft: FeedbackDraftInput = {}
+  if (typeof body.title === 'string') draft.title = body.title
+  if (typeof body.description === 'string') draft.description = body.description
+  if (Array.isArray(body.reproduction)) draft.reproduction = body.reproduction.filter((value): value is string => typeof value === 'string')
+  if (typeof body.expected === 'string') draft.expected = body.expected
+  if (typeof body.actual === 'string') draft.actual = body.actual
+  if (typeof body.errorContext === 'string') draft.errorContext = body.errorContext
+  if (typeof body.bodyMarkdown === 'string') draft.bodyMarkdown = body.bodyMarkdown
+  return runtime.adminSaveFeedbackDraft(namespace, draft)
+}
+
 async function importExternalMemory(runtime: StrataGateRuntime, req: WebRequest): Promise<unknown> {
   let suppliedBody = req.body
   if (suppliedBody === undefined && typeof req[Symbol.asyncIterator] === 'function') {
@@ -376,6 +439,17 @@ function receiptThreadId(id: string): string | null {
   return match?.[1]?.trim() || null
 }
 
+function receiptTurnNumber(id: string): number | null {
+  const match = /^dsh:(.+):turn:(\d+)$/.exec(id)
+  if (!match) return null
+  const turn = Number(match[2])
+  return Number.isSafeInteger(turn) ? turn : null
+}
+
+function receiptTurnKey(threadId: string, createdAt: string): string {
+  return `${threadId}\u0000${timestampKey(createdAt)}`
+}
+
 function timestampKey(value: string): string {
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? String(parsed) : value
@@ -384,11 +458,14 @@ function timestampKey(value: string): string {
 function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotView {
   const receiptThreads = new Map<string, string>()
   const receiptActivity = new Map<string, string>()
+  const receiptTurns = new Map<string, number>()
   const receiptCandidates = new Map<string, Set<string>>()
   for (const receipt of snapshot.ingestionReceipts) {
     const threadId = receiptThreadId(receipt.id)
     if (!threadId) continue
     receiptThreads.set(receipt.id, threadId)
+    const turn = receiptTurnNumber(receipt.id)
+    if (turn !== null) receiptTurns.set(receiptTurnKey(threadId, receipt.createdAt), turn)
     const currentActivity = receiptActivity.get(threadId)
     if (!currentActivity || receipt.createdAt > currentActivity) receiptActivity.set(threadId, receipt.createdAt)
     const key = timestampKey(receipt.createdAt)
@@ -438,8 +515,13 @@ function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotVie
   const turnCounters = new Map<string, number>()
   for (const block of blocks) {
     if (block.source.threadId) {
-      block.turnRange = [block.source.startTurn, block.source.endTurn]
-      turnCounters.set(block.threadId, Math.max(turnCounters.get(block.threadId) ?? 0, block.source.endTurn))
+      const turnMessages = block.messages.filter(({ role }) => role === 'user')
+      const dshTurns = turnMessages
+        .map((message) => receiptTurns.get(receiptTurnKey(block.threadId, message.createdAt)))
+      block.turnRange = dshTurns.length > 0 && dshTurns.every((turn): turn is number => turn !== undefined)
+        ? [Math.min(...dshTurns), Math.max(...dshTurns)]
+        : [block.source.startTurn, block.source.endTurn]
+      turnCounters.set(block.threadId, Math.max(turnCounters.get(block.threadId) ?? 0, block.turnRange[1]))
       continue
     }
     const turns = Math.max(1, block.messages.filter(({ role }) => role === 'user').length)
@@ -453,10 +535,11 @@ function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotVie
     openMessages: recoverMessages(snapshot.openTail),
     receiptThreads,
     receiptActivity,
+    receiptTurns,
   }
 }
 
-function virtualBlockLayers(block: DisplayBlock): Array<{ level: number; content: string }> {
+function virtualBlockLayers(block: DisplayBlock): DisplayLayer[] {
   if (!block.virtual || block.messages.length === block.source.l5Raw.length) return blockLayers(block.source)
   const deterministic = deterministicBlockLayers(block.messages)
   const natural = block.messages.filter(({ role }) => role === 'user' || role === 'assistant')
@@ -464,14 +547,14 @@ function virtualBlockLayers(block: DisplayBlock): Array<{ level: number; content
   const title = firstUser?.content.replace(/\s+/g, ' ').trim().slice(0, 80) || '旧会话片段'
   const summary = natural.map(({ content }) => content.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' ').slice(0, 500)
   const keypoints = natural.filter(({ role }) => role === 'user').map(({ content }) => content.replace(/\s+/g, ' ').trim().slice(0, 160))
-  return [
+  return withLayerMetrics([
     { level: 0, content: title },
     { level: 1, content: summary || title },
     { level: 2, content: keypoints.map((point) => `• ${point}`).join('\n') || summary || title },
     { level: 3, content: deterministic.l3Condensed },
     { level: 4, content: deterministic.l4Readable },
-    { level: 5, content: block.messages.map((message) => `${message.role}: ${message.content}`).join('\n\n') },
-  ]
+    { level: 5, content: formatRawTranscript(block.messages) },
+  ])
 }
 
 function conversationRows(snapshot: StrataGateSnapshot, view = recoverSnapshotView(snapshot)): Array<{ id: string; label: string; blocks: number; lastActivityAt: string | null }> {
@@ -563,7 +646,10 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       : []
     values = scopedBlocks.map((block) => {
       const source = block.source
+      const layers = virtualBlockLayers(block)
+      const layerTokens = layers.map(({ level, tokens, percentOfL5 }) => ({ level, tokens, percentOfL5 }))
       const extraction = snapshot.extractionJobs.find(({ blockId }) => blockId === source.id)
+      const summary = snapshot.summaryJobs.find(({ blockId }) => blockId === source.id)
       const blockMessageIds = new Set(block.messages.map(({ id }) => id))
       const relatedEvents = snapshot.events.filter((event) => event.sourceBlockId === source.id
         && (!block.virtual || event.sourceMessageIds.some((id) => blockMessageIds.has(id))))
@@ -589,11 +675,14 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         latestBlockPosition,
         snapshot.blockDecayLambda,
       )
+      const currentMetrics = layerTokens.find(({ level }) => level === currentLevel)
+      const l5Tokens = layerTokens.find(({ level }) => level === 5)?.tokens ?? 0
       return {
         id: block.id,
         sourceBlockId: source.id,
         threadId: block.threadId,
         sequence: source.sequence,
+        blockIndex: blockPosition,
         turnRange: block.turnRange,
         title: block.virtual && block.messages.length !== source.l5Raw.length
           ? block.messages.find(({ role }) => role === 'user')?.content.replace(/\s+/g, ' ').trim().slice(0, 80) || '旧会话片段'
@@ -602,12 +691,23 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         summary: source.l1Summary,
         keypoints: source.l2Keypoints,
         currentLevel,
+        currentTokens: currentMetrics?.tokens ?? 0,
+        l5Tokens,
+        compressionPercent: currentMetrics?.percentOfL5 ?? (currentLevel === 5 ? 100 : 0),
+        layerTokens,
         distanceFromLatest: Math.max(0, latestBlockPosition - blockPosition),
         expansionSource: source.lastLiftedAt ? source.lastLiftedBy ?? 'legacy' : null,
         lastLiftedAt: source.lastLiftedAt,
         sourceMessages: block.messages.length,
         createdAt: source.createdAt,
         virtual: block.virtual,
+        processingStatus: source.processingStatus,
+        summaryJob: summary ? {
+          status: summary.status,
+          attempts: summary.attempts,
+          nextRetryAt: summary.nextRetryAt,
+          updatedAt: summary.updatedAt,
+        } : null,
         status,
         eventExtraction: extraction ? {
           status: extraction.status,
@@ -630,6 +730,10 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       ? recovered.openMessages.filter((message) => message.threadId === activeThreadId).map(({ message }) => message)
       : []
     const openTurns = openMessages.filter(({ role }) => role === 'user').length
+    const openDshTurns = activeThreadId
+      ? openMessages.filter(({ role }) => role === 'user')
+        .map((message) => recovered.receiptTurns.get(receiptTurnKey(activeThreadId, message.createdAt)))
+      : []
     return {
       namespace,
       kind,
@@ -638,10 +742,17 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       limit,
       items: filtered.slice(offset, offset + limit),
       openBlock: {
-        turnRange: openTurns > 0 ? [latestSealedTurn + 1, latestSealedTurn + openTurns] : null,
+        turnRange: openTurns > 0
+          ? openDshTurns.length > 0 && openDshTurns.every((turn): turn is number => turn !== undefined)
+            ? [Math.min(...openDshTurns), Math.max(...openDshTurns)]
+            : [latestSealedTurn + 1, latestSealedTurn + openTurns]
+          : null,
         messages: openMessages.length,
+        turns: openTurns,
+        capacity: snapshot.blockTurnSize,
         status: 'open',
       },
+      blockTurnSize: snapshot.blockTurnSize,
       conversations,
       activeThreadId,
     }
@@ -849,7 +960,9 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
   try {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname.replace(/\/$/, '')
-    if (path === '/api/stratagate/settings') {
+    if (path === '/api/stratagate/feedback') {
+      sendJson(res, 200, await feedback(runtime, req, url))
+    } else if (path === '/api/stratagate/settings') {
       if (req.method !== 'PATCH') throw new AdminHttpError(405, 'StrataGate settings require PATCH')
       sendJson(res, 200, await updateSettings(runtime, url))
     } else if (path === '/api/stratagate/blocks/expand') {

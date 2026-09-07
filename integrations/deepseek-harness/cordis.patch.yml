@@ -1,0 +1,13 @@
+# StrataGate adds one Host plugin row. Memory stays under DSH_HOME so profile
+# upgrades and plugin removal do not delete user data.
+- insert:
+    - id: stratagate-memory
+      name: stratagate-dsh
+      inject: [tools, systemPrompt, llm, agentDefaultModel]
+      config:
+        database: !!js dshHomePath('stratagate', 'memory.db')
+        namespaceMode: project
+        blockTurnSize: 6
+        blockDecayLambda: 0.3
+        ingestSubagents: false
+        maxOutputTokens: 10000

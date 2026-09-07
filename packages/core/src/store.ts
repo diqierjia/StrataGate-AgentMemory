@@ -3,6 +3,7 @@ import {
   DEFAULT_BLOCK_TURN_SIZE,
   blockLevelLabel,
   deterministicBlockLayers,
+  formatRawTranscript,
   getDecayedBlockLevel,
   normalizeBlockLevel,
 } from './blocks.js';
@@ -184,9 +185,10 @@ function renderBlock(block: MemoryBlock, level: BlockLevel): string {
   if (level === 0) return `${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}`;
   if (level === 1) return block.l1Summary;
   if (level === 2) return block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary;
-  if (level === 3) return block.l3Condensed;
-  if (level === 4) return block.l4Readable;
-  return block.l5Raw.map((message) => `${message.role}: ${message.content}`).join('\n\n');
+  const deterministic = deterministicBlockLayers(block.l5Raw);
+  if (level === 3) return deterministic.l3Condensed;
+  if (level === 4) return deterministic.l4Readable;
+  return formatRawTranscript(block.l5Raw);
 }
 
 function sameIds(left: readonly string[], right: readonly string[]): boolean {

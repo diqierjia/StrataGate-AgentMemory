@@ -2,6 +2,44 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
+function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string, unknown> = {}) {
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  const instrumented = source.replace(
+    "    exports.name = 'stratagate-dsh'",
+    "    exports.__test = { feedbackDraftMarkdown, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, consumeFeedbackDeepLink, feedbackLinkTarget, navigateToFeedback, installFeedbackLinkNavigation, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT }; exports.name = 'stratagate-dsh'",
+  )
+  let definition: any
+  runInNewContext(instrumented, {
+    Blob,
+    URL,
+    URLSearchParams,
+    ...globals,
+    window: {
+      ...(globals.window && typeof globals.window === 'object' ? globals.window : {}),
+      __ModuleLoader__: { load: (value: unknown) => { definition = value } },
+    },
+  })
+  let stateIndex = 0
+  const React = {
+    createElement: (...args: unknown[]) => args,
+    Fragment: 'fragment',
+    useState: (initial: unknown) => [stateIndex < stateValues.length ? stateValues[stateIndex++] : initial, () => {}],
+    useEffect: () => {},
+    useRef: (initial: unknown) => ({ current: initial }),
+  }
+  const plugin = definition.factory((name: string) => {
+    if (name !== 'react') throw new Error(`unexpected client dependency: ${name}`)
+    return React
+  })
+  return { ...plugin.__test, React }
+}
+
+function elementProps(tree: unknown): any[] {
+  if (!Array.isArray(tree)) return []
+  const props = tree[1] && typeof tree[1] === 'object' ? [tree[1]] : []
+  return props.concat(tree.slice(2).flatMap(elementProps))
+}
+
 describe('StrataGate Web client contract', () => {
   it('registers its settings section through the DSH module loader', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
@@ -28,7 +66,100 @@ describe('StrataGate Web client contract', () => {
     expect(typeof registration.render).toBe('function')
   })
 
-  it('adds a short-term memory compression inspector to the sidebar footer', () => {
+  it('parses and consumes only the StrataGate feedback deep link while preserving unrelated URL state', () => {
+    const { readFeedbackDeepLink, consumeFeedbackDeepLink } = loadSupportHelpers()
+    const location = {
+      pathname: '/',
+      search: '?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest&keep=1',
+      hash: '#conversation',
+    }
+    let replaced = ''
+    const history = { state: { retained: true }, replaceState: (_state: unknown, _title: string, next: string) => { replaced = next } }
+    expect(readFeedbackDeepLink(location)).toEqual({ namespace: 'dsh:project:test' })
+    expect(consumeFeedbackDeepLink(location, history)).toBe('/?keep=1#conversation')
+    expect(replaced).toBe('/?keep=1#conversation')
+    expect(readFeedbackDeepLink({ search: '?settings=other&stratagateView=feedback&namespace=dsh%3Aproject%3Atest' })).toBeNull()
+    expect(readFeedbackDeepLink({ search: '?settings=stratagate-memory&stratagateView=other&namespace=dsh%3Aproject%3Atest' })).toBeNull()
+  })
+
+  it('prefers formal Settings navigation for same-origin Feedback links and falls back to the HTTP deep link', () => {
+    const { feedbackLinkTarget, installFeedbackLinkNavigation, navigateToFeedback } = loadSupportHelpers()
+    const href = 'http://127.0.0.1:10259/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest'
+    const anchor = { getAttribute: (name: string) => name === 'href' ? href : null }
+    const target = { closest: (selector: string) => selector === 'a[href]' ? anchor : null }
+    const location = {
+      href: 'http://127.0.0.1:10259/',
+      origin: 'http://127.0.0.1:10259',
+      assigned: '',
+      assign(next: string) { this.assigned = next },
+    }
+    expect(feedbackLinkTarget(target, location)).toMatchObject({ anchor, url: { href } })
+    expect(feedbackLinkTarget({ closest: () => null }, location)).toBeNull()
+    expect(feedbackLinkTarget({ closest: () => ({ getAttribute: () => 'https://example.com/' }) }, location)).toBeNull()
+
+    let listener: (event: any) => void = () => { throw new Error('click listener was not installed') }
+    let removed = false
+    const documentRef = {
+      addEventListener: (_name: string, next: (event: any) => void, capture: boolean) => {
+        expect(capture).toBe(true)
+        listener = next
+      },
+      removeEventListener: (_name: string, next: (event: any) => void, capture: boolean) => {
+        expect(next).toBe(listener)
+        expect(capture).toBe(true)
+        removed = true
+      },
+    }
+    const openSectionCalls: unknown[][] = []
+    const ctx = {
+      get: (name: string) => name === 'settingsNavigation'
+        ? { openSection: (...args: unknown[]) => { openSectionCalls.push(args) } }
+        : undefined,
+    }
+    const dispose = installFeedbackLinkNavigation(ctx, documentRef, location)
+    let prevented = false
+    listener({ target, button: 0, preventDefault: () => { prevented = true } })
+    expect(prevented).toBe(true)
+    expect(openSectionCalls).toEqual([[
+      'stratagate-memory',
+      { view: 'feedback', namespace: 'dsh:project:test' },
+    ]])
+    expect(location.assigned).toBe('')
+    listener({ target, preventDefault: () => { prevented = true } })
+    expect(openSectionCalls).toHaveLength(2)
+    expect(feedbackLinkTarget({ parentElement: target }, location)).toMatchObject({ anchor, url: { href } })
+    expect(navigateToFeedback({ get: () => undefined }, new URL(href), location)).toBe('http')
+    expect(location.assigned).toBe(href)
+    dispose()
+    expect(removed).toBe(true)
+  })
+
+  it('accepts Feedback route state from the Settings host without reading localized DOM controls', () => {
+    const { readFeedbackNavigationState, readNewFeedbackNavigationState, navigateToFeedback } = loadSupportHelpers()
+    const first = { view: 'feedback', namespace: 'dsh:project:test' }
+    const repeated = { view: 'feedback', namespace: 'dsh:project:test' }
+    expect(readFeedbackNavigationState({ view: 'feedback', namespace: 'dsh:project:test' }))
+      .toEqual({ namespace: 'dsh:project:test' })
+    expect(readFeedbackNavigationState({ view: 'other', namespace: 'dsh:project:test' })).toBeNull()
+    expect(readFeedbackNavigationState({ view: 'feedback', namespace: '' })).toBeNull()
+    expect(readNewFeedbackNavigationState(first, first)).toBeNull()
+    expect(readNewFeedbackNavigationState(first, repeated)).toEqual({ namespace: 'dsh:project:test' })
+
+    const openSection = (sectionId: string, state: unknown) => {
+      expect(sectionId).toBe('stratagate-memory')
+      expect(state).toEqual({ view: 'feedback', namespace: 'dsh:project:test' })
+    }
+    const route = new URL('http://127.0.0.1:10259/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest')
+    expect(navigateToFeedback({ get: () => ({ openSection }) }, route, {
+      assign: () => { throw new Error('formal navigation must not use the HTTP fallback') },
+    })).toBe('host')
+
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain('const disposeDeepLink = openFeedbackDeepLink(ctx)')
+    expect(source).toContain('disposeDeepLink()')
+  })
+
+  it('keeps session status inline and registers a composer dock for virtualized conversations', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     let definition: any
     runInNewContext(source, {
@@ -44,13 +175,159 @@ describe('StrataGate Web client contract', () => {
       inject: (_name: string, callback: () => void) => callback(),
       register: (metadata: unknown, render: unknown) => { registrations.push({ metadata, render }) },
     }
-    plugin.apply({ get: (name: string) => name === 'slots' ? slots : undefined })
-    const inspector = registrations.find(({ metadata }) => metadata.id === 'stratagate-compression')
-    expect(inspector.metadata).toMatchObject({ name: 'sidebar.footer.action', order: 40 })
-    expect(typeof inspector.render).toBe('function')
-    expect(source).toContain('短期记忆正在怎样变轻')
-    expect(source).toContain('压缩不会删除证据；L5 原文始终保存在本地')
-    expect(source).toContain("api('sources', { namespace, blockId: selectedBlock.id })")
+    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'conversationEvents' ? { register: () => {} } : undefined })
+    const tail = registrations.find(({ metadata }) => metadata.name === 'conversation.chat.turnTail')
+    const dock = registrations.find(({ metadata }) => metadata.id === 'stratagate-short-term-dock')
+    expect(typeof tail.render).toBe('function')
+    expect(dock.metadata).toMatchObject({ name: 'sidebar.footer.action', order: 40 })
+    expect(typeof dock.render).toBe('function')
+    expect(source).toContain('function ShortTermMemoryTurnStatus({ matched, sessionId, useSession, useSessions, useWorkspaces })')
+    expect(source).toContain('function ShortTermMemoryDock()')
+    expect(source).toContain('短期记忆块 · ')
+    expect(source).toContain('正在压缩…')
+    expect(source).toContain('已压缩为 L')
+    expect(source).toContain("api('sources', { namespace, blockId: block.id }, { signal: controller.signal })")
+    expect(source).toContain("api('memories', { namespace, kind: 'blocks', threadId: sessionId, offset, limit: 200 }, { signal })")
+    expect(source).toContain('data?.activeThreadId === feed.sessionId')
+    expect(source).toContain('void refreshShortTermFeed(feed, workspacePath, signal, true)')
+    expect(source).toContain("if (reason?.name === 'AbortError') throw reason")
+    expect(source).toContain('new IntersectionObserver')
+    expect(source).toContain('ReactDOM.createPortal(dock, document.body)')
+    expect(source).toContain('ui.row?.mounted && ui.row.visible')
+    expect(source).not.toContain('MemoryCompressionWidget')
+    expect(source).not.toContain('sg-compression-panel')
+  })
+
+  it('selects the current short-term state and hands off to the dock when the latest row is virtualized', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const instrumented = source.replace(
+      "    exports.name = 'stratagate-dsh'",
+      "    exports.__test = { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, activateShortTermSession, updateShortTermRow, hasVisibleModalDialog }; exports.name = 'stratagate-dsh'",
+    )
+    let definition: any
+    runInNewContext(instrumented, {
+      URLSearchParams,
+      window: { __ModuleLoader__: { load: (value: unknown) => { definition = value } } },
+    })
+    const plugin = definition.factory((name: string) => {
+      if (name !== 'react') throw new Error(`unexpected client dependency: ${name}`)
+      return { createElement: (...args: unknown[]) => args }
+    })
+    const { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, activateShortTermSession, updateShortTermRow, hasVisibleModalDialog } = plugin.__test
+    const latestBlock = { id: 'block-2', sequence: 2, turnRange: [7, 12], processingStatus: 'ready', currentLevel: 1, compressionPercent: 22 }
+    const open = shortTermCurrentDisplay({
+      blockTurnSize: 6,
+      blocks: [latestBlock],
+      openBlock: { turnRange: [13, 14], turns: 2, capacity: 6 },
+    })
+    expect(open).toMatchObject({ kind: 'progress', turn: 14, current: 2, capacity: 6 })
+    expect(shortTermDisplayLabel(open)).toBe('短期记忆块 · 2/6')
+
+    const sealed = shortTermCurrentDisplay({ blocks: [latestBlock], openBlock: { turnRange: null } })
+    expect(sealed).toMatchObject({ kind: 'block', turn: 12, block: { id: 'block-2' } })
+    expect(shortTermDisplayLabel(sealed)).toBe('Block 2 · 第 7–12 轮 · 已压缩为 L1 · 22%')
+
+    activateShortTermSession('session-a')
+    updateShortTermRow('session-a', 12, true, true)
+    updateShortTermRow('session-a', 6, false, true)
+    expect(shortTermUiSnapshot()).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: true, mounted: true } })
+    updateShortTermRow('session-a', 12, false, false)
+    expect(shortTermUiSnapshot()).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: false, mounted: false } })
+
+    const visibleModal = {
+      hidden: false,
+      closest: () => null,
+      getAttribute: () => null,
+      getClientRects: () => [{}],
+    }
+    expect(hasVisibleModalDialog({ querySelectorAll: () => [visibleModal] })).toBe(true)
+    expect(hasVisibleModalDialog({ querySelectorAll: () => [{ ...visibleModal, getAttribute: () => 'true' }] })).toBe(false)
+    expect(source).toContain('.sg-stm-dock{position:fixed;z-index:900')
+    expect(source).not.toContain('.sg-stm-dock{position:fixed;z-index:2147482400')
+  })
+
+  it('maps progress and multiple persisted Blocks to only their real Turn positions', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const instrumented = source.replace(
+      '    exports.name = \'stratagate-dsh\'',
+      '    exports.__test = { shortTermTurnDisplay }; exports.name = \'stratagate-dsh\'',
+    )
+    let definition: any
+    runInNewContext(instrumented, {
+      URLSearchParams,
+      window: { __ModuleLoader__: { load: (value: unknown) => { definition = value } } },
+    })
+    const plugin = definition.factory((name: string) => {
+      if (name !== 'react') throw new Error(`unexpected client dependency: ${name}`)
+      return { createElement: (...args: unknown[]) => args }
+    })
+    const display = plugin.__test.shortTermTurnDisplay
+    for (let turn = 1; turn < 6; turn += 1) {
+      expect(display({ blockTurnSize: 6, blocks: [], openBlock: { turnRange: [1, turn], turns: turn, capacity: 6 } }, turn))
+        .toMatchObject({ kind: 'progress', current: turn, capacity: 6 })
+    }
+    expect(display({ blockTurnSize: 6, blocks: [], openBlock: { turnRange: [1, 6], turns: 6, capacity: 6 } }, 6)).toMatchObject({ kind: 'processing', current: 6, capacity: 6 })
+
+    const blocks = [
+      { id: 'block-a', turnRange: [1, 6], processingStatus: 'ready', currentLevel: 2, compressionPercent: 21 },
+      { id: 'block-b', turnRange: [7, 12], processingStatus: 'ready', currentLevel: 4, compressionPercent: 63 },
+    ]
+    expect(display({ blocks, openBlock: { turnRange: null } }, 1)).toBeNull()
+    expect(display({ blocks, openBlock: { turnRange: null } }, 6)).toMatchObject({ kind: 'block', block: { id: 'block-a', currentLevel: 2 } })
+    expect(display({ blocks, openBlock: { turnRange: null } }, 12)).toMatchObject({ kind: 'block', block: { id: 'block-b', currentLevel: 4 } })
+    expect(display({ items: blocks, openBlock: { turnRange: null } }, 12)).toMatchObject({
+      kind: 'block',
+      block: { id: 'block-b', currentLevel: 4 },
+    })
+  })
+
+  it('routes session switches to the correct workspace and rebuilds status from persisted API data', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const instrumented = source.replace(
+      '    exports.name = \'stratagate-dsh\'',
+      '    exports.__test = { sessionWorkspacePath, shortTermTurnDisplay }; exports.name = \'stratagate-dsh\'',
+    )
+    let definition: any
+    runInNewContext(instrumented, {
+      URLSearchParams,
+      window: { __ModuleLoader__: { load: (value: unknown) => { definition = value } } },
+    })
+    const plugin = definition.factory((name: string) => {
+      if (name !== 'react') throw new Error(`unexpected client dependency: ${name}`)
+      return { createElement: (...args: unknown[]) => args }
+    })
+    const { sessionWorkspacePath, shortTermTurnDisplay } = plugin.__test
+    const sessions = {
+      'child-a': { parentId: 'root-a', cwd: 'C:/stale-a' },
+      'root-a': { cwd: 'C:/project-a' },
+      'root-b': { cwd: 'D:/project-b' },
+    }
+    const workspaces = [
+      { path: 'C:/project-a', sessionIds: ['root-a'] },
+      { path: 'D:/project-b', sessionIds: ['root-b'] },
+    ]
+    expect(sessionWorkspacePath('child-a', sessions, workspaces)).toBe('C:/project-a')
+    expect(sessionWorkspacePath('root-b', sessions, workspaces)).toBe('D:/project-b')
+
+    const restoredPayload = {
+      blocks: [{ id: 'persisted', turnRange: [13, 18], processingStatus: 'ready', currentLevel: 4, compressionPercent: 61 }],
+      openBlock: { turnRange: null },
+    }
+    expect(shortTermTurnDisplay(restoredPayload, 18)).toMatchObject({
+      kind: 'block',
+      block: { id: 'persisted', currentLevel: 4, compressionPercent: 61 },
+    })
+  })
+
+  it('keeps preview selection read-only and leaves the actual layer visibly marked', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const detailSource = source.slice(source.indexOf('function ShortTermMemoryBlockDetail'), source.indexOf('function ShortTermMemoryTurnStatus'))
+    expect(detailSource).toContain('const actualLayer = Number(block.currentLevel)')
+    expect(detailSource).toContain('const [selectedPreviewLayer, setSelectedPreviewLayer] = React.useState(actualLayer)')
+    expect(detailSource).toContain('onClick: () => setSelectedPreviewLayer(level)')
+    expect(detailSource).toContain("level === actualLayer ? 'actual ' : ''")
+    expect(detailSource).toContain("level === actualLayer ? '当前使用' : ''")
+    expect(detailSource).not.toContain("api('blocks/expand'")
   })
 
   it('publishes adopted memory citations into the closing answer turn tail', () => {
@@ -140,7 +417,7 @@ describe('StrataGate Web client contract', () => {
     expect(matched.retrievedCount).toBe(5)
     expect(matched.retrievalGroups).toHaveLength(1)
     expect(matched.retrievalGroups[0].memories).toHaveLength(5)
-    expect(tail.metadata.select({ turn: { data: { get: (key: string) => locationData.get(key) } }, seq: 2 })).toBeNull()
+    expect(tail.metadata.select({ turn: { turn: 7, data: { get: (key: string) => locationData.get(key) } }, seq: 2 })).toMatchObject({ turn: 7, citations: [], retrievalGroups: [] })
     const legacyUpdated = conversationDefinition.update({ state: started }, {
       event: {
         type: 'stratagate/memory-citations',
@@ -356,7 +633,7 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions })')
+    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState })')
     expect(source).toContain('const workspaceItems = useWorkspaces((state) => state.items)')
     expect(source).toContain('const sessionById = useSessions((state) => state.byId || {})')
     expect(source).toContain("String(session?.title || '').trim()")
@@ -534,6 +811,211 @@ describe('StrataGate Web client contract', () => {
     expect([...importance.values()].every(({ radius }: { radius: number }) => radius >= 30 && radius <= 54)).toBe(true)
   })
 
+  it('keeps all feedback data local and puts only the paste hint in Feedback Issue URLs', () => {
+    const { SupportPage, ISSUE_URL, ISSUE_BODY_HINT } = loadSupportHelpers()
+    const privateChat = 'private chat content'
+    const logContent = 'diagnostic log content'
+    const graphContent = 'private graph state'
+    const tree = SupportPage({
+      overview: { pluginVersion: '1.2.3', harnessVersion: '4.5.6' },
+      selected: { blockTurnSize: 6, blocks: 1, events: 1, graphNodes: 1, failedJobDetails: [{ lastError: logContent }] },
+      data: {
+        blocks: [{ id: 'block-1', l5Raw: [{ id: 'message-1', role: 'user', content: privateChat }] }],
+        events: [{ id: 'event-1', title: 'event title' }],
+        graph: { nodes: [{ id: 'node-1', name: graphContent }], edges: [] },
+      },
+      recentError: logContent,
+      onBack: () => {},
+    })
+    const hrefs = elementProps(tree).map((props) => props.href).filter(Boolean)
+    expect(hrefs.length).toBeGreaterThanOrEqual(3)
+    const issueLinks = hrefs.filter((href) => href.startsWith(ISSUE_URL))
+    expect(issueLinks).toHaveLength(2)
+    const feedbackIssue = issueLinks.find((href) => href !== ISSUE_URL)!
+    expect(new URL(feedbackIssue).searchParams.get('body')).toBe(ISSUE_BODY_HINT)
+    for (const href of hrefs) {
+      expect(href).not.toContain(privateChat)
+      expect(href).not.toContain(logContent)
+      expect(href).not.toContain(graphContent)
+    }
+  })
+
+  it('keeps an empty feedback page incomplete and formats structured AI drafts without guessing', () => {
+    const { SupportPage, feedbackDraftMarkdown, FEEDBACK_AI_PROMPT } = loadSupportHelpers()
+    const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
+    const props = elementProps(tree)
+    expect(props.find((value) => value['aria-label'] === '本地反馈报告预览')).toBeUndefined()
+    expect(props.some((value) => value.disabled === true && value.children === undefined)).toBe(true)
+    expect(JSON.stringify(tree)).toContain('请先描述问题，或使用 AI 帮你填写。')
+    expect(FEEDBACK_AI_PROMPT).toContain('feedback_prepare')
+    expect(FEEDBACK_AI_PROMPT).toContain('不要猜测')
+    expect(feedbackDraftMarkdown({
+      description: '保存草稿失败。',
+      reproduction: ['打开反馈页', '点击保存'],
+      expected: '草稿保存在本地。',
+      actual: '页面显示错误。',
+      errorContext: 'EACCES',
+    })).toBe('## 问题描述\n\n保存草稿失败。\n\n## 复现步骤\n\n1. 打开反馈页\n2. 点击保存\n\n## 预期行为\n\n草稿保存在本地。\n\n## 实际行为\n\n页面显示错误。\n\n## 相关错误信息\n\nEACCES')
+  })
+
+  it('shows a persistent top AI-copy notice with retry, close, sticky, and scroll visibility handling', () => {
+    let copied = ''
+    const { SupportPage, FEEDBACK_AI_PROMPT } = loadSupportHelpers(
+      [false, false, false, '', '', '', '', false, true],
+      { navigator: { clipboard: { writeText: async (value: string) => { copied = value } } } },
+    )
+    const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
+    const serialized = JSON.stringify(tree)
+    expect(serialized).toContain('AI 提示词已复制')
+    expect(serialized).toContain('回到刚才出现问题的会话，直接粘贴并发送')
+    const props = elementProps(tree)
+    const retry = props.find((value) => value.children === undefined && value.className === 'sg-quiet-button' && typeof value.onClick === 'function')
+    expect(retry).toBeDefined()
+    retry!.onClick()
+    expect(copied).toBe(FEEDBACK_AI_PROMPT)
+    expect(props.find((value) => value['aria-label'] === '关闭 AI 提示词提示')).toBeDefined()
+
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain('.sg-support-ai-notice{position:sticky;top:8px')
+    expect(source).toContain("scrollIntoView({ behavior: 'smooth', block: 'start' })")
+  })
+
+  it('builds complete option-controlled reports without the former 4500 character truncation', () => {
+    const { buildSupportReport } = loadSupportHelpers()
+    const longChat = 'private-chat-' + 'x'.repeat(6000) + '-tail-marker'
+    const data = {
+      blocks: [{ id: 'block-1', l5Raw: [{ id: 'message-1', role: 'user', content: longChat, createdAt: '2026-09-04T00:00:00Z' }], unrelatedAppState: 'must-not-leak' }],
+      events: [{ id: 'event-1', title: 'Event title', summary: 'Event summary' }],
+      graph: { nodes: [{ id: 'node-1', name: 'Graph node', currentState: 'Graph content' }], edges: [] },
+      unrelatedAppState: 'must-not-leak',
+    }
+    const base = buildSupportReport({ problemContent: '## 问题描述\n\nSomething failed.', data })
+    expect(base).not.toContain('## 诊断日志')
+    expect(base).not.toContain('## 用户主动附加的记忆数据')
+
+    const logs = buildSupportReport({ problemContent: '## 问题描述\n\nSomething failed.', recentError: 'frontend exploded', selected: { failedJobDetails: [{ kind: 'event-extraction', lastErrorFull: 'full failure' }] }, data, includeLogs: true })
+    expect(logs).toContain('## 诊断日志')
+    expect(logs).toContain('frontend exploded')
+    expect(logs).not.toContain('## 用户主动附加的记忆数据')
+
+    const memory = buildSupportReport({ problemContent: '## 问题描述\n\nSomething failed.', data, includeMemory: true, willingToContribute: true })
+    expect(memory.length).toBeGreaterThan(6000)
+    expect(memory).toContain('-tail-marker')
+    expect(memory).not.toContain('内容已截断')
+    expect(memory).toContain('## 用户主动附加的记忆数据（可能包含私人对话）')
+    expect(memory).toContain('自动脱敏不能保证识别所有敏感信息')
+    expect(memory).toContain('## 贡献意愿')
+    expect(memory).toContain('我愿意尝试修复并提交 PR')
+    expect(memory).not.toContain('must-not-leak')
+  })
+
+  it('copies the frozen report and opens an Issue URL containing only title and the paste hint', async () => {
+    const { buildSupportReport, copyReportAndOpenIssue, issueUrl, ISSUE_BODY_HINT } = loadSupportHelpers()
+    const report = buildSupportReport({ problemContent: '## 问题描述\n\nSomething failed.', data: { blocks: [{ l5Raw: [{ content: 'chat snapshot' }] }] }, includeMemory: true })
+    const copied: string[] = []
+    const opened: string[] = []
+    const actionOrder: string[] = []
+    const popup: any = { opener: 'original' }
+    const success = await copyReportAndOpenIssue(
+      report,
+      { writeText: async (value: string) => { actionOrder.push('copy'); copied.push(value) } },
+      (url: string) => { actionOrder.push('open'); opened.push(url); return popup },
+    )
+    expect(success).toEqual({ copied: true, opened: true, error: '' })
+    expect(copied).toEqual([report])
+    expect(opened).toEqual([issueUrl()])
+    expect(new URL(opened[0]!).searchParams.get('body')).toBe(ISSUE_BODY_HINT)
+    expect(opened[0]!).not.toContain('chat snapshot')
+    expect(actionOrder).toEqual(['copy', 'open'])
+    expect(popup.opener).toBeNull()
+
+    const failure = await copyReportAndOpenIssue(
+      report,
+      { writeText: async () => { throw new Error('permission denied') } },
+      () => null,
+    )
+    expect(failure).toMatchObject({ copied: false, opened: false })
+    expect(failure.error).toContain('permission denied')
+    expect(report).toContain('chat snapshot')
+
+    const unavailable = await copyReportAndOpenIssue(report, null, () => null)
+    expect(unavailable).toMatchObject({ copied: false, opened: false })
+    expect(unavailable.error).toContain('不支持自动复制')
+
+    const titled: string[] = []
+    await copyReportAndOpenIssue(report, { writeText: async () => {} }, (url: string) => { titled.push(url); return {} }, 'Draft title')
+    expect(new URL(titled[0]!).searchParams.get('title')).toBe('Draft title')
+    expect(new URL(titled[0]!).searchParams.get('body')).toBe(ISSUE_BODY_HINT)
+    expect(titled[0]!).not.toContain('chat snapshot')
+  })
+
+  it('starts the Issue action immediately instead of waiting for the local draft save', async () => {
+    let resolveSave: ((value: unknown) => void) | undefined
+    const calls: string[] = []
+    const { SupportPage } = loadSupportHelpers(
+      [false, false, false, '', '', '', '## 问题描述\n\nLocal failure', false],
+      {
+        fetch: () => new Promise((resolve) => { resolveSave = resolve }),
+        navigator: { clipboard: { writeText: () => { calls.push('copy'); return Promise.resolve() } } },
+        window: { open: () => { calls.push('open'); return {} } },
+      },
+    )
+    const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
+    const button = elementProps(tree).find((props) => props.className === 'sg-primary-link')
+    expect(button).toBeDefined()
+    button!.onClick()
+    expect(calls).toEqual(['copy', 'open'])
+    resolveSave!({ ok: true, json: async () => ({}) })
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  it('shows the report only on demand and reuses the exact preview for copy and download', async () => {
+    const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false])
+    const closedTree = closedHelpers.SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
+    expect(elementProps(closedTree).find((props) => props['aria-label'] === '本地反馈报告预览')).toBeUndefined()
+    expect(elementProps(closedTree).find((props) => props.children === undefined && props['aria-expanded'] === false)).toBeDefined()
+
+    const { copyReportAndOpenIssue, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true])
+    let objectUrlCalls = 0
+    let revokeCalls = 0
+    let clickCalls = 0
+    let openCalls = 0
+    const copied: string[] = []
+    let appended: any
+    const link: any = { style: {}, remove: () => {} }
+    const documentRef: any = {
+      body: { appendChild: (value: unknown) => { appended = value } },
+      createElement: () => Object.assign(link, { click: () => { clickCalls += 1 } }),
+    }
+    const urlRef = {
+      createObjectURL: (blob: Blob) => { objectUrlCalls += 1; expect(blob.type).toBe('text/plain;charset=utf-8'); return 'blob:report' },
+      revokeObjectURL: (url: string) => { revokeCalls += 1; expect(url).toBe('blob:report') },
+    }
+
+    const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
+    const preview = elementProps(tree).find((props) => props['aria-label'] === '本地反馈报告预览')?.value
+    expect(JSON.stringify(tree)).toContain('将复制的内容')
+    expect(preview).toContain('## 诊断日志')
+    expect(preview).toContain('local-only-error')
+    expect(objectUrlCalls).toBe(0)
+    expect(clickCalls).toBe(0)
+    expect(openCalls).toBe(0)
+
+    await copyReportAndOpenIssue(preview, { writeText: async (value: string) => { copied.push(value) } }, () => { openCalls += 1; return null })
+    const blob = downloadSupportReport(preview, documentRef, urlRef)
+    expect(copied).toEqual([preview])
+    expect(await blob.text()).toBe(preview)
+    expect(appended).toBe(link)
+    expect(link.href).toBe('blob:report')
+    expect(link.download).toBe('stratagate-diagnostics.txt')
+    expect(link.download).not.toContain('workspace')
+    expect(objectUrlCalls).toBe(1)
+    expect(clickCalls).toBe(1)
+    expect(openCalls).toBe(1)
+    expect(revokeCalls).toBe(1)
+  })
+
   it('keeps failures reassuring and exposes related Block settings under More', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain('lastErrorFull')
@@ -555,7 +1037,9 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("method: 'PATCH'")
     expect(source).toContain('当前工作区')
     expect(source).toContain("['support', '?', '反馈与支持'")
-    expect(source).toContain('在 GitHub 提交 Issue')
+    expect(source).toContain('复制报告并打开 GitHub Issue')
+    expect(source).toContain('下载诊断文件')
+    expect(source).toContain('本地反馈报告预览')
     expect(source).toContain('附加诊断日志')
     expect(source).toContain('附加记忆数据（可能包含对话内容）')
     expect(source).toContain('默认诊断不包含原始聊天、L5、Event 或 Graph 内容。')

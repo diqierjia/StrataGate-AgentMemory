@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS stratagate_dsh_workspaces (
   display_name TEXT NOT NULL,
   updated_at TEXT NOT NULL
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS stratagate_dsh_feedback_drafts (
+  namespace TEXT PRIMARY KEY,
+  draft_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
 `
 
 export class DshMetadataStore {
@@ -50,12 +56,26 @@ export class DshMetadataStore {
     this.setSetting('blockDecayLambda', value)
   }
 
+  lastFeedbackPromptAt(): string | null {
+    const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'lastFeedbackPromptAt'")
+      .get() as { value: string } | undefined
+    return row?.value ?? null
+  }
+
+  setLastFeedbackPromptAt(value: string): void {
+    this.setSettingValue('lastFeedbackPromptAt', value)
+  }
+
   private setSetting(key: string, value: number): void {
+    this.setSettingValue(key, String(value))
+  }
+
+  private setSettingValue(key: string, value: string): void {
     this.database.prepare(`
       INSERT INTO stratagate_dsh_settings (key, value, updated_at)
       VALUES (?, ?, ?)
       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-    `).run(key, String(value), new Date().toISOString())
+    `).run(key, value, new Date().toISOString())
   }
 
   workspaceName(namespace: string): string | null {
@@ -72,6 +92,25 @@ export class DshMetadataStore {
       VALUES (?, ?, ?)
       ON CONFLICT (namespace) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at
     `).run(namespace, name, new Date().toISOString())
+  }
+
+  feedbackDraft(namespace: string): unknown | null {
+    const row = this.database.prepare('SELECT draft_json FROM stratagate_dsh_feedback_drafts WHERE namespace = ?')
+      .get(namespace) as { draft_json: string } | undefined
+    if (!row) return null
+    try {
+      return JSON.parse(row.draft_json)
+    } catch {
+      return null
+    }
+  }
+
+  setFeedbackDraft(namespace: string, draft: unknown): void {
+    this.database.prepare(`
+      INSERT INTO stratagate_dsh_feedback_drafts (namespace, draft_json, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT (namespace) DO UPDATE SET draft_json = excluded.draft_json, updated_at = excluded.updated_at
+    `).run(namespace, JSON.stringify(draft), new Date().toISOString())
   }
 
   close(): void {

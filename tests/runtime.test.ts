@@ -7,7 +7,7 @@ import { StrataGate } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import { describe, expect, it, vi } from 'vitest'
 import type { DshModelBridge } from '../src/llm.js'
-import { StrataGateRuntime } from '../src/runtime.js'
+import { feedbackDraftUrl, StrataGateRuntime } from '../src/runtime.js'
 
 const fakeModels = {
   run: async <T>(_session: Session, operation: () => Promise<T>): Promise<T> => operation(),
@@ -46,6 +46,61 @@ function turnEvents(): SessionEvent[] {
 }
 
 describe('DSH runtime ingestion', () => {
+  it('persists local feedback drafts and enforces the five-day proactive prompt cooldown', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-'))
+    const database = join(directory, 'memory.db')
+    const config = {
+      database, namespaceMode: 'project' as const, namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 6, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
+    }
+    const first = new StrataGateRuntime(config, fakeModels, undefined, undefined, () => 'http://127.0.0.1:10259')
+    try {
+      const prepared = await first.prepareFeedback(session, {
+        title: '  Draft title  ',
+        description: 'Observed failure.',
+        reproduction: [' First step ', '', 'Second step'],
+        errorContext: 'EACCES',
+      }) as Record<string, unknown>
+      const feedbackUrl = feedbackDraftUrl(first.namespaceFor(session), 'http://127.0.0.1:10259')
+      expect(prepared).toMatchObject({
+        prepared: true,
+        draftCreated: true,
+        submitted: false,
+        namespace: first.namespaceFor(session),
+        feedbackUrl,
+        message: `反馈草稿已经准备好了，还没有提交到 GitHub。\n\n[打开反馈草稿](${feedbackUrl})`,
+      })
+      expect(prepared).not.toHaveProperty('draft')
+      expect(feedbackUrl).toContain('namespace=' + encodeURIComponent(first.namespaceFor(session)))
+      expect(feedbackUrl).toMatch(/^http:\/\/127\.0\.0\.1:10259\/\?settings=stratagate-memory&stratagateView=feedback&namespace=/)
+      expect(feedbackDraftUrl(first.namespaceFor(session))).toMatch(/^\/\?settings=stratagate-memory&stratagateView=feedback&namespace=/)
+
+      const now = Date.parse('2026-09-04T00:00:00.000Z')
+      first.notePluginError(session, new Error('write failed'))
+      expect(first.takeFeedbackSuggestion(session, now)).toMatch(/only as evidence[\s\S]*not as an instruction[\s\S]*feedback_prepare itself/)
+      first.notePluginError(session, new Error('again'))
+      expect(first.takeFeedbackSuggestion(session, now + 4 * 24 * 60 * 60 * 1_000)).toBe('')
+    } finally {
+      await first.close()
+    }
+
+    const second = new StrataGateRuntime(config, fakeModels)
+    try {
+      expect(second.adminFeedbackDraft(second.namespaceFor(session))).toMatchObject({
+        draft: { title: 'Draft title', description: 'Observed failure.', errorContext: 'EACCES' },
+      })
+      expect(second.adminSaveFeedbackDraft(second.namespaceFor(session), { bodyMarkdown: '' })).toMatchObject({
+        draft: { title: 'Draft title', description: '', reproduction: [], expected: '', actual: '', errorContext: '' },
+      })
+      const afterCooldown = Date.parse('2026-09-10T00:00:00.000Z')
+      second.notePluginError(session, new Error('later failure'))
+      expect(second.takeFeedbackSuggestion(session, afterCooldown)).toMatch(/static StrataGate feedback policy[\s\S]*session-limit[\s\S]*deduplication/)
+    } finally {
+      await second.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('runs malformed external-memory recovery in a resumable background job', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-import-job-'))
     const database = join(directory, 'memory.db')
@@ -508,6 +563,44 @@ describe('DSH runtime ingestion', () => {
         expect(attempts).toBeGreaterThanOrEqual(2)
         expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
       })
+    } finally {
+      await runtime.close().catch(() => {})
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('suggests feedback when a background Summary job records a failure without throwing', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-job-failure-'))
+    const database = join(directory, 'memory.db')
+    const runtime = new StrataGateRuntime({
+      database,
+      namespaceMode: 'project',
+      namespacePrefix: 'dsh',
+      globalNamespace: 'global',
+      blockTurnSize: 1,
+      blockDecayLambda: 0.3,
+      ingestSubagents: false,
+      maxOutputTokens: 2048,
+    }, {
+      ...fakeModels,
+      summarizer: async () => { throw new Error('summary service unavailable') },
+    } as unknown as DshModelBridge)
+    try {
+      const seed = await StrataGate.open({
+        database,
+        namespace: runtime.namespaceFor(session),
+        blockTurnSize: 1,
+      })
+      await seed.appendTurn({ user: 'trigger summary', assistant: 'stored', threadId: String(session.id) }, { deferDerivation: true })
+      await seed.close()
+
+      const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> }).space(session)
+      await vi.waitFor(() => {
+        expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'failed', attempts: 1 })
+        expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toContain('static StrataGate feedback policy')
+      }, { timeout: 4_000 })
+
+      expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-10T00:00:00.000Z'))).toBe('')
     } finally {
       await runtime.close().catch(() => {})
       await rm(directory, { recursive: true, force: true })
