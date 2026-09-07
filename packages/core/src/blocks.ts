@@ -143,11 +143,13 @@ function summarizeToolJson(value: string): string | null {
 }
 
 function removeStandaloneFillers(paragraph: string): string {
-  return paragraph
+  const pieces = paragraph
     .split(/(?<=[。！？!?])|\n+/u)
     .map((piece) => piece.trim())
-    .filter((piece) => piece && !isFillerSentence(piece))
-    .join('\n');
+    .filter(Boolean);
+  const kept = pieces.filter((piece) => !isFillerSentence(piece));
+  if (kept.length === pieces.length) return paragraph.trim();
+  return kept.join('\n');
 }
 
 function splitTextAndCode(source: string): Array<{ text: string; isCode: boolean }> {
@@ -198,6 +200,37 @@ export function formatReadableTranscript(messages: readonly RawMessage[]): strin
     .join('\n\n');
 }
 
+function renderRawToolTrace(trace: ToolTrace): string {
+  return `Tool call (raw): ${JSON.stringify(trace)}`;
+}
+
+export function formatRawTranscript(messages: readonly RawMessage[]): string {
+  return messages
+    .flatMap((message) => [
+      `${message.role}: ${message.content}`,
+      ...(message.toolCalls ?? []).map(renderRawToolTrace),
+    ])
+    .join('\n\n');
+}
+
+export function estimateTokens(value: string): number {
+  let tokens = 0;
+  let asciiRun = 0;
+  const flushAscii = (): void => {
+    if (asciiRun > 0) tokens += Math.ceil(asciiRun / 4);
+    asciiRun = 0;
+  };
+  for (const character of value) {
+    if (character.codePointAt(0)! <= 0x7f) asciiRun += 1;
+    else {
+      flushAscii();
+      tokens += 1;
+    }
+  }
+  flushAscii();
+  return tokens;
+}
+
 export function condenseTranscript(messages: readonly RawMessage[]): string {
   const seen = new Set<string>();
   return messages
@@ -237,9 +270,14 @@ export function deterministicBlockLayers(messages: readonly RawMessage[]): Pick<
   import('./types.js').BlockLayers,
   'l3Condensed' | 'l4Readable' | 'l5Raw'
 > {
+  const l5Rendered = formatRawTranscript(messages);
+  const readable = formatReadableTranscript(messages);
+  const l4Readable = estimateTokens(readable) <= estimateTokens(l5Rendered) ? readable : l5Rendered;
+  const condensed = condenseTranscript(messages);
+  const l3Condensed = estimateTokens(condensed) <= estimateTokens(l4Readable) ? condensed : l4Readable;
   return {
-    l3Condensed: condenseTranscript(messages),
-    l4Readable: formatReadableTranscript(messages),
+    l3Condensed,
+    l4Readable,
     l5Raw: cloneRawMessages(messages),
   };
 }

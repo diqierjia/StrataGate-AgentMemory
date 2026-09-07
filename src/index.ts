@@ -34,6 +34,13 @@ function renderError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function feedbackWebOrigin(ctx: Context): string | undefined {
+  const port = (ctx.get('webServer') as { port?: unknown } | undefined)?.port
+  return typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65_535
+    ? `http://127.0.0.1:${String(port)}`
+    : undefined
+}
+
 export async function apply(ctx: Context, config: StrataGateConfig): Promise<() => Promise<void>> {
   const resolved = resolveConfig(config)
   await mkdir(dirname(resolved.database), { recursive: true })
@@ -42,7 +49,7 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     ctx.logger.error(`stratagate-memory ingestion failed: ${renderError(error)}`)
   }, async (session) => {
     await ctx.sessions.flush(session)
-  })
+  }, () => feedbackWebOrigin(ctx))
   await runtime.syncConfiguredSettings()
 
   ctx.systemPrompt.section({ name: 'tool:stratagate-memory', order: 113, text: MEMORY_PROTOCOL })
@@ -50,16 +57,17 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     const assembled = await next()
     const session = context.agent?.session
     if (!session) return assembled
+    const contexts = [...assembled.contexts]
     try {
       const text = await runtime.buildAutoContext(session)
-      return {
-        ...assembled,
-        contexts: [...assembled.contexts, { name: 'stratagate:auto-memory', text }],
-      }
+      contexts.push({ name: 'stratagate:auto-memory', text })
     } catch (error) {
       ctx.logger.warn(`stratagate-memory auto-context failed: ${renderError(error)}`)
-      return assembled
+      runtime.notePluginError(session, error)
     }
+    const feedbackSuggestion = runtime.takeFeedbackSuggestion(session)
+    if (feedbackSuggestion) contexts.push({ name: 'stratagate:feedback-suggestion', text: feedbackSuggestion })
+    return { ...assembled, contexts }
   })
   ctx.on('agent/turn-stopping', ({ agent }) => {
     if (!runtime.needsRecordUse(agent.session)) return
@@ -72,6 +80,12 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     }))
   })
   registerMemoryTools(ctx, runtime)
+  ctx.on('tools/result', (exec, result) => {
+    if (!result.isError || !exec.agent) return
+    if (exec.name === 'feedback_prepare' || exec.name.startsWith('memory_')) {
+      runtime.notePluginError(exec.agent.session, result.error.message)
+    }
+  })
   const disposeAdminRoutes = registerAdminRoutes(ctx, runtime)
   ctx.on('session/event', (session, event) => runtime.acceptEvent(session, event))
 

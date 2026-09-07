@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.54 - 2026-09-07
+
+- Keep the virtualized short-term memory dock below host overlays and hide it while a visible modal dialog such as Settings is open.
+
+## 0.2.53 - 2026-09-06
+
+- Prefer DSH's formal `settingsNavigation.openSection()` contract when opening a prepared Feedback draft, while retaining the HTTP deep link and legacy rc.7 navigation as compatibility fallbacks.
+- Replace the permanently expanded Feedback report with an on-demand preview that shares the exact generated report snapshot used for clipboard copy and diagnostic download.
+- Keep real report, diagnostic-log, and Memory content out of GitHub Issue URLs; prefill only the optional title and a generic HTML paste instruction.
+
+## 0.2.52 - 2026-09-05
+
+- Return the Feedback draft entry as an absolute link derived from DSH's active Web server port, so the conversation renderer keeps it clickable without hardcoding a port.
+
+## 0.2.51 - 2026-09-04
+
+- Keep the current short-term memory Block status visible above the composer when its inline conversation row scrolls out of view or is virtualized away.
+- Show explicit open, sealed, compressing, failed, and compressed L0-L5 states while retaining expandable read-only Block details.
+- Reuse the existing session feed and browser observers without adding runtime dependencies.
+
+## 0.2.50 - 2026-09-04
+
+- Keep feedback reports local instead of placing diagnostics, conversations, errors, or graph data in GitHub Issue URLs.
+- Add a read-only report preview, clipboard-assisted Issue flow, and an exact UTF-8 diagnostic file download fallback.
+- Build diagnostics from explicit field allowlists, preserve full report content, and warn users before including potentially private memory data.
+- Add the local-only `feedback_prepare` Agent tool and editable AI-assisted feedback drafts in the feedback page.
+- Detect explicit StrataGate tool, ingestion, Block derivation, and Graph projection failures for a short temporary Agent suggestion, with a global five-day cooldown.
+- Keep GitHub submission manual and keep diagnostic logs and memory data opt-in.
+
+## 0.2.48 - 2026-09-03
+
+- Replace the short-term memory floating inspector with quiet, expandable Block status rows inside the conversation flow.
+- Show persisted Turn ranges, the actual decayed L0-L5 layer, server-estimated layer token sizes, and read-only layer previews for the active DSH session.
+- Restore sealed Block rows when the lightweight client consumes the paginated `memories(kind=blocks)` response.
+
 ## 0.2.47 - 2026-09-02
 
 - Package the ordered, per-tool retrieval visualization as a new installable DSH release.

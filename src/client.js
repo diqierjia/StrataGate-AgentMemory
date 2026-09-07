@@ -15,6 +15,10 @@ window.__ModuleLoader__.load({
     const STAR_REPOSITORY_URL = 'https://github.com/diqierjia/StrataGate-AgentMemory'
     const ISSUE_URL = STAR_REPOSITORY_URL + '/issues/new'
     const DISCUSSION_URL = STAR_REPOSITORY_URL + '/discussions/categories/q-a'
+    const FEEDBACK_AI_PROMPT = '请根据刚才这个会话中 StrataGate 出现的问题整理一份问题反馈。只使用当前会话中真实发生的信息，不要猜测；不知道的信息留空。然后调用 StrataGate 的 feedback_prepare 工具创建本地反馈草稿，不要自行提交 GitHub Issue。'
+    const FEEDBACK_SETTINGS_ID = 'stratagate-memory'
+    const FEEDBACK_VIEW_ID = 'feedback'
+    const ISSUE_BODY_HINT = '<!-- 请在此处粘贴刚刚复制的反馈报告（Ctrl+V） -->'
     const MASCOT_DATA_URL = '__STRATAGATE_MASCOT_DATA_URL__'
     const MEMORY_CITATIONS_KIND = 'stratagate-memory-citations'
     const MEMORY_RETRIEVAL_TOOLS = new Set([
@@ -22,6 +26,153 @@ window.__ModuleLoader__.load({
       'memory_search_elements', 'memory_search_raw', 'memory_get_blocks',
       'memory_expand_block', 'memory_expand_event', 'memory_expand_element',
     ])
+
+    function readFeedbackDeepLink(locationRef = window.location) {
+      const params = new URLSearchParams(String(locationRef?.search || ''))
+      if (params.get('settings') !== FEEDBACK_SETTINGS_ID || params.get('stratagateView') !== FEEDBACK_VIEW_ID) return null
+      const namespace = String(params.get('namespace') || '').trim()
+      return namespace ? { namespace } : null
+    }
+
+    function readFeedbackNavigationState(state) {
+      if (!state || state.view !== FEEDBACK_VIEW_ID) return null
+      const namespace = String(state.namespace || '').trim()
+      return namespace ? { namespace } : null
+    }
+
+    function readNewFeedbackNavigationState(previousState, state) {
+      if (state === previousState) return null
+      return readFeedbackNavigationState(state)
+    }
+
+    function consumeFeedbackDeepLink(locationRef = window.location, historyRef = window.history) {
+      const params = new URLSearchParams(String(locationRef?.search || ''))
+      params.delete('settings')
+      params.delete('stratagateView')
+      params.delete('namespace')
+      const search = params.toString()
+      const next = String(locationRef?.pathname || '/') + (search ? '?' + search : '') + String(locationRef?.hash || '')
+      historyRef?.replaceState?.(historyRef.state, '', next)
+      return next
+    }
+
+    function feedbackLinkTarget(target, locationRef = window.location) {
+      const anchor = target?.closest?.('a[href]') || target?.parentElement?.closest?.('a[href]')
+      if (!anchor) return null
+      let url
+      try {
+        url = new URL(String(anchor.getAttribute?.('href') || ''), String(locationRef?.href || ''))
+      } catch {
+        return null
+      }
+      if (!readFeedbackDeepLink(url) || url.origin !== String(locationRef?.origin || '')) return null
+      return { anchor, url }
+    }
+
+    function navigateToFeedback(ctx, targetUrl, locationRef = window.location, allowHttpFallback = true) {
+      const feedback = readFeedbackDeepLink(targetUrl)
+      if (!feedback) return 'ignored'
+      const navigation = ctx?.get?.('settingsNavigation')
+      if (typeof navigation?.openSection === 'function') {
+        navigation.openSection(FEEDBACK_SETTINGS_ID, { view: FEEDBACK_VIEW_ID, namespace: feedback.namespace })
+        return 'host'
+      }
+      if (allowHttpFallback) locationRef.assign(targetUrl.href)
+      return 'http'
+    }
+
+    function installFeedbackLinkNavigation(ctx, documentRef = document, locationRef = window.location) {
+      const onClick = (event) => {
+        if (event.defaultPrevented || (typeof event.button === 'number' && event.button !== 0) || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+        const match = feedbackLinkTarget(event.target, locationRef)
+        if (!match) return
+        event.preventDefault()
+        navigateToFeedback(ctx, match.url, locationRef)
+      }
+      documentRef.addEventListener('click', onClick, true)
+      return () => documentRef.removeEventListener('click', onClick, true)
+    }
+
+    function exactInteractiveControl(labels, documentRef) {
+      const selector = 'button,[role="button"],[role="tab"],a'
+      const matches = (element) => {
+        const values = [element.getAttribute?.('aria-label'), element.getAttribute?.('title'), element.textContent]
+          .map((value) => String(value || '').trim())
+        return labels.some((label) => values.includes(label))
+      }
+      const visible = (element) => !element.hidden
+        && element.getAttribute?.('aria-hidden') !== 'true'
+        && (typeof element.getClientRects !== 'function' || element.getClientRects().length > 0)
+      const controls = Array.from(documentRef.querySelectorAll(selector))
+      const direct = controls.find((element) => visible(element) && matches(element))
+      if (direct) return direct
+      for (const element of Array.from(documentRef.querySelectorAll('*'))) {
+        if (String(element.textContent || '').trim() !== labels[0]) continue
+        const control = element.closest?.(selector) || element
+        if (visible(control) && typeof control.click === 'function') return control
+      }
+      return null
+    }
+
+    function openLegacyFeedbackDeepLink(documentRef = document) {
+      let observer = null
+      let timer = null
+      let settingsClicked = false
+      let sectionClicked = false
+      const cleanup = () => {
+        observer?.disconnect?.()
+        if (timer !== null) window.clearTimeout(timer)
+      }
+      const attempt = () => {
+        if (documentRef.querySelector('[data-testid="stratagate-memory-ui"]')) {
+          cleanup()
+          return
+        }
+        if (!sectionClicked) {
+          const section = exactInteractiveControl(['StrataGate-AgentMemory'], documentRef)
+          if (section) {
+            sectionClicked = true
+            section.click()
+            return
+          }
+        }
+        if (!settingsClicked) {
+          const settings = exactInteractiveControl(['设置', 'Settings'], documentRef)
+          if (settings) {
+            settingsClicked = true
+            settings.click()
+          }
+        }
+      }
+      const Observer = window.MutationObserver || globalThis.MutationObserver
+      if (typeof Observer === 'function') {
+        observer = new Observer(attempt)
+        observer.observe(documentRef.documentElement || documentRef.body, { childList: true, subtree: true })
+      }
+      timer = window.setTimeout(cleanup, 12_000)
+      attempt()
+      return cleanup
+    }
+
+    function openFeedbackDeepLink(ctx, documentRef = document, locationRef = window.location, historyRef = window.history) {
+      if (!readFeedbackDeepLink(locationRef)) return () => {}
+      if (navigateToFeedback(ctx, locationRef, locationRef, false) === 'host') {
+        consumeFeedbackDeepLink(locationRef, historyRef)
+        return () => {}
+      }
+      let legacyCleanup = () => {}
+      const timer = window.setTimeout(() => { legacyCleanup = openLegacyFeedbackDeepLink(documentRef) }, 250)
+      ctx?.inject?.(['settingsNavigation'], (scope) => {
+        if (navigateToFeedback(scope, locationRef, locationRef, false) !== 'host') return
+        window.clearTimeout(timer)
+        legacyCleanup()
+        consumeFeedbackDeepLink(locationRef, historyRef)
+      })
+      return () => {
+        window.clearTimeout(timer)
+        legacyCleanup()
+      }
+    }
 
     const css = `
       .sg-memory {
@@ -96,19 +247,24 @@ window.__ModuleLoader__.load({
       @media (max-width:860px){.sg-layer-hover:after{display:none}.sg-layer-popover{position:relative;left:auto;top:auto;width:auto;max-height:280px;margin:5px 0 1px;display:none;transform:none}.sg-layer-hover:hover .sg-layer-popover,.sg-layer-item:focus-visible + .sg-layer-popover{display:block;transform:none}}
       @media (max-width:560px){.sg-memory{padding:12px 12px 26px}.sg-brand-name{font-size:14px}.sg-tabs{margin-left:-2px;margin-right:-2px}.sg-tab{padding-left:0;padding-right:0}.sg-alert{grid-template-columns:auto minmax(0,1fr)}.sg-alert>.sg-chevron{display:none}.sg-tech-row{grid-template-columns:1fr;gap:1px}.sg-counts{gap:16px}.sg-entry-title{font-size:14px}.sg-block-header{display:none}.sg-block-toggle{grid-template-columns:76px minmax(76px,1fr) 24px;gap:6px}.sg-block-turn{grid-column:1/3}.sg-block-distance{display:none}.sg-layer-heading{display:block}.sg-layer-heading span{display:block;margin-top:2px}}
       .sg-decay-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-conversation{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0;color:var(--sg-muted);font-size:11px}.sg-conversation select{min-width:0;max-width:230px;padding:3px 21px 3px 6px;border:1px solid var(--sg-border);border-radius:5px;background:var(--sg-surface);font-size:11px;text-overflow:ellipsis}.sg-distribution{scrollbar-width:none}.sg-distribution::-webkit-scrollbar{display:none}.sg-distribution-rail{display:block;width:100%;height:14px;margin:4px 0 0;accent-color:var(--sg-accent);cursor:pointer}.sg-distribution-rail:disabled{cursor:default;opacity:.38}.sg-layer-hover:after{display:none}.sg-layer-more-placeholder{width:30px}.sg-layer-popover{position:fixed!important;left:0;top:0;z-index:2147483000;width:min(390px,calc(100vw - 24px));max-height:min(70vh,520px);display:block!important;margin:0;overflow:auto;visibility:visible!important;opacity:1!important;transform:none!important;transition:opacity .1s ease;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));background:var(--sg-surface);color:var(--sg-text);box-shadow:0 18px 50px rgba(0,0,0,.38)}
-      .sg-support-card{padding:14px 0;border-bottom:1px solid var(--sg-border)}.sg-support-card h3{margin:0;font-size:14px}.sg-support-card p{margin:4px 0 10px;color:var(--sg-muted);font-size:12px}.sg-primary-link{display:inline-flex;padding:7px 11px;border:1px solid var(--sg-accent);border-radius:6px;background:var(--sg-accent);color:#fff;text-decoration:none;cursor:pointer}.sg-check{display:flex;align-items:flex-start;gap:8px;margin:9px 0;color:var(--sg-text);font-size:12px}.sg-check input{margin-top:3px}.sg-privacy-note{padding:10px 11px;margin:12px 0;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-size:12px}.sg-footer{margin-top:24px;padding-top:13px;border-top:1px solid var(--sg-border);text-align:center;color:var(--sg-muted);font-size:12px}.sg-footer button{padding:2px 4px;border:0;background:transparent;color:var(--sg-accent);cursor:pointer}.sg-virtual-note{margin-top:6px;color:var(--sg-muted);font-size:11px}
+      .sg-support-card{padding:14px 0;border-bottom:1px solid var(--sg-border)}.sg-support-card h3{margin:0;font-size:14px}.sg-support-card p{margin:4px 0 10px;color:var(--sg-muted);font-size:12px}.sg-primary-link{display:inline-flex;padding:7px 11px;border:1px solid var(--sg-accent);border-radius:6px;background:var(--sg-accent);color:#fff;text-decoration:none;cursor:pointer}.sg-support-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:11px}.sg-support-preview-panel{margin-top:12px;padding:12px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-soft)}.sg-support-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.sg-support-preview{width:100%;min-height:260px;max-height:440px;margin-top:9px;padding:11px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);resize:vertical;outline:0;color:var(--sg-text);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow:auto}.sg-support-preview:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-support-status{margin-top:9px;color:var(--sg-good);font-size:12px}.sg-support-error{margin-top:9px;color:var(--sg-danger);font-size:12px}.sg-check{display:flex;align-items:flex-start;gap:8px;margin:9px 0;color:var(--sg-text);font-size:12px}.sg-check input{margin-top:3px}.sg-privacy-note{padding:10px 11px;margin:12px 0;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-size:12px}.sg-footer{margin-top:24px;padding-top:13px;border-top:1px solid var(--sg-border);text-align:center;color:var(--sg-muted);font-size:12px}.sg-footer button{padding:2px 4px;border:0;background:transparent;color:var(--sg-accent);cursor:pointer}.sg-virtual-note{margin-top:6px;color:var(--sg-muted);font-size:11px}
+      .sg-support-compose{display:grid;gap:8px}.sg-support-compose-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.sg-support-field{display:grid;gap:5px;color:var(--sg-muted);font-size:11px}.sg-support-input,.sg-support-description{width:100%;padding:9px 10px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);font:inherit;outline:0}.sg-support-description{min-height:190px;resize:vertical;line-height:1.55}.sg-support-input:focus,.sg-support-description:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-support-ai{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--sg-accent);border-radius:6px;background:transparent;color:var(--sg-accent);font-weight:650;cursor:pointer}.sg-support-empty{padding:22px 14px;border:1px dashed var(--sg-border);border-radius:8px;background:var(--sg-soft);color:var(--sg-muted);text-align:center}.sg-support-metrics{margin:0;color:var(--sg-muted);font-size:11px}.sg-support-sync{color:var(--sg-muted);font-size:11px}
+      .sg-support-ai-notice{position:sticky;top:8px;z-index:8;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px;margin:12px 0;padding:13px 14px;border:1px solid color-mix(in srgb,var(--sg-good) 45%,var(--sg-border));border-radius:8px;background:color-mix(in srgb,var(--sg-good-soft) 92%,var(--sg-surface));color:var(--sg-text);box-shadow:0 8px 24px rgba(0,0,0,.16);scroll-margin-top:8px}.sg-support-ai-notice-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--sg-good);color:#fff;font-weight:800}.sg-support-ai-notice strong{display:block;color:var(--sg-good);font-size:13px}.sg-support-ai-notice p{margin:4px 0 0;color:var(--sg-text);font-size:12px;line-height:1.5}.sg-support-ai-notice .sg-quiet-button{margin-top:9px}.sg-support-ai-notice-close{display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--sg-muted);font-size:20px;line-height:1;cursor:pointer}.sg-support-ai-notice-close:hover{background:var(--sg-soft);color:var(--sg-text)}
       @media (max-width:560px){.sg-decay-head{align-items:flex-start;flex-direction:column}.sg-conversation{width:100%;justify-content:flex-start}.sg-conversation select{max-width:100%;flex:1}}
       @media (prefers-reduced-motion:reduce){.sg-memory *,.sg-memory *:before,.sg-memory *:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}.sg-processing-icon{animation:none}.sg-skeleton:after{display:none}}
     `
 
-    const compressionWidgetCss = `
-      .sg-compression-widget,.sg-compression-panel{--sgc-bg:var(--dsw-alias-bg-layer-2,#17191d);--sgc-surface:var(--dsw-specific-input-major,#22252a);--sgc-soft:var(--dsw-alias-interactive-bg-hover-solid,#2b2e34);--sgc-text:var(--dsw-alias-label-primary,#f4f5f7);--sgc-muted:var(--dsw-alias-label-secondary,#a5a9b1);--sgc-border:var(--dsw-alias-border-l2,rgba(255,255,255,.12));--sgc-accent:var(--dsw-alias-state-business-primary,#5f8fe8);--sgc-good:var(--dsw-alias-state-success-primary,#42c77a);color:var(--sgc-text);font:12px/1.5 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}.sg-compression-widget *,.sg-compression-panel *{box-sizing:border-box}.sg-compression-launcher{position:relative;display:grid;place-items:center;width:36px;height:36px;flex:0 0 36px;padding:0;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--sgc-muted);cursor:pointer;transition:background-color 160ms ease,border-color 160ms ease,color 160ms ease,transform 160ms ease}.sg-compression-launcher:hover,.sg-compression-launcher[aria-expanded="true"]{border-color:color-mix(in srgb,var(--sgc-accent) 30%,var(--sgc-border));background:color-mix(in srgb,var(--sgc-accent) 11%,var(--sgc-soft));color:var(--sgc-text);transform:translateY(-1px)}.sg-compression-launcher:active{transform:scale(.97)}.sg-compression-launcher:focus-visible,.sg-compression-panel :is(button,select):focus-visible{outline:2px solid var(--sgc-accent);outline-offset:2px}.sg-compression-glyph{position:relative;width:22px;height:20px}.sg-compression-glyph i{position:absolute;left:50%;width:18px;height:6px;border:1.5px solid currentColor;border-radius:3px;transform:translateX(-50%)}.sg-compression-glyph i:nth-child(1){top:1px;opacity:.42}.sg-compression-glyph i:nth-child(2){top:7px;width:14px;opacity:.68}.sg-compression-glyph i:nth-child(3){top:13px;width:9px;color:var(--sgc-accent)}.sg-compression-live{position:absolute;right:4px;top:4px;width:6px;height:6px;border:1px solid var(--sgc-bg);border-radius:50%;background:var(--sgc-good)}.sg-compression-tip{position:absolute;left:0;bottom:calc(100% + 8px);z-index:4;width:max-content;max-width:190px;padding:6px 8px;border:1px solid var(--sgc-border);border-radius:7px;background:var(--sgc-bg);color:var(--sgc-muted);box-shadow:0 8px 24px rgba(0,0,0,.24);pointer-events:none;opacity:0;transform:translateY(3px);transition:opacity 140ms ease,transform 140ms ease}.sg-compression-launcher:hover .sg-compression-tip,.sg-compression-launcher:focus-visible .sg-compression-tip{opacity:1;transform:translateY(0)}
-      .sg-compression-panel{position:fixed;z-index:2147482500;width:min(438px,calc(100vw - 24px));max-height:min(690px,calc(100dvh - 24px));overflow:auto;border:1px solid color-mix(in srgb,var(--sgc-accent) 26%,var(--sgc-border));border-radius:16px;background:radial-gradient(circle at 12% -8%,color-mix(in srgb,var(--sgc-accent) 13%,transparent),transparent 34%),color-mix(in srgb,var(--sgc-bg) 96%,transparent);box-shadow:0 24px 70px rgba(3,8,20,.42),inset 0 1px 0 rgba(255,255,255,.07);backdrop-filter:blur(18px);animation:sg-compression-in 220ms cubic-bezier(.22,1,.36,1) both}.sg-compression-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:17px 18px 14px}.sg-compression-kicker{display:flex;align-items:center;gap:7px;margin-bottom:3px;color:var(--sgc-accent);font-size:11px;font-weight:680}.sg-compression-kicker:before{content:"";width:6px;height:6px;border-radius:50%;background:var(--sgc-good);box-shadow:0 0 0 4px color-mix(in srgb,var(--sgc-good) 14%,transparent)}.sg-compression-head h2{margin:0;font-size:18px;line-height:1.25;font-weight:730;letter-spacing:-.025em}.sg-compression-close{display:grid;place-items:center;width:28px;height:28px;flex:0 0 auto;border:0;border-radius:7px;background:transparent;color:var(--sgc-muted);font-size:20px;cursor:pointer}.sg-compression-close:hover{background:var(--sgc-soft);color:var(--sgc-text)}.sg-compression-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;padding:0 18px 13px}.sg-compression-field{display:grid;gap:4px;min-width:0;color:var(--sgc-muted);font-size:10px}.sg-compression-field select{width:100%;min-width:0;height:32px;padding:0 25px 0 8px;border:1px solid var(--sgc-border);border-radius:7px;background:var(--sgc-surface);color:var(--sgc-text);font-size:11px;text-overflow:ellipsis}.sg-compression-body{padding:0 18px 18px}.sg-compression-empty,.sg-compression-error{padding:24px 14px;border:1px dashed var(--sgc-border);border-radius:11px;color:var(--sgc-muted);text-align:center}.sg-compression-error{color:#e9a66d}.sg-compression-map{position:relative;padding:14px;border:1px solid var(--sgc-border);border-radius:12px;background:color-mix(in srgb,var(--sgc-surface) 78%,transparent);overflow:hidden}.sg-compression-map:after{content:"";position:absolute;right:-54px;top:-70px;width:150px;height:150px;border:1px solid color-mix(in srgb,var(--sgc-accent) 18%,transparent);border-radius:50%;box-shadow:0 0 0 18px color-mix(in srgb,var(--sgc-accent) 4%,transparent),0 0 0 38px color-mix(in srgb,var(--sgc-accent) 3%,transparent);pointer-events:none}.sg-compression-map-head{position:relative;z-index:1;display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.sg-compression-map-title{min-width:0}.sg-compression-map-title strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.sg-compression-map-title span{color:var(--sgc-muted);font-size:10px}.sg-compression-current{flex:0 0 auto;padding:3px 7px;border:1px solid color-mix(in srgb,var(--sgc-accent) 52%,var(--sgc-border));border-radius:6px;background:color-mix(in srgb,var(--sgc-accent) 13%,transparent);color:var(--sgc-accent);font-weight:720}.sg-compression-flow{position:relative;z-index:1;display:grid;grid-template-columns:72px 1fr 78px;align-items:center;gap:10px;margin:15px 0 12px}.sg-compression-endpoint{display:grid;gap:2px}.sg-compression-endpoint:last-child{text-align:right}.sg-compression-endpoint strong{font-size:11px}.sg-compression-endpoint span{color:var(--sgc-muted);font-size:9px}.sg-compression-track{position:relative;display:grid;grid-template-columns:repeat(6,1fr);align-items:center}.sg-compression-track:before{content:"";position:absolute;left:7%;right:7%;height:1px;background:var(--sgc-border)}.sg-compression-node{position:relative;display:grid;place-items:center;width:18px;height:18px;margin:auto;border:1px solid var(--sgc-border);border-radius:50%;background:var(--sgc-bg);color:var(--sgc-muted);font-size:8px}.sg-compression-node.passed{border-color:color-mix(in srgb,var(--sgc-accent) 45%,var(--sgc-border));background:color-mix(in srgb,var(--sgc-accent) 16%,var(--sgc-bg));color:var(--sgc-text)}.sg-compression-node.current{width:24px;height:24px;border-color:var(--sgc-accent);background:var(--sgc-accent);color:#fff;font-size:10px;font-weight:760;box-shadow:0 0 0 5px color-mix(in srgb,var(--sgc-accent) 14%,transparent)}.sg-compression-preview{position:relative;z-index:1;padding:10px 11px;border-left:2px solid var(--sgc-accent);border-radius:0 8px 8px 0;background:color-mix(in srgb,var(--sgc-bg) 62%,transparent)}.sg-compression-preview-label{display:flex;justify-content:space-between;gap:10px;margin-bottom:5px;color:var(--sgc-muted);font-size:9px}.sg-compression-preview p{max-height:94px;margin:0;overflow:auto;color:var(--sgc-text);font-size:11px;line-height:1.58;white-space:pre-wrap}.sg-compression-proof{display:flex;align-items:flex-start;gap:7px;margin:10px 1px 0;color:var(--sgc-muted);font-size:10px}.sg-compression-proof:before{content:"✓";display:grid;place-items:center;width:16px;height:16px;flex:0 0 auto;border-radius:50%;background:color-mix(in srgb,var(--sgc-good) 15%,transparent);color:var(--sgc-good);font-weight:800}.sg-compression-list-label{display:flex;justify-content:space-between;gap:10px;margin:15px 0 7px;color:var(--sgc-muted);font-size:10px}.sg-compression-blocks{display:grid;gap:5px}.sg-compression-block{display:grid;grid-template-columns:35px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:42px;padding:6px 8px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--sgc-text);text-align:left;cursor:pointer}.sg-compression-block:hover{background:var(--sgc-soft)}.sg-compression-block.selected{border-color:color-mix(in srgb,var(--sgc-accent) 35%,var(--sgc-border));background:color-mix(in srgb,var(--sgc-accent) 8%,var(--sgc-surface))}.sg-compression-block-level{display:grid;place-items:center;width:30px;height:26px;border:1px solid color-mix(in srgb,var(--sgc-accent) 38%,var(--sgc-border));border-radius:6px;color:var(--sgc-accent);font-weight:740}.sg-compression-block-copy{min-width:0}.sg-compression-block-copy strong,.sg-compression-block-copy span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sg-compression-block-copy strong{font-size:11px}.sg-compression-block-copy span{color:var(--sgc-muted);font-size:9px}.sg-compression-block-arrow{color:var(--sgc-muted);font-size:16px}.sg-compression-loading{display:grid;gap:8px;padding:8px 0}.sg-compression-loading i{height:10px;border-radius:4px;background:var(--sgc-soft);animation:sg-compression-pulse 1.2s ease-in-out infinite}.sg-compression-loading i:nth-child(2){width:76%}.sg-compression-loading i:nth-child(3){width:54%}@keyframes sg-compression-in{from{opacity:0;transform:translateX(-8px) scale(.985)}to{opacity:1;transform:translateX(0) scale(1)}}@keyframes sg-compression-pulse{50%{opacity:.45}}
-      @media (max-width:700px){.sg-compression-panel{left:12px!important;right:12px;width:auto;top:auto!important;bottom:12px;max-height:calc(100dvh - 24px)}.sg-compression-controls{grid-template-columns:1fr}.sg-compression-flow{grid-template-columns:60px 1fr 66px}}
-      @media (prefers-reduced-motion:reduce){.sg-compression-widget *,.sg-compression-panel *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
-    `
-
     const citationCss = `
+      .sg-stm{--sgm-text:var(--dsw-alias-label-primary,#0f1115);--sgm-muted:var(--dsw-alias-label-tertiary,#8a8f98);--sgm-secondary:var(--dsw-alias-label-secondary,#61666b);--sgm-border:var(--dsw-alias-border-l2,rgba(0,0,0,.1));--sgm-soft:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.04));--sgm-accent:var(--dsw-alias-state-business-primary,#4176e6);width:100%;max-width:640px;color:var(--sgm-muted);font:12px/1.5 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-variant-numeric:tabular-nums}
+      .sg-stm *{box-sizing:border-box}.sg-stm-line{display:grid;grid-template-columns:minmax(18px,1fr) auto minmax(18px,1fr);align-items:center;gap:10px;width:100%;min-height:24px;margin:1px 0;color:var(--sgm-muted);text-align:center}.sg-stm-rule{height:1px;background:color-mix(in srgb,var(--sgm-border) 76%,transparent)}.sg-stm-line-copy{white-space:nowrap}.sg-stm-line.processing .sg-stm-line-copy:before{content:"";display:inline-block;width:6px;height:6px;margin:0 7px 1px 0;border-radius:50%;background:var(--sgm-accent);animation:sg-stm-pulse 1.15s ease-in-out infinite}
+      .sg-stm-toggle{appearance:none;padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}.sg-stm-toggle:hover{color:var(--sgm-secondary)}.sg-stm-toggle:active{transform:translateY(1px)}.sg-stm-toggle:focus-visible,.sg-stm-layer:focus-visible{outline:2px solid var(--sgm-accent);outline-offset:2px;border-radius:5px}.sg-stm-chevron{display:inline-block;margin-left:5px;color:inherit;font-size:14px;transition:transform 180ms cubic-bezier(.22,1,.36,1)}.sg-stm-chevron.open{transform:rotate(90deg)}
+      .sg-stm-detail{margin:7px 0 4px;padding:10px 0 3px 14px;border-left:1px solid color-mix(in srgb,var(--sgm-accent) 42%,var(--sgm-border));color:var(--sgm-secondary);animation:sg-stm-open 180ms cubic-bezier(.22,1,.36,1) both}.sg-stm-detail-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px}.sg-stm-detail-head strong{color:var(--sgm-text);font-size:12px;font-weight:670}.sg-stm-detail-head span{color:var(--sgm-muted);font-size:11px}.sg-stm-facts{display:flex;gap:5px 12px;flex-wrap:wrap;margin-bottom:11px;color:var(--sgm-muted);font-size:11px}.sg-stm-facts strong{color:var(--sgm-secondary);font-weight:650}
+      .sg-stm-layers{display:grid;grid-template-columns:repeat(6,minmax(70px,1fr));gap:3px;overflow-x:auto;padding:2px 0 5px;scrollbar-width:thin}.sg-stm-layer{position:relative;min-width:70px;padding:6px 4px 7px;border:0;border-radius:6px;background:transparent;color:var(--sgm-muted);font:inherit;text-align:center;cursor:pointer}.sg-stm-layer:hover{background:var(--sgm-soft);color:var(--sgm-secondary)}.sg-stm-layer.selected{background:color-mix(in srgb,var(--sgm-accent) 8%,transparent);color:var(--sgm-text)}.sg-stm-layer.actual:after{content:"";position:absolute;left:22%;right:22%;bottom:1px;height:2px;border-radius:2px;background:var(--sgm-accent)}.sg-stm-layer-level{display:block;font-weight:720}.sg-stm-layer-name{display:block;margin-top:1px;font-size:10px}.sg-stm-layer-size{display:block;margin-top:3px;color:var(--sgm-muted);font-size:9px}.sg-stm-layer-current{display:block;min-height:14px;margin-top:2px;color:var(--sgm-accent);font-size:9px;font-weight:680}
+      .sg-stm-preview{margin-top:8px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--sgm-border) 78%,transparent)}.sg-stm-preview-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px}.sg-stm-preview-head strong{color:var(--sgm-text);font-weight:670}.sg-stm-preview-head span{color:var(--sgm-muted);font-size:10px}.sg-stm-content{max-height:320px;margin:0;padding:0 4px 1px 0;overflow:auto;color:var(--sgm-secondary);font:12px/1.62 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;white-space:pre-wrap;overflow-wrap:anywhere}.sg-stm-loading,.sg-stm-error{padding:10px 0;color:var(--sgm-muted)}.sg-stm-error{color:var(--dsw-alias-state-error-primary,#c44)}
+      .sg-stm-dock{position:fixed;z-index:900;padding:5px 10px 6px;border:1px solid color-mix(in srgb,var(--sgm-border) 82%,transparent);border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,#fff) 94%,transparent);box-shadow:0 10px 30px rgba(0,0,0,.14);backdrop-filter:blur(14px);animation:sg-stm-open 180ms cubic-bezier(.22,1,.36,1) both}.sg-stm-dock .sg-stm-line{margin:0}.sg-stm-dock .sg-stm-detail{max-height:min(52vh,430px);margin-bottom:2px;overflow:auto}.sg-stm-dock .sg-stm-rule{opacity:.62}
+      @keyframes sg-stm-open{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}@keyframes sg-stm-pulse{50%{opacity:.32;transform:scale(.78)}}
+      @media (max-width:620px){.sg-stm-line{gap:7px}.sg-stm-line-copy{white-space:normal}.sg-stm-detail{padding-left:10px}.sg-stm-detail-head{display:block}.sg-stm-detail-head span{display:block;margin-top:2px}.sg-stm-layers{grid-template-columns:repeat(6,76px)}}
+      @media (prefers-reduced-motion:reduce){.sg-stm *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
       .sg-answer-citations{display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:start;gap:7px 9px;margin-top:14px;font-size:13px;line-height:22px;color:var(--dsw-alias-label-secondary,#61666b)}
       .sg-answer-citations-label{color:var(--dsw-alias-label-tertiary,#8a8f98);white-space:nowrap}
       .sg-answer-citations-list{display:flex;flex-wrap:wrap;gap:7px;min-width:0}
@@ -196,6 +352,7 @@ window.__ModuleLoader__.load({
           return data
         }))
         .catch((reason) => {
+          if (reason?.name === 'AbortError') throw reason
           const message = String(reason?.message || reason)
           const networkFailure = reason instanceof TypeError || message.includes('Failed to fetch')
           if (networkFailure && !options?.method && attempt < 2) {
@@ -228,13 +385,13 @@ window.__ModuleLoader__.load({
 
     function selectMemoryCitations(owner) {
       const data = owner.turn.data.get(MEMORY_CITATIONS_KIND)
-      if (!data || !Array.isArray(data.entries)) return null
+      const entries = Array.isArray(data?.entries) ? data.entries : []
       const selected = []
       const seen = new Set()
       const retrievalGroups = []
       const seenGroups = new Set()
       let retrievedCount = 0
-      for (const entry of data.entries) {
+      for (const entry of entries) {
         if (entry.seq > owner.seq || !Array.isArray(entry.citations)) continue
         const groupCount = Number.isInteger(entry.retrievedCount) && entry.retrievedCount >= 0 ? entry.retrievedCount : entry.citations.length
         const groupKey = String(entry.batchId || 'legacy:' + entry.seq)
@@ -263,7 +420,7 @@ window.__ModuleLoader__.load({
           : right.sequence !== null
             ? 1
             : left.seq - right.seq)
-      return selected.length === 0 && retrievalGroups.length === 0 ? null : { citations: selected, retrievedCount, retrievalGroups }
+      return { turn: owner.turn.turn, citations: selected, retrievedCount, retrievalGroups }
     }
 
     function parseToolResultJson(event) {
@@ -510,7 +667,453 @@ window.__ModuleLoader__.load({
         h(CitationDisclosure, { title: '详细情况' }, h('div', { className: 'sg-citation-tech' }, citation.evidenceRef + '\n' + citation.detailKind + ': ' + citation.id)))
     }
 
-    function MemoryCitationTail({ matched }) {
+    const shortTermMemoryFeeds = new Map()
+    const shortTermMemoryUi = {
+      activeSessionId: '',
+      rows: new Map(),
+      listeners: new Set(),
+    }
+
+    function shortTermLayerName(level) {
+      return ['索引', '摘要', '关键事实', '精简对话', '近原文', '原文'][Number(level)] || '会话视图'
+    }
+
+    function shortTermFeed(sessionId) {
+      let feed = shortTermMemoryFeeds.get(sessionId)
+      if (feed) return feed
+      feed = {
+        sessionId,
+        snapshot: { payload: null, loading: true, error: '' },
+        listeners: new Set(),
+        request: null,
+        controller: null,
+        namespace: '',
+        workspacePath: '',
+        signal: '',
+        queuedWorkspacePath: '',
+        queuedSignal: '',
+        pollTimer: null,
+      }
+      shortTermMemoryFeeds.set(sessionId, feed)
+      return feed
+    }
+
+    function publishShortTermFeed(feed, patch) {
+      feed.snapshot = { ...feed.snapshot, ...patch }
+      for (const listener of feed.listeners) listener(feed.snapshot)
+    }
+
+    function sessionWorkspacePath(sessionId, sessionById, workspaceItems) {
+      let candidateId = sessionId
+      const visited = new Set()
+      while (candidateId && !visited.has(candidateId)) {
+        visited.add(candidateId)
+        const workspace = workspaceItems.find((item) => (item.sessionIds || []).some((id) => String(id) === candidateId))
+        if (workspace?.path) return workspace.path
+        candidateId = sessionById[candidateId]?.parentId || ''
+      }
+      return sessionById[sessionId]?.cwd || ''
+    }
+
+    function shortTermBlocks(data) {
+      if (Array.isArray(data?.blocks)) return data.blocks
+      return Array.isArray(data?.items) ? data.items : []
+    }
+
+    function shortTermCurrentDisplay(data) {
+      const open = data?.openBlock
+      if (Array.isArray(open?.turnRange)) {
+        const turn = Number(open.turnRange[1])
+        const display = shortTermTurnDisplay(data, turn)
+        if (display) return { ...display, turn }
+      }
+      const block = shortTermBlocks(data).slice().sort((left, right) => {
+        const leftTurn = Array.isArray(left.turnRange) ? Number(left.turnRange[1]) : 0
+        const rightTurn = Array.isArray(right.turnRange) ? Number(right.turnRange[1]) : 0
+        return rightTurn - leftTurn || Number(right.sequence || right.blockIndex || 0) - Number(left.sequence || left.blockIndex || 0)
+      })[0]
+      if (!block || !Array.isArray(block.turnRange)) return null
+      const turn = Number(block.turnRange[1])
+      const display = shortTermTurnDisplay(data, turn)
+      return display ? { ...display, turn } : null
+    }
+
+    function shortTermBlockNumber(block) {
+      return Number(block?.blockIndex || block?.sequence || 1)
+    }
+
+    function shortTermTurnRangeText(range) {
+      if (!Array.isArray(range) || range.length < 2 || Number(range[1]) < Number(range[0])) return '等待新对话'
+      return '第 ' + Number(range[0]) + '–' + Number(range[1]) + ' 轮'
+    }
+
+    function shortTermDisplayLabel(display) {
+      if (display.kind === 'progress') return '短期记忆块 · ' + display.current + '/' + display.capacity
+      if (display.kind === 'processing') return '已封块 ' + display.current + '/' + display.capacity + ' · 正在压缩…'
+      if (display.kind === 'failed') return shortTermTurnRangeText(display.block.turnRange) + ' · 压缩暂不可用'
+      return 'Block ' + shortTermBlockNumber(display.block) + ' · ' + shortTermTurnRangeText(display.block.turnRange)
+        + ' · 已压缩为 L' + Number(display.block.currentLevel) + ' · ' + Number(display.block.compressionPercent ?? 0) + '%'
+    }
+
+    function shortTermUiSnapshot() {
+      const sessionId = shortTermMemoryUi.activeSessionId
+      return { sessionId, row: sessionId ? shortTermMemoryUi.rows.get(sessionId) || null : null }
+    }
+
+    function publishShortTermUi() {
+      const snapshot = shortTermUiSnapshot()
+      for (const listener of shortTermMemoryUi.listeners) listener(snapshot)
+    }
+
+    function activateShortTermSession(sessionId) {
+      if (!sessionId || shortTermMemoryUi.activeSessionId === sessionId) return
+      shortTermMemoryUi.activeSessionId = sessionId
+      publishShortTermUi()
+    }
+
+    function updateShortTermRow(sessionId, turn, visible, mounted) {
+      const current = shortTermMemoryUi.rows.get(sessionId)
+      if (mounted) {
+        if (!current || Number(turn) >= Number(current.turn)) {
+          shortTermMemoryUi.rows.set(sessionId, { turn: Number(turn), visible: Boolean(visible), mounted: true })
+          publishShortTermUi()
+        }
+        return
+      }
+      if (current && Number(current.turn) === Number(turn)) {
+        shortTermMemoryUi.rows.set(sessionId, { ...current, visible: false, mounted: false })
+        publishShortTermUi()
+      }
+    }
+
+    function shortTermNeedsPolling(payload) {
+      return shortTermBlocks(payload?.data).some((block) => block.processingStatus === 'pending'
+        && block.summaryJob?.status !== 'failed')
+    }
+
+    function scheduleShortTermPoll(feed) {
+      if (feed.pollTimer !== null || feed.listeners.size === 0) return
+      feed.pollTimer = window.setTimeout(() => {
+        feed.pollTimer = null
+        void refreshShortTermFeed(feed, feed.workspacePath, feed.signal, true)
+      }, 1_200)
+    }
+
+    function loadSessionBlocks(namespace, sessionId, signal, offset = 0, items = []) {
+      return api('memories', { namespace, kind: 'blocks', threadId: sessionId, offset, limit: 200 }, { signal }).then((page) => {
+        const combined = [...items, ...(page.items || [])]
+        return combined.length < Number(page.total || 0)
+          ? loadSessionBlocks(namespace, sessionId, signal, combined.length, combined)
+          : { ...page, items: combined }
+      })
+    }
+
+    function refreshShortTermFeed(feed, workspacePath, signal, force = false) {
+      if (!workspacePath) {
+        publishShortTermFeed(feed, { loading: false, error: '无法确定当前会话所属的工作区。' })
+        return Promise.resolve()
+      }
+      const workspaceChanged = feed.workspacePath !== workspacePath
+      if (!force && !workspaceChanged && feed.signal === signal && feed.snapshot.payload) return feed.request || Promise.resolve()
+      if (feed.request) {
+        feed.queuedWorkspacePath = workspacePath
+        feed.queuedSignal = signal
+        return feed.request
+      }
+      if (workspaceChanged) {
+        feed.workspacePath = workspacePath
+        feed.namespace = ''
+        publishShortTermFeed(feed, { payload: null, loading: true, error: '' })
+      } else if (!feed.snapshot.payload) {
+        publishShortTermFeed(feed, { loading: true, error: '' })
+      }
+      feed.signal = signal
+      const controller = new AbortController()
+      feed.controller = controller
+      const run = workspaceProjectKey(workspacePath).then((projectKey) => {
+        if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+        if (!projectKey) throw new Error('无法读取当前会话的工作区标识。')
+        const namespace = 'dsh:project:' + projectKey
+        feed.namespace = namespace
+        return loadSessionBlocks(namespace, feed.sessionId, controller.signal)
+      }).then((data) => {
+        const payload = data?.activeThreadId === feed.sessionId ? { namespace: feed.namespace, data } : null
+        publishShortTermFeed(feed, { payload, loading: false, error: '' })
+        if (shortTermNeedsPolling(feed.snapshot.payload)) scheduleShortTermPoll(feed)
+      }).catch((reason) => {
+        if (reason?.name !== 'AbortError') publishShortTermFeed(feed, { loading: false, error: String(reason?.message || reason) })
+      }).finally(() => {
+        if (feed.controller === controller) feed.controller = null
+        if (feed.request === run) feed.request = null
+        const queuedWorkspacePath = feed.queuedWorkspacePath
+        const queuedSignal = feed.queuedSignal
+        feed.queuedWorkspacePath = ''
+        feed.queuedSignal = ''
+        if (queuedWorkspacePath && (queuedWorkspacePath !== feed.workspacePath || queuedSignal !== feed.signal)) {
+          void refreshShortTermFeed(feed, queuedWorkspacePath, queuedSignal, true)
+        }
+      })
+      feed.request = run
+      return run
+    }
+
+    function shortTermTurnDisplay(data, turn) {
+      const block = shortTermBlocks(data).find((item) => Array.isArray(item.turnRange) && Number(item.turnRange[1]) === Number(turn))
+      if (block) {
+        if (block.processingStatus === 'ready') return { kind: 'block', block }
+        const failed = block.summaryJob?.status === 'failed' && !block.summaryJob?.nextRetryAt
+        return { kind: failed ? 'failed' : 'processing', block, current: block.turnRange[1] - block.turnRange[0] + 1, capacity: data.blockTurnSize || 6 }
+      }
+      const open = data?.openBlock
+      if (!Array.isArray(open?.turnRange) || Number(open.turnRange[1]) !== Number(turn)) return null
+      const current = Math.max(0, Number(open.turns ?? (open.turnRange[1] - open.turnRange[0] + 1)))
+      const capacity = Math.max(1, Number(open.capacity || data.blockTurnSize || 6))
+      return current >= capacity
+        ? { kind: 'processing', block: null, current, capacity }
+        : { kind: 'progress', block: null, current, capacity }
+    }
+
+    function useShortTermMemoryFeed(sessionId, workspacePath, signal) {
+      const feed = shortTermFeed(sessionId)
+      const [state, setState] = React.useState(() => feed.snapshot)
+      React.useEffect(() => {
+        feed.listeners.add(setState)
+        setState(feed.snapshot)
+        return () => {
+          feed.listeners.delete(setState)
+          if (feed.listeners.size === 0) {
+            if (feed.pollTimer !== null) {
+              window.clearTimeout(feed.pollTimer)
+              feed.pollTimer = null
+            }
+            feed.controller?.abort()
+            feed.controller = null
+          }
+        }
+      }, [feed])
+      React.useEffect(() => {
+        void refreshShortTermFeed(feed, workspacePath, signal, true)
+      }, [feed, workspacePath, signal])
+      return state
+    }
+
+    function useShortTermFeedSnapshot(sessionId) {
+      const [state, setState] = React.useState(() => sessionId ? shortTermFeed(sessionId).snapshot : { payload: null, loading: false, error: '' })
+      React.useEffect(() => {
+        if (!sessionId) {
+          setState({ payload: null, loading: false, error: '' })
+          return undefined
+        }
+        const feed = shortTermFeed(sessionId)
+        feed.listeners.add(setState)
+        setState(feed.snapshot)
+        return () => {
+          feed.listeners.delete(setState)
+          if (feed.listeners.size === 0) {
+            if (feed.pollTimer !== null) {
+              window.clearTimeout(feed.pollTimer)
+              feed.pollTimer = null
+            }
+            feed.controller?.abort()
+            feed.controller = null
+          }
+        }
+      }, [sessionId])
+      return state
+    }
+
+    function ShortTermMemoryBlockDetail({ namespace, block }) {
+      const actualLayer = Number(block.currentLevel)
+      const [selectedPreviewLayer, setSelectedPreviewLayer] = React.useState(actualLayer)
+      const [detail, setDetail] = React.useState(null)
+      const [loading, setLoading] = React.useState(true)
+      const [error, setError] = React.useState('')
+      React.useEffect(() => {
+        setSelectedPreviewLayer(actualLayer)
+        setDetail(null)
+        setLoading(true)
+        setError('')
+        const controller = new AbortController()
+        void api('sources', { namespace, blockId: block.id }, { signal: controller.signal })
+          .then(setDetail)
+          .catch((reason) => { if (reason?.name !== 'AbortError') setError(String(reason?.message || reason)) })
+          .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+        return () => controller.abort()
+      }, [namespace, block.id])
+
+      const layerMetrics = new Map((block.layerTokens || []).map((layer) => [Number(layer.level), layer]))
+      const layers = new Map((detail?.layers || []).map((layer) => [Number(layer.level), layer]))
+      const preview = layers.get(selectedPreviewLayer)
+      const previewMetrics = preview || layerMetrics.get(selectedPreviewLayer) || { tokens: 0, percentOfL5: selectedPreviewLayer === 5 ? 100 : 0 }
+      return h('section', { className: 'sg-stm-detail', 'aria-label': '短期记忆块详情' },
+        h('div', { className: 'sg-stm-detail-head' },
+          h('strong', null, 'Block ' + Number(block.blockIndex || block.sequence || 1) + ' · ' + shortTermTurnRangeText(block.turnRange)),
+          h('span', null, '原文一直保留；选择层级只切换预览')),
+        h('div', { className: 'sg-stm-facts' },
+          h('span', null, '当前使用：', h('strong', null, 'L' + actualLayer)),
+          h('span', null, '压缩至：', h('strong', null, Number(block.compressionPercent ?? 0) + '%')),
+          h('span', null, h('strong', null, Number(block.currentTokens || 0) + ' / ' + Number(block.l5Tokens || 0)), ' tokens')),
+        h('div', { className: 'sg-stm-layers', role: 'tablist', 'aria-label': '同一会话块的六层压缩视图' }, [5, 4, 3, 2, 1, 0].map((level) => {
+          const metrics = layerMetrics.get(level) || { tokens: 0, percentOfL5: level === 5 ? 100 : 0 }
+          const available = !loading && layers.has(level)
+          return h('button', {
+            key: level,
+            type: 'button',
+            role: 'tab',
+            className: 'sg-stm-layer ' + (level === actualLayer ? 'actual ' : '') + (level === selectedPreviewLayer ? 'selected' : ''),
+            'aria-selected': level === selectedPreviewLayer,
+            disabled: !available,
+            title: 'L' + level + ' · ' + shortTermLayerName(level) + ' · ' + Number(metrics.tokens || 0) + ' tokens · L5 的 ' + Number(metrics.percentOfL5 ?? 0) + '%',
+            onClick: () => setSelectedPreviewLayer(level),
+          },
+          h('span', { className: 'sg-stm-layer-level' }, 'L' + level),
+          h('span', { className: 'sg-stm-layer-name' }, shortTermLayerName(level)),
+          h('span', { className: 'sg-stm-layer-size' }, Number(metrics.tokens || 0) + 't · ' + Number(metrics.percentOfL5 ?? 0) + '%'),
+          h('span', { className: 'sg-stm-layer-current' }, level === actualLayer ? '当前使用' : ''))
+        })),
+        loading ? h('div', { className: 'sg-stm-loading', role: 'status' }, '正在读取 L0–L5…')
+          : error ? h('div', { className: 'sg-stm-error' }, '暂时无法读取会话压缩视图：' + error)
+            : preview ? h('div', { className: 'sg-stm-preview', role: 'tabpanel' },
+              h('div', { className: 'sg-stm-preview-head' },
+                h('strong', null, 'L' + selectedPreviewLayer + ' · ' + shortTermLayerName(selectedPreviewLayer)),
+                h('span', null, Number(previewMetrics.tokens || 0) + ' tokens · ' + (selectedPreviewLayer === 5 ? '100%' : 'L5 的 ' + Number(previewMetrics.percentOfL5 ?? 0) + '%'))),
+              h('pre', { className: 'sg-stm-content' }, preview.content)) : null)
+    }
+
+    function ShortTermMemoryTurnStatus({ matched, sessionId, useSession, useSessions, useWorkspaces }) {
+      const sessionById = useSessions((state) => state.byId || {})
+      const workspaceItems = useWorkspaces((state) => state.items || [])
+      const sessionSignal = useSession((state) => {
+        let latestTurn = 0
+        for (const turn of state.turnEnds?.keys?.() || []) latestTurn = Math.max(latestTurn, Number(turn) || 0)
+        return String(latestTurn) + ':' + (state.running ? 'running' : 'idle')
+      })
+      const workspacePath = sessionWorkspacePath(sessionId, sessionById, workspaceItems)
+      const feed = useShortTermMemoryFeed(sessionId, workspacePath, sessionSignal)
+      const data = feed.payload?.data
+      const display = shortTermTurnDisplay(data, matched.turn)
+      const [expanded, setExpanded] = React.useState(false)
+      const statusRef = React.useRef(null)
+      React.useEffect(() => activateShortTermSession(sessionId), [sessionId])
+      React.useEffect(() => {
+        if (display?.kind !== 'block') setExpanded(false)
+      }, [display?.kind, display?.block?.id])
+      React.useEffect(() => {
+        if (!display || !statusRef.current) return undefined
+        const turn = Number(matched.turn)
+        const node = statusRef.current
+        const rect = node.getBoundingClientRect?.()
+        const initiallyVisible = Boolean(rect && rect.bottom > 0 && rect.top < window.innerHeight)
+        updateShortTermRow(sessionId, turn, initiallyVisible, true)
+        if (typeof IntersectionObserver !== 'function') return () => updateShortTermRow(sessionId, turn, false, false)
+        const observer = new IntersectionObserver((entries) => {
+          const entry = entries[0]
+          updateShortTermRow(sessionId, turn, Boolean(entry?.isIntersecting && entry.intersectionRatio > 0), true)
+        }, { threshold: [0, 0.01] })
+        observer.observe(node)
+        return () => {
+          observer.disconnect()
+          updateShortTermRow(sessionId, turn, false, false)
+        }
+      }, [display?.kind, display?.block?.id, display?.current, display?.capacity, matched.turn, sessionId])
+      if (!display) return null
+      const rule = () => h('span', { className: 'sg-stm-rule', 'aria-hidden': 'true' })
+      if (display.kind === 'progress') return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-progress' },
+        h('div', { className: 'sg-stm-line', role: 'status' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
+      if (display.kind === 'processing') return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-processing' },
+        h('div', { className: 'sg-stm-line processing', role: 'status', 'aria-live': 'polite' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
+      if (display.kind === 'failed') return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-failed' },
+        h('div', { className: 'sg-stm-line', role: 'status' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
+      const block = display.block
+      return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-block', 'data-block-id': block.id },
+        h('div', { className: 'sg-stm-line' }, rule(),
+          h('button', { type: 'button', className: 'sg-stm-toggle', 'aria-expanded': expanded, onClick: () => setExpanded((value) => !value) },
+            shortTermDisplayLabel(display),
+            h('span', { className: 'sg-stm-chevron ' + (expanded ? 'open' : ''), 'aria-hidden': 'true' }, '›')), rule()),
+        expanded ? h(ShortTermMemoryBlockDetail, { namespace: feed.payload.namespace, block }) : null)
+    }
+
+    function hasVisibleModalDialog(documentRef = typeof document === 'undefined' ? null : document) {
+      if (!documentRef?.querySelectorAll) return false
+      return [...documentRef.querySelectorAll('[aria-modal="true"]')].some((element) => !element.closest?.('.sg-stm-dock')
+        && !element.hidden
+        && element.getAttribute?.('aria-hidden') !== 'true'
+        && (typeof element.getClientRects !== 'function' || element.getClientRects().length > 0))
+    }
+
+    function findShortTermDockAnchor() {
+      if (typeof document === 'undefined' || hasVisibleModalDialog()) return null
+      const candidates = [...document.querySelectorAll('textarea:not([disabled]),[contenteditable="true"],[role="textbox"]')]
+        .filter((element) => !element.closest?.('.sg-memory,.sg-citation-dialog,.sg-stm-dock'))
+        .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+        .filter(({ rect }) => rect.width >= 180 && rect.height >= 20 && rect.bottom > 0 && rect.top < window.innerHeight)
+        .sort((left, right) => right.rect.bottom - left.rect.bottom)
+      return candidates[0] || null
+    }
+
+    function shortTermDockPlacement() {
+      const anchor = findShortTermDockAnchor()
+      if (!anchor) return { visible: false, left: 12, bottom: 84, width: 320 }
+      const width = Math.min(640, Math.max(280, anchor.rect.width))
+      const left = Math.min(Math.max(12, anchor.rect.left + (anchor.rect.width - width) / 2), Math.max(12, window.innerWidth - width - 12))
+      return { visible: true, left, bottom: Math.max(12, window.innerHeight - anchor.rect.top + 8), width }
+    }
+
+    function ShortTermMemoryDock() {
+      const [ui, setUi] = React.useState(shortTermUiSnapshot)
+      const [expanded, setExpanded] = React.useState(false)
+      const [placement, setPlacement] = React.useState(shortTermDockPlacement)
+      React.useEffect(() => {
+        shortTermMemoryUi.listeners.add(setUi)
+        setUi(shortTermUiSnapshot())
+        return () => shortTermMemoryUi.listeners.delete(setUi)
+      }, [])
+      const feed = useShortTermFeedSnapshot(ui.sessionId)
+      const display = shortTermCurrentDisplay(feed.payload?.data)
+      const displayKey = display?.kind + ':' + (display?.block?.id || display?.turn || '')
+      React.useEffect(() => setExpanded(false), [ui.sessionId, displayKey])
+      React.useEffect(() => {
+        let frame = null
+        const update = () => {
+          if (frame !== null) return
+          frame = window.requestAnimationFrame(() => {
+            frame = null
+            setPlacement(shortTermDockPlacement())
+          })
+        }
+        update()
+        window.addEventListener('resize', update)
+        window.addEventListener('scroll', update, true)
+        const mutationObserver = typeof MutationObserver === 'function' && document.body
+          ? new MutationObserver(update)
+          : null
+        mutationObserver?.observe(document.body, { childList: true, subtree: true })
+        return () => {
+          if (frame !== null) window.cancelAnimationFrame(frame)
+          window.removeEventListener('resize', update)
+          window.removeEventListener('scroll', update, true)
+          mutationObserver?.disconnect()
+        }
+      }, [ui.sessionId, displayKey])
+      const inlineVisible = Boolean(display && ui.row?.mounted && ui.row.visible && Number(ui.row.turn) === Number(display.turn))
+      if (!display || inlineVisible || !placement.visible) return null
+      const rule = () => h('span', { className: 'sg-stm-rule', 'aria-hidden': 'true' })
+      const ready = display.kind === 'block'
+      const dock = h('section', {
+        className: 'sg-stm sg-stm-dock',
+        style: { left: placement.left + 'px', bottom: placement.bottom + 'px', width: placement.width + 'px' },
+        'data-testid': 'stratagate-short-term-dock',
+        'aria-label': '当前短期记忆状态',
+      },
+      h('div', { className: 'sg-stm-line ' + (display.kind === 'processing' ? 'processing' : ''), role: 'status', 'aria-live': display.kind === 'processing' ? 'polite' : undefined }, rule(),
+        ready ? h('button', { type: 'button', className: 'sg-stm-toggle', 'aria-expanded': expanded, onClick: () => setExpanded((value) => !value) },
+          shortTermDisplayLabel(display), h('span', { className: 'sg-stm-chevron ' + (expanded ? 'open' : ''), 'aria-hidden': 'true' }, '›'))
+          : h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()),
+      expanded && ready ? h(ShortTermMemoryBlockDetail, { namespace: feed.payload.namespace, block: display.block }) : null)
+      return ReactDOM?.createPortal && document.body ? ReactDOM.createPortal(dock, document.body) : dock
+    }
+
+    function MemoryCitationTail({ matched, sessionId, useSession, useSessions, useWorkspaces }) {
       const citations = matched.citations
       const retrievedCount = matched.retrievedCount
       const retrievalGroups = matched.retrievalGroups
@@ -537,6 +1140,7 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onKeyDown)
       }, [selected])
       return h(React.Fragment, null,
+        h(ShortTermMemoryTurnStatus, { matched, sessionId, useSession, useSessions, useWorkspaces }),
         citations.length ? h('div', { className: 'sg-answer-citations', 'data-testid': 'stratagate-answer-citations' },
           h('span', { className: 'sg-answer-citations-label' }, '本回答参考了 ' + citations.length + ' 条记忆'),
           h('div', { className: 'sg-answer-citations-list' }, citations.map((citation) => {
@@ -1485,12 +2089,11 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null, h('div', { className: 'sg-intro' }, h('h2', null, '更多'), h('p', null, '高级信息与工程视图')), h('div', { className: 'sg-menu' }, rows.map(([id, icon, title, subtitle]) => h('button', { key: id, className: 'sg-menu-row', onClick: () => setView({ name: id }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›')))))
     }
 
-    function limitedJson(value, limit = 4500) {
-      const text = JSON.stringify(value, null, 2)
+    function redactedJson(value) {
+      return JSON.stringify(value, null, 2)
         .replace(/\b(?:sk|gh[opasu]|github_pat)_[A-Za-z0-9_-]{12,}\b/g, '[REDACTED_TOKEN]')
         .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{12,}={0,2}\b/gi, '$1[REDACTED]')
         .replace(/\b(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]')
-      return text.length > limit ? text.slice(0, limit) + '\n…（内容已截断）' : text
     }
 
     function safeErrorSummary(value) {
@@ -1498,37 +2101,397 @@ window.__ModuleLoader__.load({
       return firstLine.length > 240 ? firstLine.slice(0, 240) + '…' : firstLine
     }
 
-    function SupportPage({ overview, selected, project, data, recentError, onBack }) {
-      const [includeLogs, setIncludeLogs] = React.useState(false)
-      const [includeMemory, setIncludeMemory] = React.useState(false)
+    function whitelistedMessage(message) {
+      return {
+        id: message?.id,
+        role: message?.role,
+        content: message?.content,
+        createdAt: message?.createdAt,
+        threadId: message?.threadId,
+        toolCalls: Array.isArray(message?.toolCalls) ? message.toolCalls.map((call) => ({
+          name: call?.name,
+          arguments: call?.arguments,
+          result: call?.result,
+        })) : undefined,
+      }
+    }
+
+    function whitelistedEvent(event) {
+      const temporal = event?.temporal
+      const weight = event?.weight
+      return {
+        id: event?.id,
+        title: event?.title,
+        summary: event?.summary,
+        narrative: event?.narrative,
+        tags: event?.tags,
+        quotes: event?.quotes,
+        sourceBlockId: event?.sourceBlockId,
+        sourceMessageIds: event?.sourceMessageIds,
+        temporal: temporal ? {
+          mentionedAt: temporal.mentionedAt,
+          happenedStart: temporal.happenedStart,
+          happenedEnd: temporal.happenedEnd,
+          originalText: temporal.originalText,
+          precision: temporal.precision,
+          basis: temporal.basis,
+          status: temporal.status,
+          participants: temporal.participants,
+          participantNodeIds: temporal.participantNodeIds,
+          eventType: temporal.eventType,
+          threadId: temporal.threadId,
+          sameEventId: temporal.sameEventId,
+          beforeEventIds: temporal.beforeEventIds,
+          afterEventIds: temporal.afterEventIds,
+          supersedesEventIds: temporal.supersedesEventIds,
+          conflictsWithEventIds: temporal.conflictsWithEventIds,
+          relatedEventIds: temporal.relatedEventIds,
+        } : undefined,
+        scope: event?.scope,
+        criticality: event?.criticality,
+        confidence: event?.confidence,
+        status: event?.status,
+        supersededBy: event?.supersededBy,
+        weight: weight ? {
+          mentionCount: weight.mentionCount,
+          lastAdoptedTurn: weight.lastAdoptedTurn,
+          lastRetrievedAt: weight.lastRetrievedAt,
+          pinned: weight.pinned,
+          floorWeight: weight.floorWeight,
+          forcedCap: weight.forcedCap,
+        } : undefined,
+        createdAt: event?.createdAt,
+        updatedAt: event?.updatedAt,
+      }
+    }
+
+    function whitelistedBlock(block) {
+      const source = block?.source || block || {}
+      const messages = block?.messages || block?.l5Raw || source?.l5Raw
+      return {
+        id: block?.id ?? source?.id,
+        threadId: block?.threadId ?? source?.threadId,
+        sequence: block?.sequence ?? source?.sequence,
+        blockIndex: block?.blockIndex,
+        turnRange: block?.turnRange || (source?.startTurn !== undefined && source?.endTurn !== undefined ? [source.startTurn, source.endTurn] : undefined),
+        title: block?.title ?? source?.l0Title,
+        tags: block?.tags ?? source?.l0Tags,
+        summary: block?.summary ?? source?.l1Summary,
+        keypoints: block?.keypoints ?? source?.l2Keypoints,
+        condensed: source?.l3Condensed,
+        readable: source?.l4Readable,
+        messages: Array.isArray(messages) ? messages.map(whitelistedMessage) : undefined,
+        layers: Array.isArray(block?.layers) ? block.layers.map((layer) => ({ level: layer?.level, content: layer?.content, tokens: layer?.tokens, percentOfL5: layer?.percentOfL5 })) : undefined,
+        currentLevel: block?.currentLevel ?? source?.pointerCurrentLevel,
+        currentTokens: block?.currentTokens,
+        l5Tokens: block?.l5Tokens,
+        compressionPercent: block?.compressionPercent,
+        layerTokens: block?.layerTokens,
+        distanceFromLatest: block?.distanceFromLatest,
+        expansionSource: block?.expansionSource,
+        lastLiftedAt: block?.lastLiftedAt ?? source?.lastLiftedAt,
+        sourceMessages: block?.sourceMessages,
+        createdAt: block?.createdAt ?? source?.createdAt,
+        virtual: block?.virtual,
+        processingStatus: block?.processingStatus ?? source?.processingStatus,
+        summaryJob: block?.summaryJob ? { status: block.summaryJob.status, attempts: block.summaryJob.attempts, nextRetryAt: block.summaryJob.nextRetryAt, updatedAt: block.summaryJob.updatedAt } : undefined,
+        eventExtraction: block?.eventExtraction ? { status: block.eventExtraction.status, attempts: block.eventExtraction.attempts, updatedAt: block.eventExtraction.updatedAt, lastError: block.eventExtraction.lastError } : undefined,
+        graphProjection: block?.graphProjection ? { status: block.graphProjection.status, jobs: block.graphProjection.jobs, lastError: block.graphProjection.lastError } : undefined,
+        relatedEvents: Array.isArray(block?.relatedEvents) ? block.relatedEvents.map(whitelistedEvent) : undefined,
+        relatedNodes: Array.isArray(block?.relatedNodes) ? block.relatedNodes.map((node) => ({ id: node?.id, name: node?.name, type: node?.type })) : undefined,
+      }
+    }
+
+    function whitelistedGraphNode(node) {
+      return {
+        id: node?.id,
+        name: node?.name,
+        type: node?.type,
+        aliases: node?.aliases,
+        tags: node?.tags,
+        currentState: node?.currentState,
+        facts: Array.isArray(node?.facts) ? node.facts.map((fact) => ({
+          id: fact?.id,
+          key: fact?.key,
+          value: fact?.value,
+          status: fact?.status,
+          validFrom: fact?.validFrom,
+          validTo: fact?.validTo,
+          confidence: fact?.confidence,
+          sourceEventIds: fact?.sourceEventIds,
+          createdAt: fact?.createdAt,
+          updatedAt: fact?.updatedAt,
+        })) : undefined,
+        status: node?.status,
+        confidence: node?.confidence,
+        sourceEventIds: node?.sourceEventIds,
+        supportingEvents: Array.isArray(node?.supportingEvents) ? node.supportingEvents.map(whitelistedEvent) : undefined,
+        createdAt: node?.createdAt,
+        updatedAt: node?.updatedAt,
+      }
+    }
+
+    function whitelistedGraph(graph) {
+      return {
+        projectorVersion: graph?.projectorVersion,
+        nodes: Array.isArray(graph?.nodes) ? graph.nodes.map(whitelistedGraphNode) : [],
+        edges: Array.isArray(graph?.edges) ? graph.edges.map((edge) => ({
+          id: edge?.id,
+          fromNodeId: edge?.fromNodeId,
+          toNodeId: edge?.toNodeId,
+          relation: edge?.relation,
+          status: edge?.status,
+          validFrom: edge?.validFrom,
+          validTo: edge?.validTo,
+          confidence: edge?.confidence,
+          sourceEventIds: edge?.sourceEventIds,
+          createdAt: edge?.createdAt,
+          updatedAt: edge?.updatedAt,
+        })) : [],
+        clusters: Array.isArray(graph?.clusters) ? graph.clusters.map((cluster) => ({ id: cluster?.id, label: cluster?.label, nodeIds: cluster?.nodeIds, tags: cluster?.tags })) : [],
+        migration: graph?.migration ? {
+          projected: graph.migration.projected,
+          total: graph.migration.total,
+          pending: graph.migration.pending,
+          running: graph.migration.running,
+          failed: graph.migration.failed,
+          complete: graph.migration.complete,
+        } : null,
+      }
+    }
+
+    function feedbackDraftMarkdown(draft = {}) {
+      if (String(draft.bodyMarkdown || '').trim()) return String(draft.bodyMarkdown).trim()
+      const lines = []
+      const section = (heading, value) => {
+        const text = String(value || '').trim()
+        if (text) lines.push('## ' + heading, '', text, '')
+      }
+      section('问题描述', draft.description)
+      const steps = Array.isArray(draft.reproduction) ? draft.reproduction.map((value) => String(value || '').trim()).filter(Boolean) : []
+      if (steps.length) lines.push('## 复现步骤', '', ...steps.map((value, index) => (index + 1) + '. ' + value), '')
+      section('预期行为', draft.expected)
+      section('实际行为', draft.actual)
+      section('相关错误信息', draft.errorContext)
+      return lines.join('\n').trim()
+    }
+
+    function issueUrl(title = '') {
+      const value = String(title || '').trim()
+      const params = new URLSearchParams()
+      if (value) params.set('title', value)
+      params.set('body', ISSUE_BODY_HINT)
+      return ISSUE_URL + '?' + params.toString()
+    }
+
+    function buildSupportReport({ problemContent = '', overview = {}, selected = {}, data = {}, recentError = '', includeLogs = false, includeMemory = false, willingToContribute = false } = {}) {
+      const problem = String(problemContent || '').trim()
+      if (!problem) return ''
       const latestJobError = selected?.failedJobDetails?.[0]?.lastError || ''
       const lines = [
+        '# StrataGate 问题报告',
+        '',
+        problem,
+        '',
         '## 自动诊断信息',
         '',
         '- StrataGate 版本：' + (overview.pluginVersion || 'unknown'),
         '- Harness 版本：' + (overview.harnessVersion || 'unknown'),
-        '- 当前工作区：' + project,
         '- blockTurnSize：' + (selected?.blockTurnSize ?? 'unknown'),
         '- 已封存块：' + (selected?.blocks ?? 0),
         '- Event / Graph Node 数量：' + (selected?.events ?? 0) + ' / ' + (selected?.graphNodes ?? 0),
         '- 最近错误：' + (safeErrorSummary(recentError || latestJobError) || '无'),
         '',
-        '> 默认诊断不包含原始聊天、L5、Event 或 Graph 内容。',
+        '> 此报告在浏览器本地生成。默认诊断不包含原始聊天、L5、Event 或 Graph 内容。正则脱敏仅是纵深防御，提交前仍需人工检查。',
       ]
-      if (includeLogs) lines.push('', '<details><summary>诊断日志</summary>', '', '```json', limitedJson({ frontendError: recentError || null, failedJobs: selected?.failedJobDetails || [] }), '```', '</details>')
-      if (includeMemory) lines.push('', '<details><summary>用户主动附加的记忆数据（可能包含对话内容）</summary>', '', '```json', limitedJson({ blocks: data.blocks, events: data.events, graph: data.graph }), '```', '</details>')
-      const issueParams = new URLSearchParams({ title: '[Bug] StrataGate：', body: lines.join('\n') })
-      const featureParams = new URLSearchParams({ title: '[Feature] StrataGate：', body: '请描述希望增加的能力、使用场景和预期行为。' })
+      if (willingToContribute) lines.push('', '## 贡献意愿', '', '- [x] 我愿意尝试修复并提交 PR。')
+      if (includeLogs) {
+        const failedJobs = Array.isArray(selected?.failedJobDetails) ? selected.failedJobDetails.map((job) => ({
+          id: job?.id,
+          kind: job?.kind,
+          attempts: job?.attempts,
+          lastError: job?.lastErrorFull || job?.lastError,
+          updatedAt: job?.updatedAt,
+        })) : []
+        lines.push('', '## 诊断日志', '', '```json', redactedJson({ frontendError: recentError || null, failedJobs }), '```')
+      }
+      if (includeMemory) {
+        lines.push('', '## 用户主动附加的记忆数据（可能包含私人对话）', '', '> 警告：这些内容可能包含私人对话。自动脱敏不能保证识别所有敏感信息，提交前必须人工检查。', '', '```json', redactedJson({
+          blocks: Array.isArray(data?.blocks) ? data.blocks.map(whitelistedBlock) : [],
+          events: Array.isArray(data?.events) ? data.events.map(whitelistedEvent) : [],
+          graph: whitelistedGraph(data?.graph),
+        }), '```')
+      }
+      return lines.join('\n')
+    }
+
+    async function copyReportAndOpenIssue(report, clipboard = navigator?.clipboard, openWindow = (url) => window.open(url, '_blank'), title = '') {
+      let copyPromise = null
+      let copyError = ''
+      if (!clipboard?.writeText) copyError = '当前浏览器不支持自动复制。'
+      else {
+        try {
+          copyPromise = Promise.resolve(clipboard.writeText(report))
+        } catch (reason) {
+          copyError = '复制失败：' + String(reason?.message || reason)
+        }
+      }
+      let opened = false
+      try {
+        const issueWindow = openWindow(issueUrl(title))
+        opened = Boolean(issueWindow)
+        if (issueWindow) issueWindow.opener = null
+      } catch {}
+      if (copyError) return { copied: false, opened, error: copyError }
+      try {
+        await copyPromise
+        return { copied: true, opened, error: '' }
+      } catch (reason) {
+        return { copied: false, opened, error: '复制失败：' + String(reason?.message || reason) }
+      }
+    }
+
+    function downloadSupportReport(report, documentRef = document, urlRef = URL) {
+      const blob = new Blob([report], { type: 'text/plain;charset=utf-8' })
+      const objectUrl = urlRef.createObjectURL(blob)
+      const link = documentRef.createElement('a')
+      link.href = objectUrl
+      link.download = 'stratagate-diagnostics.txt'
+      link.style.display = 'none'
+      try {
+        documentRef.body?.appendChild(link)
+        link.click()
+      } finally {
+        link.remove()
+        urlRef.revokeObjectURL(objectUrl)
+      }
+      return blob
+    }
+
+    function SupportPage({ namespace, overview, selected, data, recentError, onBack }) {
+      const [includeLogs, setIncludeLogs] = React.useState(false)
+      const [includeMemory, setIncludeMemory] = React.useState(false)
+      const [willingToContribute, setWillingToContribute] = React.useState(false)
+      const [status, setStatus] = React.useState('')
+      const [error, setError] = React.useState('')
+      const [title, setTitle] = React.useState('')
+      const [problemContent, setProblemContent] = React.useState('')
+      const [draftLoading, setDraftLoading] = React.useState(true)
+      const [aiPromptCopied, setAiPromptCopied] = React.useState(false)
+      const [previewOpen, setPreviewOpen] = React.useState(false)
+      const aiNoticeRef = React.useRef(null)
+      React.useEffect(() => {
+        let active = true
+        setDraftLoading(true)
+        void api('feedback', { namespace }).then((result) => {
+          if (!active || !result?.draft) return
+          setTitle(result.draft.title || '')
+          setProblemContent(feedbackDraftMarkdown(result.draft))
+        }).catch((reason) => {
+          if (active) setError('读取反馈草稿失败：' + String(reason?.message || reason))
+        }).finally(() => {
+          if (active) setDraftLoading(false)
+        })
+        return () => { active = false }
+      }, [namespace])
+      React.useEffect(() => {
+        if (!aiPromptCopied) return undefined
+        const reveal = () => aiNoticeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        if (typeof window.requestAnimationFrame !== 'function') {
+          reveal()
+          return undefined
+        }
+        const frame = window.requestAnimationFrame(reveal)
+        return () => window.cancelAnimationFrame?.(frame)
+      }, [aiPromptCopied])
+      const saveDraft = () => {
+        if (!namespace) return Promise.resolve()
+        return api('feedback', {}, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ namespace, title, bodyMarkdown: problemContent }),
+        }).then(() => undefined)
+      }
+      const reportSnapshot = Object.freeze({ text: buildSupportReport({ problemContent, overview, selected, data, recentError, includeLogs, includeMemory, willingToContribute }) })
+      const reportBytes = reportSnapshot.text ? new Blob([reportSnapshot.text]).size : 0
+      const hasProblem = Boolean(problemContent.trim())
+      const persistDraft = () => {
+        setStatus(''); setError('')
+        void saveDraft().then(() => setStatus('反馈草稿已保存在本地。')).catch((reason) => setError('保存反馈草稿失败：' + String(reason?.message || reason)))
+      }
+      const copyAndOpen = () => {
+        setStatus(''); setError('')
+        const save = saveDraft()
+        const issue = copyReportAndOpenIssue(reportSnapshot.text, navigator?.clipboard, (url) => window.open(url, '_blank'), title)
+        void Promise.allSettled([save, issue]).then(([saved, opened]) => {
+          const messages = []
+          if (opened.status === 'fulfilled') {
+            const result = opened.value
+            if (result.copied) setStatus(result.opened ? '报告已复制。请在新打开的 Issue 中粘贴、检查并提交。' : '报告已复制，但浏览器可能拦截了新窗口。请点击下方普通链接打开 Issue。')
+            else messages.push(result.error + ' 报告仍保留在预览中；请手动复制或下载诊断文件。' + (result.opened ? '' : ' 也可点击下方普通链接打开 Issue。'))
+          } else messages.push('复制或打开 Issue 失败：' + String(opened.reason?.message || opened.reason))
+          if (saved.status === 'rejected') messages.push('保存反馈草稿失败：' + String(saved.reason?.message || saved.reason))
+          if (messages.length) setError(messages.join(' '))
+        })
+      }
+      const copyAiPrompt = () => {
+        setStatus(''); setError('')
+        if (!navigator?.clipboard?.writeText) {
+          setError('当前浏览器不支持自动复制。请展开下方提示词并手动复制。')
+          return
+        }
+        void navigator.clipboard.writeText(FEEDBACK_AI_PROMPT)
+          .then(() => setAiPromptCopied(true))
+          .catch((reason) => setError('复制 AI 提示词失败：' + String(reason?.message || reason)))
+      }
+      const download = () => {
+        setStatus(''); setError('')
+        try {
+          downloadSupportReport(reportSnapshot.text)
+          setStatus('诊断文件已下载。文件内容与当前预览完全一致。')
+        } catch (reason) {
+          setError('下载失败：' + String(reason?.message || reason) + '。报告仍保留在预览中，可手动复制。')
+        }
+      }
       return h(React.Fragment, null,
         h(BackBar, { label: '更多', onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, '反馈与支持'), h('p', null, '选择最合适的入口，我们会带上必要且安全的上下文。')),
-        h('div', { className: 'sg-privacy-note' }, '基础诊断不会附带原始聊天、L5、Event 或 Graph 内容。'),
-        h('section', { className: 'sg-support-card' }, h('h3', null, '遇到问题'), h('p', null, '插件会整理版本、配置、数量和最近错误，帮助快速定位。'),
+        h('div', { className: 'sg-intro' }, h('h2', null, '反馈与支持'), h('p', null, '报告只在本地生成。只有你主动粘贴或上传后，内容才会进入 GitHub。')),
+        aiPromptCopied ? h('div', { ref: aiNoticeRef, className: 'sg-support-ai-notice', role: 'status', 'aria-live': 'polite' },
+          h('span', { className: 'sg-support-ai-notice-mark', 'aria-hidden': 'true' }, '✓'),
+          h('div', null,
+            h('strong', null, 'AI 提示词已复制'),
+            h('p', null, '下一步：回到刚才出现问题的会话，直接粘贴并发送。'),
+            h('p', null, 'Agent 会根据刚才的会话整理问题，并自动创建反馈草稿。'),
+            h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyAiPrompt }, '再次复制提示词')),
+          h('button', { type: 'button', className: 'sg-support-ai-notice-close', onClick: () => setAiPromptCopied(false), 'aria-label': '关闭 AI 提示词提示' }, '×')) : null,
+        h('div', { className: 'sg-privacy-note' }, 'GitHub 链接不包含报告正文、诊断日志或记忆数据。StrataGate 永远不会自动提交 Issue。'),
+        h('section', { className: 'sg-support-card sg-support-compose' },
+          h('div', { className: 'sg-support-compose-head' }, h('div', null, h('h3', null, '描述问题'), h('p', null, '自由描述即可，不需要填写多组必填表单。')), h('button', { type: 'button', className: 'sg-support-ai', onClick: copyAiPrompt }, 'AI 帮我填')),
+          h('label', { className: 'sg-support-field' }, h('span', null, 'Issue 标题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => setTitle(event.target.value), onBlur: persistDraft, placeholder: '简短概括问题' })),
+          h('label', { className: 'sg-support-field' }, h('span', null, '问题内容'), h('textarea', { className: 'sg-support-description', value: problemContent, onChange: (event) => setProblemContent(event.target.value), onBlur: persistDraft, placeholder: '描述刚才发生了什么；也可以点击“AI 帮我填”。', 'aria-label': '问题内容' })),
+          h('details', null, h('summary', null, '查看可手动复制的 AI 提示词'), h('pre', { className: 'sg-raw-json sg-code' }, FEEDBACK_AI_PROMPT)),
+          draftLoading ? h('div', { className: 'sg-support-sync' }, '正在读取本地反馈草稿…') : null),
+        h('section', { className: 'sg-support-card' }, h('h3', null, '附加信息'), h('p', null, '基础诊断默认包含；日志和记忆数据只有在你主动勾选后才会加入。'),
+          h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: true, disabled: true }), h('span', null, '默认基础诊断')),
           h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeLogs, onChange: (event) => setIncludeLogs(event.target.checked) }), h('span', null, '附加诊断日志')),
           h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeMemory, onChange: (event) => setIncludeMemory(event.target.checked) }), h('span', null, '附加记忆数据（可能包含对话内容）')),
-          includeMemory ? h('div', { className: 'sg-error-note' }, '你已选择附加可能包含对话内容的记忆数据，请在 GitHub 提交前再次检查。') : null,
-          h('a', { className: 'sg-primary-link', href: ISSUE_URL + '?' + issueParams, target: '_blank', rel: 'noopener noreferrer' }, '在 GitHub 提交 Issue')),
-        h('section', { className: 'sg-support-card' }, h('h3', null, '功能建议'), h('p', null, '描述使用场景和希望实现的行为。'), h('a', { className: 'sg-link', href: ISSUE_URL + '?' + featureParams, target: '_blank', rel: 'noopener noreferrer' }, '创建 Feature Request →')),
+          includeMemory ? h('div', { className: 'sg-error-note' }, '警告：内容可能包含私人对话；自动脱敏不能保证识别所有敏感信息；提交前必须人工检查。') : null,
+          h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: willingToContribute, onChange: (event) => setWillingToContribute(event.target.checked) }), h('span', null, '我愿意尝试修复并提交 PR')),
+          hasProblem ? null : h('div', { className: 'sg-support-empty' }, '请先描述问题，或使用 AI 帮你填写。'),
+          h('div', { className: 'sg-support-actions' },
+            h('button', { type: 'button', className: 'sg-primary-link', disabled: !hasProblem, onClick: copyAndOpen }, '复制报告并打开 GitHub Issue'),
+            h('button', { type: 'button', className: 'sg-quiet-button', disabled: !hasProblem, onClick: () => setPreviewOpen((open) => !open), 'aria-expanded': previewOpen }, previewOpen ? '收起将复制的内容' : '查看将复制的内容'),
+            h('button', { type: 'button', className: 'sg-quiet-button', disabled: !hasProblem, onClick: download }, '下载诊断文件'),
+            h('a', { className: 'sg-link', href: issueUrl(title), target: '_blank', rel: 'noopener noreferrer' }, '仅打开 GitHub Issue')),
+          hasProblem && previewOpen ? h('div', { className: 'sg-support-preview-panel', role: 'region', 'aria-label': '将复制的反馈报告' },
+            h('div', { className: 'sg-support-preview-head' },
+              h('strong', null, '将复制的内容'),
+              h('div', { className: 'sg-support-metrics' }, reportSnapshot.text.length + ' 个字符 · ' + reportBytes + ' 字节')),
+            includeMemory ? h('div', { className: 'sg-error-note' }, '已包含你主动勾选的 Memory 数据，请逐项检查脱敏结果和私人对话。') : null,
+            h('textarea', { id: 'sg-support-preview', className: 'sg-support-preview', readOnly: true, value: reportSnapshot.text, spellCheck: false, 'aria-label': '本地反馈报告预览' })) : null,
+          status ? h('div', { className: 'sg-support-status', role: 'status' }, status) : null,
+          error ? h('div', { className: 'sg-support-error', role: 'alert' }, error) : null),
+        h('section', { className: 'sg-support-card' }, h('h3', null, '功能建议'), h('p', null, 'GitHub 入口不会预填正文，请在页面中主动填写并提交。'), h('a', { className: 'sg-link', href: ISSUE_URL, target: '_blank', rel: 'noopener noreferrer' }, '创建 Feature Request →')),
         h('section', { className: 'sg-support-card' }, h('h3', null, '使用疑问'), h('p', null, '在 GitHub Discussion 的 Q&A 区交流使用方法。'), h('a', { className: 'sg-link', href: DISCUSSION_URL, target: '_blank', rel: 'noopener noreferrer' }, '前往 Discussion / Q&A →')))
     }
 
@@ -1597,150 +2560,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function compressionLayerName(level) {
-      return ['标题索引', '一句摘要', '关键要点', '紧凑原文', '精简原文', '原始对话'][Number(level)] || '分层记忆'
-    }
-
-    function compressionLayerFallback(block) {
-      const level = Number(block?.currentLevel ?? 0)
-      if (level === 0) return [block?.title, ...(block?.tags || []).map((tag) => '#' + tag)].filter(Boolean).join('\n')
-      if (level === 1) return block?.summary || block?.title || '摘要正在生成'
-      if (level === 2) return (block?.keypoints || []).map((point) => '• ' + point).join('\n') || block?.summary || block?.title || '关键点正在生成'
-      return block?.summary || block?.title || '正在读取这一层的内容'
-    }
-
-    function MemoryCompressionWidget({ wide }) {
-      const launcherRef = React.useRef(null)
-      const panelRef = React.useRef(null)
-      const requestRef = React.useRef(null)
-      const [open, setOpen] = React.useState(false)
-      const [panelPos, setPanelPos] = React.useState({ left: 62, top: 120 })
-      const [payload, setPayload] = React.useState(null)
-      const [namespace, setNamespace] = React.useState('')
-      const [conversationId, setConversationId] = React.useState('')
-      const [selectedBlockId, setSelectedBlockId] = React.useState('')
-      const [detail, setDetail] = React.useState(null)
-      const [loading, setLoading] = React.useState(false)
-      const [detailLoading, setDetailLoading] = React.useState(false)
-      const [error, setError] = React.useState('')
-
-      const placePanel = React.useCallback(() => {
-        const rect = launcherRef.current?.getBoundingClientRect()
-        if (!rect) return
-        const width = Math.min(438, window.innerWidth - 24)
-        const estimatedHeight = Math.min(690, window.innerHeight - 24)
-        const fitsRight = rect.right + 12 + width <= window.innerWidth - 12
-        const left = fitsRight ? rect.right + 12 : Math.max(12, rect.left - width - 12)
-        const top = Math.min(Math.max(12, rect.top - 220), Math.max(12, window.innerHeight - estimatedHeight - 12))
-        setPanelPos({ left, top })
-      }, [])
-
-      const load = React.useCallback((nextNamespace, nextConversationId, quiet) => {
-        requestRef.current?.abort()
-        const controller = new AbortController()
-        requestRef.current = controller
-        if (!quiet) setLoading(true)
-        setError('')
-        const params = {}
-        if (nextNamespace) params.namespace = nextNamespace
-        if (nextConversationId) params.threadId = nextConversationId
-        return dashboardApi(params, { signal: controller.signal }).then((result) => {
-          if (result.notModified || !result.data) return
-          const next = result.data
-          const nextData = next.data || { blocks: [], conversations: [], openBlock: null }
-          setPayload(next)
-          setNamespace(next.namespace || '')
-          setConversationId(nextData.activeThreadId || nextConversationId || '')
-          setSelectedBlockId((current) => nextData.blocks?.some((block) => block.id === current)
-            ? current
-            : [...(nextData.blocks || [])].sort((left, right) => Number(right.sequence || 0) - Number(left.sequence || 0))[0]?.id || '')
-        }).catch((reason) => {
-          if (reason?.name !== 'AbortError') setError(String(reason?.message || reason))
-        }).finally(() => {
-          if (requestRef.current === controller) requestRef.current = null
-          if (!quiet) setLoading(false)
-        })
-      }, [])
-
-      React.useEffect(() => () => requestRef.current?.abort(), [])
-      React.useEffect(() => {
-        if (!open) return undefined
-        placePanel()
-        if (!payload && !loading) void load('', '', false)
-        const reposition = () => placePanel()
-        window.addEventListener('resize', reposition)
-        window.addEventListener('scroll', reposition, true)
-        return () => {
-          window.removeEventListener('resize', reposition)
-          window.removeEventListener('scroll', reposition, true)
-        }
-      }, [open, payload, loading, load, placePanel])
-      React.useEffect(() => {
-        if (!open) return undefined
-        const close = (event) => {
-          if (event.key === 'Escape') { setOpen(false); launcherRef.current?.focus(); return }
-          if (event.type === 'pointerdown' && !launcherRef.current?.contains(event.target) && !panelRef.current?.contains(event.target)) setOpen(false)
-        }
-        document.addEventListener('keydown', close)
-        document.addEventListener('pointerdown', close)
-        return () => {
-          document.removeEventListener('keydown', close)
-          document.removeEventListener('pointerdown', close)
-        }
-      }, [open])
-
-      const data = payload?.data || { blocks: [], conversations: [], openBlock: null }
-      const blocks = [...(data.blocks || [])].sort((left, right) => Number(right.sequence || 0) - Number(left.sequence || 0))
-      const selectedBlock = blocks.find((block) => block.id === selectedBlockId) || blocks[0] || null
-      React.useEffect(() => {
-        if (!open || !namespace || !selectedBlock?.id) { setDetail(null); return undefined }
-        let active = true
-        setDetail(null)
-        setDetailLoading(true)
-        void api('sources', { namespace, blockId: selectedBlock.id }).then((value) => {
-          if (active) setDetail(value)
-        }).catch((reason) => {
-          if (active) setError(String(reason?.message || reason))
-        }).finally(() => {
-          if (active) setDetailLoading(false)
-        })
-        return () => { active = false }
-      }, [open, namespace, selectedBlock?.id])
-
-      const currentLevel = Number(selectedBlock?.currentLevel ?? 0)
-      const currentLayer = (detail?.layers || []).find((layer) => Number(layer.level) === currentLevel)
-      const preview = currentLayer?.content || compressionLayerFallback(selectedBlock)
-      const overviewItems = payload?.overview?.namespaces || []
-      const panel = open ? h('aside', { ref: panelRef, id: 'sg-compression-panel', className: 'sg-compression-panel', role: 'dialog', 'aria-label': '短期记忆压缩透视', style: { left: panelPos.left + 'px', top: panelPos.top + 'px' } },
-        h('header', { className: 'sg-compression-head' },
-          h('div', null, h('div', { className: 'sg-compression-kicker' }, '实时记忆透视'), h('h2', null, '短期记忆正在怎样变轻')),
-          h('button', { type: 'button', className: 'sg-compression-close', onClick: () => { setOpen(false); launcherRef.current?.focus() }, 'aria-label': '关闭短期记忆透视' }, '×')),
-        h('div', { className: 'sg-compression-controls' },
-          h('label', { className: 'sg-compression-field' }, h('span', null, '工作区'), h('select', { value: namespace, disabled: loading || !overviewItems.length, onChange: (event) => { setSelectedBlockId(''); setDetail(null); void load(event.target.value, '', false) }, 'aria-label': '记忆工作区' }, overviewItems.map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item))))),
-          h('label', { className: 'sg-compression-field' }, h('span', null, '对话'), h('select', { value: conversationId, disabled: loading || !data.conversations?.length, onChange: (event) => { setSelectedBlockId(''); setDetail(null); void load(namespace, event.target.value, false) }, 'aria-label': '记忆对话' }, (data.conversations || []).map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))),
-        h('div', { className: 'sg-compression-body' },
-          error ? h('div', { className: 'sg-compression-error' }, '暂时无法读取记忆：' + error) : loading ? h('div', { className: 'sg-compression-loading', 'aria-label': '正在读取短期记忆' }, h('i'), h('i'), h('i')) : !selectedBlock ? h('div', { className: 'sg-compression-empty' }, data.openBlock?.messages ? '这段对话还在开放块中，封存后会出现分层压缩视图。' : '当前对话还没有可视化的短期记忆块。') : h(React.Fragment, null,
-            h('section', { className: 'sg-compression-map', 'aria-label': '所选记忆块的压缩过程' },
-              h('div', { className: 'sg-compression-map-head' }, h('div', { className: 'sg-compression-map-title' }, h('strong', null, selectedBlock.title || 'Block #' + selectedBlock.sequence), h('span', null, turnRangeText(selectedBlock.turnRange) + ' · 距最新 ' + selectedBlock.distanceFromLatest + ' 个 Block')), h('span', { className: 'sg-compression-current' }, '现在 L' + currentLevel)),
-              h('div', { className: 'sg-compression-flow' },
-                h('div', { className: 'sg-compression-endpoint' }, h('strong', null, 'L5 原始对话'), h('span', null, Number(selectedBlock.sourceMessages || 0) + ' 条消息')),
-                h('div', { className: 'sg-compression-track', 'aria-label': '从 L5 到 L0 的六级压缩' }, [5, 4, 3, 2, 1, 0].map((level) => h('span', { key: level, className: 'sg-compression-node ' + (level === currentLevel ? 'current' : level >= currentLevel ? 'passed' : ''), title: 'L' + level + ' · ' + compressionLayerName(level) }, level))),
-                h('div', { className: 'sg-compression-endpoint' }, h('strong', null, 'L' + currentLevel + ' 当前视图'), h('span', null, compressionLayerName(currentLevel)))),
-              h('div', { className: 'sg-compression-preview' }, h('div', { className: 'sg-compression-preview-label' }, h('span', null, '此刻保留的内容'), h('span', null, detailLoading ? '读取中…' : 'L' + currentLevel)), h('p', null, detailLoading ? compressionLayerFallback(selectedBlock) : preview)),
-              h('div', { className: 'sg-compression-proof' }, '压缩不会删除证据；L5 原文始终保存在本地，需要细节时可逐层展开。')),
-            h('div', { className: 'sg-compression-list-label' }, h('span', null, '最近的记忆块'), h('span', null, blocks.length + ' 个已封存 · ' + (data.openBlock?.messages || 0) + ' 条未封存消息')),
-            h('div', { className: 'sg-compression-blocks' }, blocks.slice(0, 4).map((block) => h('button', { key: block.id, type: 'button', className: 'sg-compression-block ' + (block.id === selectedBlock.id ? 'selected' : ''), onClick: () => setSelectedBlockId(block.id) }, h('span', { className: 'sg-compression-block-level' }, 'L' + block.currentLevel), h('span', { className: 'sg-compression-block-copy' }, h('strong', null, block.title || 'Block #' + block.sequence), h('span', null, compressionLayerName(block.currentLevel) + ' · ' + turnRangeText(block.turnRange))), h('span', { className: 'sg-compression-block-arrow', 'aria-hidden': 'true' }, '›'))))))) : null
-
-      return h(React.Fragment, null,
-        h('style', null, compressionWidgetCss),
-        h('div', { className: 'sg-compression-widget' }, h('button', { ref: launcherRef, type: 'button', className: 'sg-compression-launcher', 'aria-label': '查看短期记忆如何压缩', 'aria-expanded': open ? 'true' : 'false', 'aria-controls': 'sg-compression-panel', onClick: () => setOpen((value) => !value) },
-          h('span', { className: 'sg-compression-glyph', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-          payload?.processing ? h('span', { className: 'sg-compression-live', 'aria-hidden': 'true' }) : null,
-          wide !== false ? h('span', { className: 'sg-compression-tip' }, '查看短期记忆如何压缩') : null)),
-        panel ? ReactDOM?.createPortal && document.body ? ReactDOM.createPortal(panel, document.body) : panel : null)
-    }
-
-    function MemoryPage({ useWorkspaces, useSessions }) {
+    function MemoryPage({ useWorkspaces, useSessions, navigationState }) {
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -1761,6 +2581,8 @@ window.__ModuleLoader__.load({
       const dashboardRequestRef = React.useRef(null)
       const dashboardEtagsRef = React.useRef(new Map())
       const loadedNamespaceRef = React.useRef('')
+      const feedbackDeepLinkRef = React.useRef(readFeedbackNavigationState(navigationState) || readFeedbackDeepLink())
+      const feedbackNavigationStateRef = React.useRef(navigationState)
       const reportError = (reason) => {
         const message = String(reason?.message || reason)
         setError(message)
@@ -1819,9 +2641,26 @@ window.__ModuleLoader__.load({
       }, [])
 
       React.useEffect(() => {
-        void loadDashboard('')
+        const feedbackLink = feedbackDeepLinkRef.current
+        if (feedbackLink) {
+          setSection('more')
+          setView({ name: 'support' })
+          setSource(null)
+          if (readFeedbackDeepLink()) consumeFeedbackDeepLink()
+        }
+        void loadDashboard(feedbackLink?.namespace || '')
         return () => dashboardRequestRef.current?.abort()
       }, [loadDashboard])
+      React.useEffect(() => {
+        const feedback = readNewFeedbackNavigationState(feedbackNavigationStateRef.current, navigationState)
+        feedbackNavigationStateRef.current = navigationState
+        if (!feedback) return
+        setSection('more')
+        setView({ name: 'support' })
+        setSource(null)
+        setNamespace(feedback.namespace)
+        void loadDashboard(feedback.namespace, { force: true })
+      }, [navigationState, loadDashboard])
       React.useEffect(() => {
         if (!namespace || loadedNamespaceRef.current === namespace) return
         setConversationId(''); setView({ name: 'root' }); setSource(null); setData({ events: [], graph: { nodes: [], edges: [], migration: null }, blocks: [], openBlock: null, conversations: [], activeThreadId: null, audit: [], pagination: { events: { total: 0, offset: 0, limit: 40 }, blocks: { total: 0, offset: 0, limit: 40 }, audit: { total: 0, offset: 0, limit: 100 } } }); void loadDashboard(namespace, { force: true })
@@ -1924,7 +2763,7 @@ window.__ModuleLoader__.load({
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, auditPage: data.pagination?.audit, namespace, onBack: moreBack })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: moreBack })
       else if (view.name === 'settings') content = h(SettingsPage, { selected, namespace, onBack: moreBack, updateSettings, savingSettings })
-      else if (view.name === 'support') content = h(SupportPage, { overview, selected, project, data, recentError, onBack: moreBack })
+      else if (view.name === 'support') content = h(SupportPage, { namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         h(FailureAlert, { count: failedCount, onOpen: () => setView({ name: 'status' }) }),
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? h(LongTermPage, { key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace }) : h(MoreHome, { setView }))
@@ -1946,6 +2785,8 @@ window.__ModuleLoader__.load({
         h('footer', { className: 'sg-footer' }, '发现问题？ ', h('button', { type: 'button', onClick: () => { setSection('more'); setView({ name: 'support' }); setSource(null) } }, '提交反馈')))
     }
 
+    let disposeFeedbackLinkNavigation = null
+
     function apply(ctx) {
       const slots = ctx.get('slots')
       if (!slots) return
@@ -1961,11 +2802,20 @@ window.__ModuleLoader__.load({
       try {
         slots.inject('sidebar.footer.action', () => slots.register({
           name: 'sidebar.footer.action',
-          id: 'stratagate-compression',
+          id: 'stratagate-short-term-dock',
           order: 40,
-        }, MemoryCompressionWidget))
+        }, ShortTermMemoryDock))
       } catch {}
       slots.inject('settings.section', () => slots.register({ name: 'settings.section', id: 'stratagate-memory', order: 32, label: () => 'StrataGate-AgentMemory' }, (props) => h(MemoryPage, props)))
+      if (typeof document !== 'undefined') {
+        disposeFeedbackLinkNavigation?.()
+        const disposeLinkNavigation = installFeedbackLinkNavigation(ctx)
+        const disposeDeepLink = openFeedbackDeepLink(ctx)
+        disposeFeedbackLinkNavigation = () => {
+          disposeLinkNavigation()
+          disposeDeepLink()
+        }
+      }
     }
 
     exports.name = 'stratagate-dsh'

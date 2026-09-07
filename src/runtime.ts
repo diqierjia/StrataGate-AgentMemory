@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import {
+  estimateTokens,
   memoryWeightAt,
   rrfRank,
   StorageConflictError,
@@ -34,6 +35,8 @@ import type { ResolvedConfig } from './config.js'
 import { TurnFolder } from './fold.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
+
+export { estimateTokens }
 
 interface EvidenceTarget {
   eventIds: string[]
@@ -78,10 +81,26 @@ interface RecordRefIssue {
   detail: string
 }
 
+export interface FeedbackDraftInput {
+  title?: string
+  description?: string
+  reproduction?: string[]
+  expected?: string
+  actual?: string
+  errorContext?: string
+  bodyMarkdown?: string
+}
+
+export interface FeedbackDraft extends Required<Omit<FeedbackDraftInput, 'bodyMarkdown'>> {
+  bodyMarkdown?: string
+  updatedAt: string
+}
+
 const AUTO_EVENT_LIMIT = 4
 const AUTO_ELEMENT_LIMIT = 4
 const AUTO_MEMORY_TOKEN_BUDGET = 900
 const COMPACTION_SOURCE_PLUGIN = 'stratagate-memory'
+const FEEDBACK_PROMPT_COOLDOWN_MS = 5 * 24 * 60 * 60 * 1_000
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -97,6 +116,41 @@ function workspaceDisplayName(cwd: string | undefined): string {
   return canonical.split(/[\\/]/).at(-1) || '当前工作区'
 }
 
+function feedbackText(value: unknown, maximum: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, maximum) : ''
+}
+
+function normalizeFeedbackDraft(input: FeedbackDraftInput, previous?: FeedbackDraft | null): FeedbackDraft {
+  const has = (key: keyof FeedbackDraftInput): boolean => Object.prototype.hasOwnProperty.call(input, key)
+  const replacesStructuredBody = has('bodyMarkdown')
+  const reproduction = replacesStructuredBody
+    ? []
+    : has('reproduction')
+    ? (Array.isArray(input.reproduction) ? input.reproduction : []).map((value) => feedbackText(value, 2_000)).filter(Boolean).slice(0, 20)
+    : previous?.reproduction ?? []
+  const bodyMarkdown = has('bodyMarkdown') ? feedbackText(input.bodyMarkdown, 50_000) : previous?.bodyMarkdown
+  return {
+    title: has('title') ? feedbackText(input.title, 240) : previous?.title ?? '',
+    description: replacesStructuredBody ? '' : has('description') ? feedbackText(input.description, 20_000) : previous?.description ?? '',
+    reproduction,
+    expected: replacesStructuredBody ? '' : has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
+    actual: replacesStructuredBody ? '' : has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
+    errorContext: replacesStructuredBody ? '' : has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
+    ...(bodyMarkdown ? { bodyMarkdown } : {}),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+export function feedbackDraftUrl(namespace: string, origin?: string): string {
+  const params = new URLSearchParams({
+    settings: 'stratagate-memory',
+    stratagateView: 'feedback',
+    namespace,
+  })
+  const route = `/?${params.toString()}`
+  return origin ? new URL(route, origin).href : route
+}
+
 export class StrataGateRuntime {
   private readonly folder = new TurnFolder()
   private readonly spaces = new Map<string, Promise<StrataGate>>()
@@ -108,6 +162,8 @@ export class StrataGateRuntime {
   private readonly derivationRuns = new Map<string, Promise<void>>()
   private readonly adminSnapshotCache = new Map<string, AdminSnapshotEntry>()
   private readonly externalImportRuns = new Map<string, Promise<void>>()
+  private readonly feedbackDrafts = new Map<string, FeedbackDraft>()
+  private readonly pendingFeedbackSuggestionSessions = new Set<string>()
   private ingestTail: Promise<void> = Promise.resolve()
   private settingsTail: Promise<void> = Promise.resolve()
   private batchSequence = 0
@@ -115,12 +171,14 @@ export class StrataGateRuntime {
   private ingestError: unknown
   private blockTurnSize: number
   private blockDecayLambda: number
+  private transientLastFeedbackPromptAt: string | null = null
 
   constructor(
     private readonly config: ResolvedConfig,
     private readonly models: DshModelBridge,
     private readonly onIngestError: (error: unknown) => void = () => {},
     private readonly flushNativeSession: (session: Session) => Promise<void> = async () => {},
+    private readonly feedbackOrigin: () => string | undefined = () => undefined,
   ) {
     this.blockTurnSize = config.blockTurnSize
     this.blockDecayLambda = config.blockDecayLambda
@@ -141,6 +199,7 @@ export class StrataGateRuntime {
       }
     }).catch((error: unknown) => {
       this.ingestError = error
+      this.notePluginError(session, error)
       this.onIngestError(error)
     })
   }
@@ -560,6 +619,97 @@ export class StrataGateRuntime {
     if (this.config.namespaceMode === 'global') return `${prefix}:global:${this.config.globalNamespace}`
     if (this.config.namespaceMode === 'session') return `${prefix}:session:${String(session.id)}`
     return `${prefix}:project:${projectKey(session.header.cwd)}`
+  }
+
+  async prepareFeedback(session: Session, input: FeedbackDraftInput): Promise<unknown> {
+    const namespace = this.namespaceFor(session)
+    const draft = normalizeFeedbackDraft(input)
+    this.saveFeedbackDraft(namespace, draft)
+    const feedbackUrl = feedbackDraftUrl(namespace, this.feedbackOrigin())
+    return {
+      prepared: true,
+      draftCreated: true,
+      submitted: false,
+      namespace,
+      feedbackUrl,
+      message: `反馈草稿已经准备好了，还没有提交到 GitHub。\n\n[打开反馈草稿](${feedbackUrl})`,
+    }
+  }
+
+  adminFeedbackDraft(namespace: string): { namespace: string; draft: FeedbackDraft | null } {
+    const key = namespace.trim()
+    if (!key) throw new TypeError('StrataGate feedback namespace must not be empty')
+    return { namespace: key, draft: this.loadFeedbackDraft(key) }
+  }
+
+  adminSaveFeedbackDraft(namespace: string, input: FeedbackDraftInput): { namespace: string; draft: FeedbackDraft } {
+    const key = namespace.trim()
+    if (!key) throw new TypeError('StrataGate feedback namespace must not be empty')
+    const draft = normalizeFeedbackDraft(input, this.loadFeedbackDraft(key))
+    this.saveFeedbackDraft(key, draft)
+    return { namespace: key, draft }
+  }
+
+  notePluginError(session: Session, _error?: unknown): void {
+    if (!this.closed) this.pendingFeedbackSuggestionSessions.add(String(session.id))
+  }
+
+  takeFeedbackSuggestion(session: Session, now = Date.now()): string {
+    const sessionId = String(session.id)
+    if (!this.pendingFeedbackSuggestionSessions.delete(sessionId)) return ''
+    const last = this.lastFeedbackPromptAt()
+    if (last && Number.isFinite(Date.parse(last)) && now - Date.parse(last) < FEEDBACK_PROMPT_COOLDOWN_MS) return ''
+    const promptedAt = new Date(now).toISOString()
+    this.transientLastFeedbackPromptAt = promptedAt
+    try {
+      if (this.config.database !== ':memory:') {
+        const metadata = new DshMetadataStore(this.config.database)
+        try { metadata.setLastFeedbackPromptAt(promptedAt) } finally { metadata.close() }
+      }
+    } catch (error) {
+      this.onIngestError(error)
+    }
+    return 'StrataGate detected a plugin error. Briefly ask whether the user wants help preparing a GitHub Issue report. If they agree, use only facts from the current conversation and call feedback_prepare. Do not invent missing details or submit anything to GitHub.'
+  }
+
+  private lastFeedbackPromptAt(): string | null {
+    if (this.transientLastFeedbackPromptAt) return this.transientLastFeedbackPromptAt
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    try {
+      const metadata = new DshMetadataStore(this.config.database)
+      try {
+        this.transientLastFeedbackPromptAt = metadata.lastFeedbackPromptAt()
+        return this.transientLastFeedbackPromptAt
+      } finally {
+        metadata.close()
+      }
+    } catch (error) {
+      this.onIngestError(error)
+      return null
+    }
+  }
+
+  private loadFeedbackDraft(namespace: string): FeedbackDraft | null {
+    const cached = this.feedbackDrafts.get(namespace)
+    if (cached) return structuredClone(cached)
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const metadata = new DshMetadataStore(this.config.database)
+    try {
+      const value = metadata.feedbackDraft(namespace)
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+      const draft = normalizeFeedbackDraft(value as FeedbackDraftInput)
+      this.feedbackDrafts.set(namespace, draft)
+      return structuredClone(draft)
+    } finally {
+      metadata.close()
+    }
+  }
+
+  private saveFeedbackDraft(namespace: string, draft: FeedbackDraft): void {
+    this.feedbackDrafts.set(namespace, structuredClone(draft))
+    if (this.config.database === ':memory:') return
+    const metadata = new DshMetadataStore(this.config.database)
+    try { metadata.setFeedbackDraft(namespace, draft) } finally { metadata.close() }
   }
 
   async adminNamespaces(): Promise<string[]> {
@@ -1148,9 +1298,11 @@ export class StrataGateRuntime {
     const timer = setTimeout(() => {
       this.derivationTimers.delete(key)
       if (this.closed) return
+      const failedBefore = this.failedCoreJobs(memory)
       const run = this.models.run(session, () => memory.resumePendingWork({ threadId }))
         .then(async (resumed) => {
           await this.persistSuccessfulResponses(memory)
+          this.noteNewCoreJobFailures(session, failedBefore, memory)
           const contexts = memory.getBlockContext(threadId)
           for (const block of resumed.readyBlocks) {
             if (block.threadId !== threadId) continue
@@ -1162,6 +1314,7 @@ export class StrataGateRuntime {
           if (resumed.readyBlocks.length > 0 || changed) await this.flushNativeSession(session)
         })
         .catch((error: unknown) => {
+          this.notePluginError(session, error)
           this.onIngestError(error)
         })
         .finally(() => {
@@ -1183,19 +1336,42 @@ export class StrataGateRuntime {
     const timer = setTimeout(() => {
       this.migrationTimers.delete(namespace)
       if (this.closed) return
+      const failedBefore = this.failedCoreJobs(memory)
       const completedBefore = memory.listGraphProjectionJobs().filter(({ status }) => status === 'completed').length
       void this.models.run(session, () => memory.resumePendingWork()).then(async () => {
         await this.persistSuccessfulResponses(memory)
+        this.noteNewCoreJobFailures(session, failedBefore, memory)
         const completedAfter = memory.listGraphProjectionJobs().filter(({ status }) => status === 'completed').length
         // Continue only after durable progress. A failed batch waits for the
         // next normal plugin wake-up instead of causing a retry/token storm.
         if (completedAfter > completedBefore) this.scheduleGraphMigration(session, memory)
       }).catch((error: unknown) => {
+        this.notePluginError(session, error)
         this.onIngestError(error)
       })
     }, 1_500)
     timer.unref?.()
     this.migrationTimers.set(namespace, timer)
+  }
+
+  private failedCoreJobs(memory: StrataGate): Set<string> {
+    const fingerprint = (kind: string, id: string, job: { attempts: number; updatedAt: string; lastError: string | null }): string =>
+      `${kind}:${id}:${job.attempts}:${job.updatedAt}:${job.lastError ?? ''}`
+    return new Set([
+      ...memory.listSummaryJobs()
+        .filter(({ status }) => status === 'failed')
+        .map((job) => fingerprint('summary', job.blockId, job)),
+      ...memory.listExtractionJobs()
+        .filter(({ status }) => status === 'failed')
+        .map((job) => fingerprint('extraction', job.blockId, job)),
+      ...memory.listGraphProjectionJobs()
+        .filter(({ status }) => status === 'failed')
+        .map((job) => fingerprint('graph', job.id, job)),
+    ])
+  }
+
+  private noteNewCoreJobFailures(session: Session, before: ReadonlySet<string>, memory: StrataGate): void {
+    if ([...this.failedCoreJobs(memory)].some((failure) => !before.has(failure))) this.notePluginError(session)
   }
 
   private async openAdminMemory(namespace: string): Promise<{ memory: StrataGate; owned: boolean }> {
@@ -1629,24 +1805,6 @@ function renderActivatedMemory(events: readonly EventCard[], graphNodes: readonl
 
   if (eventCount === 0 && nodeCount === 0) lines.push('(no activated memory)')
   return lines.join('\n')
-}
-
-function estimateTokens(value: string): number {
-  let tokens = 0
-  let asciiRun = 0
-  const flushAscii = (): void => {
-    if (asciiRun > 0) tokens += Math.ceil(asciiRun / 4)
-    asciiRun = 0
-  }
-  for (const character of value) {
-    if (character.codePointAt(0)! <= 0x7f) asciiRun += 1
-    else {
-      flushAscii()
-      tokens += 1
-    }
-  }
-  flushAscii()
-  return tokens
 }
 
 function activeTurn(session: Session): number | undefined {

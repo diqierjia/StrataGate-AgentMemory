@@ -20,10 +20,12 @@ describe('DSH plugin composition', () => {
       await ctx.plugin(SystemPrompt, {})
       await ctx.plugin(ToolRuntime, { mode: 'native' })
       await ctx.plugin(AgentDefaultModelConfig, { provider: 'test', model: 'test' })
+      ctx.provide('webServer', { host: '127.0.0.1', port: 10259, register: () => () => {} })
       await ctx.plugin(plugin, { database: join(directory, 'memory.db') })
 
       const names = ctx.tools.schemas().map(({ name }) => name)
       expect(names).toEqual(expect.arrayContaining([
+        'feedback_prepare',
         'memory_search_events',
         'memory_expand_event',
         'memory_search_graph',
@@ -62,9 +64,27 @@ describe('DSH plugin composition', () => {
       }))
 
       const search = ctx.tools.get('memory_search_events')
+      const feedbackPrepare = ctx.tools.get('feedback_prepare')
       const recordUse = ctx.tools.get('memory_record_use')
       expect(search).toBeDefined()
+      expect(feedbackPrepare).toBeDefined()
       expect(recordUse).toBeDefined()
+      const feedback = await feedbackPrepare!.execute({
+        title: 'Local draft',
+        description: 'A real failure from this conversation.',
+        reproduction: ['Run the failing StrataGate action.'],
+      }, {
+        agent,
+        callId: 'feedback-call',
+      } as never) as unknown as Record<string, unknown>
+      expect(feedback).toMatchObject({
+        prepared: true,
+        draftCreated: true,
+        submitted: false,
+        feedbackUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:10259\/\?settings=stratagate-memory&stratagateView=feedback/),
+      })
+      expect(feedback).not.toHaveProperty('draft')
+      expect(feedback.feedbackUrl).not.toContain('github.com')
       await search!.execute({ query: 'nothing stored' }, {
         agent,
         callId: 'search-call',

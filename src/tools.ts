@@ -20,6 +20,28 @@ function sessionOf(exec: ToolRunContext): Session {
 
 export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): void {
   ctx.tools.register(defineTool({
+    name: 'feedback_prepare',
+    description: 'Prepare a local StrataGate feedback draft from facts known in the current conversation. Unknown fields must stay empty. Never invent versions, logs, Block counts, or diagnostics, and never submit anything to GitHub. After success, respond briefly that the draft is local and not submitted, then render feedbackUrl as a Markdown link labeled "打开反馈草稿". Do not print the draft fields or an Issue-content table, and do not direct the user through Settings manually.',
+    parameters: {
+      title: { type: 'string' },
+      description: { type: 'string' },
+      reproduction: { type: 'array', items: { type: 'string' } },
+      expected: { type: 'string' },
+      actual: { type: 'string' },
+      error_context: { type: 'string' },
+    },
+    output: jsonOutput,
+    execute: async (args, exec) => runtime.prepareFeedback(sessionOf(exec), {
+      ...(args.title !== undefined ? { title: args.title } : {}),
+      ...(args.description !== undefined ? { description: args.description } : {}),
+      ...(args.reproduction !== undefined ? { reproduction: args.reproduction } : {}),
+      ...(args.expected !== undefined ? { expected: args.expected } : {}),
+      ...(args.actual !== undefined ? { actual: args.actual } : {}),
+      ...(args.error_context !== undefined ? { errorContext: args.error_context } : {}),
+    }) as never,
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'memory_search_events',
     description: 'Search durable StrataGate event memories. Returns a compact batch of event cards (id, title, summary, time, and evidence refs); call memory_expand_event for narrative/quotes/source messages. rankScore is BM25/RRF ordering only, never confidence or factual accuracy. Pass batchId to memory_assess before relying on evidence.',
     parameters: {

@@ -162,6 +162,31 @@ async function request(url: string, method = 'GET', targetRuntime = runtime, bod
 }
 
 describe('StrataGate admin routes', () => {
+  it('reads and saves local feedback drafts through the feedback route', async () => {
+    const calls: unknown[] = []
+    const feedbackRuntime = {
+      adminFeedbackDraft: (namespace: string) => ({ namespace, draft: { title: 'Existing', description: 'Saved locally.' } }),
+      adminSaveFeedbackDraft: (namespace: string, draft: unknown) => {
+        calls.push({ namespace, draft })
+        return { namespace, draft }
+      },
+    } as unknown as StrataGateRuntime
+    const read = await request('/api/stratagate/feedback?namespace=dsh%3Aproject%3Atest', 'GET', feedbackRuntime)
+    expect(read).toMatchObject({ status: 200, body: { namespace: 'dsh:project:test', draft: { title: 'Existing' } } })
+
+    const saved = await request('/api/stratagate/feedback', 'PUT', feedbackRuntime, {
+      namespace: 'dsh:project:test',
+      title: 'Edited title',
+      bodyMarkdown: '## 问题描述\n\nEdited locally.',
+      unrelated: 'ignored',
+    })
+    expect(saved.status).toBe(200)
+    expect(calls).toEqual([{ namespace: 'dsh:project:test', draft: {
+      title: 'Edited title',
+      bodyMarkdown: '## 问题描述\n\nEdited locally.',
+    } }])
+  })
+
   it('supports preview, commit, and undo through the import route', async () => {
     const received: unknown[] = []
     const importRuntime = {
@@ -262,15 +287,22 @@ describe('StrataGate admin routes', () => {
       openBlock: { turnRange: null, status: 'open' },
       items: [{
         id: 'blk_1',
+        blockIndex: 1,
         currentLevel: 5,
+        compressionPercent: 100,
         distanceFromLatest: 0,
         expansionSource: null,
+        processingStatus: 'ready',
         status: 'organized',
         eventExtraction: { status: 'succeeded' },
         relatedEvents: [{ id: 'evt_1' }],
         relatedNodes: [{ id: 'node_1' }],
       }],
     })
+    expect(blocks.body.blockTurnSize).toBe(4)
+    expect(blocks.body.items[0].currentTokens).toBe(blocks.body.items[0].l5Tokens)
+    expect(blocks.body.items[0].layerTokens).toHaveLength(6)
+    expect(blocks.body.items[0].layerTokens.find(({ level }: { level: number }) => level === 5)).toMatchObject({ percentOfL5: 100 })
   })
 
   it('serves one revision-aware dashboard snapshot and returns 304 when unchanged', async () => {
@@ -338,6 +370,36 @@ describe('StrataGate admin routes', () => {
     expect(secondResult.body.conversations.map(({ id }: { id: string }) => id)).toEqual(['thread-b', 'thread-a'])
   })
 
+  it('maps Block and open progress to receipt-backed DSH Turn numbers when turns have gaps', async () => {
+    const messages = [
+      { id: 'gap-u1', role: 'user' as const, content: 'First remembered turn', threadId: 'thread-gap', createdAt: '2026-08-20T00:00:00.000Z' },
+      { id: 'gap-a1', role: 'assistant' as const, content: 'First answer', threadId: 'thread-gap', createdAt: '2026-08-20T00:00:00.000Z' },
+      { id: 'gap-u2', role: 'user' as const, content: 'Second remembered turn', threadId: 'thread-gap', createdAt: '2026-08-20T00:02:00.000Z' },
+      { id: 'gap-a2', role: 'assistant' as const, content: 'Second answer', threadId: 'thread-gap', createdAt: '2026-08-20T00:02:00.000Z' },
+    ]
+    const gapRuntime = {
+      adminSnapshot: async () => ({
+        ...snapshot,
+        blockTurnSize: 2,
+        blocks: [{ ...snapshot.blocks[0]!, threadId: 'thread-gap', startTurn: 1, endTurn: 2, l5Raw: messages }],
+        openTail: [
+          { id: 'gap-u3', role: 'user' as const, content: 'Open remembered turn', threadId: 'thread-gap', createdAt: '2026-08-20T00:04:00.000Z' },
+          { id: 'gap-a3', role: 'assistant' as const, content: 'Open answer', threadId: 'thread-gap', createdAt: '2026-08-20T00:04:00.000Z' },
+        ],
+        ingestionReceipts: [
+          { id: 'dsh:thread-gap:turn:3', createdAt: '2026-08-20T00:00:00.000Z' },
+          { id: 'dsh:thread-gap:turn:5', createdAt: '2026-08-20T00:02:00.000Z' },
+          { id: 'dsh:thread-gap:turn:7', createdAt: '2026-08-20T00:04:00.000Z' },
+        ],
+      }),
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=gaps&kind=blocks&threadId=thread-gap', 'GET', gapRuntime)
+    expect(result.body).toMatchObject({
+      items: [{ id: 'blk_1', turnRange: [3, 5] }],
+      openBlock: { turnRange: [7, 7], turns: 1, capacity: 2 },
+    })
+  })
+
   it('recovers legacy conversation boundaries from ingestion receipts without rewriting mixed Blocks', async () => {
     const mixed = {
       ...snapshot.blocks[0]!,
@@ -384,6 +446,74 @@ describe('StrataGate admin routes', () => {
     expect(result.body.messages[0].toolCalls[0].arguments.authorization).toBe('Bearer [REDACTED]')
   })
 
+  it('reports the actual decayed layer and its size relative to L5', async () => {
+    const layerRuntime = {
+      adminSnapshot: async () => ({
+        ...snapshot,
+        blocks: [{
+          ...snapshot.blocks[0]!,
+          threadId: 'thread-layer',
+          pointerAnchorLevel: 4 as const,
+          l5Raw: snapshot.blocks[0]!.l5Raw.map((message) => ({ ...message, threadId: 'thread-layer' })),
+        }],
+      }),
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=layers&kind=blocks&threadId=thread-layer', 'GET', layerRuntime)
+    const block = result.body.items[0]
+    const l4 = block.layerTokens.find(({ level }: { level: number }) => level === 4)
+    expect(block).toMatchObject({ currentLevel: 4, currentTokens: l4.tokens, compressionPercent: l4.percentOfL5 })
+    expect(block.compressionPercent).toBe(Math.round(block.currentTokens / block.l5Tokens * 100))
+  })
+
+  it('rebuilds deterministic preview layers for Blocks stored by older versions', async () => {
+    const legacyRuntime = {
+      adminSnapshot: async () => ({
+        ...snapshot,
+        blocks: [{
+          ...snapshot.blocks[0]!,
+          threadId: 'thread-legacy-layers',
+          l3Condensed: 'stale oversized L3 '.repeat(1_000),
+          l4Readable: 'stale oversized L4 '.repeat(1_000),
+          l5Raw: snapshot.blocks[0]!.l5Raw.map((message) => ({ ...message, threadId: 'thread-legacy-layers' })),
+        }],
+      }),
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=legacy-layers&kind=blocks&threadId=thread-legacy-layers', 'GET', legacyRuntime)
+    const layers = result.body.items[0].layerTokens
+    const tokens = Object.fromEntries(layers.map(({ level, tokens }: { level: number; tokens: number }) => [level, tokens]))
+    expect(tokens[3]).toBeLessThanOrEqual(tokens[4])
+    expect(tokens[4]).toBeLessThanOrEqual(tokens[5])
+    expect(tokens[3]).toBeLessThan(1_000)
+  })
+
+  it('exposes sealed-but-pending Block compression state separately from long-term processing', async () => {
+    const pendingRuntime = {
+      adminSnapshot: async () => ({
+        ...snapshot,
+        blocks: [{
+          ...snapshot.blocks[0]!,
+          threadId: 'thread-pending',
+          processingStatus: 'pending' as const,
+          l0Title: undefined,
+          l0Tags: undefined,
+          l1Summary: undefined,
+          l2Keypoints: undefined,
+          l5Raw: snapshot.blocks[0]!.l5Raw.map((message) => ({ ...message, threadId: 'thread-pending' })),
+        }],
+        summaryJobs: [{
+          blockId: 'blk_1', status: 'running' as const, attempts: 1, lastError: null, nextRetryAt: null,
+          updatedAt: '2026-08-18T00:00:01.000Z',
+        }],
+      }),
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=pending&kind=blocks&threadId=thread-pending', 'GET', pendingRuntime)
+    expect(result.body.items[0]).toMatchObject({
+      processingStatus: 'pending',
+      summaryJob: { status: 'running' },
+      layerTokens: [{ level: 3 }, { level: 4 }, { level: 5, percentOfL5: 100 }],
+    })
+  })
+
   it('returns the adopted graph node with its directly related graph neighborhood', async () => {
     const relatedRuntime = {
       adminSnapshot: async () => ({
@@ -425,12 +555,12 @@ describe('StrataGate admin routes', () => {
       elements: [{ id: 'el_1' }],
       messages: [{ id: 'msg_1' }],
       layers: [
-        { level: 0, content: expect.stringContaining('Package manager') },
-        { level: 1, content: 'Use pnpm for this project.' },
-        { level: 2, content: '• pnpm' },
-        { level: 3, content: 'Use pnpm.' },
-        { level: 4, content: 'Use pnpm.' },
-        { level: 5, content: 'user: Use pnpm. api_key=[REDACTED]' },
+        { level: 0, content: expect.stringContaining('Package manager'), tokens: expect.any(Number), percentOfL5: expect.any(Number) },
+        { level: 1, content: 'Use pnpm for this project.', tokens: expect.any(Number), percentOfL5: expect.any(Number) },
+        { level: 2, content: '- pnpm', tokens: expect.any(Number), percentOfL5: expect.any(Number) },
+        { level: 3, content: 'User: Use pnpm. api_key=[REDACTED]\n\nTool call: fetch' },
+        { level: 4, content: 'User: Use pnpm. api_key=[REDACTED]\n\nTool call: fetch' },
+        { level: 5, content: 'user: Use pnpm. api_key=[REDACTED]\n\nTool call (raw): {"name":"fetch","arguments":{"authorization":"Bearer [REDACTED]"}}' },
       ],
     })
   })

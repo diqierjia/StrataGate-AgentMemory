@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   condenseTranscript,
   deterministicBlockLayers,
+  estimateTokens,
+  formatRawTranscript,
   getBlockWeight,
   getDecayedBlockLevel,
   normalizeBlockLevel,
@@ -31,6 +33,30 @@ describe('progressive conversation blocks', () => {
     expect(condensed).not.toContain('privateQuery');
     expect((condensed.match(/deliberately long pasted paragraph/g) ?? [])).toHaveLength(1);
     expect(layers.l5Raw[1]?.content).toContain(paste);
+  });
+
+  it('keeps L3 through L5 monotonic while retaining raw tool-call evidence in L5', () => {
+    const messages: RawMessage[] = [{
+      id: 'u1',
+      role: 'user',
+      content: '第一句保持原样。第二句也保持原样。ASCII-run-should-not-be-fragmented。',
+      createdAt: '2026-09-05T00:00:00Z',
+      toolCalls: [{
+        name: 'pwsh',
+        arguments: { command: 'Get-ChildItem -Force' },
+        result: { ok: true, files: ['package.json'] },
+      }],
+    }];
+
+    const layers = deterministicBlockLayers(messages);
+    const l5 = formatRawTranscript(layers.l5Raw);
+
+    expect(layers.l3Condensed).toContain('第一句保持原样。第二句也保持原样。');
+    expect(layers.l3Condensed).not.toContain('第一句保持原样。\n第二句也保持原样。');
+    expect(l5).toContain('"arguments":{"command":"Get-ChildItem -Force"}');
+    expect(l5).toContain('"result":{"ok":true,"files":["package.json"]}');
+    expect(estimateTokens(layers.l3Condensed)).toBeLessThanOrEqual(estimateTokens(layers.l4Readable));
+    expect(estimateTokens(layers.l4Readable)).toBeLessThanOrEqual(estimateTokens(l5));
   });
 
   it('decays through six levels and expands only to the requested level', () => {
