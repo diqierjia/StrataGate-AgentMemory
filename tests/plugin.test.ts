@@ -12,6 +12,42 @@ import { describe, expect, it } from 'vitest'
 import * as plugin from '../src/index.js'
 
 describe('DSH plugin composition', () => {
+  it.each([
+    ['auto', undefined],
+    ['force-off', 'force-off'],
+  ] as const)('registers the structured reasoning effort settings entry as %s', async (expected, configured) => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-settings-'))
+    const ctx = new Context()
+    let registration: { namespace: unknown; entry: unknown } | undefined
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SystemPrompt, {})
+      await ctx.plugin(ToolRuntime, { mode: 'native' })
+      await ctx.plugin(AgentDefaultModelConfig, { provider: 'test', model: 'test' })
+      ctx.provide('webServer', { host: '127.0.0.1', port: 10259, register: () => () => {} })
+      ctx.provide('settings', {
+        installSection: (...args: any[]) => {
+          const [, namespace, , entry, hooks] = args
+          registration = { namespace, entry }
+          hooks.setSource(() => entry)
+          hooks.onChange()
+        },
+      })
+      await ctx.plugin(plugin, {
+        database: join(directory, 'memory.db'),
+        ...(configured ? { structuredReasoningEffort: configured } : {}),
+      })
+
+      expect(registration).toEqual({
+        namespace: plugin.STRATAGATE_SETTINGS_NAMESPACE,
+        entry: { structuredReasoningEffort: expected },
+      })
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('loads into the official Cordis services and registers the complete memory protocol', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-plugin-'))
     const ctx = new Context()

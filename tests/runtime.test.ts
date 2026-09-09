@@ -26,24 +26,26 @@ const session = {
   eventAt: () => undefined,
 } as unknown as Session
 
-function turnEvents(): SessionEvent[] {
+function turnEvents(turn = 1): SessionEvent[] {
+  const offset = (turn - 1) * 4
+  const userText = turn === 1 ? 'remember pnpm' : `remember pnpm ${turn}`
   return [
-    { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+    { type: 'turn/start', seq: offset, time: offset + 1, data: { turn } },
     {
-      type: 'user/message', seq: 1, time: 2,
-      data: { id: 'u1', role: 'user', content: [{ type: 'text', text: 'remember pnpm' }], source: { kind: 'user' } },
+      type: 'user/message', seq: offset + 1, time: offset + 2,
+      data: { id: `u${turn}`, role: 'user', content: [{ type: 'text', text: userText }], source: { kind: 'user' } },
     },
     {
-      type: 'assistant/message', seq: 2, time: 3,
+      type: 'assistant/message', seq: offset + 2, time: offset + 3,
       data: {
-        turn: 1, step: 1,
+        turn, step: 1,
         message: {
-          id: 'a1', role: 'assistant', content: [{ type: 'text', text: 'Understood.' }],
+          id: `a${turn}`, role: 'assistant', content: [{ type: 'text', text: 'Understood.' }],
           source: { kind: 'model', provider: 'test', model: 'test' },
         },
       },
     },
-    { type: 'turn/end', seq: 3, time: 4, data: { turn: 1, reason: { kind: 'completed' } } },
+    { type: 'turn/end', seq: offset + 3, time: offset + 4, data: { turn, reason: { kind: 'completed' } } },
   ] as SessionEvent[]
 }
 
@@ -464,6 +466,64 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
+  it('retrieves automatic context for each current topic instead of reusing the previous turn', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-auto-context-topic-'))
+    const database = join(directory, 'memory.db')
+    let currentQuery = 'Which TypeScript compiler target did we choose?'
+    const activeSession = {
+      ...session,
+      id: 'topic-switch-session',
+      header: { ...session.header, id: 'topic-switch-session' },
+      events: [],
+      deriveMessages: () => [{
+        id: 'current-topic',
+        role: 'user',
+        content: [{ type: 'text', text: currentQuery }],
+        source: { kind: 'user' },
+      }],
+    } as unknown as Session
+    const runtime = new StrataGateRuntime({
+      database,
+      namespaceMode: 'project',
+      namespacePrefix: 'dsh',
+      globalNamespace: 'global',
+      blockTurnSize: 2,
+      blockDecayLambda: 0.3,
+      ingestSubagents: false,
+      maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(activeSession)
+      await memory.appendTurn({ user: 'Historical setup.', assistant: 'Ready.', threadId: 'historical-topic' })
+      await memory.appendTurn({ user: 'Historical close.', assistant: 'Saved.', threadId: 'historical-topic' })
+      const block = memory.listBlocks()[0]!
+      const compiler = await memory.addEvent({
+        title: 'TypeScript compiler target',
+        summary: 'The TypeScript compiler target is ES2022.',
+        sourceMessageIds: [block.l5Raw[0]!.id],
+        sourceBlockId: block.id,
+      })
+      const hotel = await memory.addEvent({
+        title: 'Kyoto hotel booking',
+        summary: 'The Kyoto hotel booking is at Hotel Granvia.',
+        sourceMessageIds: [block.l5Raw[0]!.id],
+        sourceBlockId: block.id,
+      })
+
+      const compilerContext = await runtime.buildAutoContext(activeSession)
+      expect(compilerContext).toContain(compiler.id)
+      expect(compilerContext).not.toContain(hotel.id)
+
+      currentQuery = 'Which Kyoto hotel did we book?'
+      const hotelContext = await runtime.buildAutoContext(activeSession)
+      expect(hotelContext).toContain(hotel.id)
+      expect(hotelContext).not.toContain(compiler.id)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('keeps short-term blocks session-local while activating project long-term memory', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-session-scope-'))
     const database = join(directory, 'memory.db')
@@ -698,6 +758,73 @@ describe('DSH runtime ingestion', () => {
       expect(memory.hasIngestionReceipt('dsh:session-runtime:turn:1')).toBe(true)
       await memory.close()
     } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('eagerly drains a three-turn burst without waiting for an explicit flush', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-eager-drain-'))
+    const database = join(directory, 'memory.db')
+    const runtime = new StrataGateRuntime({
+      database,
+      namespaceMode: 'project',
+      namespacePrefix: 'dsh',
+      globalNamespace: 'global',
+      blockTurnSize: 6,
+      blockDecayLambda: 0.3,
+      ingestSubagents: false,
+      maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> }).space(session)
+      for (let turn = 1; turn <= 3; turn += 1) {
+        for (const event of turnEvents(turn)) runtime.acceptEvent(session, event)
+      }
+      await vi.waitFor(() => expect(memory.turn).toBe(3), { timeout: 2_000 })
+      expect(memory.listOpenTail().map(({ content }) => content)).toEqual([
+        'remember pnpm', 'Understood.',
+        'remember pnpm 2', 'Understood.',
+        'remember pnpm 3', 'Understood.',
+      ])
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('restores an ingestion batch after failure and lets a later flush recover it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-drain-recovery-'))
+    const database = join(directory, 'memory.db')
+    const runtime = new StrataGateRuntime({
+      database,
+      namespaceMode: 'project',
+      namespacePrefix: 'dsh',
+      globalNamespace: 'global',
+      blockTurnSize: 4,
+      blockDecayLambda: 0.3,
+      ingestSubagents: false,
+      maxOutputTokens: 2048,
+    }, fakeModels)
+    const access = runtime as unknown as { space: (active: Session) => Promise<StrataGate> }
+    const openSpace = access.space.bind(runtime)
+    let failOpening = true
+    access.space = async (active) => {
+      if (failOpening) throw new Error('temporary ingestion failure')
+      return openSpace(active)
+    }
+    try {
+      for (const event of turnEvents()) runtime.acceptEvent(session, event)
+      await expect(runtime.flush()).rejects.toThrow('temporary ingestion failure')
+
+      failOpening = false
+      await expect(runtime.flush()).resolves.toBeUndefined()
+      const memory = await openSpace(session)
+      expect(memory.turn).toBe(1)
+      expect(memory.listOpenTail().map(({ content }) => content)).toEqual(['remember pnpm', 'Understood.'])
+      expect(memory.hasIngestionReceipt('dsh:session-runtime:turn:1')).toBe(true)
+    } finally {
+      failOpening = false
+      await runtime.close().catch(() => {})
       await rm(directory, { recursive: true, force: true })
     }
   })

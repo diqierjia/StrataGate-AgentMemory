@@ -26,7 +26,7 @@ import type {
   SuccessfulModelResponseKind,
 } from '@diqier/stratagate'
 import { EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, nowUtc8, parseExternalMemoryExport } from '@diqier/stratagate'
-import type { ResolvedConfig } from './config.js'
+import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
 import { ModelJsonResponseError, parseJsonResponse } from './json-response.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 
@@ -261,11 +261,18 @@ export class DshModelBridge {
   private readonly sessions = new AsyncLocalStorage<{ session?: Session; sessionId: Session['id'] }>()
   private readonly successfulResponses: SuccessfulModelResponse[] = []
   private readonly offCapabilities = new Map<string, 'supported' | 'unsupported'>()
+  private readonly warnedOffFallbackRoutes = new Set<string>()
+  private structuredReasoningEffort: StructuredReasoningEffortMode
 
   constructor(private readonly ctx: Context, private readonly config: ResolvedConfig) {
+    this.structuredReasoningEffort = config.structuredReasoningEffort ?? 'auto'
     this.ctx.on?.('llm/adapters-updated', () => {
       this.offCapabilities.clear()
     })
+  }
+
+  setStructuredReasoningEffort(mode: StructuredReasoningEffortMode): void {
+    this.structuredReasoningEffort = mode
   }
 
   run<T>(session: Session, operation: () => Promise<T>): Promise<T> {
@@ -484,7 +491,7 @@ export class DshModelBridge {
         if (useOff && isOffRejection(error)) {
           this.offCapabilities.set(routeKey, 'unsupported')
           useOff = false
-          this.ctx.logger.warn(`stratagate-memory ${baseRoute.provider}/${baseRoute.model} rejected reasoningEffort=off; retrying once without it`)
+          this.warnOffFallbackOnce(routeKey, `${baseRoute.provider}/${baseRoute.model} rejected reasoningEffort=off; retrying once without it`)
           attempt -= 1
           continue
         }
@@ -496,7 +503,7 @@ export class DshModelBridge {
         if (useOff && isOffRejection(finish.failure)) {
           this.offCapabilities.set(routeKey, 'unsupported')
           useOff = false
-          this.ctx.logger.warn(`stratagate-memory ${baseRoute.provider}/${baseRoute.model} rejected reasoningEffort=off; retrying once without it`)
+          this.warnOffFallbackOnce(routeKey, `${baseRoute.provider}/${baseRoute.model} rejected reasoningEffort=off; retrying once without it`)
           attempt -= 1
           continue
         }
@@ -579,8 +586,19 @@ export class DshModelBridge {
   private async shouldUseOff(route: { provider: string; model: string }): Promise<boolean> {
     const key = `${route.provider}\u0000${route.model}`
     const cached = this.offCapabilities.get(key)
-    if (cached) return cached === 'supported'
-    if (typeof this.ctx.llm.resolveModelInfo !== 'function') return true
+    if (cached) {
+      if (cached === 'unsupported' && this.structuredReasoningEffort === 'force-off') {
+        this.warnOffFallbackOnce(key, `${route.provider}/${route.model} does not support reasoningEffort=off; using the model default`)
+      }
+      return cached === 'supported'
+    }
+    if (typeof this.ctx.llm.resolveModelInfo !== 'function') {
+      this.offCapabilities.set(key, 'unsupported')
+      if (this.structuredReasoningEffort === 'force-off') {
+        this.warnOffFallbackOnce(key, `${route.provider}/${route.model} capabilities are unavailable; using the model default`)
+      }
+      return false
+    }
     const controller = new AbortController()
     const lookupTimeoutMs = Math.min(5_000, this.config.structuredTaskTimeoutMs ?? DEFAULT_STRUCTURED_TIMEOUT_MS)
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -595,15 +613,28 @@ export class DshModelBridge {
           timer.unref?.()
         }),
       ])
-      if (!info.reasoning) return true
+      if (!info.reasoning) return this.structuredReasoningEffort === 'force-off'
       const supported = info.reasoning.efforts.some(({ id }) => String(id) === 'off')
       this.offCapabilities.set(key, supported ? 'supported' : 'unsupported')
+      if (!supported && this.structuredReasoningEffort === 'force-off') {
+        this.warnOffFallbackOnce(key, `${route.provider}/${route.model} does not support reasoningEffort=off; using the model default`)
+      }
       return supported
     } catch {
-      return true
+      this.offCapabilities.set(key, 'unsupported')
+      if (this.structuredReasoningEffort === 'force-off') {
+        this.warnOffFallbackOnce(key, `${route.provider}/${route.model} capability lookup failed; using the model default`)
+      }
+      return false
     } finally {
       if (timer) clearTimeout(timer)
     }
+  }
+
+  private warnOffFallbackOnce(routeKey: string, message: string): void {
+    if (this.warnedOffFallbackRoutes.has(routeKey)) return
+    this.warnedOffFallbackRoutes.add(routeKey)
+    this.ctx.logger.warn(`stratagate-memory ${message}`)
   }
 
   private async consumeStructuredStream(

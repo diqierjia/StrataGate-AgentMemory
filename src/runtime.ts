@@ -32,11 +32,16 @@ import {
 } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import type { ResolvedConfig } from './config.js'
-import { TurnFolder } from './fold.js'
+import { TurnFolder, type FoldedTurn } from './fold.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
 
 export { estimateTokens }
+
+const DRAIN_THRESHOLD = 3
+const DRAIN_EAGER_MS = 150
+const DRAIN_BASE_BACKOFF_MS = 2_000
+const DRAIN_MAX_BACKOFF_MS = 60_000
 
 interface EvidenceTarget {
   eventIds: string[]
@@ -164,11 +169,15 @@ export class StrataGateRuntime {
   private readonly externalImportRuns = new Map<string, Promise<void>>()
   private readonly feedbackDrafts = new Map<string, FeedbackDraft>()
   private readonly pendingFeedbackSuggestionSessions = new Set<string>()
-  private ingestTail: Promise<void> = Promise.resolve()
+  private readonly pendingTurns = new Map<string, FoldedTurn[]>()
+  private readonly drainTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly drainBackoffMs = new Map<string, number>()
+  private readonly drainTails = new Map<string, Promise<void>>()
+  private readonly drainErrors = new Map<string, unknown>()
+  private readonly sessionsById = new Map<string, Session>()
   private settingsTail: Promise<void> = Promise.resolve()
   private batchSequence = 0
   private closed = false
-  private ingestError: unknown
   private blockTurnSize: number
   private blockDecayLambda: number
   private transientLastFeedbackPromptAt: string | null = null
@@ -189,19 +198,91 @@ export class StrataGateRuntime {
     if (!this.config.ingestSubagents && session.header.origin === 'subagent') return
     const turn = this.folder.accept(session, event)
     if (!turn) return
-    this.ingestTail = this.ingestTail.catch(() => {}).then(async () => {
-      const memory = await this.space(session)
-      try {
-        const result = await memory.appendTurn(turn, { deferDerivation: true })
-        if (result.sealedBlock) this.scheduleBlockDerivation(session, memory)
-      } finally {
-        await this.persistSuccessfulResponses(memory)
-      }
-    }).catch((error: unknown) => {
-      this.ingestError = error
+    const key = String(session.id)
+    this.sessionsById.set(key, session)
+    const queued = this.pendingTurns.get(key) ?? []
+    queued.push(turn)
+    this.pendingTurns.set(key, queued)
+    this.scheduleDrain(session)
+  }
+
+  /** Serialize drains per session while allowing unrelated sessions to settle independently. */
+  private enqueueDrain(session: Session): Promise<void> {
+    const key = String(session.id)
+    const prior = this.drainTails.get(key) ?? Promise.resolve()
+    const next = prior.catch(() => {}).then(() => this.drain(session))
+    this.drainTails.set(key, next)
+    void next.then(() => {
+      if ((this.pendingTurns.get(key)?.length ?? 0) === 0) this.drainErrors.delete(key)
+    }, (error: unknown) => {
+      this.drainErrors.set(key, error)
       this.notePluginError(session, error)
       this.onIngestError(error)
     })
+    return next
+  }
+
+  /** Batch short bursts and retry failed drains with bounded exponential backoff. */
+  private scheduleDrain(session: Session, overrideDelayMs?: number): void {
+    const key = String(session.id)
+    if (this.closed) return
+    const queued = this.pendingTurns.get(key)?.length ?? 0
+    if (queued === 0) return
+    const delay = overrideDelayMs
+      ?? (queued >= DRAIN_THRESHOLD
+        ? DRAIN_EAGER_MS
+        : Math.min(this.drainBackoffMs.get(key) ?? DRAIN_BASE_BACKOFF_MS, DRAIN_MAX_BACKOFF_MS))
+    const pending = this.drainTimers.get(key)
+    if (pending) {
+      if (delay >= DRAIN_BASE_BACKOFF_MS) return
+      clearTimeout(pending)
+      this.drainTimers.delete(key)
+    }
+    const timer = setTimeout(() => {
+      this.drainTimers.delete(key)
+      if (this.closed) return
+      void this.enqueueDrain(session).then(() => {
+        this.drainBackoffMs.delete(key)
+        if ((this.pendingTurns.get(key)?.length ?? 0) > 0) {
+          this.scheduleDrain(session, DRAIN_BASE_BACKOFF_MS)
+        }
+      }, () => {
+        const backoff = this.drainBackoffMs.get(key) ?? DRAIN_BASE_BACKOFF_MS
+        this.drainBackoffMs.set(key, Math.min(backoff * 2, DRAIN_MAX_BACKOFF_MS))
+        const pendingRetry = this.drainTimers.get(key)
+        if (pendingRetry) clearTimeout(pendingRetry)
+        this.drainTimers.delete(key)
+        this.scheduleDrain(session)
+      })
+    }, delay)
+    timer.unref?.()
+    this.drainTimers.set(key, timer)
+  }
+
+  /** Restore failed and unvisited turns ahead of turns that arrived during the drain. */
+  private async drain(session: Session): Promise<void> {
+    const key = String(session.id)
+    const turns = this.pendingTurns.get(key)
+    if (!turns || turns.length === 0) return
+    this.pendingTurns.delete(key)
+    let completed = 0
+    let memory: StrataGate | undefined
+    try {
+      memory = await this.space(session)
+      for (const turn of turns) {
+        const result = await memory.appendTurn(turn, { deferDerivation: true })
+        completed += 1
+        if (result.sealedBlock) this.scheduleBlockDerivation(session, memory)
+      }
+    } catch (error) {
+      const remaining = turns.slice(completed)
+      if (remaining.length > 0) {
+        this.pendingTurns.set(key, [...remaining, ...(this.pendingTurns.get(key) ?? [])])
+      }
+      throw error
+    } finally {
+      if (memory) await this.persistSuccessfulResponses(memory)
+    }
   }
 
   async searchEvents(session: Session, query: string, options: SearchOptions = {}): Promise<unknown> {
@@ -588,9 +669,19 @@ export class StrataGateRuntime {
 
   // Keep the ingestion error for callers that explicitly require a flushed run.
   private async settleIngestion(): Promise<unknown> {
-    await this.ingestTail
-    const error = this.ingestError
-    this.ingestError = undefined
+    do {
+      for (const [key, session] of this.sessionsById) {
+        if ((this.pendingTurns.get(key)?.length ?? 0) === 0) continue
+        const timer = this.drainTimers.get(key)
+        if (timer) clearTimeout(timer)
+        this.drainTimers.delete(key)
+        this.enqueueDrain(session)
+      }
+      await Promise.allSettled(this.drainTails.values())
+    } while (this.drainErrors.size === 0
+      && [...this.pendingTurns.values()].some((turns) => turns.length > 0))
+    const error = this.drainErrors.values().next().value
+    this.drainErrors.clear()
     return error
   }
 
@@ -599,6 +690,8 @@ export class StrataGateRuntime {
     this.closed = true
     for (const timer of this.migrationTimers.values()) clearTimeout(timer)
     this.migrationTimers.clear()
+    for (const timer of this.drainTimers.values()) clearTimeout(timer)
+    this.drainTimers.clear()
     for (const timer of this.derivationTimers.values()) clearTimeout(timer)
     this.derivationTimers.clear()
     let flushError: unknown
@@ -611,6 +704,7 @@ export class StrataGateRuntime {
     await Promise.allSettled(this.derivationRuns.values())
     await Promise.allSettled(this.externalImportRuns.values())
     await Promise.all(settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.close()] : []))
+    this.sessionsById.clear()
     if (flushError !== undefined) throw flushError
   }
 

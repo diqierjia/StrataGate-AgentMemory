@@ -13,6 +13,7 @@ describe('DeepSeek Harness plugin config', () => {
       ingestSubagents: false,
       maxOutputTokens: 2048,
       structuredTaskTimeoutMs: 45000,
+      structuredReasoningEffort: 'auto',
     })
   })
 
@@ -31,5 +32,13 @@ describe('DeepSeek Harness plugin config', () => {
       comment: '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。',
     })
     expect(resolveConfig({ database: 'memory.db', blockDecayLambda: 0.15 }).blockDecayLambda).toBe(0.15)
+  })
+
+  it('resolves the structured reasoning effort policy with a safe default', () => {
+    expect(resolveConfig({ database: 'memory.db' }).structuredReasoningEffort).toBe('auto')
+    expect(resolveConfig({
+      database: 'memory.db',
+      structuredReasoningEffort: 'force-off',
+    }).structuredReasoningEffort).toBe('force-off')
   })
 })
