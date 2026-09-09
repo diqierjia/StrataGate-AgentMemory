@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        dsh: [0.1.0-rc.6, 0.1.0-rc.7]
+        dsh: [0.1.2-rc.1]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Select DSH compatibility target
-        run: npm install --no-save --package-lock=false @deepseek-ai/dsh-agent-default-model@${{ matrix.dsh }} @deepseek-ai/dsh-agent@${{ matrix.dsh }} @deepseek-ai/dsh-attachment@${{ matrix.dsh }} @deepseek-ai/dsh-brand@${{ matrix.dsh }} @deepseek-ai/dsh-code-runtime@${{ matrix.dsh }} @deepseek-ai/dsh-invariants@${{ matrix.dsh }} @deepseek-ai/dsh-llm@${{ matrix.dsh }} @deepseek-ai/dsh-scope@${{ matrix.dsh }} @deepseek-ai/dsh-session@${{ matrix.dsh }} @deepseek-ai/dsh-settings@${{ matrix.dsh }} @deepseek-ai/dsh-system-prompt@${{ matrix.dsh }} @deepseek-ai/dsh-timeout@${{ matrix.dsh }} @deepseek-ai/dsh-typert-protocol@${{ matrix.dsh }} @deepseek-ai/dsh-user-approval@${{ matrix.dsh }} @deepseek-ai/dsh-tools@${{ matrix.dsh }}
+        run: npm install --no-save --package-lock=false @deepseek-ai/dsh-agent-default-model@${{ matrix.dsh }} @deepseek-ai/dsh-agent@${{ matrix.dsh }} @deepseek-ai/dsh-attachment@${{ matrix.dsh }} @deepseek-ai/dsh-brand@${{ matrix.dsh }} @deepseek-ai/dsh-client-ui-conversation@${{ matrix.dsh }} @deepseek-ai/dsh-code-runtime@${{ matrix.dsh }} @deepseek-ai/dsh-invariants@${{ matrix.dsh }} @deepseek-ai/dsh-llm@${{ matrix.dsh }} @deepseek-ai/dsh-scope@${{ matrix.dsh }} @deepseek-ai/dsh-session@${{ matrix.dsh }} @deepseek-ai/dsh-settings@${{ matrix.dsh }} @deepseek-ai/dsh-system-prompt@${{ matrix.dsh }} @deepseek-ai/dsh-timeout@${{ matrix.dsh }} @deepseek-ai/dsh-typert-protocol@${{ matrix.dsh }} @deepseek-ai/dsh-user-approval@${{ matrix.dsh }} @deepseek-ai/dsh-tools@${{ matrix.dsh }}
       - run: npm run check:dsh
       - run: npm run test:dsh
       - run: npm run build:dsh

@@ -170,7 +170,7 @@ For diagnostics, the five most recent successful memory-model responses are reta
 
 ## Compatibility and permissions
 
-Release gates exercise DSH `0.1.0-rc.6` and `0.1.0-rc.7` on Node `24`, plus the core package on Node `22.19` and `24`. The published peer range accepts compatible pre-`0.2.0` DSH releases starting at `rc.6`.
+Release gates exercise DSH `0.1.2-rc.1` on Node `24`, plus the core package on Node `22.19` and `24`. The published peer range accepts compatible DSH releases from `0.1.2-rc.1` up to, but not including, `0.2.0`.
 
 The package declares local filesystem read/write and Harness tool registration. It does not request direct network, subprocess, shell, Python, or credential access. Model calls still flow through DSH's existing LLM service.
 

@@ -2790,9 +2790,9 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       const slots = ctx.get('slots')
       if (!slots) return
-      const conversationEvents = ctx.get('conversationEvents')
-      if (conversationEvents) {
-        conversationEvents.register(memoryCitationsDefinition)
+      const uiConversation = ctx.get('uiConversation')
+      if (uiConversation) {
+        uiConversation.events.register(memoryCitationsDefinition)
         ensureCitationStyles()
         slots.inject('conversation.chat.turnTail', () => slots.register({
           name: 'conversation.chat.turnTail',
@@ -2819,7 +2819,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.name = 'stratagate-dsh'
-    exports.inject = ['slots', 'conversationEvents']
+    exports.inject = ['slots', 'uiConversation']
     exports.apply = apply
     return module.exports
   },

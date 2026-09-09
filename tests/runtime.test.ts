@@ -22,6 +22,8 @@ const fakeModels = {
 const session = {
   id: 'session-runtime',
   header: { id: 'session-runtime', version: 0, createdAt: 0, cwd: 'C:\\work\\project' },
+  snapshotEvents: () => [],
+  eventAt: () => undefined,
 } as unknown as Session
 
 function turnEvents(): SessionEvent[] {
@@ -353,7 +355,6 @@ describe('DSH runtime ingestion', () => {
     const database = join(directory, 'memory.db')
     const activeSession = {
       ...session,
-      events: [],
       deriveMessages: () => [{
         id: 'current-user',
         role: 'user',
@@ -470,14 +471,12 @@ describe('DSH runtime ingestion', () => {
       ...session,
       id: 'session-a',
       header: { ...session.header, id: 'session-a' },
-      events: [],
       deriveMessages: () => [],
     } as unknown as Session
     const sessionB = {
       ...session,
       id: 'session-b',
       header: { ...session.header, id: 'session-b' },
-      events: [],
       deriveMessages: () => [{
         id: 'session-b-user',
         role: 'user',
@@ -871,7 +870,7 @@ describe('DSH runtime ingestion', () => {
     }, fakeModels)
     const activeSession = {
       ...session,
-      events: [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 9 } }],
+      snapshotEvents: () => [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 9 } }],
     } as unknown as Session
     const namespace = runtime.namespaceFor(activeSession)
     try {
@@ -992,7 +991,7 @@ describe('DSH runtime ingestion', () => {
     const citationEvents: Array<{ type: string; data: Record<string, unknown> }> = []
     const activeSession = {
       ...session,
-      events: [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 10 } }],
+      snapshotEvents: () => [{ type: 'turn/start', seq: 0, time: 1, data: { turn: 10 } }],
       append: vi.fn((type: string, data: Record<string, unknown>) => {
         citationEvents.push({ type, data })
         return { type, data, seq: citationEvents.length, time: citationEvents.length + 1 }
