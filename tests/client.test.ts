@@ -53,7 +53,7 @@ describe('StrataGate Web client contract', () => {
       if (name !== 'react') throw new Error(`unexpected client dependency: ${name}`)
       return { createElement: (...args: unknown[]) => args, Fragment: 'fragment', useState: () => [], useEffect: () => {}, useCallback: (fn: unknown) => fn }
     })
-    expect(plugin.inject).toEqual(['slots', 'conversationEvents'])
+    expect(plugin.inject).toEqual(['slots', 'uiConversation'])
 
     let registration: any
     const slots = {
@@ -64,6 +64,12 @@ describe('StrataGate Web client contract', () => {
     expect(registration.metadata).toMatchObject({ name: 'settings.section', id: 'stratagate-memory' })
     expect(registration.metadata.label()).toBe('StrataGate-AgentMemory')
     expect(typeof registration.render).toBe('function')
+  })
+
+  it('declares the DSH 0.1.2 Conversation package and service contracts', () => {
+    const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+    expect(manifest.dsh.client.inject).toEqual(['@deepseek-ai/dsh-client-ui-conversation'])
+    expect(manifest.dshWorkshop.compatibility.dshVersions).toEqual(['0.1.2-rc.1'])
   })
 
   it('parses and consumes only the StrataGate feedback deep link while preserving unrelated URL state', () => {
@@ -175,7 +181,7 @@ describe('StrataGate Web client contract', () => {
       inject: (_name: string, callback: () => void) => callback(),
       register: (metadata: unknown, render: unknown) => { registrations.push({ metadata, render }) },
     }
-    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'conversationEvents' ? { register: () => {} } : undefined })
+    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'uiConversation' ? { events: { register: () => {} } } : undefined })
     const tail = registrations.find(({ metadata }) => metadata.name === 'conversation.chat.turnTail')
     const dock = registrations.find(({ metadata }) => metadata.id === 'stratagate-short-term-dock')
     expect(typeof tail.render).toBe('function')
@@ -356,8 +362,8 @@ describe('StrataGate Web client contract', () => {
     plugin.apply({
       get: (name: string) => name === 'slots'
         ? slots
-        : name === 'conversationEvents'
-          ? { register: (value: unknown) => { conversationDefinition = value } }
+        : name === 'uiConversation'
+          ? { events: { register: (value: unknown) => { conversationDefinition = value } } }
           : undefined,
     })
 
@@ -480,8 +486,8 @@ describe('StrataGate Web client contract', () => {
     plugin.apply({
       get: (name: string) => name === 'slots'
         ? slots
-        : name === 'conversationEvents'
-          ? { register: (value: unknown) => { conversationDefinition = value } }
+        : name === 'uiConversation'
+          ? { events: { register: (value: unknown) => { conversationDefinition = value } } }
           : undefined,
     })
 
@@ -606,8 +612,8 @@ describe('StrataGate Web client contract', () => {
     expandedPlugin.apply({
       get: (name: string) => name === 'slots'
         ? { inject: (_name: string, callback: () => void) => callback(), register: (metadata: unknown, render: unknown) => { expandedRegistrations.push({ metadata, render }) } }
-        : name === 'conversationEvents'
-          ? { register: () => {} }
+        : name === 'uiConversation'
+          ? { events: { register: () => {} } }
           : undefined,
     })
     const expandedTail = expandedRegistrations.find(({ metadata }) => metadata.name === 'conversation.chat.turnTail')

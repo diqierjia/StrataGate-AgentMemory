@@ -51,7 +51,8 @@ describe('DSH plugin composition', () => {
       const session = {
         id: 'auto-context-session',
         header: { id: 'auto-context-session', version: 0, createdAt: 0, cwd: directory },
-        events: [],
+        snapshotEvents: () => [],
+        eventAt: () => undefined,
         deriveMessages: () => [],
       } as unknown as Session
       const steered: unknown[] = []

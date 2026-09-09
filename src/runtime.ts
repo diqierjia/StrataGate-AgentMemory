@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import {
   estimateTokens,
   memoryWeightAt,
@@ -1528,26 +1528,28 @@ function renderMessages(messages: readonly RawMessage[]): string {
 
 function dshTurnAtBlockEnd(session: Session, block: MemoryBlock): number {
   const blockEnd = Date.parse(block.createdAt)
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index]
+  const events = session.snapshotEvents()
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
     if (event?.type === 'turn/end' && event.time === blockEnd) return event.data.turn
   }
   throw new Error(`Cannot match StrataGate block ${block.id} to its completed DSH turn`)
 }
 
-function sealedSurfaceSeqs(session: Session, endTurn: number, turnCount: number): number[] {
+function sealedSurfaceSeqs(session: Session, endTurn: number, turnCount: number): SessionSeq[] {
   const currentSurface = [...session.surface.nodes]
   const currentSet = new Set(currentSurface)
-  const completed: Array<{ turn: number; start: number; end: number; nodes: number[] }> = []
-  let open: { turn: number; start: number } | undefined
+  const completed: Array<{ turn: number; start: SessionSeq; end: SessionSeq; nodes: SessionSeq[] }> = []
+  let open: { turn: number; start: SessionSeq } | undefined
+  const events = session.snapshotEvents()
 
-  for (const event of session.events) {
+  for (const event of events) {
     if (event.type === 'turn/start') {
       open = { turn: event.data.turn, start: event.seq }
       continue
     }
     if (event.type !== 'turn/end' || !open || event.data.turn !== open.turn) continue
-    const turnEvents = session.events.slice(open.start + 1, event.seq)
+    const turnEvents = events.slice(open.start + 1, event.seq)
     const hasHumanMessage = turnEvents.some((candidate) =>
       candidate.type === 'user/message' && candidate.data.source.kind === 'user')
     if (hasHumanMessage && event.data.turn <= endTurn) {
@@ -1686,11 +1688,11 @@ function compactRawHit(result: RawSearchHit): Record<string, unknown> {
   }
 }
 
-function currentBlockSurfaceMessages(session: Session): Map<string, { seq: number; text: string }> {
-  const blocks = new Map<string, { seq: number; text: string }>()
+function currentBlockSurfaceMessages(session: Session): Map<string, { seq: SessionSeq; text: string }> {
+  const blocks = new Map<string, { seq: SessionSeq; text: string }>()
   if (!session.surface?.nodes) return blocks
   for (const seq of session.surface.nodes) {
-    const event = session.events[seq]
+    const event = session.eventAt(seq)
     if (event?.type !== 'user/message'
       || event.data.source.kind !== 'plugin'
       || event.data.source.plugin !== COMPACTION_SOURCE_PLUGIN) continue
@@ -1808,8 +1810,9 @@ function renderActivatedMemory(events: readonly EventCard[], graphNodes: readonl
 }
 
 function activeTurn(session: Session): number | undefined {
-  for (let index = session.events.length - 1; index >= 0; index -= 1) {
-    const event = session.events[index]
+  const events = session.snapshotEvents()
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
     if (event?.type === 'turn/start') return event.data.turn
   }
   return undefined
