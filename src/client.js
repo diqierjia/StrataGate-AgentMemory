@@ -6,10 +6,6 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
     const React = require('react')
-    const ReactDOM = (() => {
-      try { return require('react-dom') } catch {}
-      return globalThis.ReactDOM || null
-    })()
     const h = React.createElement
     const cytoscape = globalThis.__StrataGateGraphLibraries?.cytoscape
     const STAR_REPOSITORY_URL = 'https://github.com/diqierjia/StrataGate-AgentMemory'
@@ -261,7 +257,7 @@ window.__ModuleLoader__.load({
       .sg-stm-detail{margin:7px 0 4px;padding:10px 0 3px 14px;border-left:1px solid color-mix(in srgb,var(--sgm-accent) 42%,var(--sgm-border));color:var(--sgm-secondary);animation:sg-stm-open 180ms cubic-bezier(.22,1,.36,1) both}.sg-stm-detail-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px}.sg-stm-detail-head strong{color:var(--sgm-text);font-size:12px;font-weight:670}.sg-stm-detail-head span{color:var(--sgm-muted);font-size:11px}.sg-stm-facts{display:flex;gap:5px 12px;flex-wrap:wrap;margin-bottom:11px;color:var(--sgm-muted);font-size:11px}.sg-stm-facts strong{color:var(--sgm-secondary);font-weight:650}
       .sg-stm-layers{display:grid;grid-template-columns:repeat(6,minmax(70px,1fr));gap:3px;overflow-x:auto;padding:2px 0 5px;scrollbar-width:thin}.sg-stm-layer{position:relative;min-width:70px;padding:6px 4px 7px;border:0;border-radius:6px;background:transparent;color:var(--sgm-muted);font:inherit;text-align:center;cursor:pointer}.sg-stm-layer:hover{background:var(--sgm-soft);color:var(--sgm-secondary)}.sg-stm-layer.selected{background:color-mix(in srgb,var(--sgm-accent) 8%,transparent);color:var(--sgm-text)}.sg-stm-layer.actual:after{content:"";position:absolute;left:22%;right:22%;bottom:1px;height:2px;border-radius:2px;background:var(--sgm-accent)}.sg-stm-layer-level{display:block;font-weight:720}.sg-stm-layer-name{display:block;margin-top:1px;font-size:10px}.sg-stm-layer-size{display:block;margin-top:3px;color:var(--sgm-muted);font-size:9px}.sg-stm-layer-current{display:block;min-height:14px;margin-top:2px;color:var(--sgm-accent);font-size:9px;font-weight:680}
       .sg-stm-preview{margin-top:8px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--sgm-border) 78%,transparent)}.sg-stm-preview-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px}.sg-stm-preview-head strong{color:var(--sgm-text);font-weight:670}.sg-stm-preview-head span{color:var(--sgm-muted);font-size:10px}.sg-stm-content{max-height:320px;margin:0;padding:0 4px 1px 0;overflow:auto;color:var(--sgm-secondary);font:12px/1.62 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;white-space:pre-wrap;overflow-wrap:anywhere}.sg-stm-loading,.sg-stm-error{padding:10px 0;color:var(--sgm-muted)}.sg-stm-error{color:var(--dsw-alias-state-error-primary,#c44)}
-      .sg-stm-dock{position:fixed;z-index:900;padding:5px 10px 6px;border:1px solid color-mix(in srgb,var(--sgm-border) 82%,transparent);border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,#fff) 94%,transparent);box-shadow:0 10px 30px rgba(0,0,0,.14);backdrop-filter:blur(14px);animation:sg-stm-open 180ms cubic-bezier(.22,1,.36,1) both}.sg-stm-dock .sg-stm-line{margin:0}.sg-stm-dock .sg-stm-detail{max-height:min(52vh,430px);margin-bottom:2px;overflow:auto}.sg-stm-dock .sg-stm-rule{opacity:.62}
+      .sg-stm-dock{box-sizing:border-box;width:100%;max-width:640px;margin:4px auto;padding:5px 10px 6px}.sg-stm-dock .sg-stm-line{margin:0}.sg-stm-dock .sg-stm-detail{max-height:min(52vh,430px);margin-bottom:2px;overflow:auto}.sg-stm-dock .sg-stm-rule{opacity:.62}
       @keyframes sg-stm-open{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}@keyframes sg-stm-pulse{50%{opacity:.32;transform:scale(.78)}}
       @media (max-width:620px){.sg-stm-line{gap:7px}.sg-stm-line-copy{white-space:normal}.sg-stm-detail{padding-left:10px}.sg-stm-detail-head{display:block}.sg-stm-detail-head span{display:block;margin-top:2px}.sg-stm-layers{grid-template-columns:repeat(6,76px)}}
       @media (prefers-reduced-motion:reduce){.sg-stm *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
@@ -669,7 +665,6 @@ window.__ModuleLoader__.load({
 
     const shortTermMemoryFeeds = new Map()
     const shortTermMemoryUi = {
-      activeSessionId: '',
       rows: new Map(),
       listeners: new Set(),
     }
@@ -755,20 +750,12 @@ window.__ModuleLoader__.load({
         + ' · 已压缩为 L' + Number(display.block.currentLevel) + ' · ' + Number(display.block.compressionPercent ?? 0) + '%'
     }
 
-    function shortTermUiSnapshot() {
-      const sessionId = shortTermMemoryUi.activeSessionId
+    function shortTermUiSnapshot(sessionId) {
       return { sessionId, row: sessionId ? shortTermMemoryUi.rows.get(sessionId) || null : null }
     }
 
     function publishShortTermUi() {
-      const snapshot = shortTermUiSnapshot()
-      for (const listener of shortTermMemoryUi.listeners) listener(snapshot)
-    }
-
-    function activateShortTermSession(sessionId) {
-      if (!sessionId || shortTermMemoryUi.activeSessionId === sessionId) return
-      shortTermMemoryUi.activeSessionId = sessionId
-      publishShortTermUi()
+      for (const listener of shortTermMemoryUi.listeners) listener()
     }
 
     function updateShortTermRow(sessionId, turn, visible, mounted) {
@@ -897,31 +884,6 @@ window.__ModuleLoader__.load({
       return state
     }
 
-    function useShortTermFeedSnapshot(sessionId) {
-      const [state, setState] = React.useState(() => sessionId ? shortTermFeed(sessionId).snapshot : { payload: null, loading: false, error: '' })
-      React.useEffect(() => {
-        if (!sessionId) {
-          setState({ payload: null, loading: false, error: '' })
-          return undefined
-        }
-        const feed = shortTermFeed(sessionId)
-        feed.listeners.add(setState)
-        setState(feed.snapshot)
-        return () => {
-          feed.listeners.delete(setState)
-          if (feed.listeners.size === 0) {
-            if (feed.pollTimer !== null) {
-              window.clearTimeout(feed.pollTimer)
-              feed.pollTimer = null
-            }
-            feed.controller?.abort()
-            feed.controller = null
-          }
-        }
-      }, [sessionId])
-      return state
-    }
-
     function ShortTermMemoryBlockDetail({ namespace, block }) {
       const actualLayer = Number(block.currentLevel)
       const [selectedPreviewLayer, setSelectedPreviewLayer] = React.useState(actualLayer)
@@ -994,7 +956,6 @@ window.__ModuleLoader__.load({
       const display = shortTermTurnDisplay(data, matched.turn)
       const [expanded, setExpanded] = React.useState(false)
       const statusRef = React.useRef(null)
-      React.useEffect(() => activateShortTermSession(sessionId), [sessionId])
       React.useEffect(() => {
         if (display?.kind !== 'block') setExpanded(false)
       }, [display?.kind, display?.block?.id])
@@ -1033,75 +994,33 @@ window.__ModuleLoader__.load({
         expanded ? h(ShortTermMemoryBlockDetail, { namespace: feed.payload.namespace, block }) : null)
     }
 
-    function hasVisibleModalDialog(documentRef = typeof document === 'undefined' ? null : document) {
-      if (!documentRef?.querySelectorAll) return false
-      return [...documentRef.querySelectorAll('[aria-modal="true"]')].some((element) => !element.closest?.('.sg-stm-dock')
-        && !element.hidden
-        && element.getAttribute?.('aria-hidden') !== 'true'
-        && (typeof element.getClientRects !== 'function' || element.getClientRects().length > 0))
-    }
-
-    function findShortTermDockAnchor() {
-      if (typeof document === 'undefined' || hasVisibleModalDialog()) return null
-      const candidates = [...document.querySelectorAll('textarea:not([disabled]),[contenteditable="true"],[role="textbox"]')]
-        .filter((element) => !element.closest?.('.sg-memory,.sg-citation-dialog,.sg-stm-dock'))
-        .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-        .filter(({ rect }) => rect.width >= 180 && rect.height >= 20 && rect.bottom > 0 && rect.top < window.innerHeight)
-        .sort((left, right) => right.rect.bottom - left.rect.bottom)
-      return candidates[0] || null
-    }
-
-    function shortTermDockPlacement() {
-      const anchor = findShortTermDockAnchor()
-      if (!anchor) return { visible: false, left: 12, bottom: 84, width: 320 }
-      const width = Math.min(640, Math.max(280, anchor.rect.width))
-      const left = Math.min(Math.max(12, anchor.rect.left + (anchor.rect.width - width) / 2), Math.max(12, window.innerWidth - width - 12))
-      return { visible: true, left, bottom: Math.max(12, window.innerHeight - anchor.rect.top + 8), width }
-    }
-
-    function ShortTermMemoryDock() {
-      const [ui, setUi] = React.useState(shortTermUiSnapshot)
+    function ShortTermMemoryDock({ sessionId, useSession, useSessions, useWorkspaces }) {
+      const [ui, setUi] = React.useState(() => shortTermUiSnapshot(sessionId))
       const [expanded, setExpanded] = React.useState(false)
-      const [placement, setPlacement] = React.useState(shortTermDockPlacement)
       React.useEffect(() => {
-        shortTermMemoryUi.listeners.add(setUi)
-        setUi(shortTermUiSnapshot())
-        return () => shortTermMemoryUi.listeners.delete(setUi)
-      }, [])
-      const feed = useShortTermFeedSnapshot(ui.sessionId)
+        const update = () => setUi(shortTermUiSnapshot(sessionId))
+        shortTermMemoryUi.listeners.add(update)
+        update()
+        return () => shortTermMemoryUi.listeners.delete(update)
+      }, [sessionId])
+      const sessionById = useSessions((state) => state.byId || {})
+      const workspaceItems = useWorkspaces((state) => state.items || [])
+      const sessionSignal = useSession((state) => {
+        let latestTurn = 0
+        for (const turn of state.turnEnds?.keys?.() || []) latestTurn = Math.max(latestTurn, Number(turn) || 0)
+        return String(latestTurn) + ':' + (state.running ? 'running' : 'idle')
+      })
+      const workspacePath = sessionWorkspacePath(sessionId, sessionById, workspaceItems)
+      const feed = useShortTermMemoryFeed(sessionId, workspacePath, sessionSignal)
       const display = shortTermCurrentDisplay(feed.payload?.data)
       const displayKey = display?.kind + ':' + (display?.block?.id || display?.turn || '')
-      React.useEffect(() => setExpanded(false), [ui.sessionId, displayKey])
-      React.useEffect(() => {
-        let frame = null
-        const update = () => {
-          if (frame !== null) return
-          frame = window.requestAnimationFrame(() => {
-            frame = null
-            setPlacement(shortTermDockPlacement())
-          })
-        }
-        update()
-        window.addEventListener('resize', update)
-        window.addEventListener('scroll', update, true)
-        const mutationObserver = typeof MutationObserver === 'function' && document.body
-          ? new MutationObserver(update)
-          : null
-        mutationObserver?.observe(document.body, { childList: true, subtree: true })
-        return () => {
-          if (frame !== null) window.cancelAnimationFrame(frame)
-          window.removeEventListener('resize', update)
-          window.removeEventListener('scroll', update, true)
-          mutationObserver?.disconnect()
-        }
-      }, [ui.sessionId, displayKey])
+      React.useEffect(() => setExpanded(false), [sessionId, displayKey])
       const inlineVisible = Boolean(display && ui.row?.mounted && ui.row.visible && Number(ui.row.turn) === Number(display.turn))
-      if (!display || inlineVisible || !placement.visible) return null
+      if (!display || inlineVisible) return null
       const rule = () => h('span', { className: 'sg-stm-rule', 'aria-hidden': 'true' })
       const ready = display.kind === 'block'
       const dock = h('section', {
         className: 'sg-stm sg-stm-dock',
-        style: { left: placement.left + 'px', bottom: placement.bottom + 'px', width: placement.width + 'px' },
         'data-testid': 'stratagate-short-term-dock',
         'aria-label': '当前短期记忆状态',
       },
@@ -1110,7 +1029,7 @@ window.__ModuleLoader__.load({
           shortTermDisplayLabel(display), h('span', { className: 'sg-stm-chevron ' + (expanded ? 'open' : ''), 'aria-hidden': 'true' }, '›'))
           : h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()),
       expanded && ready ? h(ShortTermMemoryBlockDetail, { namespace: feed.payload.namespace, block: display.block }) : null)
-      return ReactDOM?.createPortal && document.body ? ReactDOM.createPortal(dock, document.body) : dock
+      return dock
     }
 
     function MemoryCitationTail({ matched, sessionId, useSession, useSessions, useWorkspaces }) {
@@ -2810,11 +2729,11 @@ window.__ModuleLoader__.load({
         }, MemoryCitationTail))
       }
       try {
-        slots.inject('sidebar.footer.action', () => slots.register({
-          name: 'sidebar.footer.action',
+        slots.inject('conversation.composer.dock', () => slots.register({
+          name: 'conversation.composer.dock',
           id: 'stratagate-short-term-dock',
           order: 40,
-        }, ShortTermMemoryDock))
+        }, (props) => props.sessionId ? h(ShortTermMemoryDock, { ...props, key: props.sessionId }) : null))
       } catch {}
       const settingsScope = ctx.get('settingsScope')
       const effortScope = settingsScope ? settingsScope.bind({ namespace: 'stratagate-memory' }) : null
