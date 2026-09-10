@@ -185,10 +185,10 @@ describe('StrataGate Web client contract', () => {
     const tail = registrations.find(({ metadata }) => metadata.name === 'conversation.chat.turnTail')
     const dock = registrations.find(({ metadata }) => metadata.id === 'stratagate-short-term-dock')
     expect(typeof tail.render).toBe('function')
-    expect(dock.metadata).toMatchObject({ name: 'sidebar.footer.action', order: 40 })
+expect(dock.metadata).toMatchObject({ name: 'conversation.composer.dock', order: 40 })
     expect(typeof dock.render).toBe('function')
     expect(source).toContain('function ShortTermMemoryTurnStatus({ matched, sessionId, useSession, useSessions, useWorkspaces })')
-    expect(source).toContain('function ShortTermMemoryDock()')
+expect(source).toContain('function ShortTermMemoryDock({ sessionId, useSession, useSessions, useWorkspaces })')
     expect(source).toContain('短期记忆块 · ')
     expect(source).toContain('正在压缩…')
     expect(source).toContain('已压缩为 L')
@@ -198,7 +198,10 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('void refreshShortTermFeed(feed, workspacePath, signal, true)')
     expect(source).toContain("if (reason?.name === 'AbortError') throw reason")
     expect(source).toContain('new IntersectionObserver')
-    expect(source).toContain('ReactDOM.createPortal(dock, document.body)')
+expect(registrations.some(({ metadata }) => metadata.name === 'sidebar.footer.action')).toBe(false)
+    expect(dock.render({})).toBeNull()
+    expect(dock.render({ sessionId: 'session-a' })[1].key).toBe('session-a')
+    expect(dock.render({ sessionId: 'session-b' })[1].key).toBe('session-b')
     expect(source).toContain('ui.row?.mounted && ui.row.visible')
     expect(source).not.toContain('MemoryCompressionWidget')
     expect(source).not.toContain('sg-compression-panel')
@@ -208,7 +211,7 @@ describe('StrataGate Web client contract', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const instrumented = source.replace(
       "    exports.name = 'stratagate-dsh'",
-      "    exports.__test = { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, activateShortTermSession, updateShortTermRow, hasVisibleModalDialog }; exports.name = 'stratagate-dsh'",
+      "    exports.__test = { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, updateShortTermRow }; exports.name = 'stratagate-dsh'",
     )
     let definition: any
     runInNewContext(instrumented, {
@@ -219,7 +222,7 @@ describe('StrataGate Web client contract', () => {
       if (name !== 'react') throw new Error(`unexpected client dependency: ${name}`)
       return { createElement: (...args: unknown[]) => args }
     })
-    const { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, activateShortTermSession, updateShortTermRow, hasVisibleModalDialog } = plugin.__test
+    const { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, updateShortTermRow } = plugin.__test
     const latestBlock = { id: 'block-2', sequence: 2, turnRange: [7, 12], processingStatus: 'ready', currentLevel: 1, compressionPercent: 22 }
     const open = shortTermCurrentDisplay({
       blockTurnSize: 6,
@@ -233,23 +236,83 @@ describe('StrataGate Web client contract', () => {
     expect(sealed).toMatchObject({ kind: 'block', turn: 12, block: { id: 'block-2' } })
     expect(shortTermDisplayLabel(sealed)).toBe('Block 2 · 第 7–12 轮 · 已压缩为 L1 · 22%')
 
-    activateShortTermSession('session-a')
+    expect(shortTermUiSnapshot('session-b').row).toBeNull()
     updateShortTermRow('session-a', 12, true, true)
     updateShortTermRow('session-a', 6, false, true)
-    expect(shortTermUiSnapshot()).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: true, mounted: true } })
+    expect(shortTermUiSnapshot('session-a')).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: true, mounted: true } })
     updateShortTermRow('session-a', 12, false, false)
-    expect(shortTermUiSnapshot()).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: false, mounted: false } })
+    expect(shortTermUiSnapshot('session-a')).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: false, mounted: false } })
 
-    const visibleModal = {
-      hidden: false,
-      closest: () => null,
-      getAttribute: () => null,
-      getClientRects: () => [{}],
+    expect(shortTermUiSnapshot('session-b').row).toBeNull()
+    expect(shortTermUiSnapshot('').row).toBeNull()
+  })
+
+  it('drops the old dock on archive or blank navigation and restores only the selected session', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const instrumented = source.replace(
+      "    exports.name = 'stratagate-dsh'",
+      "    exports.__test = { shortTermFeed, shortTermMemoryUi, updateShortTermRow }; exports.name = 'stratagate-dsh'",
+    )
+    let definition: any
+    let effects: Array<() => void | (() => void)> = []
+    runInNewContext(instrumented, {
+      URLSearchParams,
+      window: { __ModuleLoader__: { load: (value: unknown) => { definition = value } }, clearTimeout: () => {} },
+    })
+    const plugin = definition.factory(() => ({
+      createElement: (type: unknown, props: any, ...children: unknown[]) => ({ type, props, children }),
+      useState: (initial: any) => [typeof initial === 'function' ? initial() : initial, () => {}],
+      useEffect: (effect: () => void | (() => void)) => { effects.push(effect) },
+    }))
+    const registrations: any[] = []
+    plugin.apply({ get: (name: string) => name === 'slots' ? {
+      inject: (_name: string, callback: () => void) => callback(),
+      register: (metadata: any, render: any) => { registrations.push({ metadata, render }) },
+    } : undefined })
+    const dock = registrations.find(({ metadata }) => metadata.id === 'stratagate-short-term-dock')
+    const { shortTermFeed, shortTermMemoryUi, updateShortTermRow } = plugin.__test
+    const seed = (sessionId: string, turns: number) => {
+      const feed = shortTermFeed(sessionId)
+      feed.snapshot = { payload: { namespace: 'project', data: {
+        blocks: [], openBlock: { turnRange: [1, turns], turns, capacity: 6 },
+      } }, loading: false, error: '' }
+      return feed
     }
-    expect(hasVisibleModalDialog({ querySelectorAll: () => [visibleModal] })).toBe(true)
-    expect(hasVisibleModalDialog({ querySelectorAll: () => [{ ...visibleModal, getAttribute: () => 'true' }] })).toBe(false)
-    expect(source).toContain('.sg-stm-dock{position:fixed;z-index:900')
-    expect(source).not.toContain('.sg-stm-dock{position:fixed;z-index:2147482400')
+    const oldFeed = seed('old', 1)
+    const mount = (sessionId: string) => {
+      effects = []
+      const entry = dock.render({ sessionId,
+        useSession: (select: any) => select({ turnEnds: new Map(), running: false }),
+        useSessions: (select: any) => select({ byId: {} }),
+        useWorkspaces: (select: any) => select({ items: [] }),
+      })
+      const tree = entry.type(entry.props)
+      const cleanups = effects.map((effect) => effect()).filter((value) => typeof value === 'function')
+      return { tree, unmount: () => cleanups.forEach((cleanup) => cleanup!()) }
+    }
+    updateShortTermRow('old', 1, true, true)
+    const inline = mount('old')
+    expect(inline.tree).toBeNull()
+    inline.unmount()
+    updateShortTermRow('old', 1, false, false)
+    const virtualized = mount('old')
+    expect(JSON.stringify(virtualized.tree)).toContain('短期记忆块 · 1/6')
+    expect(oldFeed.listeners.size).toBe(1)
+    virtualized.unmount() // The host removes the session-scoped slot on archive/home.
+    expect(oldFeed.listeners.size).toBe(0)
+    expect(shortTermMemoryUi.listeners.size).toBe(0)
+    expect(dock.render({})).toBeNull()
+    const blank = mount('new')
+    expect(blank.tree).toBeNull() // No turn-tail activation is needed to isolate a new session.
+    blank.unmount()
+    seed('other', 2)
+    const other = mount('other')
+    expect(JSON.stringify(other.tree)).toContain('短期记忆块 · 2/6')
+    expect(JSON.stringify(other.tree)).not.toContain('短期记忆块 · 1/6')
+    other.unmount()
+    const restored = mount('old')
+    expect(JSON.stringify(restored.tree)).toContain('短期记忆块 · 1/6')
+    restored.unmount()
   })
 
   it('maps progress and multiple persisted Blocks to only their real Turn positions', () => {
