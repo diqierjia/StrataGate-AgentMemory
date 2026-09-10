@@ -14,6 +14,8 @@ The plugin adapts DSH session events to the existing StrataGate memory engine; i
 
 ### Layered short-term memory
 
+Block status appears only in its own conversation. If the latest inline status row scrolls out of view, a compact status row appears below that conversation's composer. It disappears when you leave the conversation; the home screen and empty new conversations do not inherit the previous conversation's status.
+
 ![StrataGate layered short-term memory view](assets/stratagate-short-term-memory.png)
 
 ## How it is designed
