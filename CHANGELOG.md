@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Scope short-term Block status to the active conversation's composer dock, so archiving a conversation or opening the home screen or a blank conversation cannot retain another session's status. Keep the dock in normal page flow and hide it while the matching inline status row is visible.
+
 - Run folded-turn ingestion on a count-triggered, per-session background drain so the agent hot path does not wait for memory processing; failed and unprocessed turns are restored in order for a later retry or explicit flush.
 - Keep automatic long-term-memory retrieval keyed to the current user message, avoiding stale previous-topic context during consecutive conversations.
 - Safely omit `reasoningEffort` when model capability lookup fails or times out, and emit at most one fallback warning for each provider/model route.
