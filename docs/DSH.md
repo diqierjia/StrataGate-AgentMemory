@@ -14,7 +14,7 @@ The plugin adapts DSH session events to the existing StrataGate memory engine; i
 
 ### Layered short-term memory
 
-Block status appears only in its own conversation. If the latest inline status row scrolls out of view, a compact status row appears below that conversation's composer. It disappears when you leave the conversation; the home screen and empty new conversations do not inherit the previous conversation's status.
+Block status appears only below the corresponding answer and scrolls with the conversation at the same content level. It is never pinned beside the composer, and the home screen and empty new conversations cannot inherit the previous conversation's status. To hide these rows without changing memory capture or processing, turn off **Show short-term memory status in chat** under **More → Advanced Settings**.
 
 ![StrataGate layered short-term memory view](assets/stratagate-short-term-memory.png)
 
