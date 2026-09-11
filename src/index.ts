@@ -73,6 +73,7 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
 
   const effortEntry: EffortSettings = {
     structuredReasoningEffort: resolved.structuredReasoningEffort ?? 'auto',
+    showShortTermStatus: resolved.showShortTermStatus ?? true,
   }
   let effortSource = (): EffortSettings => effortEntry
   ctx.inject(['settings'], (settingsCtx) => {
