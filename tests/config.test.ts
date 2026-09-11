@@ -14,6 +14,7 @@ describe('DeepSeek Harness plugin config', () => {
       maxOutputTokens: 2048,
       structuredTaskTimeoutMs: 45000,
       structuredReasoningEffort: 'auto',
+      showShortTermStatus: true,
     })
   })
 
@@ -40,5 +41,14 @@ describe('DeepSeek Harness plugin config', () => {
       database: 'memory.db',
       structuredReasoningEffort: 'force-off',
     }).structuredReasoningEffort).toBe('force-off')
+  })
+
+  it('exposes a persistent switch for the inline short-term status', () => {
+    const field = Config.dict?.showShortTermStatus
+    expect(field?.meta).toMatchObject({
+      default: true,
+    })
+    expect(resolveConfig({ database: 'memory.db' }).showShortTermStatus).toBe(true)
+    expect(resolveConfig({ database: 'memory.db', showShortTermStatus: false }).showShortTermStatus).toBe(false)
   })
 })
