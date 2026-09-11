@@ -16,6 +16,7 @@ export interface Config {
   maxOutputTokens?: number
   structuredTaskTimeoutMs?: number
   structuredReasoningEffort?: StructuredReasoningEffortMode
+  showShortTermStatus?: boolean
 }
 
 export interface ResolvedConfig {
@@ -31,16 +32,21 @@ export interface ResolvedConfig {
   maxOutputTokens: number
   structuredTaskTimeoutMs?: number
   structuredReasoningEffort?: StructuredReasoningEffortMode
+  showShortTermStatus?: boolean
 }
 
 export interface StructuredReasoningEffortSettings {
   structuredReasoningEffort: StructuredReasoningEffortMode
+  showShortTermStatus: boolean
 }
 
 export const StructuredReasoningEffortSettings: z<StructuredReasoningEffortSettings> = z.object({
   structuredReasoningEffort: z.union(['auto', 'force-off'] as const).default('auto')
     .description('记忆处理结构化调用的推理档位策略')
     .comment('auto：仅在模型明确支持 off 时使用；force-off：优先使用 off，不支持或能力检查失败时安全降级，并对同一模型只告警一次。'),
+  showShortTermStatus: z.boolean().default(true)
+    .description('在聊天内容中显示短期记忆状态')
+    .comment('关闭后不再显示每轮回答下方的短期记忆状态行；记忆采集与处理不受影响。'),
 })
 
 export const Config: z<Config> = z.object({
@@ -58,6 +64,7 @@ export const Config: z<Config> = z.object({
   maxOutputTokens: z.natural().min(256).default(2_048),
   structuredTaskTimeoutMs: z.natural().min(1_000).default(45_000),
   structuredReasoningEffort: z.union(['auto', 'force-off'] as const).default('auto'),
+  showShortTermStatus: z.boolean().default(true),
 })
 
 export function resolveConfig(config: Config): ResolvedConfig {
@@ -82,5 +89,6 @@ export function resolveConfig(config: Config): ResolvedConfig {
     maxOutputTokens: Math.max(256, Math.floor(config.maxOutputTokens ?? 2_048)),
     structuredTaskTimeoutMs: Math.max(1_000, Math.floor(config.structuredTaskTimeoutMs ?? 45_000)),
     structuredReasoningEffort: config.structuredReasoningEffort ?? 'auto',
+    showShortTermStatus: config.showShortTermStatus ?? true,
   }
 }

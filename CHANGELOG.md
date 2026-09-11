@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Render short-term Block status only in the corresponding turn's content flow, so it scrolls with the conversation instead of staying beside the composer. Add a persistent Advanced Settings switch that hides this status without disabling memory capture or processing.
+
 - Run folded-turn ingestion on a count-triggered, per-session background drain so the agent hot path does not wait for memory processing; failed and unprocessed turns are restored in order for a later retry or explicit flush.
 - Keep automatic long-term-memory retrieval keyed to the current user message, avoiding stale previous-topic context during consecutive conversations.
 - Safely omit `reasoningEffort` when model capability lookup fails or times out, and emit at most one fallback warning for each provider/model route.

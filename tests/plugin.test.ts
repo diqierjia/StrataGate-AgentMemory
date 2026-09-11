@@ -15,7 +15,7 @@ describe('DSH plugin composition', () => {
   it.each([
     ['auto', undefined],
     ['force-off', 'force-off'],
-  ] as const)('registers the structured reasoning effort settings entry as %s', async (expected, configured) => {
+  ] as const)('registers the plugin settings entry with structured reasoning effort %s', async (expected, configured) => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-settings-'))
     const ctx = new Context()
     let registration: { namespace: unknown; entry: unknown } | undefined
@@ -40,7 +40,7 @@ describe('DSH plugin composition', () => {
 
       expect(registration).toEqual({
         namespace: plugin.STRATAGATE_SETTINGS_NAMESPACE,
-        entry: { structuredReasoningEffort: expected },
+        entry: { structuredReasoningEffort: expected, showShortTermStatus: true },
       })
     } finally {
       await ctx.fiber.dispose()

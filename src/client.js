@@ -6,10 +6,6 @@ window.__ModuleLoader__.load({
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
     const React = require('react')
-    const ReactDOM = (() => {
-      try { return require('react-dom') } catch {}
-      return globalThis.ReactDOM || null
-    })()
     const h = React.createElement
     const cytoscape = globalThis.__StrataGateGraphLibraries?.cytoscape
     const STAR_REPOSITORY_URL = 'https://github.com/diqierjia/StrataGate-AgentMemory'
@@ -217,7 +213,7 @@ window.__ModuleLoader__.load({
       .sg-status{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:5px;font-size:12px;font-weight:650}.sg-status:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}.sg-status.organized{color:var(--sg-good);background:var(--sg-good-soft)}.sg-status.processing{color:var(--sg-accent);background:var(--sg-accent-soft)}.sg-status.waiting{color:var(--sg-muted);background:var(--sg-soft)}.sg-status.failed{color:var(--sg-warn);background:var(--sg-warn-soft)}
       .sg-backbar{display:flex;align-items:center;min-height:35px;margin:-4px 0 13px}.sg-back{display:inline-flex;align-items:center;gap:6px;margin-left:-7px;padding:6px 7px;border-radius:6px;font-weight:650}.sg-detail-header{padding-bottom:16px;border-bottom:1px solid var(--sg-border)}.sg-detail-section{padding:18px 0;border-bottom:1px solid var(--sg-border)}.sg-detail-section:last-child{border-bottom:0}.sg-section-title{margin:0 0 11px;font-size:14px;font-weight:730}.sg-prose{margin:0;white-space:pre-wrap}.sg-facts{margin:0;padding-left:20px}.sg-facts li+li{margin-top:7px}.sg-related-list{display:flex;flex-direction:column}.sg-related{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border:0;border-bottom:1px solid var(--sg-border);background:transparent;text-align:left;cursor:pointer}.sg-related:last-child{border-bottom:0}.sg-related-name{color:var(--sg-accent)}.sg-related-time{flex:0 0 auto;color:var(--sg-muted);font-size:12px}
       .sg-source-label{display:flex;align-items:center;gap:8px}.sg-source-icon{color:var(--sg-muted)}.sg-tech{margin-top:13px}.sg-tech summary{color:var(--sg-muted);font-size:12px;cursor:pointer}.sg-tech-body{margin-top:10px;padding:11px;border-radius:7px;background:var(--sg-soft);font-size:12px}.sg-tech-row{display:grid;grid-template-columns:88px minmax(0,1fr);gap:9px;padding:3px 0}.sg-code{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.sg-raw-message{padding-top:10px;margin-top:10px;border-top:1px solid var(--sg-border)}
-      .sg-result-count{margin:0 0 9px;color:var(--sg-muted);font-size:12px}.sg-result-event{padding:8px 0;border-bottom:1px solid var(--sg-border)}.sg-result-event:last-child{border-bottom:0}.sg-pipeline{display:flex;flex-direction:column}.sg-stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:9px 0;border-bottom:1px solid var(--sg-border)}.sg-stage:last-child{border-bottom:0}.sg-stage-value{font-size:12px}.sg-stage-value.done{color:var(--sg-good)}.sg-stage-value.failed{color:var(--sg-danger)}.sg-stage-value.waiting{color:var(--sg-muted)}.sg-lambda-control{display:flex;align-items:center;justify-content:flex-end;gap:7px}.sg-number-input,.sg-effort-select{padding:4px 5px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface)}.sg-number-input{width:82px;text-align:right}.sg-effort-button{padding:4px 6px;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer;font-size:12px}.sg-effort-button:hover{background:var(--sg-soft);color:var(--sg-accent)}.sg-setting-note{margin:7px 0 11px;color:var(--sg-muted);font-size:12px}.sg-setting-suggestion{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;margin:4px 0 10px;border-radius:7px;background:var(--sg-soft);font-size:12px}.sg-save-button{align-self:flex-end;padding:7px 12px;margin-top:12px;border:0;border-radius:6px;background:var(--sg-accent);color:white;cursor:pointer}.sg-save-button:disabled{opacity:.5;cursor:not-allowed}.sg-safe-note{padding:11px 12px;margin-bottom:12px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-weight:650}.sg-error-note{margin:8px 0 0;color:var(--sg-muted);font-size:12px}
+      .sg-result-count{margin:0 0 9px;color:var(--sg-muted);font-size:12px}.sg-result-event{padding:8px 0;border-bottom:1px solid var(--sg-border)}.sg-result-event:last-child{border-bottom:0}.sg-pipeline{display:flex;flex-direction:column}.sg-stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:9px 0;border-bottom:1px solid var(--sg-border)}.sg-stage:last-child{border-bottom:0}.sg-stage-value{font-size:12px}.sg-stage-value.done{color:var(--sg-good)}.sg-stage-value.failed{color:var(--sg-danger)}.sg-stage-value.waiting{color:var(--sg-muted)}.sg-lambda-control{display:flex;align-items:center;justify-content:flex-end;gap:7px}.sg-number-input,.sg-effort-select{padding:4px 5px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface)}.sg-number-input{width:82px;text-align:right}.sg-effort-button{padding:4px 6px;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer;font-size:12px}.sg-effort-button:hover{background:var(--sg-soft);color:var(--sg-accent)}.sg-setting-switch{position:relative;width:38px;height:22px;padding:0;border:1px solid var(--sg-border);border-radius:999px;background:var(--sg-soft);cursor:pointer}.sg-setting-switch:before{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--sg-muted);transition:transform var(--sg-fast) var(--sg-ease),background-color var(--sg-fast) var(--sg-ease)}.sg-setting-switch[aria-checked="true"]{border-color:var(--sg-accent);background:var(--sg-accent)}.sg-setting-switch[aria-checked="true"]:before{background:#fff;transform:translateX(16px)}.sg-setting-switch:disabled{cursor:not-allowed;opacity:.5}.sg-setting-note{margin:7px 0 11px;color:var(--sg-muted);font-size:12px}.sg-setting-suggestion{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;margin:4px 0 10px;border-radius:7px;background:var(--sg-soft);font-size:12px}.sg-save-button{align-self:flex-end;padding:7px 12px;margin-top:12px;border:0;border-radius:6px;background:var(--sg-accent);color:white;cursor:pointer}.sg-save-button:disabled{opacity:.5;cursor:not-allowed}.sg-safe-note{padding:11px 12px;margin-bottom:12px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-weight:650}.sg-error-note{margin:8px 0 0;color:var(--sg-muted);font-size:12px}
       .sg-menu{display:grid;gap:7px}.sg-menu-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:11px;width:100%;padding:12px;border:1px solid transparent;border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 48%,transparent);text-align:left;cursor:pointer}.sg-menu-row:hover{border-color:color-mix(in srgb,var(--sg-accent) 22%,var(--sg-border));background:color-mix(in srgb,var(--sg-accent) 6%,var(--sg-surface));transform:translateY(-1px);box-shadow:0 8px 20px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-menu-row:hover .sg-menu-title,.sg-menu-row:hover .sg-chevron{color:var(--sg-accent)}.sg-menu-icon{width:32px;height:32px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--sg-accent) 14%,var(--sg-border));border-radius:8px;background:var(--sg-soft);color:var(--sg-muted);font-weight:700}.sg-menu-title{font-weight:700}.sg-menu-subtitle{color:var(--sg-muted);font-size:12px}.sg-counts{display:flex;gap:22px;padding:5px 0 18px;border-bottom:1px solid var(--sg-border)}.sg-count-value{font-size:22px;font-weight:760;letter-spacing:-.03em}.sg-count-label{color:var(--sg-muted);font-size:12px}.sg-structured-group{padding-top:17px}.sg-raw-group{padding:12px 0;border-bottom:1px solid var(--sg-border)}.sg-raw-group summary{cursor:pointer;font-weight:680}.sg-raw-json{max-height:360px;padding:11px;margin:10px 0 0;overflow:auto;border-radius:7px;background:var(--sg-soft)}
       .sg-import-card{padding:15px;border:1px solid color-mix(in srgb,var(--sg-accent) 22%,var(--sg-border));border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 72%,transparent);box-shadow:0 8px 24px color-mix(in srgb,var(--sg-text) 5%,transparent)}.sg-import-card textarea{width:100%;min-height:270px;padding:11px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page);resize:vertical;outline:0;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.sg-import-card textarea:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-import-actions{display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap}.sg-import-button{padding:8px 13px;border:1px solid var(--sg-accent);border-radius:7px;background:var(--sg-accent);color:#fff;cursor:pointer;font-weight:680}.sg-import-button:disabled{cursor:wait;opacity:.6}.sg-import-hint{margin:8px 0 0;color:var(--sg-muted);font-size:12px}.sg-import-result{margin-top:12px;padding:10px 11px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-size:12px}.sg-import-error{margin-top:12px;padding:10px 11px;border-radius:7px;background:var(--sg-danger-soft);color:var(--sg-danger);font-size:12px}
       .sg-import-overlay{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.52);backdrop-filter:blur(2px);animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-import-dialog{width:min(720px,calc(100vw - 28px));max-height:calc(100vh - 36px);overflow:auto;padding:14px;border:1px solid color-mix(in srgb,var(--sg-border) 90%,#fff 10%);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.42)}.sg-import-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}.sg-import-dialog-title{margin:0;font-size:18px;font-weight:760}.sg-import-step{padding:12px;margin-top:10px;border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 78%,transparent)}.sg-import-step-head{display:flex;align-items:center;gap:9px;margin-bottom:9px}.sg-import-step-num{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--sg-text);color:var(--sg-page);font-weight:760}.sg-import-step-title{font-weight:720}.sg-import-prompt{max-height:185px;padding:10px;overflow:auto;border-radius:7px;background:var(--sg-page);color:var(--sg-muted);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.sg-import-dialog .sg-import-card{padding:0;border:0;box-shadow:none;background:transparent}.sg-import-dialog .sg-import-card textarea{min-height:165px;background:var(--sg-page)}.sg-import-dialog-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}.sg-import-cancel{padding:8px 18px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;cursor:pointer}.sg-import-dialog .sg-import-button{padding:8px 18px}.sg-import-copy{margin-left:auto;padding:6px 11px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);cursor:pointer;font-size:12px}.sg-import-copy:hover{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-import-loading{color:var(--sg-muted);font-size:12px}.sg-import-preview{display:grid;gap:8px;margin-top:10px}.sg-import-preview-item{padding:10px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page)}.sg-import-preview-title{font-weight:700}.sg-import-preview-meta{display:flex;gap:8px;margin-top:5px;color:var(--sg-muted);font-size:12px}.sg-import-preview-reason{margin-top:5px;font-size:12px}.sg-import-review{display:flex;gap:7px;align-items:flex-start;margin-top:8px;color:var(--sg-warn);font-size:12px}
@@ -261,7 +257,6 @@ window.__ModuleLoader__.load({
       .sg-stm-detail{margin:7px 0 4px;padding:10px 0 3px 14px;border-left:1px solid color-mix(in srgb,var(--sgm-accent) 42%,var(--sgm-border));color:var(--sgm-secondary);animation:sg-stm-open 180ms cubic-bezier(.22,1,.36,1) both}.sg-stm-detail-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px}.sg-stm-detail-head strong{color:var(--sgm-text);font-size:12px;font-weight:670}.sg-stm-detail-head span{color:var(--sgm-muted);font-size:11px}.sg-stm-facts{display:flex;gap:5px 12px;flex-wrap:wrap;margin-bottom:11px;color:var(--sgm-muted);font-size:11px}.sg-stm-facts strong{color:var(--sgm-secondary);font-weight:650}
       .sg-stm-layers{display:grid;grid-template-columns:repeat(6,minmax(70px,1fr));gap:3px;overflow-x:auto;padding:2px 0 5px;scrollbar-width:thin}.sg-stm-layer{position:relative;min-width:70px;padding:6px 4px 7px;border:0;border-radius:6px;background:transparent;color:var(--sgm-muted);font:inherit;text-align:center;cursor:pointer}.sg-stm-layer:hover{background:var(--sgm-soft);color:var(--sgm-secondary)}.sg-stm-layer.selected{background:color-mix(in srgb,var(--sgm-accent) 8%,transparent);color:var(--sgm-text)}.sg-stm-layer.actual:after{content:"";position:absolute;left:22%;right:22%;bottom:1px;height:2px;border-radius:2px;background:var(--sgm-accent)}.sg-stm-layer-level{display:block;font-weight:720}.sg-stm-layer-name{display:block;margin-top:1px;font-size:10px}.sg-stm-layer-size{display:block;margin-top:3px;color:var(--sgm-muted);font-size:9px}.sg-stm-layer-current{display:block;min-height:14px;margin-top:2px;color:var(--sgm-accent);font-size:9px;font-weight:680}
       .sg-stm-preview{margin-top:8px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--sgm-border) 78%,transparent)}.sg-stm-preview-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:7px}.sg-stm-preview-head strong{color:var(--sgm-text);font-weight:670}.sg-stm-preview-head span{color:var(--sgm-muted);font-size:10px}.sg-stm-content{max-height:320px;margin:0;padding:0 4px 1px 0;overflow:auto;color:var(--sgm-secondary);font:12px/1.62 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;white-space:pre-wrap;overflow-wrap:anywhere}.sg-stm-loading,.sg-stm-error{padding:10px 0;color:var(--sgm-muted)}.sg-stm-error{color:var(--dsw-alias-state-error-primary,#c44)}
-      .sg-stm-dock{position:fixed;z-index:900;padding:5px 10px 6px;border:1px solid color-mix(in srgb,var(--sgm-border) 82%,transparent);border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2,#fff) 94%,transparent);box-shadow:0 10px 30px rgba(0,0,0,.14);backdrop-filter:blur(14px);animation:sg-stm-open 180ms cubic-bezier(.22,1,.36,1) both}.sg-stm-dock .sg-stm-line{margin:0}.sg-stm-dock .sg-stm-detail{max-height:min(52vh,430px);margin-bottom:2px;overflow:auto}.sg-stm-dock .sg-stm-rule{opacity:.62}
       @keyframes sg-stm-open{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}@keyframes sg-stm-pulse{50%{opacity:.32;transform:scale(.78)}}
       @media (max-width:620px){.sg-stm-line{gap:7px}.sg-stm-line-copy{white-space:normal}.sg-stm-detail{padding-left:10px}.sg-stm-detail-head{display:block}.sg-stm-detail-head span{display:block;margin-top:2px}.sg-stm-layers{grid-template-columns:repeat(6,76px)}}
       @media (prefers-reduced-motion:reduce){.sg-stm *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
@@ -668,11 +663,6 @@ window.__ModuleLoader__.load({
     }
 
     const shortTermMemoryFeeds = new Map()
-    const shortTermMemoryUi = {
-      activeSessionId: '',
-      rows: new Map(),
-      listeners: new Set(),
-    }
 
     function shortTermLayerName(level) {
       return ['索引', '摘要', '关键事实', '精简对话', '近原文', '原文'][Number(level)] || '会话视图'
@@ -720,24 +710,6 @@ window.__ModuleLoader__.load({
       return Array.isArray(data?.items) ? data.items : []
     }
 
-    function shortTermCurrentDisplay(data) {
-      const open = data?.openBlock
-      if (Array.isArray(open?.turnRange)) {
-        const turn = Number(open.turnRange[1])
-        const display = shortTermTurnDisplay(data, turn)
-        if (display) return { ...display, turn }
-      }
-      const block = shortTermBlocks(data).slice().sort((left, right) => {
-        const leftTurn = Array.isArray(left.turnRange) ? Number(left.turnRange[1]) : 0
-        const rightTurn = Array.isArray(right.turnRange) ? Number(right.turnRange[1]) : 0
-        return rightTurn - leftTurn || Number(right.sequence || right.blockIndex || 0) - Number(left.sequence || left.blockIndex || 0)
-      })[0]
-      if (!block || !Array.isArray(block.turnRange)) return null
-      const turn = Number(block.turnRange[1])
-      const display = shortTermTurnDisplay(data, turn)
-      return display ? { ...display, turn } : null
-    }
-
     function shortTermBlockNumber(block) {
       return Number(block?.blockIndex || block?.sequence || 1)
     }
@@ -755,35 +727,8 @@ window.__ModuleLoader__.load({
         + ' · 已压缩为 L' + Number(display.block.currentLevel) + ' · ' + Number(display.block.compressionPercent ?? 0) + '%'
     }
 
-    function shortTermUiSnapshot() {
-      const sessionId = shortTermMemoryUi.activeSessionId
-      return { sessionId, row: sessionId ? shortTermMemoryUi.rows.get(sessionId) || null : null }
-    }
-
-    function publishShortTermUi() {
-      const snapshot = shortTermUiSnapshot()
-      for (const listener of shortTermMemoryUi.listeners) listener(snapshot)
-    }
-
-    function activateShortTermSession(sessionId) {
-      if (!sessionId || shortTermMemoryUi.activeSessionId === sessionId) return
-      shortTermMemoryUi.activeSessionId = sessionId
-      publishShortTermUi()
-    }
-
-    function updateShortTermRow(sessionId, turn, visible, mounted) {
-      const current = shortTermMemoryUi.rows.get(sessionId)
-      if (mounted) {
-        if (!current || Number(turn) >= Number(current.turn)) {
-          shortTermMemoryUi.rows.set(sessionId, { turn: Number(turn), visible: Boolean(visible), mounted: true })
-          publishShortTermUi()
-        }
-        return
-      }
-      if (current && Number(current.turn) === Number(turn)) {
-        shortTermMemoryUi.rows.set(sessionId, { ...current, visible: false, mounted: false })
-        publishShortTermUi()
-      }
+    function shortTermStatusVisible(settingsSnapshot) {
+      return settingsSnapshot?.value?.showShortTermStatus !== false
     }
 
     function shortTermNeedsPolling(payload) {
@@ -897,31 +842,6 @@ window.__ModuleLoader__.load({
       return state
     }
 
-    function useShortTermFeedSnapshot(sessionId) {
-      const [state, setState] = React.useState(() => sessionId ? shortTermFeed(sessionId).snapshot : { payload: null, loading: false, error: '' })
-      React.useEffect(() => {
-        if (!sessionId) {
-          setState({ payload: null, loading: false, error: '' })
-          return undefined
-        }
-        const feed = shortTermFeed(sessionId)
-        feed.listeners.add(setState)
-        setState(feed.snapshot)
-        return () => {
-          feed.listeners.delete(setState)
-          if (feed.listeners.size === 0) {
-            if (feed.pollTimer !== null) {
-              window.clearTimeout(feed.pollTimer)
-              feed.pollTimer = null
-            }
-            feed.controller?.abort()
-            feed.controller = null
-          }
-        }
-      }, [sessionId])
-      return state
-    }
-
     function ShortTermMemoryBlockDetail({ namespace, block }) {
       const actualLayer = Number(block.currentLevel)
       const [selectedPreviewLayer, setSelectedPreviewLayer] = React.useState(actualLayer)
@@ -993,39 +913,19 @@ window.__ModuleLoader__.load({
       const data = feed.payload?.data
       const display = shortTermTurnDisplay(data, matched.turn)
       const [expanded, setExpanded] = React.useState(false)
-      const statusRef = React.useRef(null)
-      React.useEffect(() => activateShortTermSession(sessionId), [sessionId])
       React.useEffect(() => {
         if (display?.kind !== 'block') setExpanded(false)
       }, [display?.kind, display?.block?.id])
-      React.useEffect(() => {
-        if (!display || !statusRef.current) return undefined
-        const turn = Number(matched.turn)
-        const node = statusRef.current
-        const rect = node.getBoundingClientRect?.()
-        const initiallyVisible = Boolean(rect && rect.bottom > 0 && rect.top < window.innerHeight)
-        updateShortTermRow(sessionId, turn, initiallyVisible, true)
-        if (typeof IntersectionObserver !== 'function') return () => updateShortTermRow(sessionId, turn, false, false)
-        const observer = new IntersectionObserver((entries) => {
-          const entry = entries[0]
-          updateShortTermRow(sessionId, turn, Boolean(entry?.isIntersecting && entry.intersectionRatio > 0), true)
-        }, { threshold: [0, 0.01] })
-        observer.observe(node)
-        return () => {
-          observer.disconnect()
-          updateShortTermRow(sessionId, turn, false, false)
-        }
-      }, [display?.kind, display?.block?.id, display?.current, display?.capacity, matched.turn, sessionId])
       if (!display) return null
       const rule = () => h('span', { className: 'sg-stm-rule', 'aria-hidden': 'true' })
-      if (display.kind === 'progress') return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-progress' },
+      if (display.kind === 'progress') return h('div', { className: 'sg-stm', 'data-testid': 'stratagate-short-term-progress' },
         h('div', { className: 'sg-stm-line', role: 'status' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
-      if (display.kind === 'processing') return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-processing' },
+      if (display.kind === 'processing') return h('div', { className: 'sg-stm', 'data-testid': 'stratagate-short-term-processing' },
         h('div', { className: 'sg-stm-line processing', role: 'status', 'aria-live': 'polite' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
-      if (display.kind === 'failed') return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-failed' },
+      if (display.kind === 'failed') return h('div', { className: 'sg-stm', 'data-testid': 'stratagate-short-term-failed' },
         h('div', { className: 'sg-stm-line', role: 'status' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
       const block = display.block
-      return h('div', { ref: statusRef, className: 'sg-stm', 'data-testid': 'stratagate-short-term-block', 'data-block-id': block.id },
+      return h('div', { className: 'sg-stm', 'data-testid': 'stratagate-short-term-block', 'data-block-id': block.id },
         h('div', { className: 'sg-stm-line' }, rule(),
           h('button', { type: 'button', className: 'sg-stm-toggle', 'aria-expanded': expanded, onClick: () => setExpanded((value) => !value) },
             shortTermDisplayLabel(display),
@@ -1033,90 +933,11 @@ window.__ModuleLoader__.load({
         expanded ? h(ShortTermMemoryBlockDetail, { namespace: feed.payload.namespace, block }) : null)
     }
 
-    function hasVisibleModalDialog(documentRef = typeof document === 'undefined' ? null : document) {
-      if (!documentRef?.querySelectorAll) return false
-      return [...documentRef.querySelectorAll('[aria-modal="true"]')].some((element) => !element.closest?.('.sg-stm-dock')
-        && !element.hidden
-        && element.getAttribute?.('aria-hidden') !== 'true'
-        && (typeof element.getClientRects !== 'function' || element.getClientRects().length > 0))
-    }
-
-    function findShortTermDockAnchor() {
-      if (typeof document === 'undefined' || hasVisibleModalDialog()) return null
-      const candidates = [...document.querySelectorAll('textarea:not([disabled]),[contenteditable="true"],[role="textbox"]')]
-        .filter((element) => !element.closest?.('.sg-memory,.sg-citation-dialog,.sg-stm-dock'))
-        .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-        .filter(({ rect }) => rect.width >= 180 && rect.height >= 20 && rect.bottom > 0 && rect.top < window.innerHeight)
-        .sort((left, right) => right.rect.bottom - left.rect.bottom)
-      return candidates[0] || null
-    }
-
-    function shortTermDockPlacement() {
-      const anchor = findShortTermDockAnchor()
-      if (!anchor) return { visible: false, left: 12, bottom: 84, width: 320 }
-      const width = Math.min(640, Math.max(280, anchor.rect.width))
-      const left = Math.min(Math.max(12, anchor.rect.left + (anchor.rect.width - width) / 2), Math.max(12, window.innerWidth - width - 12))
-      return { visible: true, left, bottom: Math.max(12, window.innerHeight - anchor.rect.top + 8), width }
-    }
-
-    function ShortTermMemoryDock() {
-      const [ui, setUi] = React.useState(shortTermUiSnapshot)
-      const [expanded, setExpanded] = React.useState(false)
-      const [placement, setPlacement] = React.useState(shortTermDockPlacement)
-      React.useEffect(() => {
-        shortTermMemoryUi.listeners.add(setUi)
-        setUi(shortTermUiSnapshot())
-        return () => shortTermMemoryUi.listeners.delete(setUi)
-      }, [])
-      const feed = useShortTermFeedSnapshot(ui.sessionId)
-      const display = shortTermCurrentDisplay(feed.payload?.data)
-      const displayKey = display?.kind + ':' + (display?.block?.id || display?.turn || '')
-      React.useEffect(() => setExpanded(false), [ui.sessionId, displayKey])
-      React.useEffect(() => {
-        let frame = null
-        const update = () => {
-          if (frame !== null) return
-          frame = window.requestAnimationFrame(() => {
-            frame = null
-            setPlacement(shortTermDockPlacement())
-          })
-        }
-        update()
-        window.addEventListener('resize', update)
-        window.addEventListener('scroll', update, true)
-        const mutationObserver = typeof MutationObserver === 'function' && document.body
-          ? new MutationObserver(update)
-          : null
-        mutationObserver?.observe(document.body, { childList: true, subtree: true })
-        return () => {
-          if (frame !== null) window.cancelAnimationFrame(frame)
-          window.removeEventListener('resize', update)
-          window.removeEventListener('scroll', update, true)
-          mutationObserver?.disconnect()
-        }
-      }, [ui.sessionId, displayKey])
-      const inlineVisible = Boolean(display && ui.row?.mounted && ui.row.visible && Number(ui.row.turn) === Number(display.turn))
-      if (!display || inlineVisible || !placement.visible) return null
-      const rule = () => h('span', { className: 'sg-stm-rule', 'aria-hidden': 'true' })
-      const ready = display.kind === 'block'
-      const dock = h('section', {
-        className: 'sg-stm sg-stm-dock',
-        style: { left: placement.left + 'px', bottom: placement.bottom + 'px', width: placement.width + 'px' },
-        'data-testid': 'stratagate-short-term-dock',
-        'aria-label': '当前短期记忆状态',
-      },
-      h('div', { className: 'sg-stm-line ' + (display.kind === 'processing' ? 'processing' : ''), role: 'status', 'aria-live': display.kind === 'processing' ? 'polite' : undefined }, rule(),
-        ready ? h('button', { type: 'button', className: 'sg-stm-toggle', 'aria-expanded': expanded, onClick: () => setExpanded((value) => !value) },
-          shortTermDisplayLabel(display), h('span', { className: 'sg-stm-chevron ' + (expanded ? 'open' : ''), 'aria-hidden': 'true' }, '›'))
-          : h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()),
-      expanded && ready ? h(ShortTermMemoryBlockDetail, { namespace: feed.payload.namespace, block: display.block }) : null)
-      return ReactDOM?.createPortal && document.body ? ReactDOM.createPortal(dock, document.body) : dock
-    }
-
-    function MemoryCitationTail({ matched, sessionId, useSession, useSessions, useWorkspaces }) {
+    function MemoryCitationTail({ matched, sessionId, useSession, useSessions, useWorkspaces, usePluginSettings }) {
       const citations = matched.citations
       const retrievedCount = matched.retrievedCount
       const retrievalGroups = matched.retrievalGroups
+      const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
       const [showRetrieved, setShowRetrieved] = React.useState(false)
       const [selected, setSelected] = React.useState(null)
       const [detail, setDetail] = React.useState(null)
@@ -1140,7 +961,9 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onKeyDown)
       }, [selected])
       return h(React.Fragment, null,
-        h(ShortTermMemoryTurnStatus, { matched, sessionId, useSession, useSessions, useWorkspaces }),
+        shortTermStatusVisible(pluginSettings)
+          ? h(ShortTermMemoryTurnStatus, { matched, sessionId, useSession, useSessions, useWorkspaces })
+          : null,
         citations.length ? h('div', { className: 'sg-answer-citations', 'data-testid': 'stratagate-answer-citations' },
           h('span', { className: 'sg-answer-citations-label' }, '本回答参考了 ' + citations.length + ' 条记忆'),
           h('div', { className: 'sg-answer-citations-list' }, citations.map((citation) => {
@@ -2532,7 +2355,7 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null, h(BackBar, { label: '更多', onBack }), h('div', { className: 'sg-intro' }, h('h2', null, '原始数据'), h('p', null, '供排查问题使用的内部字段与 JSON')), groups.map(([label, value, total]) => h('details', { key: label, className: 'sg-raw-group' }, h('summary', null, label + ' (' + (Array.isArray(value) && Number(total) > value.length ? '已加载 ' + value.length + ' / 共 ' + total : Array.isArray(value) ? value.length : ((value.nodes?.length || 0) + (value.edges?.length || 0))) + ')'), h('pre', { className: 'sg-raw-json sg-code' }, JSON.stringify(value, null, 2)))))
     }
 
-    function SettingsPage({ selected, namespace, onBack, updateSettings, savingSettings, useStructuredEffort, setEffort, resetEffort }) {
+    function SettingsPage({ selected, namespace, onBack, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setShortTermStatus }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       React.useEffect(() => {
@@ -2545,17 +2368,21 @@ window.__ModuleLoader__.load({
       const changed = valid && (turnSizeValue !== selected.blockTurnSize || lambdaValue !== selected.blockDecayLambda)
       const suggestedLambda = Math.round(((selected.blockDecayLambda ?? 0.3) * turnSizeValue / (selected.blockTurnSize || 6)) / 0.05) * 0.05
       const showSuggestion = Number.isSafeInteger(turnSizeValue) && turnSizeValue >= 1 && turnSizeValue !== selected.blockTurnSize
-      const effortSnapshot = useStructuredEffort ? useStructuredEffort((state) => state) : null
-      const effortMode = effortSnapshot?.value?.structuredReasoningEffort || 'auto'
-      const effortOverridden = effortSnapshot?.user?.structuredReasoningEffort !== undefined
-      const effortWritable = effortSnapshot?.writable === true
+      const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
+      const effortMode = pluginSettings?.value?.structuredReasoningEffort || 'auto'
+      const effortOverridden = pluginSettings?.user?.structuredReasoningEffort !== undefined
+      const settingsWritable = pluginSettings?.writable === true
+      const showShortTermStatus = shortTermStatusVisible(pluginSettings)
       const rows = [['Schema 版本', 'v' + selected.schemaVersion], ['模型', '由 DSH 当前模型配置提供'], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
       return h(React.Fragment, null,
         h(BackBar, { label: '更多', onBack }),
         h('div', { className: 'sg-intro' }, h('h2', null, '高级设置'), h('p', null, '修改后会立即应用到所有已有工作区，并作为新工作区的默认值。')),
         h('div', { className: 'sg-pipeline' },
+          h('div', { className: 'sg-stage' }, h('span', null, '聊天中显示短期记忆状态'),
+            h('button', { type: 'button', className: 'sg-setting-switch', role: 'switch', 'aria-checked': showShortTermStatus, 'aria-label': '聊天中显示短期记忆状态', disabled: !settingsWritable, onClick: () => { if (setShortTermStatus) void setShortTermStatus(!showShortTermStatus) } })),
+          h('p', { className: 'sg-setting-note' }, '状态行跟随对应回答一起滚动；关闭只会隐藏显示，不影响记忆采集和处理。'),
           h('div', { className: 'sg-stage' }, h('span', null, '结构化推理档位'), h('span', { className: 'sg-lambda-control' },
-            h('select', { className: 'sg-effort-select', value: effortMode, disabled: !effortWritable, onChange: (event) => { if (setEffort) void setEffort(event.target.value) }, 'aria-label': '结构化推理档位策略' },
+            h('select', { className: 'sg-effort-select', value: effortMode, disabled: !settingsWritable, onChange: (event) => { if (setEffort) void setEffort(event.target.value) }, 'aria-label': '结构化推理档位策略' },
               h('option', { value: 'auto' }, 'auto（自动）'),
               h('option', { value: 'force-off' }, 'force-off（强制关闭）')),
             effortOverridden ? h('button', { type: 'button', className: 'sg-effort-button', onClick: () => { if (resetEffort) void resetEffort() } }, '恢复默认') : h('span', { className: 'sg-stage-value waiting' }, '默认'))),
@@ -2570,7 +2397,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function MemoryPage({ useWorkspaces, useSessions, navigationState, useStructuredEffort, setEffort, resetEffort }) {
+    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setShortTermStatus }) {
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -2772,7 +2599,7 @@ window.__ModuleLoader__.load({
       else if (view.name === 'system') content = h(SystemPage, { selected, blocks: data.blocks, onBack: moreBack, refresh })
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, auditPage: data.pagination?.audit, namespace, onBack: moreBack })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: moreBack })
-      else if (view.name === 'settings') content = h(SettingsPage, { selected, namespace, onBack: moreBack, updateSettings, savingSettings, useStructuredEffort, setEffort, resetEffort })
+      else if (view.name === 'settings') content = h(SettingsPage, { selected, namespace, onBack: moreBack, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setShortTermStatus })
       else if (view.name === 'support') content = h(SupportPage, { namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         h(FailureAlert, { count: failedCount, onOpen: () => setView({ name: 'status' }) }),
@@ -2800,6 +2627,8 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       const slots = ctx.get('slots')
       if (!slots) return
+      const settingsScope = ctx.get('settingsScope')
+      const pluginSettingsScope = settingsScope ? settingsScope.bind({ namespace: 'stratagate-memory' }) : null
       const uiConversation = ctx.get('uiConversation')
       if (uiConversation) {
         uiConversation.events.register(memoryCitationsDefinition)
@@ -2807,26 +2636,19 @@ window.__ModuleLoader__.load({
         slots.inject('conversation.chat.turnTail', () => slots.register({
           name: 'conversation.chat.turnTail',
           select: selectMemoryCitations,
+          inject: () => pluginSettingsScope ? { hooks: { pluginSettings: pluginSettingsScope } } : {},
         }, MemoryCitationTail))
       }
-      try {
-        slots.inject('sidebar.footer.action', () => slots.register({
-          name: 'sidebar.footer.action',
-          id: 'stratagate-short-term-dock',
-          order: 40,
-        }, ShortTermMemoryDock))
-      } catch {}
-      const settingsScope = ctx.get('settingsScope')
-      const effortScope = settingsScope ? settingsScope.bind({ namespace: 'stratagate-memory' }) : null
       slots.inject('settings.section', () => slots.register({
         name: 'settings.section',
         id: 'stratagate-memory',
         order: 32,
         label: () => 'StrataGate-AgentMemory',
         inject: () => ({
-          hooks: { structuredEffort: effortScope },
-          setEffort: effortScope ? (mode) => effortScope.set('structuredReasoningEffort', mode) : null,
-          resetEffort: effortScope ? () => effortScope.unset('structuredReasoningEffort') : null,
+          hooks: { pluginSettings: pluginSettingsScope },
+          setEffort: pluginSettingsScope ? (mode) => pluginSettingsScope.set('structuredReasoningEffort', mode) : null,
+          resetEffort: pluginSettingsScope ? () => pluginSettingsScope.unset('structuredReasoningEffort') : null,
+          setShortTermStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showShortTermStatus', visible) : null,
         }),
       }, (props) => h(MemoryPage, props)))
       if (typeof document !== 'undefined') {

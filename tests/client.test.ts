@@ -165,7 +165,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('disposeDeepLink()')
   })
 
-  it('keeps session status inline and registers a composer dock for virtualized conversations', () => {
+  it('keeps short-term status in the chat content flow and does not register a composer dock', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     let definition: any
     runInNewContext(source, {
@@ -181,14 +181,27 @@ describe('StrataGate Web client contract', () => {
       inject: (_name: string, callback: () => void) => callback(),
       register: (metadata: unknown, render: unknown) => { registrations.push({ metadata, render }) },
     }
-    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'uiConversation' ? { events: { register: () => {} } } : undefined })
+    const settingWrites: unknown[][] = []
+    const pluginSettings = {
+      getSnapshot: () => ({ value: { showShortTermStatus: true } }),
+      subscribe: () => () => {},
+      set: (...args: unknown[]) => { settingWrites.push(args) },
+      unset: () => {},
+    }
+    plugin.apply({ get: (name: string) => name === 'slots'
+      ? slots
+      : name === 'uiConversation'
+        ? { events: { register: () => {} } }
+        : name === 'settingsScope'
+          ? { bind: () => pluginSettings }
+          : undefined })
     const tail = registrations.find(({ metadata }) => metadata.name === 'conversation.chat.turnTail')
-    const dock = registrations.find(({ metadata }) => metadata.id === 'stratagate-short-term-dock')
+    const settings = registrations.find(({ metadata }) => metadata.name === 'settings.section')
     expect(typeof tail.render).toBe('function')
-    expect(dock.metadata).toMatchObject({ name: 'sidebar.footer.action', order: 40 })
-    expect(typeof dock.render).toBe('function')
+    expect(tail.metadata.inject()).toEqual({ hooks: { pluginSettings } })
+    settings.metadata.inject().setShortTermStatus(false)
+    expect(settingWrites).toEqual([['showShortTermStatus', false]])
     expect(source).toContain('function ShortTermMemoryTurnStatus({ matched, sessionId, useSession, useSessions, useWorkspaces })')
-    expect(source).toContain('function ShortTermMemoryDock()')
     expect(source).toContain('短期记忆块 · ')
     expect(source).toContain('正在压缩…')
     expect(source).toContain('已压缩为 L')
@@ -197,18 +210,20 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('data?.activeThreadId === feed.sessionId')
     expect(source).toContain('void refreshShortTermFeed(feed, workspacePath, signal, true)')
     expect(source).toContain("if (reason?.name === 'AbortError') throw reason")
-    expect(source).toContain('new IntersectionObserver')
-    expect(source).toContain('ReactDOM.createPortal(dock, document.body)')
-    expect(source).toContain('ui.row?.mounted && ui.row.visible')
+    expect(registrations.some(({ metadata }) => metadata.name === 'conversation.composer.dock')).toBe(false)
+    expect(registrations.some(({ metadata }) => metadata.name === 'sidebar.footer.action')).toBe(false)
+    expect(source).not.toContain('ShortTermMemoryDock')
+    expect(source).not.toContain('sg-stm-dock')
+    expect(source).not.toContain('IntersectionObserver')
     expect(source).not.toContain('MemoryCompressionWidget')
     expect(source).not.toContain('sg-compression-panel')
   })
 
-  it('selects the current short-term state and hands off to the dock when the latest row is virtualized', () => {
+  it('defaults the inline short-term status to visible and respects the persisted setting', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const instrumented = source.replace(
       "    exports.name = 'stratagate-dsh'",
-      "    exports.__test = { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, activateShortTermSession, updateShortTermRow, hasVisibleModalDialog }; exports.name = 'stratagate-dsh'",
+      "    exports.__test = { shortTermStatusVisible }; exports.name = 'stratagate-dsh'",
     )
     let definition: any
     runInNewContext(instrumented, {
@@ -219,37 +234,11 @@ describe('StrataGate Web client contract', () => {
       if (name !== 'react') throw new Error(`unexpected client dependency: ${name}`)
       return { createElement: (...args: unknown[]) => args }
     })
-    const { shortTermCurrentDisplay, shortTermDisplayLabel, shortTermUiSnapshot, activateShortTermSession, updateShortTermRow, hasVisibleModalDialog } = plugin.__test
-    const latestBlock = { id: 'block-2', sequence: 2, turnRange: [7, 12], processingStatus: 'ready', currentLevel: 1, compressionPercent: 22 }
-    const open = shortTermCurrentDisplay({
-      blockTurnSize: 6,
-      blocks: [latestBlock],
-      openBlock: { turnRange: [13, 14], turns: 2, capacity: 6 },
-    })
-    expect(open).toMatchObject({ kind: 'progress', turn: 14, current: 2, capacity: 6 })
-    expect(shortTermDisplayLabel(open)).toBe('短期记忆块 · 2/6')
-
-    const sealed = shortTermCurrentDisplay({ blocks: [latestBlock], openBlock: { turnRange: null } })
-    expect(sealed).toMatchObject({ kind: 'block', turn: 12, block: { id: 'block-2' } })
-    expect(shortTermDisplayLabel(sealed)).toBe('Block 2 · 第 7–12 轮 · 已压缩为 L1 · 22%')
-
-    activateShortTermSession('session-a')
-    updateShortTermRow('session-a', 12, true, true)
-    updateShortTermRow('session-a', 6, false, true)
-    expect(shortTermUiSnapshot()).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: true, mounted: true } })
-    updateShortTermRow('session-a', 12, false, false)
-    expect(shortTermUiSnapshot()).toEqual({ sessionId: 'session-a', row: { turn: 12, visible: false, mounted: false } })
-
-    const visibleModal = {
-      hidden: false,
-      closest: () => null,
-      getAttribute: () => null,
-      getClientRects: () => [{}],
-    }
-    expect(hasVisibleModalDialog({ querySelectorAll: () => [visibleModal] })).toBe(true)
-    expect(hasVisibleModalDialog({ querySelectorAll: () => [{ ...visibleModal, getAttribute: () => 'true' }] })).toBe(false)
-    expect(source).toContain('.sg-stm-dock{position:fixed;z-index:900')
-    expect(source).not.toContain('.sg-stm-dock{position:fixed;z-index:2147482400')
+    const { shortTermStatusVisible } = plugin.__test
+    expect(shortTermStatusVisible(null)).toBe(true)
+    expect(shortTermStatusVisible({ value: {} })).toBe(true)
+    expect(shortTermStatusVisible({ value: { showShortTermStatus: true } })).toBe(true)
+    expect(shortTermStatusVisible({ value: { showShortTermStatus: false } })).toBe(false)
   })
 
   it('maps progress and multiple persisted Blocks to only their real Turn positions', () => {
@@ -639,10 +628,13 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, useStructuredEffort, setEffort, resetEffort })')
+    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setShortTermStatus })')
     expect(source).toContain("settingsScope.bind({ namespace: 'stratagate-memory' })")
-    expect(source).toContain("effortScope.set('structuredReasoningEffort', mode)")
-    expect(source).toContain("effortScope.unset('structuredReasoningEffort')")
+    expect(source).toContain("pluginSettingsScope.set('structuredReasoningEffort', mode)")
+    expect(source).toContain("pluginSettingsScope.unset('structuredReasoningEffort')")
+    expect(source).toContain("pluginSettingsScope.set('showShortTermStatus', visible)")
+    expect(source).toContain("role: 'switch', 'aria-checked': showShortTermStatus")
+    expect(source).toContain('状态行跟随对应回答一起滚动')
     expect(source).toContain('const workspaceItems = useWorkspaces((state) => state.items)')
     expect(source).toContain('const sessionById = useSessions((state) => state.byId || {})')
     expect(source).toContain("String(session?.title || '').trim()")
