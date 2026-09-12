@@ -26,6 +26,9 @@ jobs:
           node-version: 24.x
           cache: npm
           registry-url: https://registry.npmjs.org
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - name: Install npm with trusted-publishing support
         run: npm install --global npm@^11.15.0
       - name: Verify release source

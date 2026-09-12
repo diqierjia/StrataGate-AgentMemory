@@ -39,6 +39,9 @@ jobs:
         with:
           node-version: 24.x
           cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - run: npm ci
       - name: Install complete DSH CLI dependency tree
         run: npm install --no-save --package-lock=false @deepseek-ai/dsh@${{ matrix.dsh }}
