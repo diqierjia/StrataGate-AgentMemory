@@ -1,10 +1,13 @@
 {
   "name": "stratagate-dsh",
-  "version": "0.2.55",
+  "version": "0.2.64",
   "description": "Recent conversations stay vivid. Older ones fade into summaries, not oblivion. StrataGate gives DeepSeek Harness six-layer, time-decaying memory, while lasting events and relationships settle into a knowledge graph. Bring your memories from other AIs with you—no need to start over.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "stratagate-dsh-repair": "./dist/repair-profile.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -55,7 +58,7 @@
     "test:dsh": "vitest run --config vitest.config.ts",
     "test:core": "npm run test --workspace @diqier/stratagate",
     "test:workbuddy": "npm run test --workspace stratagate-workbuddy",
-    "verify:dsh": "npm run build:dsh && node scripts/verify-package.mjs",
+    "verify:dsh": "npm run build:dsh && node scripts/verify-package.mjs && npm pack --ignore-scripts --pack-destination . && node scripts/verify-dsh-install.mjs stratagate-dsh-0.2.64.tgz",
     "verify:workbuddy": "npm run verify:package --workspace stratagate-workbuddy",
     "test:watch": "vitest --config vitest.config.ts",
     "prepare": "npm run build:dsh"
@@ -111,7 +114,8 @@
     },
     "compatibility": {
       "dshVersions": [
-        "0.1.2-rc.1"
+        "0.1.2-rc.1",
+        "0.1.5-rc.1"
       ]
     },
     "permissions": [
@@ -144,26 +148,71 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent-default-model": ">=0.1.2-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-client-ui-conversation": ">=0.1.2-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-llm": ">=0.1.2-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-session": ">=0.1.2-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-settings": ">=0.1.2-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-system-prompt": ">=0.1.2-rc.1 <0.2.0",
-    "@deepseek-ai/dsh-tools": ">=0.1.2-rc.1 <0.2.0",
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-session": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-session-format": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-session-format-catalog": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-session-format-v0-to-v1": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.2-rc.1 || 0.1.5-rc.2",
+    "@deepseek-ai/schemastery": "3.18.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-default-model": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-conversation": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-format": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-format-catalog": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-format-v0-to-v1": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-system-prompt": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-session": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-settings": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
-    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-session": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-session-format": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-session-format-catalog": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-session-format-v0-to-v1": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
+    "@deepseek-ai/schemastery": "3.18.2",
     "@types/node": "^22.0.0",
     "cytoscape": "^3.34.1",
     "cytoscape-fcose": "^2.2.0",

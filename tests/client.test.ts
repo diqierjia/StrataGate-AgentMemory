@@ -66,10 +66,10 @@ describe('StrataGate Web client contract', () => {
     expect(typeof registration.render).toBe('function')
   })
 
-  it('declares the DSH 0.1.2 Conversation package and service contracts', () => {
+  it('declares the supported DSH Conversation package and service contracts', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     expect(manifest.dsh.client.inject).toEqual(['@deepseek-ai/dsh-client-ui-conversation'])
-    expect(manifest.dshWorkshop.compatibility.dshVersions).toEqual(['0.1.2-rc.1'])
+    expect(manifest.dshWorkshop.compatibility.dshVersions).toEqual(['0.1.2-rc.1', '0.1.5-rc.1'])
   })
 
   it('parses and consumes only the StrataGate feedback deep link while preserving unrelated URL state', () => {
@@ -1022,7 +1022,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('lastErrorFull')
     expect(source).toContain('原始内容已经保存，不会丢失。')
     expect(source).toContain('原始记忆已保存，不会丢失。')
-    expect(source).toContain('技术错误详情')
+    expect(source).toContain('最近一次错误')
     expect(source).toContain("['raw', '{}', '原始数据'")
     expect(source).toContain("['audit', '↗', '使用记录'")
     expect(source).toContain("['settings', '⚙', '高级设置'")
@@ -1061,5 +1061,24 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('pollFast ? 2500 : 30000')
     expect(source).not.toContain('window.setInterval')
     expect(source).toContain("status === 'waiting'")
+  })
+
+  it('separates status refresh from per-job retry with explicit feedback', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const statusSource = source.slice(source.indexOf('function processingFingerprint'), source.indexOf('function ImportPage'))
+    expect(statusSource).toContain("api('jobs/retry'")
+    expect(statusSource).toContain("{ method: 'POST' }")
+    expect(statusSource).toContain('重试此任务')
+    expect(statusSource).toContain('正在处理…')
+    expect(statusSource).toContain('当前尝试次数')
+    expect(statusSource).toContain('最近一次错误')
+    expect(statusSource).toContain('下次重试时间')
+    expect(statusSource).toContain('只读取最新状态，不会触发模型调用。')
+    expect(statusSource).toContain('正在读取…')
+    expect(statusSource).toContain('状态已更新')
+    expect(statusSource).toContain('状态没有变化')
+    expect(statusSource).toContain('读取失败：')
+    expect(statusSource).toContain('failures.map((job) =>')
+    expect(statusSource).not.toContain('failures[0]')
   })
 })

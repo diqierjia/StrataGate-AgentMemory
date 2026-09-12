@@ -12,7 +12,7 @@ describe('DeepSeek Harness plugin config', () => {
       blockDecayLambda: 0.3,
       ingestSubagents: false,
       maxOutputTokens: 2048,
-      structuredTaskTimeoutMs: 45000,
+      structuredTaskTimeoutMs: 120000,
       structuredReasoningEffort: 'auto',
       showShortTermStatus: true,
     })

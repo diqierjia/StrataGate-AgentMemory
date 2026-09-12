@@ -71,7 +71,7 @@ function extractorPayload(context: ExtractionContext): Record<string, unknown> {
 
 const JSON_RESPONSE_ATTEMPTS = 2
 const JSON_RETRY_INSTRUCTION = 'Your previous response did not make one valid call to the requested tool. Do not spend output on analysis or reasoning. Immediately call that tool exactly once with complete arguments. Do not return an answer as text or markdown.'
-const DEFAULT_STRUCTURED_TIMEOUT_MS = 45_000
+const DEFAULT_STRUCTURED_TIMEOUT_MS = 120_000
 const STRUCTURED_FIELDS = {
   summarizer: ['l0Title', 'l0Tags', 'l1Summary', 'l2Keypoints', 'shouldExtract'],
   extractor: ['shouldExtract', 'reason', 'events'],

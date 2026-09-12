@@ -31,3 +31,4 @@ writeFileSync(
   bundledClient.replace('__STRATAGATE_MASCOT_DATA_URL__', `data:image/png;base64,${mascot}`),
 )
 copyFileSync(new URL('src/client.d.ts', root), new URL('dist/client.d.ts', root))
+copyFileSync(new URL('dist/plugin.d.ts', root), new URL('dist/index.d.ts', root))

@@ -234,6 +234,7 @@ export class StrataGate {
   private readonly summaryJobs = new Map<string, BlockSummaryJob>();
   private readonly elementProjectionJobs = new Map<string, ElementProjectionJob>();
   private readonly graphProjectionJobs = new Map<string, GraphProjectionJob>();
+  private readonly manualRetryRuns = new Map<string, Promise<unknown>>();
   private readonly usageReceipts = new Map<string, UsageReceipt>();
   private readonly successfulModelResponses: SuccessfulModelResponse[] = [];
   private readonly ingestionReceipts = new Map<string, IngestionReceipt>();
@@ -499,6 +500,95 @@ export class StrataGate {
 
   listSummaryJobs(): readonly BlockSummaryJob[] {
     return [...this.summaryJobs.values()];
+  }
+
+  private runManualRetry<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const existing = this.manualRetryRuns.get(key) as Promise<T> | undefined;
+    if (existing) return existing;
+    const run = operation().finally(() => {
+      if (this.manualRetryRuns.get(key) === run) this.manualRetryRuns.delete(key);
+    });
+    this.manualRetryRuns.set(key, run);
+    return run;
+  }
+
+  /** Give one failed Block Summary job a fresh, user-requested retry budget. */
+  async retryBlockSummary(id: string): Promise<ResumePendingResult> {
+    const blockId = id.trim();
+    if (!blockId) throw new TypeError('Block id must not be empty');
+    return this.runManualRetry(`summary:${blockId}`, async () => {
+      const block = this.blocks.find((candidate) => candidate.id === blockId);
+      if (!block) throw new Error(`Unknown block: ${blockId}`);
+      if (block.processingStatus !== 'pending') throw new Error(`Block ${blockId} is already ready`);
+      await this.commitMutation(() => {
+        const job = this.summaryJobs.get(blockId);
+        if (!job) throw new Error(`Missing summary job for block: ${blockId}`);
+        if (job.status !== 'failed') throw new Error(`Block ${blockId} Summary is ${job.status}, not failed`);
+        this.summaryJobs.set(blockId, {
+          ...job,
+          status: 'pending',
+          attempts: 0,
+          lastError: null,
+          nextRetryAt: null,
+          updatedAt: toUtc8Iso(this.now()),
+        });
+      });
+      const extractedEvents = await this.processBlock(block, { retryFailed: false });
+      const processed = this.blocks.find((candidate) => candidate.id === blockId);
+      const readyBlocks = processed?.processingStatus === 'ready' ? [processed] : [];
+      return { sealedBlocks: [], readyBlocks, extractedEvents, projectedElements: [] };
+    });
+  }
+
+  /** Retry only Event extraction for one failed Block without rerunning its Summary. */
+  async retryEventExtraction(id: string): Promise<EventCard[]> {
+    const blockId = id.trim();
+    if (!blockId) throw new TypeError('Block id must not be empty');
+    return this.runManualRetry(`extraction:${blockId}`, async () => {
+      const block = this.blocks.find((candidate) => candidate.id === blockId);
+      if (!block) throw new Error(`Unknown block: ${blockId}`);
+      if (block.processingStatus !== 'pending' || block.shouldExtract !== true) {
+        throw new Error(`Block ${blockId} is not waiting for Event extraction`);
+      }
+      await this.commitMutation(() => {
+        const job = this.extractionJobs.get(blockId);
+        if (!job) throw new Error(`Missing extraction job for block: ${blockId}`);
+        if (job.status !== 'failed') throw new Error(`Event extraction ${blockId} is ${job.status}, not failed`);
+        this.extractionJobs.set(blockId, {
+          ...job,
+          attempts: 0,
+          lastError: null,
+          nextRetryAt: null,
+          updatedAt: toUtc8Iso(this.now()),
+        });
+      });
+      return await this.extractEligibleBlock({ blockId, retryFailed: true }) ?? [];
+    });
+  }
+
+  /** Retry exactly one failed Graph projection batch. */
+  async retryGraphProjection(id: string): Promise<{ nodeIds: string[]; edgeIds: string[] }> {
+    const jobId = id.trim();
+    if (!jobId) throw new TypeError('Graph projection id must not be empty');
+    return this.runManualRetry(`graph:${jobId}`, async () => {
+      if (!this.graphProjector) throw new Error('Graph projector is not configured');
+      await this.commitMutation(() => {
+        const job = this.requireGraphProjectionJob(jobId);
+        if (job.status !== 'failed') throw new Error(`Graph projection ${jobId} is ${job.status}, not failed`);
+        job.status = 'pending';
+        job.attempts = 0;
+        job.lastError = null;
+        job.updatedAt = toUtc8Iso(this.now());
+      });
+      const batch = await this.claimGraphProjection(jobId);
+      if (!batch) throw new Error(`Graph projection ${jobId} could not be claimed`);
+      try {
+        return await this.completeGraphProjection(jobId, await this.graphProjector(batch));
+      } catch (error) {
+        await this.failGraphProjection(jobId, error);
+        throw error;
+      }
+    });
   }
 
   listElementProjectionJobs(): readonly ElementProjectionJob[] {
@@ -1251,10 +1341,11 @@ export class StrataGate {
     });
   }
 
-  async claimNextGraphProjection(): Promise<GraphProjectionContext | null> {
+  private async claimGraphProjection(jobId?: string): Promise<GraphProjectionContext | null> {
     return this.commitMutation(() => {
       const job = [...this.graphProjectionJobs.values()]
-        .filter((candidate) => candidate.status === 'pending' || candidate.status === 'failed')
+        .filter((candidate) => (jobId === undefined || candidate.id === jobId)
+          && (candidate.status === 'pending' || candidate.status === 'failed'))
         .sort((left, right) => right.priority - left.priority || left.createdAt.localeCompare(right.createdAt))[0];
       if (!job) return null;
       const events = job.sourceEventIds.flatMap((id) => this.events.find((event) => event.id === id) ?? []);
@@ -1279,6 +1370,10 @@ export class StrataGate {
         existingEdges: structuredClone(this.graphEdges.filter(({ fromNodeId, toNodeId }) => nodeIds.has(fromNodeId) && nodeIds.has(toNodeId)).slice(-120)),
       };
     });
+  }
+
+  async claimNextGraphProjection(): Promise<GraphProjectionContext | null> {
+    return this.claimGraphProjection();
   }
 
   async completeGraphProjection(jobId: string, result: GraphProjectionResult): Promise<{ nodeIds: string[]; edgeIds: string[] }> {

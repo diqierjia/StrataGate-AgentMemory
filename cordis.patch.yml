@@ -6,6 +6,7 @@
       inject: [tools, systemPrompt, llm, agentDefaultModel]
       config:
         database: !!js dshHomePath('stratagate', 'memory.db')
+        sessionRoot: !!js dshHomePath('sessions')
         namespaceMode: project
         blockTurnSize: 6
         blockDecayLambda: 0.3

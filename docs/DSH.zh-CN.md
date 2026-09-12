@@ -14,8 +14,6 @@
 
 ### 分层短期记忆
 
-记忆块状态只显示在对应回答下方，与聊天内容处于同一层级并随对话一起滚动，不再固定在输入框旁；首页和空白新对话也不会继承上一段对话的状态。如需隐藏这些状态行，可在 **更多 → 高级设置** 中关闭 **聊天中显示短期记忆状态**，记忆采集和处理不会受到影响。
-
 ![StrataGate 分层短期记忆界面](assets/stratagate-short-term-memory.png)
 
 ## 它是怎么设计的
@@ -146,6 +144,7 @@ config:
   blockDecayLambda: 0.3
   ingestSubagents: false
   maxOutputTokens: 10000
+  structuredTaskTimeoutMs: 120000
   structuredReasoningEffort: auto # auto | force-off
   # 可选：为记忆处理指定专用模型。
   # provider: deepseek
@@ -170,7 +169,9 @@ config:
 
 ## 兼容性与权限
 
-发布门禁会在 Node `24` 上测试 DSH `0.1.2-rc.1`，并在 Node `22.19` 和 `24` 上测试核心包。发布包声明的 peer 版本范围接受从 `0.1.2-rc.1` 开始、低于 `0.2.0` 的兼容 DSH 版本。
+发布门禁会在 Node `24`、Linux 和 Windows 上测试完整的 DSH `0.1.2-rc.1` 依赖族，以及 `@deepseek-ai/dsh@0.1.5-rc.1`。后者的真实依赖树会把内部 DSH 包解析为 `0.1.5-rc.2`，这是预期行为。插件将这些 DSH 包声明为可选且精确版本的 peer，由宿主提供一套一致的运行时，避免 npm 在插件目录再安装第二套核心包；不会笼统承诺其他 `0.1.x` 版本。
+
+DSH 核心包现在都是由宿主提供的可选 peer。若某个 profile 曾在本地安装这些 peer，升级后、启动前运行 `dsh plugin --profile <名称> exec stratagate-dsh-repair`。该命令只会把已知 DSH 运行时包移动到 profile 内的 `.stratagate-runtime-backups` 并写入恢复收据，不会删除包或触碰会话数据。启动时 bootstrap 还会把 StrataGate 自身的 DSH 导入定向到宿主维护的共享模块回退目录，再检查实际解析出的 DSH 核心族；未知宿主会立即给出明确错误并停止，而不是让正文区域空白。对于 DSH `0.1.5`，含已废弃 `stratagate/memory-citations` 事件的 v0 会话会先复制成经过校验的 v1 代际，再交给宿主迁移到 v3；原始 v0 日志不会被修改，并写入 `stratagate-legacy-citations-v1.json` 记录源/目标哈希和恢复说明。
 
 该包申请本地文件系统读写权限和 Harness 工具注册权限，不申请直接网络访问、子进程、Shell、Python 或凭证访问权限。模型调用仍通过 DSH 现有的 LLM 服务进行。
 

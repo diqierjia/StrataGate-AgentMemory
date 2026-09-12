@@ -14,8 +14,6 @@ The plugin adapts DSH session events to the existing StrataGate memory engine; i
 
 ### Layered short-term memory
 
-Block status appears only below the corresponding answer and scrolls with the conversation at the same content level. It is never pinned beside the composer, and the home screen and empty new conversations cannot inherit the previous conversation's status. To hide these rows without changing memory capture or processing, turn off **Show short-term memory status in chat** under **More → Advanced Settings**.
-
 ![StrataGate layered short-term memory view](assets/stratagate-short-term-memory.png)
 
 ## How it is designed
@@ -149,6 +147,7 @@ config:
   blockDecayLambda: 0.3
   ingestSubagents: false
   maxOutputTokens: 10000
+  structuredTaskTimeoutMs: 120000
   structuredReasoningEffort: auto # auto | force-off
   # Optional: use a dedicated model for memory processing.
   # provider: deepseek
@@ -173,7 +172,9 @@ For diagnostics, the five most recent successful memory-model responses are reta
 
 ## Compatibility and permissions
 
-Release gates exercise DSH `0.1.2-rc.1` on Node `24`, plus the core package on Node `22.19` and `24`. The published peer range accepts compatible DSH releases from `0.1.2-rc.1` up to, but not including, `0.2.0`.
+Release gates exercise the complete DSH `0.1.2-rc.1` family and `@deepseek-ai/dsh@0.1.5-rc.1` on Node `24`, on both Linux and Windows. The latter's real dependency tree resolves its internal DSH packages to `0.1.5-rc.2`; that is intentional. The plugin declares these DSH packages as optional, exact-version peers so the host supplies one coherent runtime instead of npm installing a second copy. Other `0.1.x` versions are not implicitly supported.
+
+DSH core packages are host-provided optional peers. After upgrading a profile that once installed those peers locally, run `dsh plugin --profile <name> exec stratagate-dsh-repair` before starting it. The command moves only the known DSH runtime packages into `.stratagate-runtime-backups` inside that profile and writes a recovery receipt; it does not delete them or touch session data. At startup, a bootstrap resolver also forces StrataGate's own imports through the installation-owned module fallback, then verifies the resolved DSH core family and stops with an actionable error for an unknown host family. On DSH `0.1.5`, v0 sessions containing the retired `stratagate/memory-citations` event are copied to a validated v1 generation before the host migrates them to v3. The original v0 log is never modified; a `stratagate-legacy-citations-v1.json` receipt records source/target hashes and recovery instructions.
 
 The package declares local filesystem read/write and Harness tool registration. It does not request direct network, subprocess, shell, Python, or credential access. Model calls still flow through DSH's existing LLM service.
 
