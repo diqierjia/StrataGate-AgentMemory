@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,6 +30,11 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
+function platformFixture(source) {
+  const cwd = process.platform === 'win32' ? 'C:\\redacted\\workspace' : '/redacted/workspace'
+  return source.replace(/("cwd":)"[^"]*"/, `$1${JSON.stringify(cwd)}`)
+}
+
 function seedSessions(dshHome) {
   const project = join(dshHome, 'sessions', '--C-redacted-workspace--')
   const fixtures = [
@@ -39,7 +44,8 @@ function seedSessions(dshHome) {
   for (const [fixture, id] of fixtures) {
     const directory = join(project, id)
     mkdirSync(directory, { recursive: true })
-    copyFileSync(join(fixtureRoot, fixture, 'session.jsonl'), join(directory, 'session.jsonl'))
+    const source = readFileSync(join(fixtureRoot, fixture, 'session.jsonl'), 'utf8')
+    writeFileSync(join(directory, 'session.jsonl'), platformFixture(source))
   }
 }
 

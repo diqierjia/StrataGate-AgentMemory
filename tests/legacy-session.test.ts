@@ -20,6 +20,12 @@ const modules = {
   sessionFormatCatalog,
 }
 
+function platformFixture(source: Buffer): Buffer {
+  const cwd = process.platform === 'win32' ? 'C:\\redacted\\workspace' : '/redacted/workspace'
+  const text = source.toString('utf8').replace(/("cwd":)"[^"]*"/, `$1${JSON.stringify(cwd)}`)
+  return Buffer.from(text)
+}
+
 function digest(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
@@ -34,7 +40,7 @@ function conversationText(events: readonly any[]): string[] {
 
 describe('legacy stratagate/memory-citations migration', () => {
   it('uses the official v0-to-v3 catalog without changing conversation content', async () => {
-    const source = await readFile(fixturePath)
+    const source = platformFixture(await readFile(fixturePath))
     const originalHash = digest(source)
     const prepared = prepareLegacyCitationGeneration(source, 'none', modules)
     expect(prepared).toBeDefined()
@@ -51,8 +57,8 @@ describe('legacy stratagate/memory-citations migration', () => {
   })
 
   it('refuses to reinterpret a non-ignorable or surface-participating citation event', async () => {
-    const source = await readFile(fixturePath, 'utf8')
-    const unsafe = Buffer.from(source.replace('"ignorable":true', '"ignorable":false'))
+    const source = platformFixture(await readFile(fixturePath))
+    const unsafe = Buffer.from(source.toString('utf8').replace('"ignorable":true', '"ignorable":false'))
     expect(() => prepareLegacyCitationGeneration(unsafe, 'none', modules)).toThrow(/not marked ignorable/)
   })
 
@@ -60,7 +66,7 @@ describe('legacy stratagate/memory-citations migration', () => {
     const root = await mkdtemp(join(tmpdir(), 'stratagate-session-migration-'))
     const directory = join(root, 'redacted-project', 'fixture-session')
     await mkdir(directory, { recursive: true })
-    const source = await readFile(fixturePath)
+    const source = platformFixture(await readFile(fixturePath))
     const sourcePath = join(directory, 'session.jsonl')
     await writeFile(sourcePath, source)
     const before = digest(await readFile(sourcePath))
@@ -81,7 +87,7 @@ describe('legacy stratagate/memory-citations migration', () => {
   })
 
   it('preserves concatenated zstd generations and validates every frame', async () => {
-    const source = await readFile(fixturePath)
+    const source = platformFixture(await readFile(fixturePath))
     const newline = source.indexOf(10) + 1
     const options = { params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 } }
     const compressed = Buffer.concat([
