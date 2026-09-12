@@ -85,4 +85,37 @@ describe('Event-backed knowledge graph', () => {
     expect(attempts).toBe(2);
     await restored.close();
   });
+
+  it('manually retries only the selected failed Graph projection', async () => {
+    let shouldFail = true;
+    let calls = 0;
+    const memory = StrataGate.inMemory({
+      blockTurnSize: 1,
+      summarizer: async () => ({ l0Title: 'event', l0Tags: [], l1Summary: 'event', l2Keypoints: [], shouldExtract: true }),
+      extractor: async ({ target }) => ({
+        shouldExtract: true,
+        reason: 'event',
+        events: [{ title: 'Graph retry', summary: 'Retry this graph batch.', sourceMessageIds: [target.l5Raw[0]!.id], sourceBlockId: target.id }],
+      }),
+      graphProjector: async () => {
+        calls += 1;
+        if (shouldFail) throw new Error('graph timed out');
+        return { reason: 'completed', nodes: [], edges: [] };
+      },
+    });
+
+    await memory.appendTurn({ user: 'graph', assistant: 'saved' });
+    const jobId = memory.listGraphProjectionJobs()[0]!.id;
+    expect(memory.listGraphProjectionJobs()[0]).toMatchObject({ status: 'failed', attempts: 1 });
+
+    shouldFail = false;
+    const [first, second] = await Promise.all([
+      memory.retryGraphProjection(jobId),
+      memory.retryGraphProjection(jobId),
+    ]);
+    expect(first).toEqual({ nodeIds: [], edgeIds: [] });
+    expect(second).toEqual(first);
+    expect(calls).toBe(2);
+    expect(memory.listGraphProjectionJobs()[0]).toMatchObject({ id: jobId, status: 'completed', attempts: 1, lastError: null });
+  });
 });

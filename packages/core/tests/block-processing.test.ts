@@ -100,4 +100,72 @@ describe('sealed Block processing boundary', () => {
       .toEqual(['one', 'saved', 'two', 'also saved']);
     expect(memory.exportSnapshot().ingestionReceipts.map(({ id }) => id)).toEqual(['turn:1', 'turn:2']);
   });
+
+  it('allows an explicit retry of one terminally failed Block Summary', async () => {
+    let shouldFail = true;
+    let calls = 0;
+    const memory = StrataGate.inMemory({
+      blockTurnSize: 1,
+      summarizer: async (messages) => {
+        calls += 1;
+        if (shouldFail) throw new Error('invalid API key');
+        return validSummary(messages);
+      },
+      extractor: async () => ({ shouldExtract: false, reason: 'none', events: [] }),
+    });
+
+    await memory.appendTurn({ user: 'retry me', assistant: 'saved', receiptId: 'turn:retry' });
+    await memory.resumePendingWork({ retryFailed: true });
+    await memory.resumePendingWork({ retryFailed: true });
+    expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null });
+
+    shouldFail = false;
+    const blockId = memory.listBlocks()[0]!.id;
+    const result = await memory.retryBlockSummary(blockId);
+    expect(calls).toBe(4);
+    expect(result.readyBlocks).toMatchObject([{ id: blockId, processingStatus: 'ready' }]);
+    expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'succeeded', attempts: 1, lastError: null });
+    expect(memory.listExtractionJobs()[0]).toMatchObject({ status: 'skipped' });
+  });
+
+  it('retries only one failed Event extraction and coalesces concurrent requests', async () => {
+    let extractionCalls = 0;
+    let summaryCalls = 0;
+    let shouldFail = true;
+    const memory = StrataGate.inMemory({
+      blockTurnSize: 1,
+      summarizer: async (messages) => {
+        summaryCalls += 1;
+        return validSummary(messages);
+      },
+      extractor: async () => {
+        extractionCalls += 1;
+        if (shouldFail) throw new Error('structured model task timed out');
+        return { shouldExtract: false, reason: 'nothing durable', events: [] };
+      },
+    });
+
+    await memory.appendTurn({ user: 'extract me', assistant: 'saved' });
+    await memory.resumePendingWork({ retryFailed: true });
+    await memory.resumePendingWork({ retryFailed: true });
+    const blockId = memory.listBlocks()[0]!.id;
+    expect(memory.listExtractionJobs()[0]).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null });
+
+    await expect(memory.retryEventExtraction(blockId)).rejects.toThrow('structured model task timed out');
+    expect(memory.listExtractionJobs()[0]).toMatchObject({
+      status: 'failed', attempts: 1, lastError: 'structured model task timed out',
+    });
+
+    shouldFail = false;
+    const [first, second] = await Promise.all([
+      memory.retryEventExtraction(blockId),
+      memory.retryEventExtraction(blockId),
+    ]);
+    expect(first).toEqual([]);
+    expect(second).toEqual([]);
+    expect(summaryCalls).toBe(1);
+    expect(extractionCalls).toBe(5);
+    expect(memory.listBlocks()[0]).toMatchObject({ id: blockId, processingStatus: 'ready' });
+    expect(memory.listExtractionJobs()[0]).toMatchObject({ status: 'skipped', attempts: 1, lastError: null });
+  });
 });

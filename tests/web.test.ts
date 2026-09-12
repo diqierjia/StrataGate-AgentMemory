@@ -243,6 +243,163 @@ describe('StrataGate admin routes', () => {
     expect(skipped.body.items[0]).toMatchObject({ status: 'organized', eventExtraction: null })
   })
 
+  it('reports Summary jobs in overview and Block processing state', async () => {
+    const pendingBlock = {
+      ...snapshot.blocks[0]!,
+      processingStatus: 'pending' as const,
+      shouldExtract: undefined,
+      l0Title: undefined,
+      l0Tags: undefined,
+      l1Summary: undefined,
+      l2Keypoints: undefined,
+    }
+    const summaryFailure = 'Summary model timed out'
+    let retriedBlock: { namespace: string; blockId: string } | null = null
+    const summaryRuntime = {
+      adminNamespaces: async () => ['dsh:project:summary'],
+      adminSnapshot: async () => ({
+        ...snapshot,
+        blocks: [pendingBlock],
+        summaryJobs: [{
+          blockId: 'blk_1', status: 'failed' as const, attempts: 3, lastError: summaryFailure,
+          nextRetryAt: null, updatedAt: '2026-08-18T00:03:00.000Z',
+        }],
+        extractionJobs: [],
+        graphProjectionJobs: [],
+      }),
+      adminWorkspaceName: () => 'Summary workspace',
+      adminRetryBlockSummary: async (namespace: string, blockId: string) => {
+        retriedBlock = { namespace, blockId }
+        return { blockId, ready: true, processingStatus: 'ready', summaryJob: { status: 'succeeded' } }
+      },
+    } as unknown as StrataGateRuntime
+
+    const overview = await request('/api/stratagate/overview', 'GET', summaryRuntime)
+    expect(overview.body.namespaces[0]).toMatchObject({
+      failedJobs: 1,
+      processingJobs: 0,
+      failedJobDetails: [{
+        id: 'blk_1', kind: 'block-summary', attempts: 3,
+        lastError: summaryFailure, lastErrorFull: summaryFailure,
+      }],
+    })
+
+    const failed = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Asummary&kind=blocks', 'GET', summaryRuntime)
+    expect(failed.body.items[0]).toMatchObject({ status: 'failed', processingStatus: 'pending', summaryJob: { status: 'failed' } })
+
+    const retried = await request('/api/stratagate/blocks/retry-summary?namespace=dsh%3Aproject%3Asummary&blockId=blk_1', 'POST', summaryRuntime)
+    expect(retried).toMatchObject({ status: 200, body: { blockId: 'blk_1', ready: true, summaryJob: { status: 'succeeded' } } })
+    expect(retriedBlock).toEqual({ namespace: 'dsh:project:summary', blockId: 'blk_1' })
+
+    const runningRuntime = {
+      ...summaryRuntime,
+      adminSnapshot: async () => ({
+        ...snapshot,
+        blocks: [pendingBlock],
+        summaryJobs: [{
+          blockId: 'blk_1', status: 'running' as const, attempts: 1, lastError: null,
+          nextRetryAt: null, updatedAt: '2026-08-18T00:03:00.000Z',
+        }],
+        extractionJobs: [],
+        graphProjectionJobs: [],
+      }),
+    } as unknown as StrataGateRuntime
+    const running = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Asummary&kind=blocks', 'GET', runningRuntime)
+    expect(running.body.items[0]).toMatchObject({ status: 'processing', processingStatus: 'pending', summaryJob: { status: 'running' } })
+
+    const extractionFailureRuntime = {
+      ...summaryRuntime,
+      adminSnapshot: async () => ({
+        ...snapshot,
+        blocks: [{ ...pendingBlock, shouldExtract: true }],
+        summaryJobs: [{
+          blockId: 'blk_1', status: 'succeeded' as const, attempts: 1, lastError: null,
+          nextRetryAt: null, updatedAt: '2026-08-18T00:03:00.000Z',
+        }],
+        extractionJobs: [{
+          blockId: 'blk_1', status: 'failed' as const, attempts: 3, lastError: 'Extraction failed',
+          nextRetryAt: null, updatedAt: '2026-08-18T00:04:00.000Z',
+        }],
+        graphProjectionJobs: [],
+      }),
+    } as unknown as StrataGateRuntime
+    const extractionFailure = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Asummary&kind=blocks', 'GET', extractionFailureRuntime)
+    expect(extractionFailure.body.items[0]).toMatchObject({ status: 'failed', processingStatus: 'pending', summaryJob: { status: 'succeeded' } })
+  })
+
+  it('rejects Block Summary retries while the job is not failed', async () => {
+    const retryingRuntime = {
+      adminSnapshot: async () => ({
+        ...snapshot,
+        summaryJobs: [{
+          blockId: 'blk_1', status: 'running' as const, attempts: 1, lastError: null,
+          nextRetryAt: null, updatedAt: '2026-08-18T00:04:00.000Z',
+        }],
+      }),
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/blocks/retry-summary?namespace=dsh%3Aproject%3Asummary&blockId=blk_1', 'POST', retryingRuntime)
+    expect(result).toMatchObject({ status: 409, body: { error: 'Block Summary is running, not failed' } })
+  })
+
+  it('retries a specific failed job through the unified endpoint and reports model failures', async () => {
+    const calls: Array<{ namespace: string; kind: string; jobId: string }> = []
+    const failedSnapshot = {
+      ...snapshot,
+      blocks: [{ ...snapshot.blocks[0]!, processingStatus: 'pending' as const, threadId: 'thread-retry' }],
+      summaryJobs: [],
+      extractionJobs: [{
+        blockId: 'blk_1', status: 'failed' as const, attempts: 3,
+        lastError: 'StrataGate structured model task timed out after 45000ms', nextRetryAt: null,
+        updatedAt: '2026-08-18T00:04:00.000Z',
+      }],
+      graphProjectionJobs: [{
+        ...snapshot.graphProjectionJobs[0]!, id: 'gproj_failed', status: 'failed' as const,
+        attempts: 2, lastError: 'graph failed', nodeIds: [],
+      }],
+    }
+    const retryRuntime = {
+      adminSnapshot: async () => failedSnapshot,
+      adminRetryJob: async (namespace: string, kind: string, jobId: string) => {
+        calls.push({ namespace, kind, jobId })
+        if (kind === 'graph-projection') throw new Error('graph timed out again')
+        return { kind, jobId, status: 'succeeded' }
+      },
+    } as unknown as StrataGateRuntime
+
+    const extraction = await request('/api/stratagate/jobs/retry?namespace=dsh%3Aproject%3Atest&kind=event-extraction&jobId=blk_1', 'POST', retryRuntime)
+    expect(extraction).toMatchObject({ status: 200, body: { kind: 'event-extraction', jobId: 'blk_1', status: 'succeeded' } })
+    const graph = await request('/api/stratagate/jobs/retry?namespace=dsh%3Aproject%3Atest&kind=graph-projection&jobId=gproj_failed', 'POST', retryRuntime)
+    expect(graph).toMatchObject({ status: 422, body: { error: 'graph timed out again' } })
+    expect(calls).toEqual([
+      { namespace: 'dsh:project:test', kind: 'event-extraction', jobId: 'blk_1' },
+      { namespace: 'dsh:project:test', kind: 'graph-projection', jobId: 'gproj_failed' },
+    ])
+
+    const running = await request('/api/stratagate/jobs/retry?namespace=dsh%3Aproject%3Atest&kind=event-extraction&jobId=blk_1', 'POST', {
+      adminSnapshot: async () => ({
+        ...failedSnapshot,
+        extractionJobs: [{ ...failedSnapshot.extractionJobs[0]!, status: 'running' as const }],
+      }),
+    } as unknown as StrataGateRuntime)
+    expect(running).toMatchObject({ status: 409, body: { error: 'event-extraction job is running, not failed' } })
+
+    const overview = await request('/api/stratagate/overview', 'GET', {
+      adminNamespaces: async () => ['dsh:project:test'],
+      adminSnapshot: async () => failedSnapshot,
+      adminWorkspaceName: () => 'Retry workspace',
+    } as unknown as StrataGateRuntime)
+    expect(overview.body.namespaces[0].failedJobDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'event-extraction', id: 'blk_1', nextRetryAt: null,
+        blockIds: ['blk_1'], threadIds: ['thread-retry'], turnRange: [1, 4],
+      }),
+      expect.objectContaining({
+        kind: 'graph-projection', id: 'gproj_failed', nextRetryAt: null,
+        blockIds: ['blk_1'], threadIds: ['thread-retry'], sourceEventIds: ['evt_1'],
+      }),
+    ]))
+  })
+
   it('summarizes namespaces and returns paginated memories', async () => {
     const overview = await request('/api/stratagate/overview')
     expect(overview.status).toBe(200)

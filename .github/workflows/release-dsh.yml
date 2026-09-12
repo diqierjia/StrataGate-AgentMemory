@@ -6,15 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact package version contained in the staged tarball
-        required: true
-        type: string
-      sha256:
-        description: Expected SHA-256 digest of the staged tarball
-        required: true
-        type: string
-      staging_tag:
-        description: Temporary GitHub release tag containing the tarball
+        description: Exact package version committed on main
         required: true
         type: string
 
@@ -24,10 +16,11 @@ permissions:
 
 jobs:
   publish:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24.x
@@ -35,66 +28,76 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Install npm with trusted-publishing support
         run: npm install --global npm@^11.15.0
+      - name: Verify release source
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || {
+            echo "Release commit $GITHUB_SHA is not contained in origin/main"
+            exit 1
+          }
+
+          version="$(node -p 'require("./package.json").version')"
+          tag="stratagate-dsh-v${version}"
+
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            test "$GITHUB_REF_NAME" = "$tag" || {
+              echo "Expected tag $tag, received $GITHUB_REF_NAME"
+              exit 1
+            }
+          else
+            test "$GITHUB_REF" = "refs/heads/main" || {
+              echo "Manual releases must run from main, received $GITHUB_REF"
+              exit 1
+            }
+            test "$REQUESTED_VERSION" = "$version" || {
+              echo "Requested version $REQUESTED_VERSION, but package.json contains $version"
+              exit 1
+            }
+          fi
+
+          test "$(node -p 'require("./package-lock.json").version')" = "$version" || {
+            echo "package-lock.json version does not match package.json"
+            exit 1
+          }
+          test "$(node -p 'require("./package-lock.json").packages[""].version')" = "$version" || {
+            echo "package-lock.json root package version does not match package.json"
+            exit 1
+          }
+
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
-      - name: Verify tag and package version match
-        shell: bash
-        run: |
-          expected="stratagate-dsh-v$(node -p 'require("./package.json").version')"
-          test "$GITHUB_REF_NAME" = "$expected" || { echo "Expected tag $expected, received $GITHUB_REF_NAME"; exit 1; }
       - run: npm run check
       - run: npm test
-      - run: npm run verify:dsh
-      - name: Pack release assets from one artifact
+      - name: Build and verify package contents
+        run: |
+          npm run build:dsh
+          node scripts/verify-package.mjs
+      - name: Pack release assets from the checked-out source
         shell: bash
         run: |
-          version="$(node -p 'require("./package.json").version')"
-          versioned="stratagate-dsh-${version}.tgz"
+          versioned="stratagate-dsh-${VERSION}.tgz"
           npm pack --silent
           test -f "$versioned"
+          node scripts/verify-dsh-install.mjs "$versioned"
           cp "$versioned" stratagate-dsh.tgz
           cmp "$versioned" stratagate-dsh.tgz
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          sha256sum "$versioned" stratagate-dsh.tgz
       - name: Publish exact package artifact
         run: npm publish "stratagate-dsh-${VERSION}.tgz" --provenance --access public
-      - name: Create GitHub release
+      - name: Create GitHub release from pushed tag
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" "stratagate-dsh-${VERSION}.tgz" stratagate-dsh.tgz --verify-tag --generate-notes --title "StrataGate DSH $VERSION"
-
-  publish-artifact:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ inputs.version }}
-      EXPECTED_SHA256: ${{ inputs.sha256 }}
-      STAGING_TAG: ${{ inputs.staging_tag }}
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.x
-          registry-url: https://registry.npmjs.org
-      - name: Install npm with trusted-publishing support
-        run: npm install --global npm@^11.15.0
-      - name: Download and verify staged package
-        shell: bash
+          gh release create "$RELEASE_TAG" "stratagate-dsh-${VERSION}.tgz" stratagate-dsh.tgz --verify-tag --generate-notes --title "StrataGate DSH $VERSION"
+      - name: Create GitHub release and tag from main
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          filename="stratagate-dsh-${VERSION}.tgz"
-          gh release download "$STAGING_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$filename"
-          echo "${EXPECTED_SHA256}  ${filename}" | sha256sum --check --strict
-          tar -xOf "$filename" package/package.json > package-manifest.json
-          test "$(node -p 'require("./package-manifest.json").name')" = "stratagate-dsh"
-          test "$(node -p 'require("./package-manifest.json").version')" = "$VERSION"
-          cp "$filename" stratagate-dsh.tgz
-          cmp "$filename" stratagate-dsh.tgz
-      - name: Publish exact package artifact
-        run: npm publish "stratagate-dsh-${VERSION}.tgz" --provenance --access public
-      - name: Create GitHub release with verified artifact
-        shell: bash
-        run: |
-          tag="stratagate-dsh-v${VERSION}"
-          filename="stratagate-dsh-${VERSION}.tgz"
-          gh release create "$tag" "$filename" stratagate-dsh.tgz --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes --title "StrataGate DSH $VERSION"
+          gh release create "$RELEASE_TAG" "stratagate-dsh-${VERSION}.tgz" stratagate-dsh.tgz --target "$GITHUB_SHA" --generate-notes --title "StrataGate DSH $VERSION"

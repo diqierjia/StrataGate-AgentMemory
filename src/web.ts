@@ -19,7 +19,7 @@ import {
 import type { AdminSnapshotEntry, FeedbackDraftInput, StrataGateRuntime } from './runtime.js'
 import { clusterKnowledgeGraph } from './graph-clustering.js'
 
-const STRATAGATE_DSH_VERSION = '0.2.52'
+const STRATAGATE_DSH_VERSION = '0.2.64'
 const LEGACY_THREAD_ID = '__legacy__'
 const nodeRequire = createRequire(import.meta.url)
 
@@ -227,32 +227,82 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
   const rows = []
   for (const { namespace, snapshot } of entries) {
     if (!snapshot) continue
-    const failedJobs = snapshot.extractionJobs.filter(({ status }) => status === 'failed').length
+    const failedJobs = snapshot.summaryJobs.filter(({ status }) => status === 'failed').length
+      + snapshot.extractionJobs.filter(({ status }) => status === 'failed').length
       + snapshot.graphProjectionJobs.filter(({ status }) => status === 'failed').length
     const processingJobs = snapshot.summaryJobs.filter(({ status, nextRetryAt }) => status === 'pending' || status === 'running' || (status === 'failed' && nextRetryAt !== null)).length
       + snapshot.extractionJobs.filter(({ status, nextRetryAt }) => status === 'running' || (status === 'failed' && nextRetryAt !== null)).length
       + snapshot.graphProjectionJobs.filter(({ status }) => status === 'pending' || status === 'running').length
     const failedJobDetails = [
+      ...snapshot.summaryJobs
+        .filter(({ status }) => status === 'failed')
+        .map((job) => {
+          const block = snapshot.blocks.find(({ id }) => id === job.blockId)
+          return {
+            id: job.blockId,
+            kind: 'block-summary',
+            attempts: job.attempts,
+            nextRetryAt: job.nextRetryAt,
+            lastError: job.lastError?.slice(0, 500) ?? null,
+            lastErrorFull: job.lastError,
+            updatedAt: job.updatedAt,
+            threadId: block?.threadId ?? null,
+            blockIds: [job.blockId],
+            threadIds: block?.threadId ? [block.threadId] : [],
+            blockDetails: block ? [{
+              id: block.id, sequence: block.sequence, title: block.l0Title ?? null,
+              threadId: block.threadId ?? null, turnRange: [block.startTurn, block.endTurn],
+            }] : [],
+            sequence: block?.sequence ?? null,
+            turnRange: block ? [block.startTurn, block.endTurn] : null,
+          }
+        }),
       ...snapshot.extractionJobs
         .filter(({ status }) => status === 'failed')
-        .map((job) => ({
-          id: job.blockId,
-          kind: 'event-extraction',
-          attempts: job.attempts,
-          lastError: job.lastError?.slice(0, 500) ?? null,
-          lastErrorFull: job.lastError,
-          updatedAt: job.updatedAt,
-        })),
+        .map((job) => {
+          const block = snapshot.blocks.find(({ id }) => id === job.blockId)
+          return {
+            id: job.blockId,
+            kind: 'event-extraction',
+            attempts: job.attempts,
+            nextRetryAt: job.nextRetryAt,
+            lastError: job.lastError?.slice(0, 500) ?? null,
+            lastErrorFull: job.lastError,
+            updatedAt: job.updatedAt,
+            blockIds: [job.blockId],
+            threadIds: block?.threadId ? [block.threadId] : [],
+            blockDetails: block ? [{
+              id: block.id, sequence: block.sequence, title: block.l0Title ?? null,
+              threadId: block.threadId ?? null, turnRange: [block.startTurn, block.endTurn],
+            }] : [],
+            sequence: block?.sequence ?? null,
+            turnRange: block ? [block.startTurn, block.endTurn] : null,
+          }
+        }),
       ...snapshot.graphProjectionJobs
         .filter(({ status }) => status === 'failed')
-        .map((job) => ({
-          id: job.id,
-          kind: 'graph-projection',
-          attempts: job.attempts,
-          lastError: job.lastError?.slice(0, 500) ?? null,
-          lastErrorFull: job.lastError,
-          updatedAt: job.updatedAt,
-        })),
+        .map((job) => {
+          const blockIds = [...new Set(job.sourceEventIds.flatMap((eventId) =>
+            snapshot.events.find(({ id }) => id === eventId)?.sourceBlockId ?? []))]
+          const blocks = blockIds.flatMap((blockId) => snapshot.blocks.find(({ id }) => id === blockId) ?? [])
+          return {
+            id: job.id,
+            kind: 'graph-projection',
+            attempts: job.attempts,
+            nextRetryAt: null,
+            lastError: job.lastError?.slice(0, 500) ?? null,
+            lastErrorFull: job.lastError,
+            updatedAt: job.updatedAt,
+            blockIds,
+            threadIds: [...new Set(blocks.flatMap(({ threadId }) => threadId ?? []))],
+            blockDetails: blocks.map((block) => ({
+              id: block.id, sequence: block.sequence, title: block.l0Title ?? null,
+              threadId: block.threadId ?? null, turnRange: [block.startTurn, block.endTurn],
+            })),
+            sequences: blocks.map(({ sequence }) => sequence),
+            sourceEventIds: job.sourceEventIds,
+          }
+        }),
     ]
     const timestamps = [
       ...snapshot.blocks.map(({ createdAt }) => createdAt),
@@ -662,11 +712,15 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       const failedProjection = projections.find(({ status }) => status === 'failed')
       const pendingProjection = projections.some(({ status }) => status === 'pending' || status === 'running')
       const needsExtraction = source.shouldExtract === true
-      const status = extraction?.status === 'failed' || failedProjection
+      const status = summary?.status === 'failed'
         ? 'failed'
-        : extraction?.status === 'succeeded' || extraction?.status === 'skipped'
-          ? pendingProjection ? 'processing' : 'organized'
-          : needsExtraction ? 'waiting' : 'organized'
+        : summary?.status === 'pending' || summary?.status === 'running' || (!summary && source.processingStatus === 'pending')
+          ? 'processing'
+          : extraction?.status === 'failed' || failedProjection
+            ? 'failed'
+            : extraction?.status === 'succeeded' || extraction?.status === 'skipped'
+              ? pendingProjection ? 'processing' : 'organized'
+              : needsExtraction ? 'waiting' : 'organized'
       const blockPosition = scopedBlocks.findIndex(({ id }) => id === block.id) + 1
       const latestBlockPosition = scopedBlocks.length
       const currentLevel = getDecayedBlockLevel(
@@ -842,6 +896,48 @@ async function expandBlock(runtime: StrataGateRuntime, url: URL): Promise<unknow
   return runtime.adminExpandBlock(namespace, blockId, target)
 }
 
+async function retryBlockSummary(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
+  const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+  const blockId = url.searchParams.get('blockId')?.trim() ?? ''
+  if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+  if (!blockId) throw new AdminHttpError(400, 'blockId is required')
+  if (blockId.startsWith('virtual:')) throw new AdminHttpError(409, 'Recovered legacy fragments cannot be retried')
+  const snapshot = await requiredSnapshot(runtime, namespace)
+  const job = snapshot.summaryJobs.find(({ blockId: candidateId }) => candidateId === blockId)
+  if (!job) throw new AdminHttpError(404, `Unknown Block Summary job: ${blockId}`)
+  if (job.status !== 'failed') throw new AdminHttpError(409, `Block Summary is ${job.status}, not failed`)
+  return runtime.adminRetryBlockSummary(namespace, blockId)
+}
+
+async function retryJob(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
+  const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+  const kind = url.searchParams.get('kind')?.trim() ?? ''
+  const jobId = url.searchParams.get('jobId')?.trim() ?? ''
+  if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+  if (!['block-summary', 'event-extraction', 'graph-projection'].includes(kind)) {
+    throw new AdminHttpError(400, 'kind must be block-summary, event-extraction, or graph-projection')
+  }
+  if (!jobId) throw new AdminHttpError(400, 'jobId is required')
+  if (jobId.startsWith('virtual:')) throw new AdminHttpError(409, 'Recovered legacy fragments cannot be retried')
+  const snapshot = await requiredSnapshot(runtime, namespace)
+  const job = kind === 'block-summary'
+    ? snapshot.summaryJobs.find(({ blockId }) => blockId === jobId)
+    : kind === 'event-extraction'
+      ? snapshot.extractionJobs.find(({ blockId }) => blockId === jobId)
+      : snapshot.graphProjectionJobs.find(({ id }) => id === jobId)
+  if (!job) throw new AdminHttpError(404, `Unknown ${kind} job: ${jobId}`)
+  if (job.status !== 'failed') throw new AdminHttpError(409, `${kind} job is ${job.status}, not failed`)
+  try {
+    return await runtime.adminRetryJob(
+      namespace,
+      kind as 'block-summary' | 'event-extraction' | 'graph-projection',
+      jobId,
+    )
+  } catch (error) {
+    throw new AdminHttpError(422, error instanceof Error ? error.message : String(error))
+  }
+}
+
 function receiptSources(snapshot: StrataGateSnapshot, receipt: UsageReceipt): unknown {
   const events = snapshot.events.filter(({ id }) => receipt.eventIds.includes(id))
   const elements = snapshot.elements.filter(({ id }) => receipt.elementIds.includes(id))
@@ -968,6 +1064,12 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
     } else if (path === '/api/stratagate/blocks/expand') {
       if (req.method !== 'PATCH') throw new AdminHttpError(405, 'StrataGate Block expansion requires PATCH')
       sendJson(res, 200, await expandBlock(runtime, url))
+    } else if (path === '/api/stratagate/blocks/retry-summary') {
+      if (req.method !== 'POST') throw new AdminHttpError(405, 'StrataGate Block Summary retry requires POST')
+      sendJson(res, 200, await retryBlockSummary(runtime, url))
+    } else if (path === '/api/stratagate/jobs/retry') {
+      if (req.method !== 'POST') throw new AdminHttpError(405, 'StrataGate job retry requires POST')
+      sendJson(res, 200, await retryJob(runtime, url))
     } else if (path === '/api/stratagate/import') {
       if (req.method === 'GET') {
         const operation = url.searchParams.get('operation')

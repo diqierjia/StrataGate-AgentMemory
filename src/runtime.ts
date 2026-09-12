@@ -33,6 +33,7 @@ import {
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import type { ResolvedConfig } from './config.js'
 import { TurnFolder, type FoldedTurn } from './fold.js'
+import { dshReplaceSurfaceOp } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
 
@@ -165,8 +166,11 @@ export class StrataGateRuntime {
   private readonly migrationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly derivationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly derivationRuns = new Map<string, Promise<void>>()
+  private readonly knownSessions = new Map<string, WeakRef<Session>>()
+  private readonly pendingSurfaceSync = new Map<string, { namespace: string; blockId: string }>()
   private readonly adminSnapshotCache = new Map<string, AdminSnapshotEntry>()
   private readonly externalImportRuns = new Map<string, Promise<void>>()
+  private readonly adminJobRetryRuns = new Map<string, Promise<unknown>>()
   private readonly feedbackDrafts = new Map<string, FeedbackDraft>()
   private readonly pendingFeedbackSuggestionSessions = new Set<string>()
   private readonly pendingTurns = new Map<string, FoldedTurn[]>()
@@ -259,7 +263,10 @@ export class StrataGateRuntime {
     this.drainTimers.set(key, timer)
   }
 
-  /** Restore failed and unvisited turns ahead of turns that arrived during the drain. */
+  /**
+   * Persist one detached batch. On failure, the failed and unvisited turns are
+   * restored ahead of turns that arrived meanwhile, preserving original order.
+   */
   private async drain(session: Session): Promise<void> {
     const key = String(session.id)
     const turns = this.pendingTurns.get(key)
@@ -641,7 +648,7 @@ export class StrataGateRuntime {
       content: [{ type: 'text', text: renderBlockSurfaceMessage(context) }],
       source: { kind: 'plugin', plugin: COMPACTION_SOURCE_PLUGIN },
     }), {
-      surfaceOp: { op: 'replace', start, end },
+      surfaceOp: dshReplaceSurfaceOp(start, end),
       sourceEventSeqs,
     })
   }
@@ -659,12 +666,41 @@ export class StrataGateRuntime {
         content: [{ type: 'text', text }],
         source: { kind: 'plugin', plugin: COMPACTION_SOURCE_PLUGIN },
       }), {
-        surfaceOp: { op: 'replace', start: node.seq, end: node.seq },
+        surfaceOp: dshReplaceSurfaceOp(node.seq, node.seq),
         sourceEventSeqs: [node.seq],
       })
       changed = true
     }
     return changed
+  }
+
+  /** Finish native-surface replacement when an admin retry ran without the target session loaded. */
+  private async syncPendingRetrySurface(session: Session, memory: StrataGate): Promise<void> {
+    const namespace = this.namespaceFor(session)
+    const threadId = String(session.id)
+    const pending = [...this.pendingSurfaceSync.entries()]
+      .filter(([, item]) => item.namespace === namespace)
+    if (pending.length === 0) return
+    const contexts = new Map(memory.getBlockContext(threadId).map((context) => [context.id, context]))
+    const existing = currentBlockSurfaceMessages(session)
+    let changed = false
+    for (const [key, { blockId }] of pending) {
+      if (existing.has(blockId)) {
+        this.pendingSurfaceSync.delete(key)
+        continue
+      }
+      const block = memory.listBlocks().find((candidate) => candidate.id === blockId && candidate.threadId === threadId)
+      const context = contexts.get(blockId)
+      if (!block || block.processingStatus !== 'ready' || !context) continue
+      try {
+        this.replaceSealedSurface(session, block, context, dshTurnAtBlockEnd(session, block))
+        this.pendingSurfaceSync.delete(key)
+        changed = true
+      } catch (error) {
+        this.onIngestError(error)
+      }
+    }
+    if (changed) await this.flushNativeSession(session)
   }
 
   // Keep the ingestion error for callers that explicitly require a flushed run.
@@ -1238,6 +1274,79 @@ export class StrataGateRuntime {
     return update
   }
 
+  async adminRetryJob(namespace: string, kind: 'block-summary' | 'event-extraction' | 'graph-projection', id: string): Promise<unknown> {
+    const key = namespace.trim()
+    const jobId = id.trim()
+    if (!key) throw new TypeError('StrataGate admin namespace must not be empty')
+    if (!jobId) throw new TypeError('StrataGate job id must not be empty')
+    const retryKey = `${key}\u0000${kind}\u0000${jobId}`
+    const existing = this.adminJobRetryRuns.get(retryKey)
+    if (existing) return existing
+    const update = this.settingsTail.catch(() => {}).then(async () => {
+      await this.flush()
+      const { memory, owned } = await this.openAdminMemory(key, { derivation: true })
+      try {
+        await this.refreshExternalImportMemory(key, memory)
+        const graphJob = kind === 'graph-projection'
+          ? memory.listGraphProjectionJobs().find((candidate) => candidate.id === jobId)
+          : undefined
+        const blockId = kind === 'graph-projection'
+          ? graphJob?.sourceEventIds.flatMap((eventId) => memory.listEvents().find(({ id: eventCandidateId }) => eventCandidateId === eventId)?.sourceBlockId ?? [])[0]
+          : jobId
+        const block = blockId ? memory.listBlocks().find((candidate) => candidate.id === blockId) : undefined
+        if (kind !== 'graph-projection' && !block) throw new Error(`Unknown block: ${jobId}`)
+        if (kind === 'graph-projection' && !graphJob) throw new Error(`Unknown graph projection: ${jobId}`)
+        const threadId = block?.threadId ?? `admin-job-retry:${kind}:${jobId}`
+        const session = block?.threadId ? this.knownSessions.get(block.threadId)?.deref() : undefined
+        const retry = async (): Promise<unknown> => {
+          if (kind === 'block-summary') return memory.retryBlockSummary(jobId)
+          if (kind === 'event-extraction') return memory.retryEventExtraction(jobId)
+          return memory.retryGraphProjection(jobId)
+        }
+        const result = session && this.namespaceFor(session) === key
+          ? await this.models.run(session, retry)
+          : await this.models.runDetached(threadId, retry)
+        await this.persistSuccessfulResponses(memory)
+        const currentBlock = blockId ? memory.listBlocks().find(({ id: candidateId }) => candidateId === blockId) : undefined
+        if (kind !== 'graph-projection' && currentBlock?.processingStatus === 'ready' && currentBlock.threadId) {
+          this.pendingSurfaceSync.set(`${key}\u0000${currentBlock.id}`, { namespace: key, blockId: currentBlock.id })
+          if (session && this.namespaceFor(session) === key) await this.syncPendingRetrySurface(session, memory)
+        }
+        const job = kind === 'block-summary'
+          ? memory.listSummaryJobs().find(({ blockId: candidateId }) => candidateId === jobId)
+          : kind === 'event-extraction'
+            ? memory.listExtractionJobs().find(({ blockId: candidateId }) => candidateId === jobId)
+            : memory.listGraphProjectionJobs().find(({ id: candidateId }) => candidateId === jobId)
+        const succeeded = kind === 'graph-projection' ? job?.status === 'completed' : job?.status === 'succeeded' || job?.status === 'skipped'
+        if (!succeeded) throw new Error(job?.lastError || `${kind} retry did not complete`)
+        return {
+          kind,
+          jobId,
+          blockId,
+          status: job?.status,
+          job: job ?? null,
+          ...(kind === 'block-summary' ? { summaryJob: job ?? null } : {}),
+          result,
+          processingStatus: currentBlock?.processingStatus ?? null,
+          ready: currentBlock?.processingStatus === 'ready',
+          surfaceUpdated: !blockId || !this.pendingSurfaceSync.has(`${key}\u0000${blockId}`),
+        }
+      } finally {
+        if (owned) await memory.close()
+      }
+    })
+    this.settingsTail = update.then(() => {}, () => {})
+    const tracked = update.finally(() => {
+      if (this.adminJobRetryRuns.get(retryKey) === tracked) this.adminJobRetryRuns.delete(retryKey)
+    })
+    this.adminJobRetryRuns.set(retryKey, tracked)
+    return tracked
+  }
+
+  async adminRetryBlockSummary(namespace: string, id: string): Promise<unknown> {
+    return this.adminRetryJob(namespace, 'block-summary', id)
+  }
+
   private async applyBlockDecayLambda(value: number): Promise<void> {
     await this.flush()
     this.blockDecayLambda = value
@@ -1304,8 +1413,9 @@ export class StrataGateRuntime {
     }
   }
 
-  private space(session: Session): Promise<StrataGate> {
+  private async space(session: Session): Promise<StrataGate> {
     const namespace = this.namespaceFor(session)
+    this.knownSessions.set(String(session.id), new WeakRef(session))
     this.rememberWorkspace(namespace, session.header.cwd)
     let opening = this.spaces.get(namespace)
     if (!opening) {
@@ -1340,7 +1450,9 @@ export class StrataGateRuntime {
         if (this.spaces.get(namespace) === opening) this.spaces.delete(namespace)
       })
     }
-    return opening
+    const memory = await opening
+    await this.syncPendingRetrySurface(session, memory)
+    return memory
   }
 
   async searchGraph(session: Session, query: string, limit = 8): Promise<unknown> {
@@ -1468,7 +1580,10 @@ export class StrataGateRuntime {
     if ([...this.failedCoreJobs(memory)].some((failure) => !before.has(failure))) this.notePluginError(session)
   }
 
-  private async openAdminMemory(namespace: string): Promise<{ memory: StrataGate; owned: boolean }> {
+  private async openAdminMemory(
+    namespace: string,
+    options: { derivation?: boolean } = {},
+  ): Promise<{ memory: StrataGate; owned: boolean }> {
     const active = this.spaces.get(namespace)
     if (active) return { memory: await active, owned: false }
     if (this.config.database === ':memory:' || !existsSync(this.config.database)) {
@@ -1480,6 +1595,10 @@ export class StrataGateRuntime {
         namespace,
         blockTurnSize: this.blockTurnSize,
         blockDecayLambda: this.blockDecayLambda,
+        ...(options.derivation ? {
+          summarizer: this.models.summarizer,
+          extractor: this.models.extractor,
+        } : {}),
         graphProjector: this.models.graphProjector,
         disableElementProjection: true,
       }),

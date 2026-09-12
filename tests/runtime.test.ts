@@ -231,6 +231,95 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
+  it('retries one terminally failed Block Summary from the admin surface', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-summary-retry-'))
+    const database = join(directory, 'memory.db')
+    let shouldFail = true
+    let summaryCalls = 0
+    const models = {
+      ...fakeModels,
+      summarizer: async () => {
+        summaryCalls += 1
+        if (shouldFail) throw new Error('invalid API key')
+        return { l0Title: 'retried', l0Tags: [], l1Summary: 'retried', l2Keypoints: [], shouldExtract: false }
+      },
+    } as unknown as DshModelBridge
+    const runtime = new StrataGateRuntime({
+      database, namespaceMode: 'project', namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 1, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
+    }, models)
+    try {
+      const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(session)
+      await memory.appendTurn({ user: 'retry this summary', assistant: 'saved', threadId: String(session.id) })
+      await memory.resumePendingWork({ retryFailed: true })
+      await memory.resumePendingWork({ retryFailed: true })
+      const block = memory.listBlocks()[0]!
+      expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null })
+
+      shouldFail = false
+      const [result, duplicate] = await Promise.all([
+        runtime.adminRetryBlockSummary(runtime.namespaceFor(session), block.id),
+        runtime.adminRetryBlockSummary(runtime.namespaceFor(session), block.id),
+      ]) as Array<{
+        ready: boolean; processingStatus: string; summaryJob: { status: string; attempts: number }
+      }>
+      expect(result).toMatchObject({
+        ready: true,
+        processingStatus: 'ready',
+        summaryJob: { status: 'succeeded', attempts: 1 },
+      })
+      expect(duplicate).toEqual(result)
+      expect(summaryCalls).toBe(4)
+      expect(memory.listExtractionJobs()[0]).toMatchObject({ blockId: block.id, status: 'skipped' })
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('retries Event extraction without rerunning a successful Summary', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-extraction-retry-'))
+    const database = join(directory, 'memory.db')
+    let shouldFail = true
+    let summaryCalls = 0
+    let extractionCalls = 0
+    const models = {
+      ...fakeModels,
+      summarizer: async () => {
+        summaryCalls += 1
+        return { l0Title: 'event', l0Tags: [], l1Summary: 'event', l2Keypoints: [], shouldExtract: true }
+      },
+      extractor: async () => {
+        extractionCalls += 1
+        if (shouldFail) throw new Error('StrataGate structured model task timed out after 45000ms')
+        return { shouldExtract: false, reason: 'nothing durable', events: [] }
+      },
+    } as unknown as DshModelBridge
+    const runtime = new StrataGateRuntime({
+      database, namespaceMode: 'project', namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 1, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
+    }, models)
+    try {
+      const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(session)
+      await memory.appendTurn({ user: 'retry extraction', assistant: 'saved', threadId: String(session.id) })
+      await memory.resumePendingWork({ retryFailed: true })
+      await memory.resumePendingWork({ retryFailed: true })
+      const block = memory.listBlocks()[0]!
+      expect(memory.listExtractionJobs()[0]).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null })
+
+      shouldFail = false
+      const result = await runtime.adminRetryJob(runtime.namespaceFor(session), 'event-extraction', block.id) as {
+        kind: string; status: string; ready: boolean
+      }
+      expect(result).toMatchObject({ kind: 'event-extraction', status: 'skipped', ready: true })
+      expect(summaryCalls).toBe(1)
+      expect(extractionCalls).toBe(4)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('returns compact event/graph/raw cards while expand preserves full details', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-compact-search-'))
     const database = join(directory, 'memory.db')
@@ -857,17 +946,17 @@ describe('DSH runtime ingestion', () => {
     }
     const appendPlainTurn = (turn: number, user: string, assistant: string): void => {
       append('turn/start', { turn })
+      append('step/start', { turn, step: 1 })
       append('user/message', createUserMessage({
         content: [{ type: 'text', text: user }], source: { kind: 'user' },
       }), { surfaceOp: 'append' })
-      append('step/start', { turn, step: 1 })
       append('assistant/message', {
         turn, step: 1,
         message: createAssistantMessage({
           content: [{ type: 'text', text: assistant }],
           source: { provider: 'test', model: 'test' },
         }),
-      }, { surfaceOp: 'append', sourceEventSeqs: [] })
+      }, { surfaceOp: 'append' })
       append('step/end', { turn, step: 1 })
       append('turn/end', { turn, reason: { kind: 'completed' } })
     }
@@ -903,17 +992,17 @@ describe('DSH runtime ingestion', () => {
 
       const callId = 'current-tool-call' as never
       append('turn/start', { turn: 3 })
+      append('step/start', { turn: 3, step: 1 })
       append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'CURRENT USER SENTINEL' }], source: { kind: 'user' },
       }), { surfaceOp: 'append' })
-      append('step/start', { turn: 3, step: 1 })
       append('assistant/message', {
         turn: 3, step: 1,
         message: createAssistantMessage({
           content: [{ type: 'tool-call', id: callId, name: 'inspect_workspace', arguments: '{"path":"CURRENT_TOOL_PATH"}' }],
           source: { provider: 'test', model: 'test' },
         }),
-      }, { surfaceOp: 'append', sourceEventSeqs: [] })
+      }, { surfaceOp: 'append' })
       append('tool/call', { turn: 3, step: 1, callId, name: 'inspect_workspace', arguments: '{"path":"CURRENT_TOOL_PATH"}' })
       append('tool/result', {
         turn: 3, step: 1,
@@ -931,7 +1020,7 @@ describe('DSH runtime ingestion', () => {
           content: [{ type: 'text', text: 'CURRENT FINAL ANSWER' }],
           source: { provider: 'test', model: 'test' },
         }),
-      }, { surfaceOp: 'append', sourceEventSeqs: [] })
+      }, { surfaceOp: 'append' })
       append('step/end', { turn: 3, step: 2 })
       append('turn/end', { turn: 3, reason: { kind: 'completed' } })
       await runtime.flush()

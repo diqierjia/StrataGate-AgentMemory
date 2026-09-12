@@ -13,6 +13,8 @@ import { DshModelBridge } from './llm.js'
 import { StrataGateRuntime } from './runtime.js'
 import { registerMemoryTools } from './tools.js'
 import { registerAdminRoutes } from './web.js'
+import { assertCompatibleDshRuntime } from './dsh-compatibility.js'
+import { migrateLegacyCitationSessions } from './legacy-session.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
@@ -61,7 +63,16 @@ function feedbackWebOrigin(ctx: Context): string | undefined {
 }
 
 export async function apply(ctx: Context, config: StrataGateConfig): Promise<() => Promise<void>> {
+  const compatibility = assertCompatibleDshRuntime()
   const resolved = resolveConfig(config)
+  const legacyMigration = await migrateLegacyCitationSessions(resolved.sessionRoot)
+  if (legacyMigration.failures.length > 0) {
+    const detail = legacyMigration.failures.map(({ path, error }) => `${path}: ${error}`).join('; ')
+    throw new Error(`StrataGate could not safely migrate legacy citation events: ${detail}`)
+  }
+  if (legacyMigration.migrated > 0) {
+    ctx.logger.info(`stratagate-memory prepared ${legacyMigration.migrated} legacy Session generation(s) for DSH 0.1.5`)
+  }
   await mkdir(dirname(resolved.database), { recursive: true })
   const models = new DshModelBridge(ctx, resolved)
   const runtime = new StrataGateRuntime(resolved, models, (error) => {
@@ -127,7 +138,7 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
   const disposeAdminRoutes = registerAdminRoutes(ctx, runtime)
   ctx.on('session/event', (session, event) => runtime.acceptEvent(session, event))
 
-  ctx.logger.info(`stratagate-memory ready (${resolved.namespaceMode} namespaces, ${resolved.database})`)
+  ctx.logger.info(`stratagate-memory ready (DSH ${compatibility.cliVersion}, ${resolved.namespaceMode} namespaces, ${resolved.database})`)
   return async () => {
     disposeAdminRoutes?.()
     await runtime.close()

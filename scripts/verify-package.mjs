@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -46,6 +46,8 @@ try {
     'LICENSE',
     'dist/index.js',
     'dist/index.d.ts',
+    'dist/plugin.js',
+    'dist/repair-profile.js',
     'dist/client.js',
     'dist/client.d.ts',
   ]
@@ -69,11 +71,10 @@ try {
   run(['install', tarball, '--ignore-scripts', '--package-lock=false'], installRoot)
   const installed = join(installRoot, 'node_modules', 'stratagate-dsh')
   for (const path of required) assert(existsSync(join(installed, path)), `Clean install is missing ${path}`)
-  const plugin = await import(pathToFileURL(join(installed, 'dist', 'index.js')).href)
-  assert(plugin.name === 'stratagate-memory', 'Installed package exports the wrong plugin name')
-  assert(typeof plugin.apply === 'function', 'Installed package does not export apply()')
-
-  console.log(`Verified ${packed.filename}: ${packed.entryCount} files, clean install and import passed.`)
+  // DSH core packages are optional peers and intentionally absent from this
+  // bare npm project. Runtime import is covered by verify-dsh-install.mjs,
+  // which installs the complete host CLI and its real dependency tree.
+  console.log(`Verified ${packed.filename}: ${packed.entryCount} files and clean tarball install passed.`)
 } finally {
   if (installRoot) rmSync(installRoot, { recursive: true, force: true })
   if (tarball) rmSync(tarball, { force: true })

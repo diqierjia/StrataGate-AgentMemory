@@ -5,6 +5,7 @@ export type StructuredReasoningEffortMode = 'auto' | 'force-off'
 
 export interface Config {
   database?: string
+  sessionRoot?: string
   namespaceMode?: NamespaceMode
   namespacePrefix?: string
   globalNamespace?: string
@@ -21,6 +22,7 @@ export interface Config {
 
 export interface ResolvedConfig {
   database: string
+  sessionRoot?: string
   namespaceMode: NamespaceMode
   namespacePrefix: string
   globalNamespace: string
@@ -51,6 +53,7 @@ export const StructuredReasoningEffortSettings: z<StructuredReasoningEffortSetti
 
 export const Config: z<Config> = z.object({
   database: z.string().required(),
+  sessionRoot: z.string(),
   namespaceMode: z.union(['project', 'session', 'global'] as const).default('project'),
   namespacePrefix: z.string().default('dsh'),
   globalNamespace: z.string().default('global'),
@@ -62,13 +65,14 @@ export const Config: z<Config> = z.object({
   provider: z.string(),
   model: z.string(),
   maxOutputTokens: z.natural().min(256).default(2_048),
-  structuredTaskTimeoutMs: z.natural().min(1_000).default(45_000),
+  structuredTaskTimeoutMs: z.natural().min(1_000).default(120_000),
   structuredReasoningEffort: z.union(['auto', 'force-off'] as const).default('auto'),
   showShortTermStatus: z.boolean().default(true),
 })
 
 export function resolveConfig(config: Config): ResolvedConfig {
   const database = config.database?.trim() ?? ''
+  const sessionRoot = config.sessionRoot?.trim()
   const namespacePrefix = config.namespacePrefix?.trim() || 'dsh'
   const globalNamespace = config.globalNamespace?.trim() || 'global'
   const provider = config.provider?.trim()
@@ -79,6 +83,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
   }
   return {
     database,
+    ...(sessionRoot ? { sessionRoot } : {}),
     namespaceMode: config.namespaceMode ?? 'project',
     namespacePrefix,
     globalNamespace,
@@ -87,7 +92,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     ingestSubagents: config.ingestSubagents ?? false,
     ...(provider && model ? { provider, model } : {}),
     maxOutputTokens: Math.max(256, Math.floor(config.maxOutputTokens ?? 2_048)),
-    structuredTaskTimeoutMs: Math.max(1_000, Math.floor(config.structuredTaskTimeoutMs ?? 45_000)),
+    structuredTaskTimeoutMs: Math.max(1_000, Math.floor(config.structuredTaskTimeoutMs ?? 120_000)),
     structuredReasoningEffort: config.structuredReasoningEffort ?? 'auto',
     showShortTermStatus: config.showShortTermStatus ?? true,
   }

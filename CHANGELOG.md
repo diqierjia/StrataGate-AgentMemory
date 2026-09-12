@@ -1,13 +1,44 @@
 # Changelog
 
-## Unreleased
+## 0.2.64 - 2026-09-12
 
+- Separate read-only status refresh from targeted retries for Block Summary, Event extraction, and Graph projection failures. The status page now lists every failed job with Block and conversation context, attempt count, retry time, latest error, visible progress, and durable retry failure feedback.
 - Render short-term Block status only in the corresponding turn's content flow, so it scrolls with the conversation instead of staying beside the composer. Add a persistent Advanced Settings switch that hides this status without disabling memory capture or processing.
 
 - Run folded-turn ingestion on a count-triggered, per-session background drain so the agent hot path does not wait for memory processing; failed and unprocessed turns are restored in order for a later retry or explicit flush.
 - Keep automatic long-term-memory retrieval keyed to the current user message, avoiding stale previous-topic context during consecutive conversations.
 - Safely omit `reasoningEffort` when model capability lookup fails or times out, and emit at most one fallback warning for each provider/model route.
 - Expose the `structuredReasoningEffort` policy (`auto` or `force-off`) as a user-editable plugin setting; unsupported `force-off` requests fall back to the model default instead of failing the structured call.
+## 0.2.63 - 2026-09-12
+
+- Make DSH core packages host-provided optional peers instead of profile-local plugin dependencies. The new `stratagate-dsh-repair` command moves old hoisted DSH peers into a recoverable profile backup before startup; a bootstrap resolver then forces StrataGate's own imports through DSH's installation-owned fallback, and unsupported host families fail fast with a diagnostic.
+- Add a safe bridge for v0 sessions containing the retired `stratagate/memory-citations` event. The original generation remains untouched and a recovery receipt records both hashes.
+- Formally test the complete DSH `0.1.2-rc.1` family and DSH `0.1.5-rc.1` with its real `0.1.5-rc.2` internal dependency tree.
+
+## 0.2.60 - 2026-09-08
+
+- Queue folded turns on a count-triggered, per-session background drain with bounded retry backoff; failed batches are restored in order and a later explicit flush can recover them without losing memory.
+- Keep automatic long-term-memory retrieval keyed to the current user message, avoiding stale previous-topic snapshots during consecutive conversations.
+- Expose the structured reasoning-effort policy through DSH settings; capability lookup failures now conservatively omit `reasoningEffort`, and each provider/model route emits at most one fallback warning.
+- Migrate the Web client from the removed `conversationEvents` service to `uiConversation.events`, adopt the new Session snapshot and branded-sequence APIs, and update the supported DSH baseline to `0.1.2-rc.1`.
+
+## 0.2.59 - 2026-09-08
+
+- Increase the structured model task timeout from 45 to 120 seconds so Event extraction has enough time to complete on slower model responses.
+
+## 0.2.58 - 2026-09-08
+
+- Style normal background memory processing with the blue informational theme, reserving red danger styling for failures.
+
+## 0.2.57 - 2026-09-07
+
+- Add an explicit per-Block Summary retry action for terminal failures, with affected conversation details and separate status refresh behavior.
+- Give a user-requested retry a fresh bounded attempt budget while preserving raw conversation data and continuing downstream Event and graph processing only after Summary succeeds.
+
+## 0.2.56 - 2026-09-07
+
+- Include Block Summary failures in workspace alerts, diagnostics, and system status instead of reporting only downstream Event and graph jobs.
+- Derive pending Block presentation from the persisted Summary job and use workspace-wide job totals on the system page.
 
 ## 0.2.55 - 2026-09-07
 
