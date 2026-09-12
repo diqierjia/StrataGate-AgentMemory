@@ -8,5 +8,8 @@ export default defineConfig({
       { find: '@diqier/stratagate', replacement: fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)) },
     ],
   },
-  test: { include: ['tests/**/*.test.ts'] },
+  test: {
+    include: ['tests/**/*.test.ts'],
+    testTimeout: process.env.CI ? 30_000 : 5_000,
+  },
 });

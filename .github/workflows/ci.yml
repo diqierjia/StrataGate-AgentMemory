@@ -49,3 +49,5 @@ jobs:
       - run: npm run test:dsh
       - run: npm run build:dsh
       - run: npm run verify:dsh
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}

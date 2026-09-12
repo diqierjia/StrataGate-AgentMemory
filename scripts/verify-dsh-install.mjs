@@ -9,7 +9,9 @@ import { once } from 'node:events'
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const tarball = process.argv[2] ? resolve(packageRoot, process.argv[2]) : join(packageRoot, 'stratagate-dsh-0.2.64.tgz')
-const versions = ['0.1.2-rc.1', '0.1.5-rc.1']
+const versions = process.env.DSH_VERSION
+  ? [process.env.DSH_VERSION]
+  : ['0.1.2-rc.1', '0.1.5-rc.1']
 const fixtureRoot = join(packageRoot, 'tests', 'fixtures')
 
 function run(command, args, cwd, env = {}) {
@@ -36,7 +38,8 @@ function platformFixture(source) {
 }
 
 function seedSessions(dshHome) {
-  const project = join(dshHome, 'sessions', '--C-redacted-workspace--')
+  const projectId = process.platform === 'win32' ? '--C-redacted-workspace--' : '--redacted-workspace--'
+  const project = join(dshHome, 'sessions', projectId)
   const fixtures = [
     ['legacy-session-v0', 'fixture-legacy-citations'],
     ['clean-session-v0', 'fixture-clean-session'],
@@ -186,7 +189,8 @@ try {
     const config = run(process.execPath, [cli, '--profile', 'web', '--dump-config'], root, dshEnv)
     assert(config.includes("sessionRoot: !!js dshHomePath('sessions')"), `${version}: sessionRoot was not wired to the host DSH_HOME`)
     await smokeWeb(cli, root, dshEnv, version)
-    const legacyDirectory = join(dshHome, 'sessions', '--C-redacted-workspace--', 'fixture-legacy-citations')
+    const projectId = process.platform === 'win32' ? '--C-redacted-workspace--' : '--redacted-workspace--'
+    const legacyDirectory = join(dshHome, 'sessions', projectId, 'fixture-legacy-citations')
     assert(existsSync(join(legacyDirectory, 'session.jsonl')), `${version}: immutable v0 fixture was removed`)
     if (version === '0.1.5-rc.1') {
       assert(existsSync(join(legacyDirectory, 'session.v1.jsonl')), `${version}: legacy citation bridge was not published`)
