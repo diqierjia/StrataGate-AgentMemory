@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
     const FEEDBACK_AI_PROMPT = '请根据刚才这个会话中 StrataGate 出现的问题整理一份问题反馈。只使用当前会话中真实发生的信息，不要猜测；不知道的信息留空。然后调用 StrataGate 的 feedback_prepare 工具创建本地反馈草稿，不要自行提交 GitHub Issue。'
     const FEEDBACK_SETTINGS_ID = 'stratagate-memory'
     const FEEDBACK_VIEW_ID = 'feedback'
-    const ISSUE_BODY_HINT = '<!-- 请在此处粘贴刚刚复制的反馈报告（Ctrl+V） -->'
+    const ISSUE_BODY_HINT = '> 请在下方粘贴 StrataGate 反馈报告（Ctrl+V / ⌘V），检查后提交。若无法粘贴，请返回 StrataGate 手动复制报告。\n\n'
     const MASCOT_DATA_URL = '__STRATAGATE_MASCOT_DATA_URL__'
     const STRATAGATE_CLIENT_VERSION = '__STRATAGATE_CLIENT_VERSION__'
     const MEMORY_CITATIONS_KIND = 'stratagate-memory-citations'
@@ -2746,16 +2746,38 @@ window.__ModuleLoader__.load({
           setting({ title: '记忆检索状态', description: '显示检索次数、返回数量，以及回答下方的记忆采用信息。', checked: showRetrievalStatus, disabled: !showStrataGateStatus, onChange: setRetrievalStatus, child: true })))
     }
 
+    function redactText(value) {
+      return String(value ?? '')
+        .replace(/\b(?:sk|gh[opasu]|github_pat)_[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+        .replace(/(["']?\b(?:api[_-]?key|token|password|passwd|access[_-]?token|refresh[_-]?token|secret|authorization)["']?\s*[:=]\s*)(["'])([\s\S]*?)\2/gi, '$1$2[REDACTED]$2')
+        .replace(/(\bauthorization\s*[:=]\s*)(Bearer|Basic|Token)\s+[^\s,;}]+/gi, '$1$2 [REDACTED]')
+        .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}={0,2}\b/gi, 'Bearer [REDACTED]')
+        .replace(/\b(?:Basic|Token)\s+[^\s,;}]+/gi, (match) => match.replace(/\s+[^\s,;}]+$/, ' [REDACTED]'))
+        .replace(/(["']?\b(?:api[_-]?key|token|password|passwd|access[_-]?token|refresh[_-]?token|secret|authorization)["']?\s*[:=]\s*)([^\s,;}]+)/gi, '$1[REDACTED]')
+    }
+
     function redactedJson(value) {
-      return JSON.stringify(value, null, 2)
-        .replace(/\b(?:sk|gh[opasu]|github_pat)_[A-Za-z0-9_-]{12,}\b/g, '[REDACTED_TOKEN]')
-        .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]{12,}={0,2}\b/gi, '$1[REDACTED]')
-        .replace(/\b(api[_-]?key|token|password|secret)\s*[:=]\s*([^\s,;]+)/gi, '$1=[REDACTED]')
+      const sensitive = /^(password|passwd|token|access[_-]?token|refresh[_-]?token|api[_-]?key|secret|authorization)$/i
+      const visit = (current, key = '') => {
+        if (sensitive.test(String(key))) return '[REDACTED]'
+        if (typeof current === 'string') return redactText(current)
+        if (Array.isArray(current)) return current.map((item) => visit(item))
+        if (current && typeof current === 'object') return Object.fromEntries(Object.entries(current).map(([name, item]) => [name, visit(item, name)]))
+        return current
+      }
+      return JSON.stringify(visit(value), null, 2) ?? 'null'
     }
 
     function safeErrorSummary(value) {
-      const firstLine = String(value || '').split(/\r?\n/, 1)[0].trim()
-      return firstLine.length > 240 ? firstLine.slice(0, 240) + '…' : firstLine
+      const text = redactText(String(value ?? '').trim())
+      return text.length > 2_000 ? text.slice(0, 2_000) + '…' : text
+    }
+
+    function restoreFeedbackDraftValues(draft, touched = {}) {
+      return {
+        title: touched.title ? undefined : String(draft?.title || ''),
+        problemContent: touched.body ? undefined : feedbackDraftMarkdown(draft),
+      }
     }
 
     function whitelistedMessage(message) {
@@ -2946,7 +2968,7 @@ window.__ModuleLoader__.load({
     }
 
     function buildSupportReport({ problemContent = '', overview = {}, selected = {}, data = {}, recentError = '', includeLogs = false, includeMemory = false, willingToContribute = false } = {}) {
-      const problem = String(problemContent || '').trim()
+      const problem = redactText(String(problemContent || '').trim())
       if (!problem) return ''
       const latestJobError = selected?.failedJobDetails?.[0]?.lastError || ''
       const lines = [
@@ -3012,6 +3034,22 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function shouldExpandFeedbackPreview(result) {
+      return result?.copied === false
+    }
+
+    function handleFeedbackIssueResult(result, callbacks = {}) {
+      const messages = []
+      if (result?.copied) {
+        callbacks.setStatus?.(result.opened ? '报告已复制。请在新打开的 Issue 中粘贴、检查并提交。' : '报告已复制，但浏览器可能拦截了新窗口。请点击下方普通链接打开 Issue。')
+      } else {
+        if (shouldExpandFeedbackPreview(result)) callbacks.setPreviewOpen?.(true)
+        messages.push((result?.error || '复制或打开 Issue 失败') + ' 报告仍保留在预览中；请手动复制或下载诊断文件。' + (result?.opened ? '' : ' 也可点击下方普通链接打开 Issue。'))
+        callbacks.setError?.(messages.join(' '))
+      }
+      return result
+    }
+
     function downloadSupportReport(report, documentRef = document, urlRef = URL) {
       const blob = new Blob([report], { type: 'text/plain;charset=utf-8' })
       const objectUrl = urlRef.createObjectURL(blob)
@@ -3038,16 +3076,21 @@ window.__ModuleLoader__.load({
       const [title, setTitle] = React.useState('')
       const [problemContent, setProblemContent] = React.useState('')
       const [draftLoading, setDraftLoading] = React.useState(true)
+      const titleTouchedRef = React.useRef(false)
+      const bodyTouchedRef = React.useRef(false)
       const [aiPromptCopied, setAiPromptCopied] = React.useState(false)
       const [previewOpen, setPreviewOpen] = React.useState(false)
       const aiNoticeRef = React.useRef(null)
       React.useEffect(() => {
         let active = true
+        titleTouchedRef.current = false
+        bodyTouchedRef.current = false
         setDraftLoading(true)
         void api('feedback', { namespace }).then((result) => {
           if (!active || !result?.draft) return
-          setTitle(result.draft.title || '')
-          setProblemContent(feedbackDraftMarkdown(result.draft))
+          const restored = restoreFeedbackDraftValues(result.draft, { title: titleTouchedRef.current, body: bodyTouchedRef.current })
+          if (!titleTouchedRef.current) setTitle(restored.title)
+          if (!bodyTouchedRef.current) setProblemContent(restored.problemContent)
         }).catch((reason) => {
           if (active) setError('读取反馈草稿失败：' + String(reason?.message || reason))
         }).finally(() => {
@@ -3082,18 +3125,13 @@ window.__ModuleLoader__.load({
       }
       const copyAndOpen = () => {
         setStatus(''); setError('')
-        const save = saveDraft()
+        void saveDraft().catch((reason) => setError((current) => {
+          const message = '保存反馈草稿失败：' + String(reason?.message || reason)
+          return current ? current + ' ' + message : message
+        }))
         const issue = copyReportAndOpenIssue(reportSnapshot.text, navigator?.clipboard, (url) => window.open(url, '_blank'), title)
-        void Promise.allSettled([save, issue]).then(([saved, opened]) => {
-          const messages = []
-          if (opened.status === 'fulfilled') {
-            const result = opened.value
-            if (result.copied) setStatus(result.opened ? '报告已复制。请在新打开的 Issue 中粘贴、检查并提交。' : '报告已复制，但浏览器可能拦截了新窗口。请点击下方普通链接打开 Issue。')
-            else messages.push(result.error + ' 报告仍保留在预览中；请手动复制或下载诊断文件。' + (result.opened ? '' : ' 也可点击下方普通链接打开 Issue。'))
-          } else messages.push('复制或打开 Issue 失败：' + String(opened.reason?.message || opened.reason))
-          if (saved.status === 'rejected') messages.push('保存反馈草稿失败：' + String(saved.reason?.message || saved.reason))
-          if (messages.length) setError(messages.join(' '))
-        })
+        void issue.then((result) => handleFeedbackIssueResult(result, { setStatus, setError, setPreviewOpen }))
+          .catch((reason) => setError('复制或打开 Issue 失败：' + String(reason?.message || reason)))
       }
       const copyAiPrompt = () => {
         setStatus(''); setError('')
@@ -3128,8 +3166,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'sg-privacy-note' }, 'GitHub 链接不包含报告正文、诊断日志或记忆数据。StrataGate 永远不会自动提交 Issue。'),
         h('section', { className: 'sg-support-card sg-support-compose' },
           h('div', { className: 'sg-support-compose-head' }, h('div', null, h('h3', null, '描述问题'), h('p', null, '自由描述即可，不需要填写多组必填表单。')), h('button', { type: 'button', className: 'sg-support-ai', onClick: copyAiPrompt }, 'AI 帮我填')),
-          h('label', { className: 'sg-support-field' }, h('span', null, 'Issue 标题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => setTitle(event.target.value), onBlur: persistDraft, placeholder: '简短概括问题' })),
-          h('label', { className: 'sg-support-field' }, h('span', null, '问题内容'), h('textarea', { className: 'sg-support-description', value: problemContent, onChange: (event) => setProblemContent(event.target.value), onBlur: persistDraft, placeholder: '描述刚才发生了什么；也可以点击“AI 帮我填”。', 'aria-label': '问题内容' })),
+          h('label', { className: 'sg-support-field' }, h('span', null, 'Issue 标题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => { titleTouchedRef.current = true; setTitle(event.target.value) }, onBlur: persistDraft, placeholder: '简短概括问题' })),
+          h('label', { className: 'sg-support-field' }, h('span', null, '问题内容'), h('textarea', { className: 'sg-support-description', value: problemContent, onChange: (event) => { bodyTouchedRef.current = true; setProblemContent(event.target.value) }, onBlur: persistDraft, placeholder: '描述刚才发生了什么；也可以点击“AI 帮我填”。', 'aria-label': '问题内容' })),
           h('details', null, h('summary', null, '查看可手动复制的 AI 提示词'), h('pre', { className: 'sg-raw-json sg-code' }, FEEDBACK_AI_PROMPT)),
           draftLoading ? h('div', { className: 'sg-support-sync' }, '正在读取本地反馈草稿…') : null),
         h('section', { className: 'sg-support-card' }, h('h3', null, '附加信息'), h('p', null, '基础诊断默认包含；日志和记忆数据只有在你主动勾选后才会加入。'),

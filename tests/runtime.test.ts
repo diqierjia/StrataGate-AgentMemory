@@ -209,7 +209,7 @@ describe('DSH runtime ingestion', () => {
         draft: { title: 'Draft title', description: 'Observed failure.', errorContext: 'EACCES' },
       })
       expect(second.adminSaveFeedbackDraft(second.namespaceFor(session), { bodyMarkdown: '' })).toMatchObject({
-        draft: { title: 'Draft title', description: '', reproduction: [], expected: '', actual: '', errorContext: '' },
+        draft: { title: 'Draft title', description: 'Observed failure.', reproduction: ['First step', 'Second step'], expected: '', actual: '', errorContext: 'EACCES' },
       })
       const afterCooldown = Date.parse('2026-09-10T00:00:00.000Z')
       second.notePluginError(session, new Error('later failure'))
@@ -217,6 +217,101 @@ describe('DSH runtime ingestion', () => {
     } finally {
       await second.close()
       await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('patches feedback drafts without dropping omitted fields or losing manual bodyMarkdown', async () => {
+    const runtime = new StrataGateRuntime({
+      database: ':memory:', namespaceMode: 'project', namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 6, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      const namespace = runtime.namespaceFor(session)
+      await runtime.prepareFeedback(session, {
+        title: 'Original title', description: 'Original description', reproduction: ['step one', 'step two'],
+        expected: 'Original expected', actual: 'Original actual', errorContext: 'Original error',
+      })
+      await runtime.prepareFeedback(session, { title: 'New title' })
+      expect(runtime.adminFeedbackDraft(namespace).draft).toMatchObject({
+        title: 'New title', description: 'Original description', reproduction: ['step one', 'step two'],
+        expected: 'Original expected', actual: 'Original actual', errorContext: 'Original error',
+      })
+      await runtime.prepareFeedback(session, { expected: 'New expected' })
+      expect(runtime.adminFeedbackDraft(namespace).draft).toMatchObject({
+        title: 'New title', description: 'Original description', reproduction: ['step one', 'step two'],
+        expected: 'New expected', actual: 'Original actual', errorContext: 'Original error',
+      })
+      await runtime.prepareFeedback(session, { reproduction: ['new step'] })
+      expect(runtime.adminFeedbackDraft(namespace).draft).toMatchObject({
+        title: 'New title', description: 'Original description', reproduction: ['new step'],
+        expected: 'New expected', actual: 'Original actual', errorContext: 'Original error',
+      })
+      const withBody = runtime.adminSaveFeedbackDraft(namespace, { bodyMarkdown: '## 问题描述\n\nManual body.\n\n## 自定义备注\n\nKeep this custom section.' }).draft
+      expect(withBody.bodyMarkdown).toContain('Manual body.')
+      await runtime.prepareFeedback(session, { title: 'Manual body title patch' })
+      expect(runtime.adminFeedbackDraft(namespace).draft?.bodyMarkdown).toContain('Keep this custom section.')
+      await runtime.prepareFeedback(session, { reproduction: ['repro step after manual edit'] })
+      expect(runtime.adminFeedbackDraft(namespace).draft?.bodyMarkdown).toContain('1. repro step after manual edit')
+      await runtime.prepareFeedback(session, { expected: 'Latest expected' })
+      const afterStructuredUpdate = runtime.adminFeedbackDraft(namespace).draft!
+      expect(afterStructuredUpdate).toMatchObject({
+        title: 'Manual body title patch', description: 'Original description', reproduction: ['repro step after manual edit'],
+        expected: 'Latest expected', actual: 'Original actual', errorContext: 'Original error',
+      })
+      expect(afterStructuredUpdate.bodyMarkdown).toContain('Manual body.')
+      expect(afterStructuredUpdate.bodyMarkdown).toContain('## 自定义备注')
+      expect(afterStructuredUpdate.bodyMarkdown).toContain('Keep this custom section.')
+      expect(afterStructuredUpdate.bodyMarkdown).toContain('Latest expected')
+      const afterBodyClear = runtime.adminSaveFeedbackDraft(namespace, { bodyMarkdown: '' }).draft
+      expect(afterBodyClear).toMatchObject({
+        title: 'Manual body title patch', description: 'Original description', reproduction: ['repro step after manual edit'],
+        expected: 'Latest expected', actual: 'Original actual', errorContext: 'Original error',
+      })
+      expect(afterBodyClear.bodyMarkdown).toBeUndefined()
+    } finally {
+      await runtime.close()
+    }
+  })
+
+  it('patches only a real top-level Markdown section and preserves lookalikes in text and fences', async () => {
+    const runtime = new StrataGateRuntime({
+      database: ':memory:', namespaceMode: 'project', namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 6, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      const namespace = runtime.namespaceFor(session)
+      const bodyMarkdown = [
+        'Intro with literal ## 预期行为 text.',
+        '',
+        '### 预期行为',
+        '',
+        'Keep the custom level-three section.',
+        '',
+        '```md',
+        '## 预期行为',
+        'code sample must remain untouched',
+        '```',
+        '',
+        '## 预期行为',
+        '',
+        'Old expected content.',
+        '',
+        '## 自定义备注',
+        '',
+        'Keep this custom section.',
+      ].join('\n')
+      runtime.adminSaveFeedbackDraft(namespace, { bodyMarkdown })
+      await runtime.prepareFeedback(session, { expected: 'New expected content.' })
+      const updated = runtime.adminFeedbackDraft(namespace).draft?.bodyMarkdown || ''
+      expect(updated).toContain('Intro with literal ## 预期行为 text.')
+      expect(updated).toContain('### 预期行为')
+      expect(updated).toContain('Keep the custom level-three section.')
+      expect(updated).toContain('```md\n## 预期行为\ncode sample must remain untouched\n```')
+      expect(updated).toContain('## 预期行为\n\nNew expected content.')
+      expect(updated).not.toContain('## 预期行为\n\nOld expected content.')
+      expect(updated).toContain('## 自定义备注\n\nKeep this custom section.')
+    } finally {
+      await runtime.close()
     }
   })
 

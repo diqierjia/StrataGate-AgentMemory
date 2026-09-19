@@ -140,22 +140,77 @@ function feedbackText(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maximum) : ''
 }
 
+const FEEDBACK_MARKDOWN_HEADINGS: Record<string, string> = {
+  description: '问题描述',
+  reproduction: '复现步骤',
+  expected: '预期行为',
+  actual: '实际行为',
+  errorContext: '相关错误信息',
+}
+
+function patchFeedbackMarkdown(markdown: string, input: FeedbackDraftInput): string {
+  let result = markdown.trim()
+  for (const [key, heading] of Object.entries(FEEDBACK_MARKDOWN_HEADINGS)) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue
+    const raw = input[key as keyof FeedbackDraftInput]
+    const text = Array.isArray(raw)
+      ? raw.map((item, index) => {
+          const value = feedbackText(item, 2_000)
+          return value ? `${index + 1}. ${value}` : ''
+        }).filter(Boolean).join('\n')
+      : feedbackText(raw, key === 'description' ? 20_000 : key === 'expected' || key === 'actual' ? 10_000 : 20_000)
+    const marker = `## ${heading}`
+    const lines = result.split('\n')
+    let inFence = false
+    let sectionStart = -1
+    let sectionEnd = lines.length
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = (lines[index] ?? '').replace(/\r$/, '')
+      const trimmed = line.trim()
+      if (/^(?:```|~~~)/.test(trimmed)) {
+        inFence = !inFence
+        continue
+      }
+      if (inFence) continue
+      if (trimmed === marker && sectionStart < 0) {
+        sectionStart = index
+        continue
+      }
+      if (sectionStart >= 0 && /^##\s+\S/.test(line)) {
+        sectionEnd = index
+        break
+      }
+    }
+    if (sectionStart < 0) {
+      if (text) result = `${result ? `${result}\n\n` : ''}${marker}\n\n${text}`
+      continue
+    }
+    const replacement = text ? [marker, '', ...text.split('\n')] : []
+    lines.splice(sectionStart, sectionEnd - sectionStart, ...replacement)
+    result = lines.join('\n').trim()
+  }
+  return result.trim()
+}
+
 function normalizeFeedbackDraft(input: FeedbackDraftInput, previous?: FeedbackDraft | null): FeedbackDraft {
   const has = (key: keyof FeedbackDraftInput): boolean => Object.prototype.hasOwnProperty.call(input, key)
-  const replacesStructuredBody = has('bodyMarkdown')
-  const reproduction = replacesStructuredBody
-    ? []
-    : has('reproduction')
+  const updatesStructuredBody = ['description', 'reproduction', 'expected', 'actual', 'errorContext']
+    .some((key) => has(key as keyof FeedbackDraftInput))
+  const reproduction = has('reproduction')
     ? (Array.isArray(input.reproduction) ? input.reproduction : []).map((value) => feedbackText(value, 2_000)).filter(Boolean).slice(0, 20)
     : previous?.reproduction ?? []
-  const bodyMarkdown = has('bodyMarkdown') ? feedbackText(input.bodyMarkdown, 50_000) : previous?.bodyMarkdown
+  const bodyMarkdown = has('bodyMarkdown')
+    ? feedbackText(input.bodyMarkdown, 50_000)
+    : updatesStructuredBody && previous?.bodyMarkdown
+    ? patchFeedbackMarkdown(previous.bodyMarkdown, input)
+    : previous?.bodyMarkdown
   return {
     title: has('title') ? feedbackText(input.title, 240) : previous?.title ?? '',
-    description: replacesStructuredBody ? '' : has('description') ? feedbackText(input.description, 20_000) : previous?.description ?? '',
+    description: has('description') ? feedbackText(input.description, 20_000) : previous?.description ?? '',
     reproduction,
-    expected: replacesStructuredBody ? '' : has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
-    actual: replacesStructuredBody ? '' : has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
-    errorContext: replacesStructuredBody ? '' : has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
+    expected: has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
+    actual: has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
+    errorContext: has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
     ...(bodyMarkdown ? { bodyMarkdown } : {}),
     updatedAt: new Date().toISOString(),
   }
@@ -869,7 +924,9 @@ export class StrataGateRuntime {
 
   async prepareFeedback(session: Session, input: FeedbackDraftInput): Promise<unknown> {
     const namespace = this.namespaceFor(session)
-    const draft = normalizeFeedbackDraft(input)
+    // feedback_prepare is patch-oriented: omitted fields retain the existing draft.
+    const previous = this.loadFeedbackDraft(namespace)
+    const draft = normalizeFeedbackDraft(input, previous)
     this.saveFeedbackDraft(namespace, draft)
     const feedbackUrl = feedbackDraftUrl(namespace, this.feedbackOrigin())
     return {
