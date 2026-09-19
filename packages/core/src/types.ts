@@ -487,6 +487,13 @@ export interface GraphNodeSearchResult {
   matchedFields?: string[];
   /** Human-readable explanation of why this node passed the lexical filter. */
   matchReason?: string;
+  matchType?: 'current' | 'historical' | 'both';
+  currentFacts?: GraphFact[];
+  historicalFacts?: GraphFact[];
+  currentEdges?: GraphEdge[];
+  historicalEdges?: GraphEdge[];
+  provenanceEventIds?: string[];
+  timeline?: Array<{ id: string; title: string; summary: string; status: MemoryStatus; time?: string }>;
 }
 
 export interface RawSearchHit {

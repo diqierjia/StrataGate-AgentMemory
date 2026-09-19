@@ -161,18 +161,22 @@ function patchFeedbackMarkdown(markdown: string, input: FeedbackDraftInput): str
       : feedbackText(raw, key === 'description' ? 20_000 : key === 'expected' || key === 'actual' ? 10_000 : 20_000)
     const marker = `## ${heading}`
     const lines = result.split('\n')
-    let inFence = false
+    let fence: { char: string; length: number } | null = null
     let sectionStart = -1
     let sectionEnd = lines.length
     for (let index = 0; index < lines.length; index += 1) {
       const line = (lines[index] ?? '').replace(/\r$/, '')
-      const trimmed = line.trim()
-      if (/^(?:```|~~~)/.test(trimmed)) {
-        inFence = !inFence
+      const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
+      if (fence) {
+        const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)
+        if (close && close[1]![0] === fence.char && close[1]!.length >= fence.length) fence = null
         continue
       }
-      if (inFence) continue
-      if (trimmed === marker && sectionStart < 0) {
+      if (fenceMatch) {
+        fence = { char: fenceMatch[1]![0]!, length: fenceMatch[1]!.length }
+        continue
+      }
+      if (line === marker && sectionStart < 0) {
         sectionStart = index
         continue
       }
@@ -194,23 +198,25 @@ function patchFeedbackMarkdown(markdown: string, input: FeedbackDraftInput): str
 
 function normalizeFeedbackDraft(input: FeedbackDraftInput, previous?: FeedbackDraft | null): FeedbackDraft {
   const has = (key: keyof FeedbackDraftInput): boolean => Object.prototype.hasOwnProperty.call(input, key)
+  const replacesBody = has('bodyMarkdown')
   const updatesStructuredBody = ['description', 'reproduction', 'expected', 'actual', 'errorContext']
     .some((key) => has(key as keyof FeedbackDraftInput))
+  const explicitBodyMarkdown = has('bodyMarkdown') ? feedbackText(input.bodyMarkdown, 50_000) : undefined
   const reproduction = has('reproduction')
     ? (Array.isArray(input.reproduction) ? input.reproduction : []).map((value) => feedbackText(value, 2_000)).filter(Boolean).slice(0, 20)
     : previous?.reproduction ?? []
-  const bodyMarkdown = has('bodyMarkdown')
-    ? feedbackText(input.bodyMarkdown, 50_000)
+  const bodyMarkdown = replacesBody
+    ? explicitBodyMarkdown
     : updatesStructuredBody && previous?.bodyMarkdown
     ? patchFeedbackMarkdown(previous.bodyMarkdown, input)
     : previous?.bodyMarkdown
   return {
     title: has('title') ? feedbackText(input.title, 240) : previous?.title ?? '',
-    description: has('description') ? feedbackText(input.description, 20_000) : previous?.description ?? '',
-    reproduction,
-    expected: has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
-    actual: has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
-    errorContext: has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
+    description: replacesBody ? '' : has('description') ? feedbackText(input.description, 20_000) : previous?.description ?? '',
+    reproduction: replacesBody ? [] : reproduction,
+    expected: replacesBody ? '' : has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
+    actual: replacesBody ? '' : has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
+    errorContext: replacesBody ? '' : has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
     ...(bodyMarkdown ? { bodyMarkdown } : {}),
     updatedAt: new Date().toISOString(),
   }
@@ -1643,14 +1649,14 @@ export class StrataGateRuntime {
   async searchGraph(session: Session, query: string, limit = 8): Promise<unknown> {
     await this.flush()
     const results = await (await this.space(session)).searchGraphNodes(query, limit)
-    return this.batch(session, results.map(({ node }) => ({
+    return this.batch(session, results.map(({ node, provenanceEventIds }) => ({
       ref: `graph-node:${node.id}`,
       target: {
-        eventIds: node.sourceEventIds,
+        eventIds: provenanceEventIds ?? node.sourceEventIds,
         elementIds: [],
         citation: citation('graph', node.id, node.name, `graph-node:${node.id}`, 'nodeId'),
       },
-    })), results.map(({ node, score, matchedFields, matchReason }) => compactGraphNode(node, score, matchedFields, matchReason)))
+    })), results.map((result) => compactGraphNode(result.node, result.score, result.matchedFields, result.matchReason, result)))
   }
 
   async expandGraphNode(session: Session, id: string): Promise<unknown> {
@@ -1658,6 +1664,12 @@ export class StrataGateRuntime {
     const memory = await this.space(session)
     const node = memory.listGraphNodes().find((candidate) => candidate.id === id)
     if (!node) throw new Error(`Unknown graph node: ${id}`)
+    const events = new Map(memory.listEvents().map((event) => [event.id, event]))
+    const usable = (ids: readonly string[]) => ids.filter((eventId) => {
+      const event = events.get(eventId)
+      return event && event.status !== 'forgotten' && event.status !== 'archived'
+    })
+    const currentFacts = node.facts.filter((fact) => (fact.status === 'active' || fact.status === 'disputed') && usable(fact.sourceEventIds).some((eventId) => events.get(eventId)?.status === 'active'))
     const edges = memory.listGraphEdges().filter(({ fromNodeId, toNodeId }) => fromNodeId === id || toNodeId === id)
     return this.batch(session, [{
       ref: `graph-node:${node.id}:expanded`,
@@ -1666,7 +1678,7 @@ export class StrataGateRuntime {
         elementIds: [],
         citation: citation('graph', node.id, node.name, `graph-node:${node.id}:expanded`, 'nodeId', { expanded: true }),
       },
-    }], { node, edges })
+    }], { node: { ...node, currentState: currentFacts.map((fact) => `${fact.key}: ${Array.isArray(fact.value) ? fact.value.join('、') : fact.value}`).join('\n') }, edges })
   }
 
   private scheduleBlockDerivation(session: Session, memory: StrataGate): void {
@@ -2052,18 +2064,25 @@ function compactGraphNode(
   score: number,
   matchedFields?: readonly string[],
   matchReason?: string,
+  result?: { matchType?: string; currentFacts?: unknown[]; historicalFacts?: unknown[]; currentEdges?: unknown[]; historicalEdges?: unknown[]; timeline?: unknown[]; provenanceEventIds?: string[] },
 ): Record<string, unknown> {
   return {
     id: node.id,
     name: node.name,
     type: node.type,
     aliases: node.aliases.map((alias) => compactText(alias, 160)),
-    currentState: compactText(node.currentState, 500),
+    currentState: compactText(result?.currentFacts?.map((fact: any) => `${fact.key}: ${Array.isArray(fact.value) ? fact.value.join('、') : fact.value}`).join('\n') || '', 500),
     status: node.status,
     rankScore: score,
     ...(matchedFields ? { matchedFields } : {}),
     ...(matchReason ? { matchReason } : {}),
     scoreMeaning: 'Ranking-only BM25/RRF score; not confidence, probability, or factual accuracy.',
+    ...(result?.matchType ? { matchType: result.matchType } : {}),
+    ...(result?.currentFacts ? { currentMatches: result.currentFacts } : {}),
+    ...(result?.historicalFacts ? { historicalMatches: result.historicalFacts } : {}),
+    ...(result?.currentEdges ? { currentRelations: result.currentEdges } : {}),
+    ...(result?.historicalEdges ? { historicalRelations: result.historicalEdges } : {}),
+    ...(result?.timeline ? { timeline: result.timeline } : {}),
   }
 }
 
