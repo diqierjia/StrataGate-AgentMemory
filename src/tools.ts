@@ -62,7 +62,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_search_graph',
-    description: 'Search the current Event-backed Knowledge Graph for people, projects, organizations, tools, places, facts, and relations. Returns compact node cards with matchedFields/matchReason; call memory_expand_graph_node for complete facts and edges. rankScore is BM25/RRF ordering only, never confidence or factual accuracy. Results are independently assessable.',
+    description: 'Search the Event-backed Knowledge Graph. Graph represents current state, while search can also find traceable historical facts and relations. Results label current, historical, or both; historical matches do not mean the fact is current and include a compact Event timeline. Call memory_expand_graph_node for complete evidence. rankScore is ranking-only, never confidence or factual accuracy.',
     parameters: {
       query: { type: 'string', required: true },
       limit: { type: 'integer', description: 'Maximum results, 1-20.' },

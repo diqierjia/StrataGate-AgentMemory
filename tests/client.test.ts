@@ -6,7 +6,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
-    "    exports.__test = { feedbackDraftMarkdown, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT }; exports.name = 'stratagate-dsh'",
+    "    exports.__test = { feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT }; exports.name = 'stratagate-dsh'",
   )
   let definition: any
   runInNewContext(instrumented, {
@@ -1161,6 +1161,9 @@ describe('StrataGate Web client contract', () => {
     expect(issueLinks).toHaveLength(2)
     const feedbackIssue = issueLinks.find((href) => href !== ISSUE_URL)!
     expect(new URL(feedbackIssue).searchParams.get('body')).toBe(ISSUE_BODY_HINT)
+    expect(ISSUE_BODY_HINT).toContain('Ctrl+V / ⌘V')
+    expect(ISSUE_BODY_HINT).not.toContain('<!--')
+    expect(ISSUE_BODY_HINT).not.toContain('-->')
     for (const href of hrefs) {
       expect(href).not.toContain(privateChat)
       expect(href).not.toContain(logContent)
@@ -1184,6 +1187,14 @@ describe('StrataGate Web client contract', () => {
       actual: '页面显示错误。',
       errorContext: 'EACCES',
     })).toBe('## 问题描述\n\n保存草稿失败。\n\n## 复现步骤\n\n1. 打开反馈页\n2. 点击保存\n\n## 预期行为\n\n草稿保存在本地。\n\n## 实际行为\n\n页面显示错误。\n\n## 相关错误信息\n\nEACCES')
+  })
+
+  it('restores draft fields independently so a late GET cannot overwrite edited values', () => {
+    const { restoreFeedbackDraftValues } = loadSupportHelpers()
+    const draft = { title: 'old title', description: 'old body' }
+    expect(restoreFeedbackDraftValues(draft, { title: true, body: false })).toEqual({ title: undefined, problemContent: '## 问题描述\n\nold body' })
+    expect(restoreFeedbackDraftValues(draft, { title: false, body: true })).toEqual({ title: 'old title', problemContent: undefined })
+    expect(restoreFeedbackDraftValues(draft, { title: false, body: false })).toEqual({ title: 'old title', problemContent: '## 问题描述\n\nold body' })
   })
 
   it('shows a persistent top AI-copy notice with retry, close, sticky, and scroll visibility handling', () => {
@@ -1237,8 +1248,68 @@ describe('StrataGate Web client contract', () => {
     expect(memory).not.toContain('must-not-leak')
   })
 
+  it('redacts nested sensitive values without breaking the attached JSON or recent errors', () => {
+    const { buildSupportReport } = loadSupportHelpers()
+    const secret = 'ghp_1234567890abcdef'
+    const report = buildSupportReport({
+      problemContent: 'Observed token=inline-secret and a useful detail.',
+      recentError: `first line is useful\nsecond line has password=error-secret and Bearer abcdefghijklmnop`,
+      includeLogs: true,
+      includeMemory: true,
+      selected: { failedJobDetails: [{ kind: 'summary', lastErrorFull: 'safe failure detail' }] },
+      data: {
+        blocks: [{
+          id: 'block-1',
+          l5Raw: [{ toolCalls: [{
+            arguments: {
+              password: 'nested-password', passwd: 'nested-passwd', token: 'nested-token',
+              accessToken: 'nested-access', refresh_token: 'nested-refresh', apiKey: 'nested-api',
+              authorization: 'nested-auth', secret: 'nested-secret', safe: 'keep this',
+            },
+            result: { message: `Bearer ${secret}` },
+          }] }],
+        }],
+        events: [{ id: 'event-1', title: 'Keep event title', summary: 'api_key=event-secret' }],
+        graph: { nodes: [{ id: 'node-1', name: 'Keep node', currentState: 'secret=graph-secret' }], edges: [] },
+      },
+    })
+    expect(report).not.toContain(secret)
+    expect(report).not.toContain('nested-password')
+    expect(report).not.toContain('nested-passwd')
+    expect(report).not.toContain('nested-token')
+    expect(report).not.toContain('nested-access')
+    expect(report).not.toContain('nested-refresh')
+    expect(report).not.toContain('nested-api')
+    expect(report).not.toContain('nested-auth')
+    expect(report).not.toContain('nested-secret')
+    expect(report).not.toContain('error-secret')
+    expect(report).not.toContain('abcdefghijklmnop')
+    expect(report).toContain('second line has')
+    expect(report).toContain('Keep event title')
+    const jsonBlock = report.match(/## 用户主动附加的记忆数据[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1]
+    expect(jsonBlock).toBeTruthy()
+    expect(() => JSON.parse(jsonBlock!)).not.toThrow()
+  })
+
+  it('redacts complete free-text credentials without damaging JSON', () => {
+    const { buildSupportReport } = loadSupportHelpers()
+    const report = buildSupportReport({
+      problemContent: 'password="two words" Authorization: Basic dXNlcjpwYXNz authorization=Basic basic-credential authorization = Token token-credential Basic bare-basic-credential Token bare-token-credential access_token=access-value refreshToken=refresh-value useful detail',
+      includeLogs: true,
+      recentError: 'password="error words" Authorization: Basic c2VjcmV0 access_token=error-access refreshToken=error-refresh; keep this detail',
+      data: { blocks: [], events: [], graph: { nodes: [], edges: [] } },
+    })
+    for (const secret of ['two words', 'dXNlcjpwYXNz', 'basic-credential', 'token-credential', 'bare-basic-credential', 'bare-token-credential', 'access-value', 'refresh-value', 'error words', 'c2Vjcm0', 'c2VjcmV0', 'error-access', 'error-refresh']) {
+      expect(report).not.toContain(secret)
+    }
+    expect(report).toContain('useful detail')
+    expect(report).toContain('keep this detail')
+    const jsonBlock = report.match(/## 诊断日志[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1]
+    expect(() => JSON.parse(jsonBlock!)).not.toThrow()
+  })
+
   it('copies the frozen report and opens an Issue URL containing only title and the paste hint', async () => {
-    const { buildSupportReport, copyReportAndOpenIssue, issueUrl, ISSUE_BODY_HINT } = loadSupportHelpers()
+    const { buildSupportReport, copyReportAndOpenIssue, shouldExpandFeedbackPreview, issueUrl, ISSUE_BODY_HINT } = loadSupportHelpers()
     const report = buildSupportReport({ problemContent: '## 问题描述\n\nSomething failed.', data: { blocks: [{ l5Raw: [{ content: 'chat snapshot' }] }] }, includeMemory: true })
     const copied: string[] = []
     const opened: string[] = []
@@ -1260,20 +1331,25 @@ describe('StrataGate Web client contract', () => {
     const failure = await copyReportAndOpenIssue(
       report,
       { writeText: async () => { throw new Error('permission denied') } },
-      () => null,
+      (url: string) => { opened.push(url); return null },
     )
     expect(failure).toMatchObject({ copied: false, opened: false })
     expect(failure.error).toContain('permission denied')
+    expect(opened).toHaveLength(2)
+    expect(shouldExpandFeedbackPreview(failure)).toBe(true)
     expect(report).toContain('chat snapshot')
 
     const unavailable = await copyReportAndOpenIssue(report, null, () => null)
     expect(unavailable).toMatchObject({ copied: false, opened: false })
     expect(unavailable.error).toContain('不支持自动复制')
+    expect(shouldExpandFeedbackPreview(unavailable)).toBe(true)
+    expect(shouldExpandFeedbackPreview({ copied: true })).toBe(false)
 
     const titled: string[] = []
     await copyReportAndOpenIssue(report, { writeText: async () => {} }, (url: string) => { titled.push(url); return {} }, 'Draft title')
     expect(new URL(titled[0]!).searchParams.get('title')).toBe('Draft title')
     expect(new URL(titled[0]!).searchParams.get('body')).toBe(ISSUE_BODY_HINT)
+    expect([...new URL(titled[0]!).searchParams.keys()].sort()).toEqual(['body', 'title'])
     expect(titled[0]!).not.toContain('chat snapshot')
   })
 
@@ -1476,6 +1552,18 @@ describe('StrataGate Web client contract', () => {
     expect(statusSource).toContain('groups.map((group) =>')
     expect(statusSource).toContain('group.items.map((item) =>')
     expect(statusSource).not.toContain("h('dt', null, 'Block')")
+  })
+
+  it('shows clipboard failure immediately without waiting for draft persistence', () => {
+    const calls: string[] = []
+    const { handleFeedbackIssueResult } = loadSupportHelpers()
+    const result = handleFeedbackIssueResult({ copied: false, opened: true, error: '复制失败：permission denied' }, {
+      setPreviewOpen: (value: boolean) => calls.push('preview:' + value),
+      setError: (value: string) => calls.push('error:' + value),
+    })
+    expect(result.copied).toBe(false)
+    expect(calls[0]).toBe('preview:true')
+    expect(calls[1]).toContain('error:复制失败')
   })
 
   it('keeps Event Extraction and Graph Projection separate in the status details', () => {

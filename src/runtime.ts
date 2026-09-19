@@ -140,22 +140,83 @@ function feedbackText(value: unknown, maximum: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maximum) : ''
 }
 
+const FEEDBACK_MARKDOWN_HEADINGS: Record<string, string> = {
+  description: '问题描述',
+  reproduction: '复现步骤',
+  expected: '预期行为',
+  actual: '实际行为',
+  errorContext: '相关错误信息',
+}
+
+function patchFeedbackMarkdown(markdown: string, input: FeedbackDraftInput): string {
+  let result = markdown.trim()
+  for (const [key, heading] of Object.entries(FEEDBACK_MARKDOWN_HEADINGS)) {
+    if (!Object.prototype.hasOwnProperty.call(input, key)) continue
+    const raw = input[key as keyof FeedbackDraftInput]
+    const text = Array.isArray(raw)
+      ? raw.map((item, index) => {
+          const value = feedbackText(item, 2_000)
+          return value ? `${index + 1}. ${value}` : ''
+        }).filter(Boolean).join('\n')
+      : feedbackText(raw, key === 'description' ? 20_000 : key === 'expected' || key === 'actual' ? 10_000 : 20_000)
+    const marker = `## ${heading}`
+    const lines = result.split('\n')
+    let fence: { char: string; length: number } | null = null
+    let sectionStart = -1
+    let sectionEnd = lines.length
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = (lines[index] ?? '').replace(/\r$/, '')
+      const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
+      if (fence) {
+        const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)
+        if (close && close[1]![0] === fence.char && close[1]!.length >= fence.length) fence = null
+        continue
+      }
+      if (fenceMatch) {
+        fence = { char: fenceMatch[1]![0]!, length: fenceMatch[1]!.length }
+        continue
+      }
+      if (line === marker && sectionStart < 0) {
+        sectionStart = index
+        continue
+      }
+      if (sectionStart >= 0 && /^##\s+\S/.test(line)) {
+        sectionEnd = index
+        break
+      }
+    }
+    if (sectionStart < 0) {
+      if (text) result = `${result ? `${result}\n\n` : ''}${marker}\n\n${text}`
+      continue
+    }
+    const replacement = text ? [marker, '', ...text.split('\n')] : []
+    lines.splice(sectionStart, sectionEnd - sectionStart, ...replacement)
+    result = lines.join('\n').trim()
+  }
+  return result.trim()
+}
+
 function normalizeFeedbackDraft(input: FeedbackDraftInput, previous?: FeedbackDraft | null): FeedbackDraft {
   const has = (key: keyof FeedbackDraftInput): boolean => Object.prototype.hasOwnProperty.call(input, key)
-  const replacesStructuredBody = has('bodyMarkdown')
-  const reproduction = replacesStructuredBody
-    ? []
-    : has('reproduction')
+  const replacesBody = has('bodyMarkdown')
+  const updatesStructuredBody = ['description', 'reproduction', 'expected', 'actual', 'errorContext']
+    .some((key) => has(key as keyof FeedbackDraftInput))
+  const explicitBodyMarkdown = has('bodyMarkdown') ? feedbackText(input.bodyMarkdown, 50_000) : undefined
+  const reproduction = has('reproduction')
     ? (Array.isArray(input.reproduction) ? input.reproduction : []).map((value) => feedbackText(value, 2_000)).filter(Boolean).slice(0, 20)
     : previous?.reproduction ?? []
-  const bodyMarkdown = has('bodyMarkdown') ? feedbackText(input.bodyMarkdown, 50_000) : previous?.bodyMarkdown
+  const bodyMarkdown = replacesBody
+    ? explicitBodyMarkdown
+    : updatesStructuredBody && previous?.bodyMarkdown
+    ? patchFeedbackMarkdown(previous.bodyMarkdown, input)
+    : previous?.bodyMarkdown
   return {
     title: has('title') ? feedbackText(input.title, 240) : previous?.title ?? '',
-    description: replacesStructuredBody ? '' : has('description') ? feedbackText(input.description, 20_000) : previous?.description ?? '',
-    reproduction,
-    expected: replacesStructuredBody ? '' : has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
-    actual: replacesStructuredBody ? '' : has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
-    errorContext: replacesStructuredBody ? '' : has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
+    description: replacesBody ? '' : has('description') ? feedbackText(input.description, 20_000) : previous?.description ?? '',
+    reproduction: replacesBody ? [] : reproduction,
+    expected: replacesBody ? '' : has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
+    actual: replacesBody ? '' : has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
+    errorContext: replacesBody ? '' : has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
     ...(bodyMarkdown ? { bodyMarkdown } : {}),
     updatedAt: new Date().toISOString(),
   }
@@ -869,7 +930,9 @@ export class StrataGateRuntime {
 
   async prepareFeedback(session: Session, input: FeedbackDraftInput): Promise<unknown> {
     const namespace = this.namespaceFor(session)
-    const draft = normalizeFeedbackDraft(input)
+    // feedback_prepare is patch-oriented: omitted fields retain the existing draft.
+    const previous = this.loadFeedbackDraft(namespace)
+    const draft = normalizeFeedbackDraft(input, previous)
     this.saveFeedbackDraft(namespace, draft)
     const feedbackUrl = feedbackDraftUrl(namespace, this.feedbackOrigin())
     return {
@@ -1586,14 +1649,14 @@ export class StrataGateRuntime {
   async searchGraph(session: Session, query: string, limit = 8): Promise<unknown> {
     await this.flush()
     const results = await (await this.space(session)).searchGraphNodes(query, limit)
-    return this.batch(session, results.map(({ node }) => ({
+    return this.batch(session, results.map(({ node, provenanceEventIds }) => ({
       ref: `graph-node:${node.id}`,
       target: {
-        eventIds: node.sourceEventIds,
+        eventIds: provenanceEventIds ?? node.sourceEventIds,
         elementIds: [],
         citation: citation('graph', node.id, node.name, `graph-node:${node.id}`, 'nodeId'),
       },
-    })), results.map(({ node, score, matchedFields, matchReason }) => compactGraphNode(node, score, matchedFields, matchReason)))
+    })), results.map((result) => compactGraphNode(result.node, result.score, result.matchedFields, result.matchReason, result)))
   }
 
   async expandGraphNode(session: Session, id: string): Promise<unknown> {
@@ -1601,6 +1664,12 @@ export class StrataGateRuntime {
     const memory = await this.space(session)
     const node = memory.listGraphNodes().find((candidate) => candidate.id === id)
     if (!node) throw new Error(`Unknown graph node: ${id}`)
+    const events = new Map(memory.listEvents().map((event) => [event.id, event]))
+    const usable = (ids: readonly string[]) => ids.filter((eventId) => {
+      const event = events.get(eventId)
+      return event && event.status !== 'forgotten' && event.status !== 'archived'
+    })
+    const currentFacts = node.facts.filter((fact) => (fact.status === 'active' || fact.status === 'disputed') && usable(fact.sourceEventIds).some((eventId) => events.get(eventId)?.status === 'active'))
     const edges = memory.listGraphEdges().filter(({ fromNodeId, toNodeId }) => fromNodeId === id || toNodeId === id)
     return this.batch(session, [{
       ref: `graph-node:${node.id}:expanded`,
@@ -1609,7 +1678,7 @@ export class StrataGateRuntime {
         elementIds: [],
         citation: citation('graph', node.id, node.name, `graph-node:${node.id}:expanded`, 'nodeId', { expanded: true }),
       },
-    }], { node, edges })
+    }], { node: { ...node, currentState: currentFacts.map((fact) => `${fact.key}: ${Array.isArray(fact.value) ? fact.value.join('、') : fact.value}`).join('\n') }, edges })
   }
 
   private scheduleBlockDerivation(session: Session, memory: StrataGate): void {
@@ -1995,18 +2064,25 @@ function compactGraphNode(
   score: number,
   matchedFields?: readonly string[],
   matchReason?: string,
+  result?: { matchType?: string; currentFacts?: unknown[]; historicalFacts?: unknown[]; currentEdges?: unknown[]; historicalEdges?: unknown[]; timeline?: unknown[]; provenanceEventIds?: string[] },
 ): Record<string, unknown> {
   return {
     id: node.id,
     name: node.name,
     type: node.type,
     aliases: node.aliases.map((alias) => compactText(alias, 160)),
-    currentState: compactText(node.currentState, 500),
+    currentState: compactText(result?.currentFacts?.map((fact: any) => `${fact.key}: ${Array.isArray(fact.value) ? fact.value.join('、') : fact.value}`).join('\n') || '', 500),
     status: node.status,
     rankScore: score,
     ...(matchedFields ? { matchedFields } : {}),
     ...(matchReason ? { matchReason } : {}),
     scoreMeaning: 'Ranking-only BM25/RRF score; not confidence, probability, or factual accuracy.',
+    ...(result?.matchType ? { matchType: result.matchType } : {}),
+    ...(result?.currentFacts ? { currentMatches: result.currentFacts } : {}),
+    ...(result?.historicalFacts ? { historicalMatches: result.historicalFacts } : {}),
+    ...(result?.currentEdges ? { currentRelations: result.currentEdges } : {}),
+    ...(result?.historicalEdges ? { historicalRelations: result.historicalEdges } : {}),
+    ...(result?.timeline ? { timeline: result.timeline } : {}),
   }
 }
 

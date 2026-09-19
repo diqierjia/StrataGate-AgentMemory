@@ -1806,43 +1806,44 @@ export class StrataGate {
   async searchGraphNodes(query: string, limit = 8): Promise<GraphNodeSearchResult[]> {
     const candidates = this.graphNodes.filter((node) => node.status === 'active' || node.status === 'disputed');
     const queryTokens = [...new Set(searchTokens(query))];
-    const fieldValues = (node: GraphNode): Array<readonly [string, string]> => [
-      ['name', node.name],
-      ['aliases', node.aliases.join(' ')],
-      ['tags', (node.tags ?? []).join(' ')],
-      ['type', node.type],
-      ['currentState', node.currentState],
-      ['facts', node.facts.map((fact) => `${fact.key} ${Array.isArray(fact.value) ? fact.value.join(' ') : fact.value}`).join(' ')],
-      ['relations', this.graphEdges.filter((edge) => edge.fromNodeId === node.id || edge.toNodeId === node.id).map(({ relation }) => relation).join(' ')],
-    ];
-    const ranked = bm25Rank(candidates, query, (node) => weightedSearchTokens([
-      [node.name, 6], [node.aliases.join(' '), 5], [(node.tags ?? []).join(' '), 5], [node.type, 2], [node.currentState, 4],
-      [node.facts.map((fact) => `${fact.key} ${Array.isArray(fact.value) ? fact.value.join(' ') : fact.value}`).join(' '), 4],
-      [this.graphEdges.filter((edge) => edge.fromNodeId === node.id || edge.toNodeId === node.id).map(({ relation }) => relation).join(' '), 3],
-    ])).filter(({ item }) => {
-      const fields = fieldValues(item);
-      const matches = fields.filter(([, value]) => {
-        const haystack = new Set(searchTokens(value));
-        return queryTokens.some((token) => haystack.has(token));
-      }).map(([field]) => field);
-      // Relation text is useful context, but relation-only hits are commonly
-      // adjacent/noise nodes. Keep type-only hits so valid project/tool/etc.
-      // searches continue to work, while requiring a descriptive field for
-      // ordinary lexical queries.
-      if (!matches.some((field) => field !== 'relations')) return false;
-      return matches.some((field) => field !== 'relations');
-    }).slice(0, Math.max(1, Math.min(20, limit)));
+    const eventMap = new Map(this.events.map((event) => [event.id, event]));
+    const usable = (ids: readonly string[], historical: boolean): string[] => ids.filter((id) => {
+      const event = eventMap.get(id);
+      if (!event || event.status === 'forgotten' || event.status === 'archived') return false;
+      return historical ? event.status === 'superseded' || event.status === 'active' : event.status === 'active';
+    });
+    const value = (fact: { key: string; value: string | string[] }) => `${fact.key} ${Array.isArray(fact.value) ? fact.value.join(' ') : fact.value}`;
+    const details = (node: GraphNode) => {
+      const facts = node.facts.filter((fact) => fact.status !== 'archived' && (usable(fact.sourceEventIds, false).length > 0 || usable(fact.sourceEventIds, true).length > 0));
+      const currentFacts = facts.filter((fact) => (fact.status === 'active' || fact.status === 'disputed') && usable(fact.sourceEventIds, false).length > 0);
+      const historicalFacts = facts.filter((fact) => fact.status === 'superseded' && usable(fact.sourceEventIds, true).length > 0);
+      const edges = this.graphEdges.filter((edge) => edge.fromNodeId === node.id || edge.toNodeId === node.id);
+      const endpoint = (edge: GraphEdge) => { const id = edge.fromNodeId === node.id ? edge.toNodeId : edge.fromNodeId; const other = this.graphNodes.find((candidate) => candidate.id === id); return other ? `${other.name} ${other.aliases.join(' ')}` : ''; };
+      const currentEdges = edges.filter((edge) => (edge.status === 'active' || edge.status === 'disputed') && usable(edge.sourceEventIds, false).length > 0);
+      const historicalEdges = edges.filter((edge) => edge.status === 'superseded' && usable(edge.sourceEventIds, true).length > 0);
+      const currentState = currentFacts.map(value).join('\n');
+      const fields: Array<readonly [string, string]> = [['name', node.name], ['aliases', node.aliases.join(' ')], ['tags', (node.tags ?? []).join(' ')], ['type', node.type], ['currentState', currentState], ['facts', currentFacts.map(value).join(' ')], ['historicalFacts', historicalFacts.map(value).join(' ')], ['relations', currentEdges.map((edge) => `${edge.relation} ${endpoint(edge)}`).join(' ')], ['historicalRelations', historicalEdges.map((edge) => `${edge.relation} ${endpoint(edge)}`).join(' ')]];
+      const matched = fields.filter(([, text]) => queryTokens.some((token) => new Set(searchTokens(text)).has(token))).map(([field]) => field);
+      return { currentFacts, historicalFacts, currentEdges, historicalEdges, currentState, fields, matched };
+    };
+    const ranked = bm25Rank(candidates, query, (node) => { const d = details(node); return weightedSearchTokens(d.fields.map(([field, text]) => [text, field.startsWith('historical') ? 2 : field === 'name' ? 6 : 4] as const)); })
+      .filter(({ item }) => details(item).matched.some((field) => field !== 'relations' || details(item).matched.includes('currentState') || details(item).matched.includes('historicalRelations')))
+      .slice(0, Math.max(1, Math.min(20, limit)));
     if (searchTokens(query).length > 0 && ranked.length === 0) return [];
     return ranked.map(({ item: node, score }) => {
-      const matchedFields = fieldValues(node).filter(([, value]) => {
-        const haystack = new Set(searchTokens(value));
-        return queryTokens.some((token) => haystack.has(token));
-      }).map(([field]) => field);
+      const d = details(node); const matchedFields = d.matched;
+      const currentHit = matchedFields.some((field) => !field.startsWith('historical') && field !== 'relations') || matchedFields.includes('relations');
+      const historicalHit = matchedFields.some((field) => field.startsWith('historical'));
+      const ids = [...new Set([...d.currentFacts, ...d.historicalFacts].flatMap((fact) => fact.sourceEventIds).concat([...d.currentEdges, ...d.historicalEdges].flatMap((edge) => edge.sourceEventIds)))].filter((id) => usable([id], true).length > 0);
+      const timeline = ids.map((id) => eventMap.get(id)).filter((event): event is EventCard => Boolean(event)).sort((a, b) => String(b.temporal.happenedStart ?? b.createdAt).localeCompare(String(a.temporal.happenedStart ?? a.createdAt))).slice(0, 4).map((event) => ({ id: event.id, title: event.title, summary: event.summary, status: event.status, ...(event.temporal.happenedStart ? { time: event.temporal.happenedStart } : {}) }));
       return {
         node,
         score,
         matchedFields,
         matchReason: `Lexical match in ${matchedFields.join(', ') || 'indexed fields'}; score is ranking-only.`,
+        matchType: currentHit && historicalHit ? 'both' : historicalHit ? 'historical' : 'current',
+        currentFacts: d.currentFacts, historicalFacts: d.historicalFacts, currentEdges: d.currentEdges, historicalEdges: d.historicalEdges,
+        provenanceEventIds: ids, timeline,
       };
     });
   }
