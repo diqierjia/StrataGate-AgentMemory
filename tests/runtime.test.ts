@@ -7,6 +7,7 @@ import { Session, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { StrataGate, type ExtractionContext, type GraphNode } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import { describe, expect, it, vi } from 'vitest'
+import type { ResolvedConfig } from '../src/config.js'
 import type { DshModelBridge } from '../src/llm.js'
 import { feedbackDraftUrl, StrataGateRuntime } from '../src/runtime.js'
 
@@ -1898,6 +1899,269 @@ describe('DSH runtime ingestion', () => {
       expect(runtime.needsRecordUse(activeSession)).toBe(false)
     } finally {
       await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+function agentRuntimeConfig(database: string, extra: Partial<ResolvedConfig> = {}): ResolvedConfig {
+  return {
+    database,
+    namespaceMode: 'project',
+    namespacePrefix: 'dsh',
+    globalNamespace: 'global',
+    blockTurnSize: 1,
+    blockDecayLambda: 0.3,
+    ingestSubagents: false,
+    maxOutputTokens: 2048,
+    ...extra,
+  }
+}
+
+function sessionWithId(id: string): Session {
+  return {
+    id,
+    header: { id, version: 0, createdAt: 0, cwd: 'C:\\work\\project' },
+    snapshotEvents: () => [],
+    eventAt: () => undefined,
+  } as unknown as Session
+}
+
+describe('DSH runtime agent memory', () => {
+  it('records a long-term agent event, merges it into searchEvents, and reinforces it on use', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-runtime-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
+    try {
+      const recorded = await runtime.recordAgentMemory(session, '用户偏好 pnpm 作为包管理器。', 'preference') as Record<string, unknown>
+      expect(recorded).toMatchObject({
+        recorded: true,
+        action: 'ADDED',
+        gate: 'clear-new',
+        namespace: expect.stringContaining('dsh:project:'),
+      })
+      expect(recorded.eventId).toBeDefined()
+
+      const batch = await runtime.searchEvents(session, 'pnpm 包管理器') as {
+        batchId: string
+        evidenceRefs: string[]
+        results: Array<Record<string, unknown>>
+      }
+      const eventRef = `event:${String(recorded.eventId)}`
+      expect(batch.evidenceRefs).toContain(eventRef)
+      expect(batch.results).toContainEqual(expect.objectContaining({
+        id: recorded.eventId,
+        source: 'agent-recorded',
+        criticality: 'preference',
+      }))
+
+      await runtime.assess(session, {
+        verdict: 'sufficient',
+        evidence_refs: batch.evidenceRefs,
+        fit: 'The event records the package-manager preference.',
+        missing: '',
+        next_strategy: 'answer',
+      })
+      const recordedUse = await runtime.recordUse(session, 'agent-use-1', [eventRef]) as Record<string, unknown>
+      expect(recordedUse).toMatchObject({ incremented: 1 })
+
+      const dashboard = await runtime.adminAgentMemories({ sessionId: 'session-runtime' }) as {
+        items: Array<Record<string, unknown>>
+      }
+      expect(dashboard.items).toHaveLength(1)
+      expect(dashboard.items[0]).toMatchObject({
+        id: recorded.eventId,
+        status: 'active',
+        category: 'preference',
+        content: '用户偏好 pnpm 作为包管理器。',
+        sessionId: 'session-runtime',
+      })
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('reinforces the existing memory instead of writing an exact duplicate', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-duplicate-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
+    try {
+      const first = await runtime.recordAgentMemory(session, '用户偏好 pnpm 作为包管理器。', 'preference') as Record<string, unknown>
+      expect(first.action).toBe('ADDED')
+      const second = await runtime.recordAgentMemory(session, '用户偏好 pnpm 作为包管理器。', 'preference') as Record<string, unknown>
+      expect(second).toMatchObject({
+        recorded: false,
+        action: 'REINFORCED',
+        gate: 'exact-duplicate',
+        reinforcedEventId: first.eventId,
+      })
+      const dashboard = await runtime.adminAgentMemories({}) as { items: unknown[] }
+      expect(dashboard.items).toHaveLength(1)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('conflict-marks ambiguous recordings when no decider is available', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-heuristic-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
+    try {
+      const memory = await (runtime as unknown as { space(s: Session): Promise<StrataGate> }).space(session)
+      await memory.appendTurn(
+        { user: 'The deployment pipeline uses GitHub Actions.', assistant: 'Noted.' },
+        { deferDerivation: true },
+      )
+      const block = memory.listBlocks().at(-1)!
+      const passive = await memory.addEvent({
+        title: 'Deployment pipeline uses GitHub Actions',
+        summary: 'The deployment pipeline uses GitHub Actions for every release.',
+        sourceBlockId: block.id,
+        sourceMessageIds: [block.l5Raw[0]!.id],
+      })
+
+      const result = await runtime.recordAgentMemory(session, 'The deployment pipeline switched to GitLab.') as Record<string, unknown>
+      expect(result).toMatchObject({
+        recorded: true,
+        action: 'CONFLICT_MARKED',
+        gate: 'heuristic-conflict',
+        existingEventIds: [passive.id],
+      })
+      const agentEvent = memory.listAgentEvents()[0]!
+      expect(agentEvent.temporal.conflictsWithEventIds).toEqual([passive.id])
+      const passiveAfter = memory.listEvents().find(({ id }) => id === passive.id)!
+      expect(passiveAfter.temporal.conflictsWithEventIds).toEqual([agentEvent.id])
+      expect(passiveAfter.status).toBe('active')
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('runs the external-memory decider once for ambiguous facts and supersedes across pools', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-decider-'))
+    const decider = vi.fn(async ({ matches }: { matches: Array<{ event: { id: string } }> }) => ({
+      action: 'SUPERSEDE',
+      existingEventIds: [matches[0]!.event.id],
+      confidence: 0.92,
+      reason: '明确的新状态',
+    }))
+    const models = { ...fakeModels, externalMemoryDecider: decider } as unknown as DshModelBridge
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), models)
+    try {
+      const memory = await (runtime as unknown as { space(s: Session): Promise<StrataGate> }).space(session)
+      await memory.appendTurn(
+        { user: 'The deployment pipeline uses GitHub Actions.', assistant: 'Noted.' },
+        { deferDerivation: true },
+      )
+      const block = memory.listBlocks().at(-1)!
+      const passive = await memory.addEvent({
+        title: 'Deployment pipeline uses GitHub Actions',
+        summary: 'The deployment pipeline uses GitHub Actions for every release.',
+        sourceBlockId: block.id,
+        sourceMessageIds: [block.l5Raw[0]!.id],
+      })
+
+      const result = await runtime.recordAgentMemory(session, 'The deployment pipeline switched to GitLab.') as Record<string, unknown>
+      expect(decider).toHaveBeenCalledTimes(1)
+      expect(result).toMatchObject({
+        action: 'SUPERSEDED',
+        gate: 'decider',
+        confidence: 0.92,
+        reason: '明确的新状态',
+        existingEventIds: [passive.id],
+      })
+      const passiveAfter = memory.listEvents().find(({ id }) => id === passive.id)!
+      expect(passiveAfter.status).toBe('superseded')
+      expect(passiveAfter.supersededBy).toBe(result.eventId)
+      expect(passiveAfter.weight.forcedCap).toBe(0.1)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps recorded memories across restarts and available to later sessions', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-persist-'))
+    const database = join(directory, 'memory.db')
+    const first = new StrataGateRuntime(agentRuntimeConfig(database), fakeModels)
+    const recorded = await first.recordAgentMemory(session, '用户偏好 pnpm 作为包管理器。', 'preference') as Record<string, unknown>
+    await first.close()
+
+    const second = new StrataGateRuntime(agentRuntimeConfig(database), fakeModels)
+    try {
+      // Long-term memory: another session finds the recorded event.
+      const otherBatch = await second.searchEvents(sessionWithId('session-other'), 'pnpm') as {
+        evidenceRefs: string[]
+      }
+      expect(otherBatch.evidenceRefs).toContain(`event:${String(recorded.eventId)}`)
+      const dashboard = await second.adminAgentMemories({}) as {
+        items: Array<Record<string, unknown>>
+      }
+      expect(dashboard.items).toHaveLength(1)
+      expect(dashboard.items[0]).toMatchObject({ sessionId: 'session-runtime' })
+    } finally {
+      await second.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects recording and surfacing when the feature is disabled', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-disabled-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db'), { agentMemoryEnabled: false }), fakeModels)
+    try {
+      expect(runtime.agentMemoryEnabled).toBe(false)
+      await expect(runtime.recordAgentMemory(session, '用户偏好 pnpm。')).rejects.toThrow('agentMemoryEnabled=false')
+      const dashboard = await runtime.adminAgentMemories({ includeArchived: true }) as { items: unknown[] }
+      expect(dashboard.items).toEqual([])
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('applies the configured agent memory retrieval weight to merged search', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-weight-'))
+    const runtime = new StrataGateRuntime(
+      agentRuntimeConfig(join(directory, 'memory.db'), { agentMemoryRetrievalWeight: 0 }),
+      fakeModels,
+    )
+    try {
+      const recorded = await runtime.recordAgentMemory(session, '用户偏好 pnpm 作为包管理器。', 'preference') as Record<string, unknown>
+      expect(recorded.action).toBe('ADDED')
+      // Weight 0 keeps the recording stored but never surfaced through search.
+      const batch = await runtime.searchEvents(session, 'pnpm 包管理器') as { evidenceRefs: string[] }
+      expect(batch.evidenceRefs).not.toContain(`event:${String(recorded.eventId)}`)
+      const dashboard = await runtime.adminAgentMemories({}) as { items: unknown[] }
+      expect(dashboard.items).toHaveLength(1)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('tunes the agent retrieval weight at runtime and restores it after a restart', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-weight-knob-'))
+    const database = join(directory, 'memory.db')
+    const first = new StrataGateRuntime(agentRuntimeConfig(database), fakeModels)
+    try {
+      const recorded = await first.recordAgentMemory(session, '用户偏好 pnpm 作为包管理器。', 'preference') as Record<string, unknown>
+      const eventRef = `event:${String(recorded.eventId)}`
+      expect((await first.searchEvents(session, 'pnpm 包管理器') as { evidenceRefs: string[] }).evidenceRefs).toContain(eventRef)
+      expect(await first.adminSetAgentMemoryRetrievalWeight(0)).toBe(0)
+      expect((await first.searchEvents(session, 'pnpm 包管理器') as { evidenceRefs: string[] }).evidenceRefs).not.toContain(eventRef)
+      expect(() => first.adminSetAgentMemoryRetrievalWeight(9)).toThrow('between 0 and 5')
+      await first.close()
+
+      // The knob is persisted next to the Block settings and restored on startup.
+      const second = new StrataGateRuntime(agentRuntimeConfig(database), fakeModels)
+      try {
+        await second.syncConfiguredSettings()
+        expect(second.adminAgentMemoryRetrievalWeight()).toBe(0)
+        expect((await second.searchEvents(session, 'pnpm 包管理器') as { evidenceRefs: string[] }).evidenceRefs).not.toContain(eventRef)
+      } finally {
+        await second.close()
+      }
+    } finally {
       await rm(directory, { recursive: true, force: true })
     }
   })

@@ -123,13 +123,19 @@ export interface EventCardInput {
   confidence?: number;
 }
 
-export interface EventCard extends Omit<EventCardInput, 'id'> {
+export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> {
   id: string;
   /** Conversation turn where this Event entered its long-term-memory lifecycle. */
   formedTurn?: number;
   narrative: string;
   tags: string[];
   quotes: string[];
+  /**
+   * Provenance block. Always present for conversation-derived and imported
+   * Events; agent-recorded Events may omit it when their provenance cites
+   * real open-tail conversation messages directly.
+   */
+  sourceBlockId?: string;
   temporal: EventTemporal;
   scope: MemoryScope;
   criticality: MemoryCriticality;
@@ -293,6 +299,73 @@ export interface ExternalMemoryUndoResult {
   sourceBlockId: string;
   removedEventIds: string[];
   restoredEventIds: string[];
+}
+
+/** Taxonomy the agent picks from when recording a memory through memory_remember. */
+export type AgentMemoryCategory = 'preference' | 'decision' | 'correction' | 'fact';
+
+/** How the pre-write gate reached its verdict. */
+/**
+ * Input for agent-recorded events: provenance may cite real conversation
+ * messages directly (no source block) — `sourceMessageIds` must then exist in
+ * the store's open tail or blocks at validation time.
+ */
+export type AgentEventCardInput = Omit<EventCardInput, 'sourceBlockId'> & {
+  sourceBlockId?: string;
+  formedTurn?: number;
+};
+
+export type AgentEventGatePath =
+  | 'exact-duplicate'
+  | 'near-duplicate'
+  | 'clear-new'
+  | 'decider'
+  | 'heuristic-conflict'
+  | 'decider-error';
+
+/** Outcome of the gate; agent events are ordinary Events once recorded. */
+export type AgentEventGateAction =
+  | 'ADDED'
+  | 'REINFORCED'
+  | 'MERGED'
+  | 'SUPERSEDED'
+  | 'CONFLICT_MARKED'
+  | 'IGNORED';
+
+export interface AgentEventRecordOptions {
+  content: string;
+  category?: AgentMemoryCategory;
+  /**
+   * Optional synchronous adjudicator reusing the external-memory decision
+   * contract. Omitted → deterministic/heuristic policy only.
+   */
+  decider?: ExternalMemoryDecider;
+  /** Top-K search width for the pre-write lookup. Default 5, clamped 1..20. */
+  topK?: number;
+  /** Recording session id, stored as temporal.threadId for dashboard grouping. */
+  threadId?: string;
+  importedAt?: string;
+}
+
+export interface AgentEventRecordResult {
+  action: AgentEventGateAction;
+  gate: AgentEventGatePath;
+  recorded: boolean;
+  /** Created event (ADDED/MERGED/SUPERSEDED/CONFLICT_MARKED). */
+  eventId?: string;
+  /** Existing event reinforced instead of writing (REINFORCED). */
+  reinforcedEventId?: string;
+  existingEventIds: string[];
+  matchedEventIds: string[];
+  /** Gate confidence; not the stored event confidence. */
+  confidence?: number;
+  downgradedFrom?: 'MERGE' | 'SUPERSEDE';
+  reason?: string;
+  sourceBlockId?: string;
+  /** Real conversation messages cited as provenance (open tail or blocks). */
+  sourceMessageIds?: string[];
+  /** memoryWeightAt(event, currentTurn) at write time. */
+  weight?: number;
 }
 
 export type MemoryElementType = 'person' | 'project' | 'organization' | 'tool' | 'place';
@@ -468,6 +541,11 @@ export interface SearchOptions {
   eventType?: string;
   happenedFrom?: string;
   happenedTo?: string;
+  /**
+   * Relative weight of the agent-recorded pool when its ranking fuses with
+   * the conversation-derived pool (1 = equal footing, 0 = never surfaced).
+   */
+  agentMemoryWeight?: number;
   /** Disable retrieval bookkeeping for read-only previews. */
   trackRetrieval?: boolean;
 }

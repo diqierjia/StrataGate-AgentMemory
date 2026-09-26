@@ -88,12 +88,17 @@ export function bm25Rank<T extends { id: string }>(
 }
 
 /** Reciprocal-rank fusion combines independently auditable rankings. */
-export function rrfRank<T extends { id: string }>(rankings: ReadonlyArray<readonly T[]>): Array<RankedItem<T>> {
+export function rrfRank<T extends { id: string }>(
+  rankings: ReadonlyArray<readonly T[]>,
+  weights?: ReadonlyArray<number>,
+): Array<RankedItem<T>> {
   const fused = new Map<string, { item: T; score: number; bestRank: number }>();
-  for (const ranking of rankings) {
+  for (const [rankingIndex, ranking] of rankings.entries()) {
+    const weight = weights?.[rankingIndex] ?? 1;
+    if (!(weight > 0)) continue;
     ranking.forEach((item, index) => {
       const current = fused.get(item.id) ?? { item, score: 0, bestRank: Number.POSITIVE_INFINITY };
-      current.score += 1 / (60 + index + 1);
+      current.score += weight / (60 + index + 1);
       current.bestRank = Math.min(current.bestRank, index);
       fused.set(item.id, current);
     });

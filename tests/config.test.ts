@@ -18,6 +18,8 @@ describe('DeepSeek Harness plugin config', () => {
       blockTurnSize: 6,
       blockDecayLambda: 0.3,
       ingestSubagents: false,
+      agentMemoryEnabled: true,
+      agentMemoryRetrievalWeight: 1,
       maxOutputTokens: 2048,
       structuredTaskTimeoutMs: 120000,
       structuredReasoningEffort: 'auto',
@@ -42,6 +44,24 @@ describe('DeepSeek Harness plugin config', () => {
       comment: '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。',
     })
     expect(resolveConfig({ database: 'memory.db', blockDecayLambda: 0.15 }).blockDecayLambda).toBe(0.15)
+  })
+
+  it('exposes the agent memory switch and retrieval weight with safe defaults', () => {
+    expect(Config.dict?.agentMemoryEnabled?.meta).toMatchObject({ default: true })
+    expect(Config.dict?.agentMemoryRetrievalWeight?.meta).toMatchObject({ default: 1, min: 0, max: 5 })
+    expect(resolveConfig({ database: 'memory.db' })).toMatchObject({
+      agentMemoryEnabled: true,
+      agentMemoryRetrievalWeight: 1,
+    })
+    expect(resolveConfig({ database: 'memory.db', agentMemoryEnabled: false }).agentMemoryEnabled).toBe(false)
+    expect(resolveConfig({
+      database: 'memory.db',
+      agentMemoryRetrievalWeight: -1,
+    }).agentMemoryRetrievalWeight).toBe(0)
+    expect(resolveConfig({
+      database: 'memory.db',
+      agentMemoryRetrievalWeight: 99,
+    }).agentMemoryRetrievalWeight).toBe(5)
   })
 
   it('resolves the structured reasoning effort policy with a safe default', () => {

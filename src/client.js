@@ -3361,16 +3361,21 @@ window.__ModuleLoader__.load({
     function SettingsPage({ selected, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
+      const [agentWeight, setAgentWeight] = React.useState(String(selected.agentMemoryRetrievalWeight ?? 1))
       const [directoryOpening, setDirectoryOpening] = React.useState(false)
       const [directoryFeedback, setDirectoryFeedback] = React.useState({ kind: '', text: '' })
       React.useEffect(() => {
         setTurnSize(String(selected.blockTurnSize ?? 6))
         setLambda(String(selected.blockDecayLambda ?? 0.3))
-      }, [selected.blockTurnSize, selected.blockDecayLambda])
+        setAgentWeight(String(selected.agentMemoryRetrievalWeight ?? 1))
+      }, [selected.blockTurnSize, selected.blockDecayLambda, selected.agentMemoryRetrievalWeight])
       const turnSizeValue = Number(turnSize)
       const lambdaValue = Number(lambda)
+      const agentWeightValue = Number(agentWeight)
       const valid = Number.isSafeInteger(turnSizeValue) && turnSizeValue >= 1 && lambda !== '' && Number.isFinite(lambdaValue) && lambdaValue >= 0
-      const changed = valid && (turnSizeValue !== selected.blockTurnSize || lambdaValue !== selected.blockDecayLambda)
+        && agentWeight !== '' && Number.isFinite(agentWeightValue) && agentWeightValue >= 0 && agentWeightValue <= 5
+      const changed = valid && (turnSizeValue !== selected.blockTurnSize || lambdaValue !== selected.blockDecayLambda
+        || agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1))
       const suggestedLambda = Math.round(((selected.blockDecayLambda ?? 0.3) * turnSizeValue / (selected.blockTurnSize || 6)) / 0.05) * 0.05
       const showSuggestion = Number.isSafeInteger(turnSizeValue) && turnSizeValue >= 1 && turnSizeValue !== selected.blockTurnSize
       const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
@@ -3422,8 +3427,10 @@ window.__ModuleLoader__.load({
             h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: (event) => setLambda(event.target.value), 'aria-label': 'Block 衰减系数 λ' }))),
             h('p', { className: 'sg-setting-note' }, '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。'),
             showSuggestion ? h('div', { className: 'sg-setting-suggestion' }, h('span', null, '为保持按对话轮数计算的遗忘速度，建议 λ 调整为 ' + suggestedLambda.toFixed(2) + '。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setLambda(String(Number(suggestedLambda.toFixed(2)))) }, '采用建议值')) : null,
+            h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', max: '5', step: '0.05', value: agentWeight, onChange: (event) => setAgentWeight(event.target.value), 'aria-label': '主动记忆检索占比' }))),
+            h('p', { className: 'sg-setting-note' }, 'agent 主动记录与对话派生记忆分别独立排序后按此权重融合：1 为平权，0 为不浮现 agent 记录，更大值提升 agent 记录的排序权重。'),
             rows.map(([label, value]) => h('div', { key: label, className: 'sg-stage' }, h('span', null, label), h('span', { className: label === '内部空间 ID' ? 'sg-stage-value sg-code' : 'sg-stage-value' }, String(value)))),
-            h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue }) }, savingSettings ? '保存中…' : changed ? '保存设置' : '已保存'))),
+            h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : changed ? '保存设置' : '已保存'))),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-storage-title' },
           h('h3', { id: 'sg-storage-title', className: 'sg-settings-group-title' }, '数据与存储'),
           h('p', { className: 'sg-settings-group-copy' }, '数据目录与原始数据'),
@@ -3661,7 +3668,7 @@ window.__ModuleLoader__.load({
 
       let content = null
       if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { selected: { blockTurnSize: 6, blockDecayLambda: 0.3, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
+      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，短期记忆和长期记忆会出现在这里。' })
       else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })

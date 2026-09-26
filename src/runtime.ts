@@ -42,6 +42,11 @@ import {
   type StrataGateSnapshot,
 } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
+import type {
+  AgentEventRecordResult,
+  AgentMemoryCategory,
+  ExternalMemoryDecisionContext,
+} from '@diqier/stratagate'
 import type { ResolvedConfig } from './config.js'
 import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
@@ -276,6 +281,7 @@ export class StrataGateRuntime {
   private closed = false
   private blockTurnSize: number
   private blockDecayLambda: number
+  private agentMemoryRetrievalWeight: number
   private transientLastFeedbackPromptAt: string | null = null
 
   constructor(
@@ -288,8 +294,13 @@ export class StrataGateRuntime {
   ) {
     this.blockTurnSize = config.blockTurnSize
     this.blockDecayLambda = config.blockDecayLambda
+    this.agentMemoryRetrievalWeight = config.agentMemoryRetrievalWeight ?? 1
     this.disposeAdaptersUpdated = this.models.onAdaptersUpdated(() => this.wakeModelWorkers())
     this.scheduleBackgroundWorker(BACKGROUND_WORKER_INITIAL_DELAY_MS)
+  }
+
+  get agentMemoryEnabled(): boolean {
+    return this.config.agentMemoryEnabled !== false
   }
 
   /** Keep durable model jobs moving even when no host session emits events. */
@@ -558,15 +569,25 @@ export class StrataGateRuntime {
 
   async searchEvents(session: Session, query: string, options: SearchOptions = {}): Promise<unknown> {
     await this.flush()
-    const results = await (await this.space(session)).searchEvents(query, options)
-    return this.batch(session, results.map(({ event }) => ({
-      ref: `event:${event.id}`,
-      target: {
-        eventIds: [event.id],
-        elementIds: [],
-        citation: citation('event', event.id, event.title, `event:${event.id}`, 'eventId'),
-      },
-    })), results.map(({ event, score }) => compactEvent(event, score)))
+    const results = await (await this.space(session)).searchEvents(query, {
+      ...options,
+      // Agent-recorded events ride their own top-k lane and fuse with the
+      // passive pool by the configured weight; they arrive as ordinary event
+      // results with the same evidence refs and reinforcement path.
+      agentMemoryWeight: this.agentMemoryRetrievalWeight,
+    })
+    return this.batch(
+      session,
+      results.map(({ event }) => ({
+        ref: `event:${event.id}`,
+        target: {
+          eventIds: [event.id],
+          elementIds: [],
+          citation: citation('event', event.id, event.title, `event:${event.id}`, 'eventId'),
+        },
+      })),
+      results.map(({ event, score }) => compactEvent(event, score)),
+    )
   }
 
   async searchElements(session: Session, query: string, options: ElementSearchOptions = {}): Promise<unknown> {
@@ -679,7 +700,7 @@ export class StrataGateRuntime {
 
   async expandEvent(session: Session, id: string): Promise<unknown> {
     await this.flush()
-    const event = (await this.space(session)).listEvents().find((candidate) => candidate.id === id)
+    const event = (await this.space(session)).listAllEvents().find((candidate) => candidate.id === id)
     if (!event) throw new Error(`Unknown event: ${id}`)
     return this.batch(session, [{
       ref: `event:${event.id}`,
@@ -864,7 +885,12 @@ export class StrataGateRuntime {
     const activationQuery = [currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
       .join('\n\n')
-    const eventHits = activationQuery ? await memory.searchEvents(activationQuery, { limit: 20 }) : []
+    const eventHits = activationQuery
+      ? await memory.searchEvents(activationQuery, {
+          limit: 20,
+          agentMemoryWeight: this.agentMemoryRetrievalWeight,
+        })
+      : []
     let graphResults: GraphNodeSearchResult[] = []
     if (activationQuery && typeof memory.searchGraphNodes === 'function') {
       graphResults = await memory.searchGraphNodes(activationQuery, 12)
@@ -889,8 +915,8 @@ export class StrataGateRuntime {
     const currentBlockIds = new Set(memory.listBlocks()
       .filter((block) => block.threadId === threadId)
       .map(({ id }) => id))
-    const currentEventIds = new Set(memory.listEvents()
-      .filter((event) => currentBlockIds.has(event.sourceBlockId))
+    const currentEventIds = new Set(memory.listAllEvents()
+      .filter((event) => event.sourceBlockId !== undefined && currentBlockIds.has(event.sourceBlockId))
       .map(({ id }) => id))
     const longTermEvents = events
       .filter((event) => !currentEventIds.has(event.id))
@@ -1087,6 +1113,99 @@ export class StrataGateRuntime {
     return { namespace: key, draft }
   }
 
+  /**
+   * Record one agent-authored fact through the core long-term Event pipeline.
+   * The pre-write gate deduplicates, merges, supersedes, or conflict-marks
+   * against existing memory; the decider reuses the external-memory contract
+   * and runs under this session's model route.
+   *
+   * The gate holds the namespace mutation queue while the decider runs, so the
+   * decider is bounded by a hard budget (min(structuredTaskTimeoutMs, 30s)); a
+   * timeout degrades to the non-destructive conflict-mark path instead of
+   * stalling every write in the namespace.
+   */
+  async recordAgentMemory(session: Session, content: string, category?: AgentMemoryCategory): Promise<unknown> {
+    if (!this.agentMemoryEnabled) {
+      throw new Error('StrataGate agent memory is disabled by configuration (agentMemoryEnabled=false).')
+    }
+    const memory = await this.space(session)
+    const hasDecider = typeof (this.models as unknown as Record<string, unknown>).externalMemoryDecider === 'function'
+    const deciderBudgetMs = Math.min(this.config.structuredTaskTimeoutMs ?? 120_000, 30_000)
+    const result = await this.models.run(session, () => memory.recordAgentEvent({
+      content,
+      ...(category !== undefined ? { category } : {}),
+      threadId: String(session.id),
+      ...(hasDecider && this.models.isReady(session)
+        ? {
+            decider: async (context: ExternalMemoryDecisionContext) => {
+              const invocation = this.models.externalMemoryDecider(context)
+              let timer: ReturnType<typeof setTimeout> | undefined
+              try {
+                return await Promise.race([
+                  invocation,
+                  new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error('StrataGate agent memory adjudication timed out')), deciderBudgetMs)
+                    timer.unref?.()
+                  }),
+                ])
+              } finally {
+                if (timer) clearTimeout(timer)
+              }
+            },
+          }
+        : {}),
+    }))
+    await this.persistSuccessfulResponses(memory)
+    return this.agentMemoryResultView(session, result)
+  }
+
+  private agentMemoryResultView(session: Session, result: AgentEventRecordResult): Record<string, unknown> {
+    return {
+      recorded: result.recorded,
+      action: result.action,
+      gate: result.gate,
+      ...(result.eventId !== undefined ? { eventId: result.eventId } : {}),
+      ...(result.reinforcedEventId !== undefined ? { reinforcedEventId: result.reinforcedEventId } : {}),
+      ...(result.existingEventIds.length > 0 ? { existingEventIds: result.existingEventIds } : {}),
+      ...(result.confidence !== undefined ? { confidence: result.confidence } : {}),
+      ...(result.downgradedFrom !== undefined ? { downgradedFrom: result.downgradedFrom } : {}),
+      ...(result.reason !== undefined ? { reason: result.reason } : {}),
+      ...(result.sourceBlockId !== undefined ? { sourceBlockId: result.sourceBlockId } : {}),
+      ...(result.weight !== undefined ? { weight: result.weight } : {}),
+      namespace: this.namespaceFor(session),
+      detailHint: 'Recorded into the long-term StrataGate memory; recall it with memory_search_events.',
+    }
+  }
+
+  async adminAgentMemories(options: { sessionId?: string; includeArchived?: boolean } = {}): Promise<unknown> {
+    const items: Array<Record<string, unknown>> = []
+    for (const { namespace, snapshot } of await this.adminSnapshotEntries()) {
+      for (const event of snapshot.agentEvents) {
+        const sessionId = typeof event.temporal.threadId === 'string' ? event.temporal.threadId : ''
+        if (options.sessionId !== undefined && options.sessionId !== '' && sessionId !== options.sessionId) continue
+        if (options.includeArchived !== true && event.status !== 'active' && event.status !== 'superseded') continue
+        items.push({
+          id: event.id,
+          namespace,
+          ...(sessionId ? { sessionId } : {}),
+          title: event.title,
+          content: event.summary,
+          category: event.tags.find((tag) => tag.startsWith('category:'))?.slice('category:'.length),
+          status: event.status,
+          scope: event.scope,
+          criticality: event.criticality,
+          supersededBy: event.supersededBy,
+          createdAt: event.createdAt,
+          updatedAt: event.updatedAt,
+          sourceBlockId: event.sourceBlockId,
+          weight: Number(memoryWeightAt(event, snapshot.currentTurn).toFixed(3)),
+        })
+      }
+    }
+    items.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
+    return { items, total: items.length }
+  }
+
   notePluginError(session: Session, _error?: unknown): void {
     if (!this.closed) this.pendingFeedbackSuggestionSessions.add(String(session.id))
   }
@@ -1204,6 +1323,7 @@ export class StrataGateRuntime {
     try {
       this.blockTurnSize = metadata.blockTurnSize() ?? this.config.blockTurnSize
       this.blockDecayLambda = metadata.blockDecayLambda() ?? this.config.blockDecayLambda
+      this.agentMemoryRetrievalWeight = metadata.agentMemoryRetrievalWeight() ?? this.config.agentMemoryRetrievalWeight ?? 1
     } finally {
       metadata.close()
     }
@@ -1541,6 +1661,27 @@ export class StrataGateRuntime {
     return value
   }
 
+  /** Runtime-tunable agent-memory retrieval share (0–5); persisted next to the Block knobs. */
+  adminAgentMemoryRetrievalWeight(): number {
+    return this.agentMemoryRetrievalWeight
+  }
+
+  adminSetAgentMemoryRetrievalWeight(value: number): number {
+    if (!Number.isFinite(value) || value < 0 || value > 5) {
+      throw new TypeError('agentMemoryRetrievalWeight must be a finite number between 0 and 5')
+    }
+    this.agentMemoryRetrievalWeight = value
+    try {
+      if (this.config.database !== ':memory:') {
+        const metadata = new DshMetadataStore(this.config.database)
+        try { metadata.setAgentMemoryRetrievalWeight(value) } finally { metadata.close() }
+      }
+    } catch (error) {
+      this.onIngestError(error)
+    }
+    return value
+  }
+
   async adminSetBlockTurnSize(value: number): Promise<number> {
     if (!Number.isSafeInteger(value) || value < 1) {
       throw new TypeError('blockTurnSize must be a positive integer')
@@ -1610,7 +1751,7 @@ export class StrataGateRuntime {
           ? memory.listGraphProjectionJobs().find((candidate) => candidate.id === jobId)
           : undefined
         const blockId = kind === 'graph-projection'
-          ? graphJob?.sourceEventIds.flatMap((eventId) => memory.listEvents().find(({ id: eventCandidateId }) => eventCandidateId === eventId)?.sourceBlockId ?? [])[0]
+          ? graphJob?.sourceEventIds.flatMap((eventId) => memory.listAllEvents().find(({ id: eventCandidateId }) => eventCandidateId === eventId)?.sourceBlockId ?? [])[0]
           : jobId
         const block = blockId ? memory.listBlocks().find((candidate) => candidate.id === blockId) : undefined
         if (kind !== 'graph-projection' && !block) throw new Error(`Unknown block: ${jobId}`)
@@ -1797,7 +1938,7 @@ export class StrataGateRuntime {
     const memory = await this.space(session)
     const node = memory.listGraphNodes().find((candidate) => candidate.id === id)
     if (!node) throw new Error(`Unknown graph node: ${id}`)
-    const view = effectiveGraphNodeView(node, memory.listGraphEdges(), memory.listEvents())
+    const view = effectiveGraphNodeView(node, memory.listGraphEdges(), memory.listAllEvents())
     if (!view) throw new Error(`Graph node ${id} has no retrievable Event evidence`)
     const provenanceEventIds = [...new Set([
       ...view.currentFacts.flatMap(({ sourceEventIds }) => sourceEventIds),
@@ -1831,7 +1972,7 @@ export class StrataGateRuntime {
       historicalEdges,
       provenanceEventIds,
       ...(legacyMetadataOverflow ? { metadataEvidenceStatus: 'not_expanded' as const } : {}),
-      timeline: graphTimeline(provenanceEventIds, memory.listEvents()),
+      timeline: graphTimeline(provenanceEventIds, memory.listAllEvents()),
     })
   }
 
@@ -2317,6 +2458,10 @@ function compactTemporal(event: EventCard): Record<string, unknown> {
     precision: temporal.precision,
     status: temporal.status,
     eventType: temporal.eventType,
+    // Provenance relations surface on compact cards so an answer can see that
+    // a card supersedes or conflicts with another memory without an expand.
+    ...(temporal.supersedesEventIds?.length ? { supersedesEventIds: temporal.supersedesEventIds } : {}),
+    ...(temporal.conflictsWithEventIds?.length ? { conflictsWithEventIds: temporal.conflictsWithEventIds } : {}),
   }).filter(([, value]) => value !== undefined))
 }
 
@@ -2349,6 +2494,7 @@ function blockCitationTitle(block: MemoryBlock | undefined): string {
 }
 
 function compactEvent(event: EventCard, score: number): Record<string, unknown> {
+  const agentRecorded = event.tags.includes('agent-recorded')
   return {
     id: event.id,
     title: compactText(event.title, 240),
@@ -2359,6 +2505,7 @@ function compactEvent(event: EventCard, score: number): Record<string, unknown> 
     status: event.status,
     scope: event.scope,
     criticality: event.criticality,
+    ...(agentRecorded ? { source: 'agent-recorded' } : {}),
     rankScore: score,
     scoreMeaning: 'Ranking-only BM25/RRF score; not confidence, probability, or factual accuracy.',
   }
@@ -2426,7 +2573,7 @@ function currentBlockSurfaceMessages(session: Session): Map<string, { seq: Sessi
 
 function activatedEvents(memory: StrataGate, relevance: readonly EventSearchResult[]): EventCard[] {
   const allowed = new Map(relevance.map(({ event }) => [event.id, event]))
-  for (const event of memory.listEvents()) {
+  for (const event of memory.listAllEvents()) {
     if ((event.status === 'active' || event.status === 'superseded')
       && (event.weight.pinned || event.criticality === 'safety')) {
       allowed.set(event.id, event)
@@ -2442,7 +2589,7 @@ function activatedEvents(memory: StrataGate, relevance: readonly EventSearchResu
 
 function activatedElements(memory: StrataGate, relevance: readonly ElementSearchResult[]): RankedElementFact[] {
   const elements = new Map(memory.listElements().map((element) => [element.id, element]))
-  const safetyEvents = new Set(memory.listEvents()
+  const safetyEvents = new Set(memory.listAllEvents()
     .filter((event) => event.criticality === 'safety' && (event.status === 'active' || event.status === 'superseded'))
     .map(({ id }) => id))
   const allowed = new Map<string, RankedElementFact>()
@@ -2478,7 +2625,10 @@ function activatedElements(memory: StrataGate, relevance: readonly ElementSearch
   ]).map(({ item }) => item)
 }
 
-function renderActivatedMemory(events: readonly EventCard[], graphResults: readonly GraphNodeSearchResult[]): string {
+function renderActivatedMemory(
+  events: readonly EventCard[],
+  graphResults: readonly GraphNodeSearchResult[],
+): string {
   const heading = [
     '[Activated long-term memory]',
     'Historical memory context.',

@@ -302,7 +302,7 @@ export class WorkBuddyRuntime {
   async expandEvent(sourceBatchId: string, eventId: string): Promise<BatchResult> {
     const source = await this.requireBatch(sourceBatchId)
     const items = await this.withMemory(async (memory) => {
-      const event = memory.listEvents().find((candidate) => candidate.id === eventId)
+      const event = memory.listAllEvents().find((candidate) => candidate.id === eventId)
       if (!event) throw new Error(`Unknown event: ${eventId}`)
       return [{
         ref: `event:${event.id}:expanded`,

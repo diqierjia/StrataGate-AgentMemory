@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.87 - Unreleased
+
+- Let the agent record durable long-term memories through `memory_remember`: each recording is written into a new isolated `agent_events` pool (schema v12) that mirrors the Event model, gets a synthetic `agent-memory:` provenance block, and projects into the Knowledge Graph.
+- Resolve duplicates and conflicts before writing: exact and near duplicates reinforce the existing card, ambiguous overlap gets one synchronous model adjudication reusing the external-memory decision contract (add/merge/supersede/conflict/ignore with a non-destructive low-confidence downgrade), and clear-new facts write without a model call.
+- Merge agent-recorded Events into retrieval through per-pool top-k lanes: the passive and agent pools are ranked independently and fused with weighted RRF, keeping `source: 'agent-recorded'` cards, cross-session persistence, and the `/api/stratagate/agent-memories` view; `agentMemoryRetrievalWeight` tunes the agent lane's share (0–5, default 1) and `agentMemoryEnabled: false` disables and unregisters the feature.
+
 ## 0.2.86 - Unreleased
 
 - Register the chat memory tail with a stable list slot ID on DSH `0.1.7-rc.1` and derive its citation data from owner props, while retaining the older chain slot path. This also allows the StrataGate Settings section to finish registering. Chat citation registration now degrades independently with a console warning if the optional host slot fails, keeping Settings available.

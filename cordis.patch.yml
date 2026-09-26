@@ -11,4 +11,6 @@
         blockTurnSize: 6
         blockDecayLambda: 0.3
         ingestSubagents: false
+        agentMemoryEnabled: true
+        agentMemoryRetrievalWeight: 1
         maxOutputTokens: 10000

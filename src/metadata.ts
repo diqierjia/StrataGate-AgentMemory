@@ -20,6 +20,21 @@ CREATE TABLE IF NOT EXISTS stratagate_dsh_feedback_drafts (
 ) STRICT;
 `
 
+/** Removes the orphaned v1 agent-memory side table, if it exists. */
+export function dropLegacyAgentMemoriesTable(filename: string): void {
+  const database = new DatabaseSync(filename)
+  try {
+    const legacyTable = database
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stratagate_dsh_agent_memories'")
+      .get() as { name: string } | undefined
+    if (!legacyTable) return
+    database.exec('DROP INDEX IF EXISTS stratagate_dsh_agent_memories_session')
+    database.exec('DROP TABLE IF EXISTS stratagate_dsh_agent_memories')
+  } finally {
+    database.close()
+  }
+}
+
 export class DshMetadataStore {
   private readonly database: DatabaseSync
 
@@ -54,6 +69,20 @@ export class DshMetadataStore {
       throw new TypeError('blockDecayLambda must be a non-negative finite number')
     }
     this.setSetting('blockDecayLambda', value)
+  }
+
+  agentMemoryRetrievalWeight(): number | null {
+    const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'agentMemoryRetrievalWeight'")
+      .get() as { value: string } | undefined
+    const value = Number(row?.value)
+    return Number.isFinite(value) && value >= 0 && value <= 5 ? value : null
+  }
+
+  setAgentMemoryRetrievalWeight(value: number): void {
+    if (!Number.isFinite(value) || value < 0 || value > 5) {
+      throw new TypeError('agentMemoryRetrievalWeight must be a finite number between 0 and 5')
+    }
+    this.setSetting('agentMemoryRetrievalWeight', value)
   }
 
   lastFeedbackPromptAt(): string | null {

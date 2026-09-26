@@ -6,6 +6,17 @@ export const STRATAGATE_STORAGE_SCHEMA_VERSION = 12;
 export const KNOWLEDGE_GRAPH_PROJECTOR_VERSION = 1;
 export const DERIVATION_MAX_ATTEMPTS = 3;
 
+/**
+ * Thread-id prefixes of synthetic provenance blocks whose turns are not real
+ * conversation turns (external memory imports, agent-recorded facts). Events
+ * citing these blocks fall back to the current turn for their lifecycle clock.
+ */
+export const SYNTHETIC_SOURCE_THREAD_PREFIXES = ['external-import:', 'agent-memory:'] as const;
+
+export function isSyntheticSourceThreadId(threadId: string | undefined | null): boolean {
+  return !!threadId && SYNTHETIC_SOURCE_THREAD_PREFIXES.some((prefix) => threadId.startsWith(prefix));
+}
+
 export type ExtractionJobStatus = 'running' | 'succeeded' | 'skipped' | 'failed';
 
 export interface ExtractionJob {
@@ -114,6 +125,7 @@ export interface StrataGateSnapshot {
   blocks: MemoryBlock[];
   summaryJobs: BlockSummaryJob[];
   events: EventCard[];
+  agentEvents: EventCard[];
   graphNodes: GraphNode[];
   graphEdges: GraphEdge[];
   graphProjectionJobs: GraphProjectionJob[];
@@ -220,8 +232,12 @@ interface LegacySnapshotV9 extends Omit<StrataGateSnapshot, 'schemaVersion' | 'e
   schemaVersion: 9;
 }
 
-interface LegacySnapshotV10 extends Omit<StrataGateSnapshot, 'schemaVersion'> {
+interface LegacySnapshotV10 extends Omit<StrataGateSnapshot, 'schemaVersion' | 'agentEvents'> {
   schemaVersion: 10;
+}
+
+interface LegacySnapshotV11 extends Omit<StrataGateSnapshot, 'schemaVersion' | 'agentEvents'> {
+  schemaVersion: 11;
 }
 
 function readyLegacyBlocks<T extends Omit<MemoryBlock, 'processingStatus'>>(blocks: readonly T[]): MemoryBlock[] {
@@ -352,6 +368,13 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
     snapshot = {
       ...structuredClone(value as LegacySnapshotV10),
       schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION,
+      agentEvents: [],
+    };
+  } else if (schemaVersion === 11) {
+    snapshot = {
+      ...structuredClone(value as LegacySnapshotV11),
+      schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION,
+      agentEvents: [],
     };
   } else if (schemaVersion === 11) {
     snapshot = { ...structuredClone(value as StrataGateSnapshot), schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION };
@@ -370,7 +393,7 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
     throw new TypeError('Invalid StrataGate snapshot: blockDecayLambda must be a non-negative finite number');
   }
   if (!Array.isArray(snapshot.externalMemoryImportJobs)) snapshot.externalMemoryImportJobs = [];
-  for (const key of ['openTail', 'blocks', 'summaryJobs', 'events', 'graphNodes', 'graphEdges', 'graphProjectionJobs', 'elements', 'extractionJobs', 'elementProjectionJobs', 'usageReceipts', 'ingestionReceipts', 'externalMemoryImportJobs'] as const) {
+  for (const key of ['openTail', 'blocks', 'summaryJobs', 'events', 'agentEvents', 'graphNodes', 'graphEdges', 'graphProjectionJobs', 'elements', 'extractionJobs', 'elementProjectionJobs', 'usageReceipts', 'ingestionReceipts', 'externalMemoryImportJobs'] as const) {
     if (!Array.isArray(snapshot[key])) throw new TypeError(`Invalid StrataGate snapshot: ${key} must be an array`);
   }
   if (!Array.isArray(snapshot.successfulModelResponses)) snapshot.successfulModelResponses = [];
@@ -380,11 +403,11 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
     if (job.nextRetryAt === undefined) job.nextRetryAt = null;
   }
   const sourceBlockMap = new Map(snapshot.blocks.map((block) => [block.id, block]));
-  for (const event of snapshot.events) {
+  for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
     event.temporal = { ...event.temporal, eventType: normalizeStandardEventType(event.temporal.eventType) };
     if (event.formedTurn === undefined) {
-      const sourceBlock = sourceBlockMap.get(event.sourceBlockId);
-      const reliableSource = sourceBlock && !sourceBlock.threadId?.startsWith('external-import:')
+      const sourceBlock = event.sourceBlockId !== undefined ? sourceBlockMap.get(event.sourceBlockId) : undefined;
+      const reliableSource = sourceBlock && !isSyntheticSourceThreadId(sourceBlock.threadId)
         && Number.isSafeInteger(sourceBlock.endTurn) && sourceBlock.endTurn >= 0;
       if (reliableSource) event.formedTurn = sourceBlock.endTurn;
     } else if (!Number.isSafeInteger(event.formedTurn) || event.formedTurn < 0) {

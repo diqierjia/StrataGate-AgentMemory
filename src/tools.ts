@@ -214,4 +214,17 @@ Each call changes exactly one predefined Profile field. Never create, delete, or
       args.batch_id,
     ) as never,
   }))
+
+  if (runtime.agentMemoryEnabled) {
+    ctx.tools.register(defineTool({
+      name: 'memory_remember',
+      description: 'This tool is provided by the StrataGate plugin. Record one memorable fact as a durable long-term StrataGate memory: explicit user preferences or corrections, decisions the user makes, durable project facts, or anything the user asks you to remember. StrataGate checks existing memory first — exact or near duplicates reinforce the existing card instead of writing, related facts may be merged, supersede an outdated card, or be conflict-marked; the result reports the action. Recorded facts are ordinary Events: they participate in the knowledge graph, persist across sessions, are retrievable with memory_search_events, decay and reinforce through the normal lifecycle. Keep each call to one self-contained sentence; never record secrets, credentials, or transient task state.',
+      parameters: {
+        content: { type: 'string', required: true, description: 'The fact to remember, stated as one self-contained sentence.' },
+        category: { type: 'string', enum: ['preference', 'decision', 'correction', 'fact'] as const },
+      },
+      output: jsonOutput,
+      execute: async (args, exec) => runtime.recordAgentMemory(sessionOf(exec), args.content, args.category) as never,
+    }))
+  }
 }

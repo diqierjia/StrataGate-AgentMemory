@@ -160,6 +160,7 @@ describe('DSH plugin composition', () => {
         'memory_expand_element',
         'memory_assess',
         'memory_record_use',
+        'memory_remember',
       ])
       for (const tool of tools) {
         expect(tool.description, tool.name).toMatch(/^This tool is provided by the StrataGate plugin\./)
@@ -168,6 +169,10 @@ describe('DSH plugin composition', () => {
       expect(prompt.sections).toContainEqual(expect.objectContaining({
         name: 'tool:stratagate-memory',
         text: expect.stringMatching(/StrataGate provides durable, evidence-gated memory[\s\S]*independent batch[\s\S]*batch_id/),
+      }))
+      expect(prompt.sections).toContainEqual(expect.objectContaining({
+        name: 'tool:stratagate-memory',
+        text: expect.stringMatching(/memory_remember[\s\S]*long-term memory[\s\S]*conflict-marked/),
       }))
       expect(prompt.sections).toContainEqual(expect.objectContaining({
         name: 'tool:stratagate-feedback',
@@ -200,6 +205,7 @@ describe('DSH plugin composition', () => {
       const profileUpdate = ctx.tools.get('memory_profile_update')
       const feedbackPrepare = ctx.tools.get('feedback_prepare')
       const recordUse = ctx.tools.get('memory_record_use')
+      const remember = ctx.tools.get('memory_remember')
       expect(search).toBeDefined()
       expect(profileUpdate).toBeDefined()
       expect(profileUpdate!.description).toMatch(/explicitly asks[\s\S]*called immediately/)
@@ -258,6 +264,26 @@ describe('DSH plugin composition', () => {
       expect(profileUpdate!.parameters).toMatchObject({ properties: { field: { enum: expect.arrayContaining(['reasoningLanguage']) } } })
       expect(feedbackPrepare).toBeDefined()
       expect(recordUse).toBeDefined()
+      expect(remember).toBeDefined()
+      expect(remember!.description).toMatch(/durable long-term StrataGate memory[\s\S]*conflict-marked/)
+      const remembered = await remember!.execute({
+        content: '用户偏好 pnpm 作为包管理器。',
+        category: 'preference',
+      }, {
+        agent,
+        callId: 'remember-call',
+      } as never) as unknown as Record<string, unknown>
+      expect(remembered).toMatchObject({
+        recorded: true,
+        action: 'ADDED',
+        gate: 'clear-new',
+        namespace: expect.stringContaining('dsh:project:'),
+      })
+      const autoPrompt = await ctx.systemPrompt.assemble({ agent })
+      expect(autoPrompt.contexts).toContainEqual(expect.objectContaining({
+        name: 'stratagate:auto-memory',
+        text: expect.stringContaining('[Activated long-term memory]'),
+      }))
       expect(feedbackPrepare!.description).toMatch(/directly requests it[\s\S]*explicitly agrees/)
       expect(feedbackPrepare!.description).toMatch(/current conversation[\s\S]*Never submit anything to GitHub/)
       expect(feedbackPrepare!.description).toMatch(/draft is local and not submitted[\s\S]*feedbackUrl[\s\S]*打开反馈草稿/)
@@ -303,6 +329,26 @@ describe('DSH plugin composition', () => {
         signal: new AbortController().signal,
       })
       expect(steered).toHaveLength(1)
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('unregisters memory_remember when agent memory is disabled', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-agent-disabled-'))
+    const ctx = new Context()
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SystemPrompt, {})
+      await ctx.plugin(ToolRuntime, { mode: 'native' })
+      await ctx.plugin(AgentDefaultModelConfig, { provider: 'test', model: 'test' })
+      ctx.provide('webServer', { host: '127.0.0.1', port: 10260, register: () => () => {} })
+      await ctx.plugin(plugin, { database: join(directory, 'memory.db'), agentMemoryEnabled: false })
+
+      const names = ctx.tools.schemas().map(({ name }) => name)
+      expect(names).not.toContain('memory_remember')
+      expect(ctx.tools.get('memory_remember')).toBeUndefined()
     } finally {
       await ctx.fiber.dispose()
       await rm(directory, { recursive: true, force: true })
