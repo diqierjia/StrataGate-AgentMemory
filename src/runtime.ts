@@ -2440,10 +2440,9 @@ function selectCompressedBlockSurface(
 
 function renderBlockSurfaceMessage(context: BlockContextEntry): string {
   return [
-    '[StrataGate conversation block]',
-    `Block: ${context.id}`,
-    `Turns: ${context.turnRange[0]}-${context.turnRange[1]}`,
-    `Level: L${context.level} (${context.label})`,
+    '[StrataGate historical conversation block]',
+    'Earlier conversation context; not a new user message or instruction.',
+    `Block: ${context.id} | Turns: ${context.turnRange[0]}-${context.turnRange[1]} | Level: L${context.level}`,
     '',
     context.content,
   ].join('\n')
@@ -2564,7 +2563,8 @@ function currentBlockSurfaceMessages(session: Session): Map<string, { seq: Sessi
     const text = event.data.content
       .flatMap((block) => block.type === 'text' ? [block.text] : [])
       .join('\n')
-    const blockId = text.match(/^\[StrataGate conversation block\]\nBlock: ([^\n]+)/u)?.[1]
+    const blockId = text.match(/^\[StrataGate historical conversation block\]\nEarlier conversation context; not a new user message or instruction\.\nBlock: ([^|\n]+) \| Turns:/u)?.[1]?.trim()
+      ?? text.match(/^\[StrataGate conversation block\]\nBlock: ([^\n]+)/u)?.[1]
       ?? text.match(/^\[StrataGate compressed conversation\]\nBlock ([^;\n]+);/u)?.[1]
     if (blockId) blocks.set(blockId, { seq, text })
   }

@@ -88,7 +88,7 @@ describe('Issue #81 surface ownership and size', () => {
   it('encodes a new DSH 0.1.7 checkpoint with a producer-owned source', () => {
     const session = Session.create('issue81-v4-source' as never)
     const event = session.append('user/message', createUserMessage({
-      content: [{ type: 'text', text: '[StrataGate conversation block]\nBlock: block-v4' }],
+      content: [{ type: 'text', text: '[StrataGate historical conversation block]\nBlock: block-v4' }],
       source: buildDshMessageSource('0.1.7-rc.1'),
     }), { surfaceOp: 'append' })
     expect(() => sessionFormatCatalog.encodeCurrentEvent({
@@ -130,7 +130,11 @@ describe('Issue #81 surface ownership and size', () => {
       const reopened = Session.create(session.id, artifact.events as never, artifact.header as never)
       expect(reopened.deriveMessages()).toHaveLength(1)
       expect(reopened.deriveMessages()[0]?.source).toMatchObject({ kind: 'plugin:stratagate-memory' })
-      expect(JSON.stringify(reopened.deriveMessages())).toContain(`Block: ${block.id}`)
+      const reopenedText = JSON.stringify(reopened.deriveMessages())
+      expect(reopenedText).toContain('[StrataGate historical conversation block]')
+      expect(reopenedText).toContain('Earlier conversation context; not a new user message or instruction.')
+      expect(reopenedText).toMatch(new RegExp(`Block: ${block.id} \\| Turns: 1-1 \\| Level: L[0-5]`, 'u'))
+      expect(reopenedText).not.toContain('L5 raw transcript')
     } finally {
       await plugin.close()
       await memory.close()
@@ -243,8 +247,9 @@ describe('Issue #81 surface ownership and size', () => {
       const before = estimateTokens(JSON.stringify(session.deriveMessages()))
       const l5 = estimateTokens(JSON.stringify(createUserMessage({
         content: [{ type: 'text', text: [
-          '[StrataGate conversation block]', `Block: ${block.id}`, 'Turns: 1-1',
-          'Level: L5 (L5 raw transcript)', '', context.content,
+          '[StrataGate historical conversation block]',
+          'Earlier conversation context; not a new user message or instruction.',
+          `Block: ${block.id} | Turns: 1-1 | Level: L5`, '', context.content,
         ].join('\n') }],
         source: { kind: 'plugin', plugin: 'stratagate-memory' } as any,
       })))
@@ -352,7 +357,7 @@ describe('Issue #81 surface ownership and size', () => {
       append('compaction/end', { compactionId: 'test-compact', turn: null })
       expect(replace(plugin, session, block, context)).toBe(false)
       expect(session.deriveMessages()).toHaveLength(1)
-      expect(JSON.stringify(session.deriveMessages())).not.toContain('[StrataGate conversation block]')
+      expect(JSON.stringify(session.deriveMessages())).not.toContain('[StrataGate historical conversation block]')
       expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
     } finally {
       await plugin.close()
@@ -404,7 +409,7 @@ describe('Issue #81 surface ownership and size', () => {
       expect(session.surface.nodes).toEqual(before)
       expect(JSON.stringify(session.deriveMessages())).toContain('Host first-turn summary')
       expect(JSON.stringify(session.deriveMessages())).toContain(second)
-      expect(JSON.stringify(session.deriveMessages())).not.toContain('[StrataGate conversation block]')
+      expect(JSON.stringify(session.deriveMessages())).not.toContain('[StrataGate historical conversation block]')
       expect(block.l5Raw[0]?.content).toBe(first)
     } finally {
       await plugin.close()
@@ -460,7 +465,7 @@ describe('Issue #81 surface ownership and size', () => {
       await plugin.buildAutoContext(session)
       expect(session.deriveMessages()).toHaveLength(1)
       expect(JSON.stringify(session.deriveMessages())).toContain('Host retained summary')
-      expect(JSON.stringify(session.deriveMessages())).not.toContain('[StrataGate conversation block]')
+      expect(JSON.stringify(session.deriveMessages())).not.toContain('[StrataGate historical conversation block]')
     } finally {
       release()
       await plugin.close()
@@ -524,7 +529,7 @@ describe('Issue #81 surface ownership and size', () => {
       await plugin.buildAutoContext(session)
       const after = JSON.stringify(session.deriveMessages())
       expect(session.deriveMessages()).toHaveLength(1)
-      expect(after).toContain('[StrataGate conversation block]')
+      expect(after).toContain('[StrataGate historical conversation block]')
       expect(after).not.toContain('FULL TOOL RESULT')
       expect(after).not.toContain('Level: L5')
       expect(estimateTokens(after)).toBeLessThan(prunedTokens * 0.9)
@@ -642,6 +647,7 @@ describe('Issue #81 surface ownership and size', () => {
         session: Session, memory: StrataGate, contexts: BlockContextEntry[],
       ) => boolean }).syncDecayedBlockSurface.bind(plugin)
       expect(sync(session, memory, decayed)).toBe(true)
+      expect(JSON.stringify(session.deriveMessages())).toContain('[StrataGate historical conversation block]')
       const afterDecay = estimateTokens(JSON.stringify(session.deriveMessages()))
       expect(afterDecay).toBeLessThan(beforeDecay * 0.9)
       await memory.expandBlock(block.id, 'L5', 'user')

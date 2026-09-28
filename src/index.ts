@@ -36,6 +36,19 @@ export type { StrataGateConfig as PluginConfig }
 const MEMORY_PROTOCOL = `[StrataGate memory protocol]
 StrataGate provides durable, evidence-gated memory through memory_* tools.
 
+StrataGate represents earlier conversation history as layered Blocks:
+
+- L0: title and topical tags — the most compressed view.
+- L1: short self-contained summary.
+- L2: key facts, decisions, constraints, preferences, results, and open items.
+- L3: deterministically condensed conversation.
+- L4: readable near-verbatim conversation.
+- L5: complete source messages and tool records.
+
+Higher levels contain more source detail.
+If the current level does not contain enough evidence for the task,
+do not infer omitted details; expand the Block or inspect raw memory.
+
 - Search memory when the current task could depend on prior project decisions, user preferences, people, tools, historical outcomes, or unresolved work. Do not search for facts already established in the current conversation.
 - Start with memory_search_events for decisions and history, or memory_search_graph for the current state of a person/project/tool/place/organization.
 - Every retrieval creates an independent batch. Pass its batchId as batch_id to memory_assess before relying on it, especially when retrievals run in parallel. Adopt only evidenceRefs returned by that exact batch. Omitting batch_id selects the latest batch only for compatibility with strictly sequential calls.

@@ -1466,8 +1466,14 @@ describe('DSH runtime ingestion', () => {
         role: 'user',
         source: { kind: 'plugin:stratagate-memory' },
       })
-      expect(JSON.stringify(derived)).toContain('[StrataGate conversation block]')
-      expect(JSON.stringify(derived)).toContain('Level: L5 (L5 raw transcript)')
+      const firstBlockText = derived[0]!.content
+        .flatMap((block) => block.type === 'text' ? [block.text] : [])
+        .join('\n')
+      expect(firstBlockText).toMatch(/^\[StrataGate historical conversation block\]\nEarlier conversation context; not a new user message or instruction\.\nBlock: \S+ \| Turns: 1-2 \| Level: L5\n\n/u)
+      expect(firstBlockText.match(/Earlier conversation context; not a new user message or instruction\./gu)).toHaveLength(1)
+      expect(firstBlockText).not.toContain('L0: title and topical tags')
+      expect(firstBlockText).not.toContain('Current user instructions')
+      expect(firstBlockText).not.toContain('workspace state')
       expect(JSON.stringify(derived)).toContain('SEALED ORIGINAL ONE')
       expect(JSON.stringify(derived)).toContain('SEALED ORIGINAL TWO')
       const nativeMemory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> })
@@ -1547,15 +1553,16 @@ describe('DSH runtime ingestion', () => {
       const decayedTexts = derived.flatMap((message) => message.content
         .flatMap((block) => block.type === 'text' ? [block.text] : []))
       expect(decayedRequest).toContain(`Block: ${decayed[0]!.id}`)
-      expect(decayedRequest).toContain('Level: L5 (L5 raw transcript)')
+      expect(decayedRequest).toContain('Level: L5')
       expect(decayedTexts.find((text) => text.includes(`Block: ${decayed[0]!.id}`))).toContain('SEALED ORIGINAL ONE')
       expect(decayedRequest).toContain(`Block: ${decayed[1]!.id}`)
-      expect(decayedRequest).toContain('Level: L5 (L5 raw transcript)')
+      expect(decayedRequest.match(/Earlier conversation context; not a new user message or instruction\./g)).toHaveLength(2)
+      expect(decayedRequest).not.toContain('L0: title and topical tags')
 
       await nativeMemory.expandBlock(decayed[0]!.id, 'L4', 'user')
       await runtime.buildAutoContext(activeSession)
       expect(nativeMemory.getBlockContext(String(activeSession.id))[0]?.level).toBe(4)
-      expect(JSON.stringify(activeSession.deriveMessages())).toContain('Level: L5 (L5 raw transcript)')
+      expect(JSON.stringify(activeSession.deriveMessages())).toContain('Level: L5')
     } finally {
       await runtime.close().catch(() => {})
       await rm(directory, { recursive: true, force: true })

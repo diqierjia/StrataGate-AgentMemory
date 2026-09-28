@@ -166,6 +166,8 @@ describe('DSH plugin composition', () => {
         expect(tool.description, tool.name).toMatch(/^This tool is provided by the StrataGate plugin\./)
       }
       const prompt = await ctx.systemPrompt.assemble()
+      const memorySections = prompt.sections.filter(({ name }) => name === 'tool:stratagate-memory')
+      expect(memorySections).toHaveLength(1)
       expect(prompt.sections).toContainEqual(expect.objectContaining({
         name: 'tool:stratagate-memory',
         text: expect.stringMatching(/StrataGate provides durable, evidence-gated memory[\s\S]*independent batch[\s\S]*batch_id/),
@@ -174,6 +176,25 @@ describe('DSH plugin composition', () => {
         name: 'tool:stratagate-memory',
         text: expect.stringMatching(/memory_profile_update[\s\S]*memory_remember[\s\S]*one place[\s\S]*conflict-marked/),
       }))
+      const memoryProtocol = memorySections[0]!.text
+      const layeredBlockProtocol = [
+        'StrataGate represents earlier conversation history as layered Blocks:',
+        '',
+        '- L0: title and topical tags — the most compressed view.',
+        '- L1: short self-contained summary.',
+        '- L2: key facts, decisions, constraints, preferences, results, and open items.',
+        '- L3: deterministically condensed conversation.',
+        '- L4: readable near-verbatim conversation.',
+        '- L5: complete source messages and tool records.',
+        '',
+        'Higher levels contain more source detail.',
+        'If the current level does not contain enough evidence for the task,',
+        'do not infer omitted details; expand the Block or inspect raw memory.',
+      ].join('\n')
+      expect(memoryProtocol).toContain(layeredBlockProtocol)
+      for (const level of ['L0', 'L1', 'L2', 'L3', 'L4', 'L5']) {
+        expect(memoryProtocol.match(new RegExp(`^- ${level}:`, 'gmu'))).toHaveLength(1)
+      }
       expect(prompt.sections).toContainEqual(expect.objectContaining({
         name: 'tool:stratagate-feedback',
         text: expect.stringMatching(/clear error signal[\s\S]*at most one proactive feedback suggestion[\s\S]*namespace plus its substantive characteristics[\s\S]*feedback_prepare itself/),
