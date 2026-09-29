@@ -185,7 +185,7 @@ target.messages is a provenance-preserving derivation view of the target Block; 
     const shouldExtract = raw.shouldExtract === true && events.length > 0
     return {
       shouldExtract,
-      reason: text(raw.reason, events.length ? 'Durable evidence extracted.' : 'No durable evidence.'),
+      reason: text(raw.reason) || (shouldExtract ? 'Durable evidence extracted.' : 'No durable evidence.'),
       events: shouldExtract ? events : [],
     }
   }

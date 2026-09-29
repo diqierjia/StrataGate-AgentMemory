@@ -431,6 +431,21 @@ describe('DeepSeek Harness model JSON retries', () => {
     expect(result.events[0]).not.toHaveProperty('confidence')
   })
 
+  it('uses the final extraction decision for the fallback reason', async () => {
+    const target = {
+      id: 'blk_final', sequence: 1, startTurn: 1, endTurn: 1,
+      l0Title: 'decision', l0Tags: [], l1Summary: '', l2Keypoints: [], l3Condensed: '', l4Readable: '',
+      l5Raw: [{ id: 'msg_final', role: 'user', content: 'Use SQLite.', createdAt: '2026-01-01T00:00:00.000Z' }],
+      shouldExtract: true, processingStatus: 'ready', pointerCurrentLevel: 5, pointerAnchorLevel: 5,
+      pointerAnchorBlockPosition: 1, lastLiftedAt: null, lastLiftedBy: null, createdAt: '2026-01-01T00:00:00.000Z',
+    } as MemoryBlock
+    const { bridge, session } = modelBridge([{ tool: {
+      shouldExtract: false, reason: '', events: [{ title: 'SQLite', summary: 'Use SQLite.', sourceMessageIds: ['msg_final'] }],
+    } }])
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target, next: null, timeline: [] }))
+    expect(result).toMatchObject({ shouldExtract: false, reason: 'No durable evidence.', events: [] })
+  })
+
   it('rejects extracted Events whose source ids are invalid for the target', async () => {
     const target = {
       id: 'blk_target', sequence: 1, startTurn: 1, endTurn: 2,
