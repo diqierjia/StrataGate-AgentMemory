@@ -770,7 +770,7 @@ window.__ModuleLoader__.load({
         ? detail.layers.find((layer) => Number(layer.level) === Number(citation.level)) || detail.layers.at(-1)
         : null
       const summary = citation.kind === 'event'
-        ? primary?.narrative || primary?.summary
+        ? primary?.summary
         : citation.kind === 'graph'
           ? primary?.currentState
           : selectedLayer?.content
@@ -785,7 +785,7 @@ window.__ModuleLoader__.load({
           h(CitationGraph, { citation, detail, primary, adopted })) : null,
         citation.kind === 'event' && primary ? h(EventMemoryDetails, { event: primary, sourceMessages, citation, relatedEvents }) : null,
         citation.kind === 'block' ? h(CitationSection, { title: 'L0–L5 记忆层级' }, h(CitationLayers, { citation, layers: Array.isArray(detail?.layers) ? detail.layers : [], adopted })) : null,
-        citation.kind !== 'event' && relatedEvents.length ? h(CitationDisclosure, { title: '关联信息' }, h('div', { className: 'sg-citation-events' }, relatedEvents.map((event, index) => h('article', { key: event.id || index, className: 'sg-citation-event' }, h('strong', null, event.title || '关联事件'), h('p', null, event.summary || event.narrative || '暂无摘要'))))) : null,
+        citation.kind !== 'event' && relatedEvents.length ? h(CitationDisclosure, { title: '关联信息' }, h('div', { className: 'sg-citation-events' }, relatedEvents.map((event, index) => h('article', { key: event.id || index, className: 'sg-citation-event' }, h('strong', null, event.title || '关联事件'), h('p', null, event.summary || '暂无摘要'))))) : null,
         citation.kind !== 'event' && sourceMessages.length ? h(CitationDisclosure, { title: '来源与证据' }, h('div', { className: 'sg-citation-messages' }, sourceMessages.map((message, index) => h('div', { key: message.id || index, className: 'sg-citation-message' }, h('span', { className: 'sg-citation-message-role' }, message.role || 'message'), String(message.content || ''))))) : null,
         citation.kind !== 'event' ? h(CitationDisclosure, { title: '技术信息' }, h('div', { className: 'sg-citation-tech' }, citation.evidenceRef + '\n' + citation.detailKind + ': ' + citation.id)) : null)
     }
@@ -2008,11 +2008,11 @@ window.__ModuleLoader__.load({
     }
 
     function EventMemoryDetails({ event, sourceMessages = [], citation = null, relatedEvents = [] }) {
-      const memoryContent = event?.narrative || event?.summary
+      const memoryContent = event?.summary
       return h(React.Fragment, null,
         h('section', { className: 'sg-event-section' }, h('h3', { className: 'sg-event-section-title' }, '记忆内容'), h('p', { className: 'sg-event-memory-copy' }, memoryContent || '暂无可展示的记忆内容。')),
         h('section', { className: 'sg-event-section sg-event-weight-section' }, h(MemoryWeightTrajectory, { event })),
-        relatedEvents.length ? h(CitationDisclosure, { title: '关联信息' }, h('div', { className: 'sg-citation-events' }, relatedEvents.map((related, index) => h('article', { key: related.id || index, className: 'sg-citation-event' }, h('strong', null, related.title || '关联事件'), h('p', null, related.summary || related.narrative || '暂无摘要'))))) : null,
+        relatedEvents.length ? h(CitationDisclosure, { title: '关联信息' }, h('div', { className: 'sg-citation-events' }, relatedEvents.map((related, index) => h('article', { key: related.id || index, className: 'sg-citation-event' }, h('strong', null, related.title || '关联事件'), h('p', null, related.summary || '暂无摘要'))))) : null,
         h(EventSourceDisclosure, { sourceMessages }),
         h(EventTechnicalDisclosure, { event, citation }))
     }
@@ -2024,7 +2024,7 @@ window.__ModuleLoader__.load({
       return h(InfoPopoverGroup, { key: event.id }, h('aside', { className: 'sg-long-detail ' + className, onMouseEnter, onMouseLeave },
         h('div', { className: 'sg-event-detail-head' }, h('div', null, h('span', { className: 'sg-event-detail-kicker' }, 'Event'), h('h2', null, event.title)), h('span', { className: 'sg-event-status ' + (temporal.status || 'unknown') }, EVENT_STATUS_TEXT[temporal.status] || '未知')),
         h(EventMetadata, { event, nodes, onNode }),
-        h('section', null, h('h3', null, '记忆内容'), h('p', { className: 'sg-detail-copy' }, event.narrative || event.summary || '暂无可展示的记忆内容。')),
+        h('section', null, h('h3', null, '记忆内容'), h('p', { className: 'sg-detail-copy' }, event.summary || '暂无可展示的记忆内容。')),
         relations.length ? h('section', null, h('h3', null, '事件关系'), relations.map((relation) => h('div', { key: relation.label + relation.id, className: 'sg-relation-row' }, h('span', null, relation.label), h('strong', null, eventMap.get(relation.id)?.title || relation.id)))) : null,
         event.weightTrajectory ? h('section', null, h(MemoryWeightTrajectory, { event })) : null,
         h('button', { className: 'sg-source-button', onClick: () => openSource(event) }, '查看来源与证据 →')))
@@ -2844,7 +2844,6 @@ window.__ModuleLoader__.load({
         formedTurn: event?.formedTurn,
         title: event?.title,
         summary: event?.summary,
-        narrative: event?.narrative,
         tags: event?.tags,
         quotes: event?.quotes,
         sourceBlockId: event?.sourceBlockId,
@@ -2870,7 +2869,6 @@ window.__ModuleLoader__.load({
         } : undefined,
         scope: event?.scope,
         criticality: event?.criticality,
-        confidence: event?.confidence,
         status: event?.status,
         supersededBy: event?.supersededBy,
         weight: weight ? {

@@ -308,7 +308,7 @@ export class WorkBuddyRuntime {
         ref: `event:${event.id}:expanded`,
         kind: 'event' as const,
         title: event.title,
-        content: short(JSON.stringify({ summary: event.summary, narrative: event.narrative, quotes: event.quotes, temporal: event.temporal }), 5_000),
+        content: short(JSON.stringify({ summary: event.summary, quotes: event.quotes, temporal: event.temporal }), 5_000),
         sourceTime: event.temporal.happenedStart ?? event.temporal.mentionedAt ?? event.createdAt,
         target: { eventIds: [event.id], elementIds: [] },
       }]

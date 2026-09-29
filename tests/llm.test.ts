@@ -381,9 +381,57 @@ describe('DeepSeek Harness model JSON retries', () => {
     expect(payload.target).not.toHaveProperty('l4Readable')
     expect(payload.neighbors.next.l2Keypoints).toEqual(['next point'])
     expect(payload.neighbors.next.l5Raw).toBeUndefined()
+    const request = calls.mock.calls[0]![0] as {
+      system: string
+      tools: Array<{ name: string; description: string; parameters: any }>
+    }
+    const tool = request.tools[0]!
+    expect(tool.name).toBe('stratagate_extract_event_cards')
+    expect(tool.description).toContain('final decision')
+    expect(tool.description).toContain('target.messages')
+    const schema = tool.parameters
+    expect(Object.keys(schema.properties)).toEqual(['shouldExtract', 'reason', 'events'])
+    expect(schema.properties.shouldExtract.description).toContain('final judgment')
+    expect(schema.properties.reason.description).toContain('Briefly explain')
+    expect(schema.properties.events.description).toContain('atomic')
+    const eventFields = schema.properties.events.items.properties as Record<string, { description: string }>
+    expect(Object.keys(eventFields)).toEqual([
+      'title', 'summary', 'tags', 'quotes', 'sourceMessageIds', 'temporal', 'scope', 'criticality',
+    ])
+    expect(Object.values(eventFields).every((field) => field.description.length > 80)).toBe(true)
+    expect(eventFields).not.toHaveProperty('narrative')
+    expect(eventFields).not.toHaveProperty('confidence')
+    for (const phrase of [
+      'one atomic fact', 'independently be retrieved', 'self-contained', 'distinct source-supported search entry points',
+      'Never invent keywords', 'assistant proposal or hypothesis', 'completed result', 'Only target.messages',
+      'allowedSourceMessageIds', 'neighbors.previous', 'timeline', 'shouldExtract=false and events=[]',
+    ]) expect(request.system).toContain(phrase)
   })
 
-  it('keeps shouldExtract true when all returned source ids are invalid for the target', async () => {
+  it('keeps independent target-supported facts as separate Events without retired fields', async () => {
+    const target = {
+      id: 'blk_multi', sequence: 1, startTurn: 1, endTurn: 2,
+      l0Title: 'decisions', l0Tags: [], l1Summary: '', l2Keypoints: [], l3Condensed: '', l4Readable: '',
+      l5Raw: [
+        { id: 'msg_a', role: 'user', content: 'Use SQLite.', createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'msg_b', role: 'user', content: 'Use pnpm.', createdAt: '2026-01-01T00:01:00.000Z' },
+      ],
+      shouldExtract: true, processingStatus: 'ready', pointerCurrentLevel: 5, pointerAnchorLevel: 5,
+      pointerAnchorBlockPosition: 1, lastLiftedAt: null, lastLiftedBy: null, createdAt: '2026-01-01T00:00:00.000Z',
+    } as MemoryBlock
+    const { bridge, session } = modelBridge([{ tool: {
+      shouldExtract: true, reason: 'Two decisions.', events: [
+        { title: 'SQLite selected', summary: 'The project selected SQLite.', sourceMessageIds: ['msg_a'] },
+        { title: 'pnpm selected', summary: 'The project selected pnpm.', sourceMessageIds: ['msg_b'] },
+      ],
+    } }])
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target, next: null, timeline: [] }))
+    expect(result.events.map((event) => event.sourceMessageIds)).toEqual([['msg_a'], ['msg_b']])
+    expect(result.events[0]).not.toHaveProperty('narrative')
+    expect(result.events[0]).not.toHaveProperty('confidence')
+  })
+
+  it('rejects extracted Events whose source ids are invalid for the target', async () => {
     const target = {
       id: 'blk_target', sequence: 1, startTurn: 1, endTurn: 2,
       l0Title: 'target', l0Tags: [], l1Summary: '', l2Keypoints: [], l3Condensed: '', l4Readable: '',
@@ -393,20 +441,20 @@ describe('DeepSeek Harness model JSON retries', () => {
     } as MemoryBlock
     const { bridge, session } = modelBridge([{
       tool: { shouldExtract: true, reason: 'wrong block', events: [{
-        title: 'Wrong source', summary: 'From neighbor', sourceMessageIds: ['msg_next'],
+        title: 'Wrong source', summary: 'From neighbor', sourceMessageIds: ['msg_target', 'msg_next'],
       }] },
     }])
 
     const result = await bridge.run(session, () => bridge.extractor({ previous: null, target, next: target, timeline: [] }))
-    expect(result.shouldExtract).toBe(true)
+    expect(result.shouldExtract).toBe(false)
     expect(result.events).toHaveLength(0)
   })
 
   it('exposes only the projector tool to the model', async () => {
     const event = {
       id: 'evt_projector', title: 'Project decision', summary: 'StrataGate uses SQLite',
-      narrative: '', tags: [], quotes: [], sourceMessageIds: ['msg_projector'], sourceBlockId: 'blk_projector',
-      temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9,
+      tags: [], quotes: [], sourceMessageIds: ['msg_projector'], sourceBlockId: 'blk_projector',
+      temporal: {}, scope: 'project' as const, criticality: 'routine' as const,
       status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
@@ -435,8 +483,8 @@ describe('DeepSeek Harness model JSON retries', () => {
   it('projects semantic Tags for newly processed Knowledge Graph nodes', async () => {
     const event = {
       id: 'evt_graph', title: 'Evaluate memory', summary: 'LoCoMo evaluates meow-memory',
-      narrative: '', tags: ['benchmark'], quotes: [], sourceMessageIds: ['msg_graph'], sourceBlockId: 'blk_graph',
-      temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9,
+      tags: ['benchmark'], quotes: [], sourceMessageIds: ['msg_graph'], sourceBlockId: 'blk_graph',
+      temporal: {}, scope: 'project' as const, criticality: 'routine' as const,
       status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
       createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z',
@@ -471,8 +519,8 @@ describe('DeepSeek Harness model JSON retries', () => {
   it('rejects a structured Graph node that omits canonical-name provenance', async () => {
     const event = {
       id: 'evt_graph_invalid', title: 'Invalid graph', summary: 'The model omitted field provenance.',
-      narrative: '', tags: [], quotes: [], sourceMessageIds: ['msg_graph_invalid'], sourceBlockId: 'blk_graph_invalid',
-      temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9,
+      tags: [], quotes: [], sourceMessageIds: ['msg_graph_invalid'], sourceBlockId: 'blk_graph_invalid',
+      temporal: {}, scope: 'project' as const, criticality: 'routine' as const,
       status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
       createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
@@ -489,8 +537,8 @@ describe('DeepSeek Harness model JSON retries', () => {
   it('compacts historical Graph context before sending it to the model', async () => {
     const event = {
       id: 'evt_compact', title: 'Compact graph', summary: 'Only touched records should be returned.',
-      narrative: '', tags: [], quotes: [], sourceMessageIds: ['msg_compact'], sourceBlockId: 'blk_compact',
-      temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9,
+      tags: [], quotes: [], sourceMessageIds: ['msg_compact'], sourceBlockId: 'blk_compact',
+      temporal: {}, scope: 'project' as const, criticality: 'routine' as const,
       status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
       createdAt: '2026-09-14T00:00:00.000Z', updatedAt: '2026-09-14T00:00:00.000Z',
@@ -556,8 +604,8 @@ describe('DeepSeek Harness model JSON retries', () => {
   it('does not pay for an identical second Graph call after max-token truncation', async () => {
     const event = {
       id: 'evt_truncated', title: 'Truncated graph', summary: 'Graph output reached its token limit.',
-      narrative: '', tags: [], quotes: [], sourceMessageIds: ['msg_truncated'], sourceBlockId: 'blk_truncated',
-      temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9,
+      tags: [], quotes: [], sourceMessageIds: ['msg_truncated'], sourceBlockId: 'blk_truncated',
+      temporal: {}, scope: 'project' as const, criticality: 'routine' as const,
       status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
       createdAt: '2026-09-14T00:00:00.000Z', updatedAt: '2026-09-14T00:00:00.000Z',

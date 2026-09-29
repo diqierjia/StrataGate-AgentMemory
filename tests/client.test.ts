@@ -1185,7 +1185,8 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'⛶ 全屏查看'")
     expect(source).toContain('sg-event-popover')
     expect(source).toContain('onMouseEnter: cancelHide')
-    expect(source).toContain('event.narrative')
+    expect(source).toContain('event.summary')
+    expect(source).not.toContain('event.narrative')
     expect(source).not.toContain("'Block · ' + event.sourceBlockId.slice")
   })
 

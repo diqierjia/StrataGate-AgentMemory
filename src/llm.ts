@@ -120,23 +120,21 @@ const EVENT_ITEM: ValueSchemaSpec = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    title: { type: 'string', required: true },
-    summary: { type: 'string', required: true },
-    narrative: { type: 'string' },
-    tags: STRING_ARRAY,
-    quotes: STRING_ARRAY,
-    sourceMessageIds: { ...STRING_ARRAY, required: true },
-    temporal: OPEN_OBJECT,
-    scope: { type: 'string', enum: ['user', 'project', 'session'] },
-    criticality: { type: 'string', enum: ['routine', 'preference', 'identity', 'safety'] },
-    confidence: { type: 'number' },
+    title: { type: 'string', description: 'A short, specific, retrieval-friendly title stating the canonical subject and the single main event or state change. Prefer explicit names, versions, tools, projects, or decisions supported by the source. Avoid pronouns, vague wording, unsupported synonyms, and keyword stuffing.', required: true },
+    summary: { type: 'string', description: 'A concise, self-contained statement of one event: identify the concrete subject, what happened or became true, and the important result or current status. Preserve exact names and distinctive source-supported terms useful for retrieval. Do not add unstated causes, conclusions, certainty, or relationships.', required: true },
+    tags: { ...STRING_ARRAY, description: 'A small set of distinctive retrieval labels that add useful search entry points not already obvious from the event type or participants. Use only source-supported canonical names, projects, tools, versions, technologies, concepts, aliases, or abbreviations. Avoid generic, speculative, weakly related, or redundant tags.' },
+    quotes: { ...STRING_ARRAY, description: 'A few short verbatim excerpts that directly support the extracted event and whose exact wording has lasting evidential or retrieval value. Copy exactly from the source messages. Do not quote unrelated context, paraphrase, or select wording that changes the original meaning.' },
+    sourceMessageIds: { ...STRING_ARRAY, description: 'The smallest set of exact message IDs from the target Block that directly supports every material claim in this event. Do not include merely related messages, and do not cite messages that support only background context.', required: true },
+    temporal: { ...OPEN_OBJECT, description: 'Structured temporal and event metadata, including when the event happened or was mentioned, its event type, participants, precision, and basis. Preserve uncertainty and do not invent missing times, participants, chronology, or relationships.' },
+    scope: { type: 'string', enum: ['user', 'project', 'session'], description: 'The memory scope of the event: user for durable user-level facts or preferences, project for project-specific facts and decisions, and session only for temporary context that should not generalize beyond the current session.' },
+    criticality: { type: 'string', enum: ['routine', 'preference', 'identity', 'safety'], description: 'The event\'s persistence class: routine for ordinary facts and outcomes, preference for durable user preferences, identity for stable identity-related facts, and safety only for safety-critical information. Do not inflate criticality merely because an event seems important.' },
   },
 }
 
 const EXTRACTOR_PARAMETERS: ParameterSchemaSpec = {
-  shouldExtract: { type: 'boolean', required: true },
-  reason: { type: 'string', required: true },
-  events: { type: 'array', items: EVENT_ITEM, required: true },
+  shouldExtract: { type: 'boolean', description: 'The Event Extractor\'s final judgment: true only when at least one durable Event is directly supported by target.messages. False when none qualifies, even if the Summarizer pre-screen was true; then return an empty events array.', required: true },
+  reason: { type: 'string', description: 'Briefly explain the final decision to extract or not extract; do not use this field as Event content.', required: true },
+  events: { type: 'array', items: EVENT_ITEM, description: 'Zero or more atomic, self-contained Event cards directly supported by target.messages. Separate independently changing, conflicting, or retrievable facts.', required: true },
 }
 
 const VALUE: ValueSchemaSpec = {
@@ -250,7 +248,7 @@ const STRUCTURED_TOOLS = {
   },
   extractor: {
     name: 'stratagate_extract_event_cards',
-    description: 'Submit durable, evidence-backed event cards from the target block only.',
+    description: 'Submit the Event Extractor\'s final decision and zero or more atomic, self-contained, source-grounded long-term Event cards. Extract only from target.messages; return shouldExtract=false and events=[] when no durable target-supported Event qualifies.',
     parameters: EXTRACTOR_PARAMETERS,
   },
   projector: {
@@ -317,7 +315,6 @@ function compactGraphProjectionContext(context: GraphProjectionContext): unknown
       id: event.id,
       title: event.title,
       summary: event.summary,
-      narrative: event.narrative,
       tags: event.tags,
       quotes: event.quotes,
       temporal: event.temporal,
@@ -426,7 +423,15 @@ export class DshModelBridge {
   readonly extractor: EventExtractor = async (context: ExtractionContext) => {
     const validMessageIds = new Set(context.target.l5Raw.map((message) => message.id))
     const raw = object(await this.callStructured('extractor',
-      `Extract only durable, evidence-backed events from target.messages, then call ${STRUCTURED_TOOLS.extractor.name} exactly once. target.messages is a provenance-preserving derivation view of the target block: message ids and conversational text are retained, while tool code and oversized tool payloads may be marked compacted. Use the retained tool names, evidence summaries, and excerpts without inventing omitted details. The target block is the only legal source of new facts, quotations, and sourceMessageIds. neighbors.previous and neighbors.next are context-only L2 summaries; never extract from them. Every sourceMessageIds entry must exactly match allowedSourceMessageIds. If a fact appears only in a neighbor, do not extract it in this call. Events must be understandable later without the original chat. Use project scope for repository decisions, user scope for stable preferences/identity, and session scope for temporary task state. temporal.eventType must use exactly one stable value: decision, release, task_completed, plan, change, cancellation, incident, meeting, collaboration, migration, or other. temporal.participants contains canonical entity names. Use ISO-8601 timestamps with the explicit +08:00 offset in temporal fields. Keep happened time separate from mentionedAt; when happened time is unknown omit it and set precision/basis to unknown. Do not turn an assistant statement that merely recalls older memory into a new event; require new human input or a new observable task/tool outcome from target.messages. Do not return the result as text.`,
+      `You are the StrataGate Event Extractor. Make the final extraction decision independently of the Summarizer's high-recall pre-screen. Extract durable, evidence-backed events from target.messages, then call ${STRUCTURED_TOOLS.extractor.name} exactly once. If none qualifies, set shouldExtract=false and events=[]; give a brief reason, not an Event body.
+
+Each Event is one atomic fact, decision, plan, outcome, or state change that can independently be retrieved, updated, superseded, or contradicted. If two facts can change or conflict separately, create separate Events; never combine them merely to reduce the Event count. Make title and summary self-contained: name the concrete subject rather than using it, this project, that tool, this issue, or the previous one. The title names the subject and one main change; the summary states the complete supported fact and current status; tags add distinct source-supported search entry points not already covered by title, summary, participants, or eventType. Keep real canonical names, aliases, abbreviations, versions, tools, technologies, projects, and distinctive concepts useful for later retrieval. Never invent keywords, unsupported synonyms, aliases, causes, relationships, or certainty, and never stuff keywords.
+
+Preserve source certainty and attribution: distinguish a user statement or decision, an assistant proposal or hypothesis, a tool-observed result, a plan, a completed result, and an unresolved possibility. Do not turn a suggestion into a decision, a hypothesis into a cause, or a plan into a completed outcome. Every material claim, quotation, time, status, and relationship must match source evidence.
+
+target.messages is a provenance-preserving derivation view of the target Block: message ids and conversational text are retained, while tool code and oversized tool payloads may be marked compacted. Use only retained tool names, evidence summaries, and excerpts; do not invent omitted details. Only target.messages may supply new facts, exact quotes, and sourceMessageIds. neighbors.previous and neighbors.next are context-only L2 summaries; timeline only helps identify historical relationships. Neither neighbors nor timeline nor an assistant recap of older memory can create a new Event. Require new human input or a new observable task/tool outcome from target.messages. Every sourceMessageIds entry must exactly match allowedSourceMessageIds and directly support the Event.
+
+Use project scope for repository decisions, user scope for stable preferences/identity, and session scope for temporary task state. temporal.eventType must use exactly one stable value: decision, release, task_completed, plan, change, cancellation, incident, meeting, collaboration, migration, or other. temporal.participants contains canonical entity names. Use ISO-8601 timestamps with the explicit +08:00 offset in temporal fields. Keep happened time separate from mentionedAt; when happened time is unknown omit it and set precision/basis to unknown. Do not return the result as text.`,
       extractorPayload(context),
     ))
     const events = (Array.isArray(raw.events) ? raw.events : []).map((candidate): EventCardInput | null => {
@@ -436,11 +441,11 @@ export class DshModelBridge {
       const criticality = CRITICALITIES.has(item.criticality as MemoryCriticality)
         ? item.criticality as MemoryCriticality
         : 'routine'
-      if (!text(item.title) || !text(item.summary) || sourceMessageIds.length === 0) return null
+      if (!text(item.title) || !text(item.summary) || sourceMessageIds.length === 0
+        || sourceMessageIds.length !== strings(item.sourceMessageIds).length) return null
       return {
         title: text(item.title).slice(0, 200),
         summary: text(item.summary).slice(0, 1_000),
-        narrative: text(item.narrative),
         tags: strings(item.tags).slice(0, 16),
         quotes: strings(item.quotes).slice(0, 12),
         sourceMessageIds,
@@ -448,13 +453,13 @@ export class DshModelBridge {
         temporal: object(item.temporal),
         scope,
         criticality,
-        confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
       }
     }).filter((event): event is EventCardInput => event !== null)
+    const shouldExtract = raw.shouldExtract === true && events.length > 0
     return {
-      shouldExtract: raw.shouldExtract === true,
+      shouldExtract,
       reason: text(raw.reason, events.length ? 'Durable evidence extracted.' : 'No durable evidence.'),
-      events,
+      events: shouldExtract ? events : [],
     }
   }
 

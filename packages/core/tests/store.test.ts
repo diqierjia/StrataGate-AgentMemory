@@ -36,6 +36,21 @@ const extractor: EventExtractor = async ({ target }) => ({
 });
 
 describe('StrataGate lifecycle', () => {
+  it('searches Event title, summary, tags, quotes, and structured temporal fields', async () => {
+    const memory = StrataGate.inMemory({ blockTurnSize: 1, summarizer: nonExtractingSummarizer, idFactory: ids() });
+    const result = await memory.appendTurn({ user: 'Atlas selected SQLite in dragonfruit mode.', assistant: 'Recorded.' });
+    const event = await memory.addEvent({
+      title: 'Atlas database selected', summary: 'Atlas selected SQLite for storage.',
+      tags: ['release-42'], quotes: ['Atlas selected SQLite in dragonfruit mode.'],
+      sourceBlockId: result.sealedBlock!.id, sourceMessageIds: [result.sealedBlock!.l5Raw[0]!.id],
+      temporal: { eventType: 'decision', participants: ['Atlas'], happenedStart: '2026-08-12T08:00:00+08:00' },
+    });
+    for (const query of ['database', 'SQLite', 'release-42', 'dragonfruit']) {
+      expect((await memory.searchEvents(query)).some(({ event: hit }) => hit.id === event.id)).toBe(true);
+    }
+    expect((await memory.searchEvents('', { participants: ['Atlas'] })).some(({ event: hit }) => hit.id === event.id)).toBe(true);
+    expect((await memory.searchEvents('', { eventType: 'decision' })).some(({ event: hit }) => hit.id === event.id)).toBe(true);
+  });
   it('writes canonical timestamps with the UTC+8 offset', () => {
     expect(toUtc8Iso('2026-08-20T00:00:00.000Z')).toBe('2026-08-20T08:00:00.000+08:00');
   });

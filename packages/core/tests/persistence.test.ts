@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   StorageConflictError,
   StrataGate,
+  normalizeSnapshot,
   type BlockSummarizer,
   type EventExtractor,
 } from '../src/index.js';
@@ -57,6 +58,34 @@ const extractor: EventExtractor = async ({ target }) => ({
 });
 
 describe('SQLite persistence', () => {
+  it('loads legacy Event columns and snapshots without exposing retired fields', async () => {
+    const filename = await databasePath();
+    const options = { database: filename, namespace: 'legacy:events', blockTurnSize: 1,
+      summarizer: nonExtractingSummarizer, now: fixedNow, idFactory: ids() };
+    const memory = await StrataGate.open(options);
+    const result = await memory.appendTurn({ user: 'Use SQLite.', assistant: 'Understood.' });
+    const event = await memory.addEvent({ title: 'SQLite selected', summary: 'The project selected SQLite.',
+      sourceBlockId: result.sealedBlock!.id, sourceMessageIds: [result.sealedBlock!.l5Raw[0]!.id] });
+    const legacySnapshot = memory.exportSnapshot() as unknown as Record<string, any>;
+    legacySnapshot.events[0].narrative = 'Old narrative.';
+    legacySnapshot.events[0].confidence = 0.37;
+    const normalized = normalizeSnapshot(legacySnapshot);
+    expect(normalized.events[0]).toMatchObject({ id: event.id, summary: event.summary });
+    expect(normalized.events[0]).not.toHaveProperty('narrative');
+    expect(normalized.events[0]).not.toHaveProperty('confidence');
+    await memory.close();
+
+    const db = new Database(filename);
+    db.prepare('UPDATE events SET narrative = ?, confidence = ? WHERE namespace = ? AND id = ?')
+      .run('Old narrative.', 0.37, options.namespace, event.id);
+    db.close();
+    const reopened = await StrataGate.open(options);
+    expect(reopened.listEvents()[0]).toMatchObject({ id: event.id, summary: event.summary });
+    expect(reopened.listEvents()[0]).not.toHaveProperty('narrative');
+    expect(reopened.listEvents()[0]).not.toHaveProperty('confidence');
+    expect((await reopened.searchEvents('SQLite'))[0]?.event.id).toBe(event.id);
+    await reopened.close();
+  });
   it('restores an unfinished external-memory import job with saved progress', async () => {
     const filename = await databasePath();
     const memory = await StrataGate.open({ database: filename, namespace: 'imports', now: fixedNow });

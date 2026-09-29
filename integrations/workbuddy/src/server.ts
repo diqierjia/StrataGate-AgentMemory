@@ -71,7 +71,7 @@ server.registerResource('stratagate-star-prompt', STAR_WIDGET_URI, {
 
 server.registerTool('memory_search_events', {
   title: 'Search StrataGate events',
-  description: 'Search source-traceable historical decisions, outcomes, plans, corrections, and time-based events. Results are compact by default; use memory_expand_event for narrative/quotes/source messages. rankScore is BM25/RRF ordering only, not confidence or factual accuracy. Results must be assessed before use.',
+  description: 'Search source-traceable historical decisions, outcomes, plans, corrections, and time-based events. Results are compact by default; use memory_expand_event for the full summary, quotes, and source messages. rankScore is BM25/RRF ordering only, not confidence or factual accuracy. Results must be assessed before use.',
   inputSchema: {
     query: z.string().min(1).max(2_000),
     session_id: session,

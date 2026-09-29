@@ -221,8 +221,8 @@ describe('Event-backed knowledge graph', () => {
       status: 'active', confidence: 0.9, sourceEventIds: [events[0]!.id], createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
     });
     const eventCards = events.map((event) => ({
-      ...event, title: event.id, summary: event.id, sourceBlockId: 'block', sourceMessageIds: [], narrative: '', tags: [], quotes: [],
-      temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9, supersededBy: null,
+      ...event, title: event.id, summary: event.id, sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [],
+      temporal: {}, scope: 'project' as const, criticality: 'routine' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
       createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
     }));
@@ -237,7 +237,7 @@ describe('Event-backed knowledge graph', () => {
   it('keeps canonical name provenance separate from an alias-based merge', async () => {
     const memory = StrataGate.inMemory({ blockTurnSize: 1 });
     const makeEvent = (id: string) => ({
-      id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], narrative: '', tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9, status: 'active' as const, supersededBy: null,
+      id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null }, createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
     });
     const e1 = makeEvent('evt_existing_name'); const e3 = makeEvent('evt_proposal_name'); const e4 = makeEvent('evt_existing_alias');
@@ -257,7 +257,7 @@ describe('Event-backed knowledge graph', () => {
   it('does not merge through a proposal alias that lacks valid field provenance', async () => {
     const memory = StrataGate.inMemory({ blockTurnSize: 1 });
     const makeEvent = (id: string) => ({
-      id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], narrative: '', tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9, status: 'active' as const, supersededBy: null,
+      id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null }, createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
     });
     const existingSource = makeEvent('evt_existing');
@@ -285,7 +285,7 @@ describe('Event-backed knowledge graph', () => {
   it('does not fall back to node sources when metadata provenance is missing or mismatched', async () => {
     const memory = StrataGate.inMemory({ blockTurnSize: 1 });
     const makeEvent = (id: string) => ({
-      id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], narrative: '', tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9, status: 'active' as const, supersededBy: null,
+      id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null }, createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
     });
     const source = makeEvent('evt_projection_source');
@@ -382,7 +382,7 @@ describe('Event-backed knowledge graph', () => {
   it('rejects a projection whose source Event became forgotten before completion', async () => {
     const now = '2026-09-20T00:00:00.000Z';
     const active = {
-      id: 'evt_existing_active', title: 'active', summary: 'active', sourceBlockId: 'block', sourceMessageIds: [], narrative: '', tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, confidence: 0.9, status: 'active' as const, supersededBy: null,
+      id: 'evt_existing_active', title: 'active', summary: 'active', sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null }, createdAt: now, updatedAt: now,
     };
     const forgotten = { ...active, id: 'evt_forgotten_before_completion', status: 'forgotten' as const };

@@ -151,7 +151,13 @@ abstract class StructuredModelBridge {
   readonly extractor: EventExtractor = async (context: ExtractionContext) => {
     const validMessageIds = new Set(context.target.l5Raw.map((message) => message.id))
     const raw = object(await this.callJson(
-      'Extract only durable, evidence-backed events from target.messages. target.messages is a provenance-preserving derivation view of the target block: message ids and conversational text are retained, while tool code and oversized tool payloads may be marked compacted. Use the retained tool names, evidence summaries, and excerpts without inventing omitted details. The target block is the only legal source of new facts, quotations, and sourceMessageIds. neighbors.previous and neighbors.next are context-only L2 summaries; never extract from them. Every sourceMessageIds entry must exactly match allowedSourceMessageIds. If a fact appears only in a neighbor, do not extract it in this call. Return JSON only: {shouldExtract:boolean,reason:string,events:[{title,summary,narrative,tags,quotes,sourceMessageIds,temporal,scope,criticality,confidence}]}. Events must be understandable later without the original chat. Use project scope for repository decisions, user scope for stable preferences/identity, and session scope for temporary task state. Use ISO-8601 timestamps with the explicit +08:00 offset in temporal fields. Do not turn an assistant statement that merely recalls older memory into a new event; require new human input or a new observable task/tool outcome from target.messages.',
+      `You are the StrataGate Event Extractor. Make the final decision independently of the Summarizer pre-screen. Return JSON only: {shouldExtract:boolean,reason:string,events:[{title,summary,tags,quotes,sourceMessageIds,temporal,scope,criticality}]}. Set shouldExtract=true only for at least one durable, target-supported Event; otherwise set false with events=[] and a brief reason.
+
+Each Event is one atomic fact, decision, plan, outcome, or state change that can independently be retrieved, updated, superseded, or contradicted. Split independently changing or conflicting facts into separate Events. Make each title and summary self-contained, with explicit source-supported names instead of pronouns. The title names the subject and one change; the summary states the complete supported fact and current status; tags add distinct retrieval entry points beyond title, summary, participants, and eventType. Preserve real names, aliases, abbreviations, versions, tools, technologies, projects, and distinctive concepts. Never invent keywords, unsupported synonyms, aliases, causes, relationships, or certainty; never stuff keywords.
+
+Distinguish a user statement or decision, an assistant proposal or hypothesis, a tool-observed result, a plan, a completed result, and an unresolved possibility. Do not promote a suggestion to a decision, a hypothesis to a cause, or a plan to a completed outcome. All claims, exact quotes, times, status, and relationships require source evidence.
+
+target.messages is a provenance-preserving derivation view of the target Block; tool code and oversized payloads may be compacted. Use retained tool names, evidence summaries, and excerpts without inventing omitted details. Only target.messages supplies new facts, quotes, and sourceMessageIds. neighbors.previous and neighbors.next are context-only; timeline is only for historical relationships. Neither neighbors, timeline, nor assistant recaps of old memory can create new Events. Require new human input or an observable target task/tool outcome. Every sourceMessageIds entry must exactly match allowedSourceMessageIds and directly support the Event. Use project scope for repository decisions, user scope for stable preferences/identity, and session scope for temporary task state. Use ISO-8601 timestamps with explicit +08:00 offset in temporal fields.`,
       extractorPayload(context),
       EXTRACTION_SCHEMA,
     ))
@@ -162,11 +168,11 @@ abstract class StructuredModelBridge {
       const criticality = CRITICALITIES.has(item.criticality as MemoryCriticality)
         ? item.criticality as MemoryCriticality
         : 'routine'
-      if (!text(item.title) || !text(item.summary) || sourceMessageIds.length === 0) return null
+      if (!text(item.title) || !text(item.summary) || sourceMessageIds.length === 0
+        || sourceMessageIds.length !== strings(item.sourceMessageIds).length) return null
       return {
         title: text(item.title).slice(0, 200),
         summary: text(item.summary).slice(0, 1_000),
-        narrative: text(item.narrative),
         tags: strings(item.tags).slice(0, 16),
         quotes: strings(item.quotes).slice(0, 12),
         sourceMessageIds,
@@ -174,13 +180,13 @@ abstract class StructuredModelBridge {
         temporal: object(item.temporal),
         scope,
         criticality,
-        confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
       }
     }).filter((event): event is EventCardInput => event !== null)
+    const shouldExtract = raw.shouldExtract === true && events.length > 0
     return {
-      shouldExtract: raw.shouldExtract === true,
+      shouldExtract,
       reason: text(raw.reason, events.length ? 'Durable evidence extracted.' : 'No durable evidence.'),
-      events,
+      events: shouldExtract ? events : [],
     }
   }
 

@@ -112,7 +112,6 @@ export interface EventCardInput {
   id?: string;
   title: string;
   summary: string;
-  narrative?: string;
   tags?: string[];
   quotes?: string[];
   sourceMessageIds: string[];
@@ -120,14 +119,12 @@ export interface EventCardInput {
   temporal?: EventTemporal;
   scope?: MemoryScope;
   criticality?: MemoryCriticality;
-  confidence?: number;
 }
 
 export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> {
   id: string;
   /** Conversation turn where this Event entered its long-term-memory lifecycle. */
   formedTurn?: number;
-  narrative: string;
   tags: string[];
   quotes: string[];
   /**
@@ -139,7 +136,6 @@ export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> 
   temporal: EventTemporal;
   scope: MemoryScope;
   criticality: MemoryCriticality;
-  confidence: number;
   status: MemoryStatus;
   supersededBy: string | null;
   weight: MemoryWeight;
@@ -167,6 +163,9 @@ export type ExternalMemoryKind = 'instruction' | 'preference' | 'fact' | 'event'
 
 /** A candidate memory produced by an external AI memory export. */
 export type ExternalMemoryCandidate = Omit<EventCardInput, 'id' | 'sourceMessageIds' | 'sourceBlockId'> & {
+  /** External import metadata; not part of an Event card. */
+  narrative?: string;
+  confidence?: number;
   memoryKind?: ExternalMemoryKind;
   category?: 'instruction' | 'identity' | 'career' | 'project' | 'preference';
 };
@@ -357,7 +356,7 @@ export interface AgentEventRecordResult {
   reinforcedEventId?: string;
   existingEventIds: string[];
   matchedEventIds: string[];
-  /** Gate confidence; not the stored event confidence. */
+  /** Confidence of the external-memory gate decision, not an Event field. */
   confidence?: number;
   downgradedFrom?: 'MERGE' | 'SUPERSEDE';
   reason?: string;

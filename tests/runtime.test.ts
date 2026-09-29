@@ -688,7 +688,6 @@ describe('DSH runtime ingestion', () => {
       const event = await memory.addEvent({
         title: 'Memory plugin released',
         summary: 'The memory plugin was released.',
-        narrative: 'Full narrative detail.',
         quotes: ['Exact source quote.'],
         sourceMessageIds: [block.l5Raw[0]!.id],
         sourceBlockId: block.id,
@@ -718,8 +717,9 @@ describe('DSH runtime ingestion', () => {
       expect(eventBatch.results[0]).not.toHaveProperty('score')
       expect(eventBatch.results[0]?.scoreMeaning).toContain('not confidence')
 
-      const expandedEvent = await runtime.expandEvent(active, event.id) as { results: { narrative: string; quotes: string[]; sourceMessageIds: string[] } }
-      expect(expandedEvent.results.narrative).toBe('Full narrative detail.')
+      const expandedEvent = await runtime.expandEvent(active, event.id) as { results: { summary: string; quotes: string[]; sourceMessageIds: string[] } }
+      expect(expandedEvent.results.summary).toBe('The memory plugin was released.')
+      expect(expandedEvent.results).not.toHaveProperty('narrative')
       expect(expandedEvent.results.quotes).toEqual(['Exact source quote.'])
 
       const graphBatch = await runtime.searchGraph(active, 'memory plugin') as { results: Array<Record<string, unknown>> }
@@ -963,7 +963,6 @@ describe('DSH runtime ingestion', () => {
       const relevant = await memory.addEvent({
         title: 'Use pnpm',
         summary: 'The project package manager is pnpm.',
-        narrative: 'PRIVATE NARRATIVE',
         quotes: ['PRIVATE QUOTE'],
         sourceMessageIds: [block!.l5Raw[0]!.id],
         sourceBlockId: block!.id,

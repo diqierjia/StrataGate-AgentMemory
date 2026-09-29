@@ -66,7 +66,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_search_events',
-    description: 'This tool is provided by the StrataGate plugin. Search durable StrataGate event memories. Returns a compact batch of event cards (id, title, summary, time, and evidence refs); call memory_expand_event for narrative/quotes/source messages. rankScore is BM25/RRF ordering only, never confidence or factual accuracy. Pass batchId to memory_assess before relying on evidence.',
+    description: 'This tool is provided by the StrataGate plugin. Search durable StrataGate event memories. Returns a compact batch of event cards (id, title, summary, time, and evidence refs); call memory_expand_event for the full summary, quotes, and source messages. rankScore is BM25/RRF ordering only, never confidence or factual accuracy. Pass batchId to memory_assess before relying on evidence.',
     parameters: {
       query: { type: 'string', required: true, description: 'What historical decision, event, preference, or outcome to find.' },
       limit: { type: 'integer', description: 'Maximum results, 1-20.' },

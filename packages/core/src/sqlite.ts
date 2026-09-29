@@ -598,7 +598,6 @@ function mapEventRows(rows: EventRow[], sourcesByEvent: Map<string, string[]>, t
     id: row.id,
     title: row.title,
     summary: row.summary,
-    narrative: row.narrative,
     tags: parseJson<string[]>(row.tags_json, `${table}.tags_json`),
     quotes: parseJson<string[]>(row.quotes_json, `${table}.quotes_json`),
     sourceMessageIds: sourcesByEvent.get(row.id) ?? [],
@@ -610,7 +609,6 @@ function mapEventRows(rows: EventRow[], sourcesByEvent: Map<string, string[]>, t
     })(),
     scope: row.scope,
     criticality: row.criticality,
-    confidence: row.confidence,
     status: row.status,
     supersededBy: row.superseded_by,
     weight: {
@@ -1294,13 +1292,15 @@ export class SqliteStorage implements StorageAdapter {
     for (const [eventPosition, event] of snapshot.events.entries()) {
       // Passive events always carry a provenance block (enforced by
       // addEventInMemory); only agent events may omit sourceBlockId.
+      // Legacy NOT NULL columns stay as storage placeholders. Event readers
+      // discard them; no live Event behavior uses their values.
       insertEvent.run(
         namespace,
         event.id,
         eventPosition,
         event.title,
         event.summary,
-        event.narrative,
+        event.summary,
         JSON.stringify(event.tags),
         JSON.stringify(event.quotes),
         event.sourceBlockId as string,
@@ -1308,7 +1308,7 @@ export class SqliteStorage implements StorageAdapter {
         JSON.stringify(event.temporal),
         event.scope,
         event.criticality,
-        event.confidence,
+        1,
         event.status,
         event.supersededBy,
         event.weight.mentionCount,
@@ -1341,13 +1341,14 @@ export class SqliteStorage implements StorageAdapter {
       INSERT INTO agent_event_sources (namespace, event_id, message_id, position) VALUES (?, ?, ?, ?)
     `);
     for (const [eventPosition, event] of snapshot.agentEvents.entries()) {
+      // Keep the same legacy-column placeholders in the agent Event table.
       insertAgentEvent.run(
         namespace,
         event.id,
         eventPosition,
         event.title,
         event.summary,
-        event.narrative,
+        event.summary,
         JSON.stringify(event.tags),
         JSON.stringify(event.quotes),
         event.sourceBlockId ?? null,
@@ -1355,7 +1356,7 @@ export class SqliteStorage implements StorageAdapter {
         JSON.stringify(event.temporal),
         event.scope,
         event.criticality,
-        event.confidence,
+        1,
         event.status,
         event.supersededBy,
         event.weight.mentionCount,

@@ -46,7 +46,6 @@ const snapshot: StrataGateSnapshot = {
     formedTurn: 4,
     title: 'Use pnpm',
     summary: 'The project uses pnpm.',
-    narrative: 'The user selected pnpm.',
     tags: ['pnpm'],
     quotes: ['Use pnpm.'],
     sourceMessageIds: ['msg_1'],
@@ -54,7 +53,6 @@ const snapshot: StrataGateSnapshot = {
     temporal: {},
     scope: 'project',
     criticality: 'routine',
-    confidence: 0.95,
     status: 'active',
     supersededBy: null,
     weight: { mentionCount: 2, lastAdoptedTurn: 8, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
@@ -629,6 +627,8 @@ describe('StrataGate admin routes', () => {
         },
       }],
     })
+    expect(memories.body.items[0]).not.toHaveProperty('narrative')
+    expect(memories.body.items[0]).not.toHaveProperty('confidence')
 
     const graph = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Atest&kind=graph')
     expect(graph.body).toMatchObject({

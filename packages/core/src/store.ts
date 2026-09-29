@@ -1363,7 +1363,6 @@ export class StrataGate {
       [event.summary, 3],
       [event.tags.join(' '), 2],
       [event.quotes.join(' '), 2],
-      [event.narrative, 1],
       [(event.temporal.participants ?? []).join(' '), 5],
       [event.temporal.eventType ?? '', 5],
       [event.temporal.originalText ?? '', 4],
@@ -2251,7 +2250,6 @@ export class StrataGate {
       formedTurn: parts.formedTurn,
       title: input.title.trim(),
       summary: input.summary.trim(),
-      narrative: input.narrative?.trim() || input.summary.trim(),
       tags: [...new Set(input.tags ?? [])].slice(0, 12),
       quotes: [...new Set(input.quotes ?? [])].slice(0, 12),
       sourceMessageIds: parts.sourceMessageIds,
@@ -2262,7 +2260,6 @@ export class StrataGate {
       },
       scope: input.scope ?? 'user',
       criticality: parts.criticality,
-      confidence: Math.max(0, Math.min(1, input.confidence ?? 1)),
       status: 'active',
       supersededBy: null,
       weight: {

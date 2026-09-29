@@ -404,6 +404,10 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
   }
   const sourceBlockMap = new Map(snapshot.blocks.map((block) => [block.id, block]));
   for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
+    // Older snapshots can carry these retired Event fields. Keep their other
+    // metadata intact while removing them from the live Event model.
+    delete (event as EventCard & { narrative?: string }).narrative;
+    delete (event as EventCard & { confidence?: number }).confidence;
     event.temporal = { ...event.temporal, eventType: normalizeStandardEventType(event.temporal.eventType) };
     if (event.formedTurn === undefined) {
       const sourceBlock = event.sourceBlockId !== undefined ? sourceBlockMap.get(event.sourceBlockId) : undefined;
