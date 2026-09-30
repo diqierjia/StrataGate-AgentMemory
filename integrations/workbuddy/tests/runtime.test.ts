@@ -122,6 +122,7 @@ describe('WorkBuddyRuntime', () => {
   })
 
   it('generates Events and Elements in the background with a configured model', async () => {
+    let previousTargetMessageId = 'non-target-message';
     const model = createServer((request, response) => {
       const chunks: Buffer[] = []
       request.on('data', (chunk) => chunks.push(Buffer.from(chunk)))
@@ -151,8 +152,12 @@ describe('WorkBuddyRuntime', () => {
               temporal: { eventType: 'decision' },
               scope: 'project',
               criticality: 'routine',
+            }, {
+              title: 'Invalid mixed-source Event', summary: 'This Event must be rejected.',
+              sourceMessageIds: [payload.target.messages[0].id, previousTargetMessageId],
             }],
           }
+          previousTargetMessageId = payload.target.messages[0].id
         } else {
           result = {
             reason: 'Project state updated from the deployment decision.',

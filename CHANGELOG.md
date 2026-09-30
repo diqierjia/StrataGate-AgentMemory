@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.92 - Unreleased
+
+- Make Event extraction atomic, self-contained, and source-grounded, with descriptions for all eight core fields; remove Event narrative and confidence from extraction, retrieval, projection input, and UI/API output.
+- Restrict extracted historical Event relationship IDs to the timeline supplied for that extraction call, including supersession, across all integrations and custom extractors.
+- Keep legacy SQLite columns readable and strip retired fields from loaded Events and snapshots. Saving rewrites those legacy columns to summary and confidence 1; downgrading after a save does not restore the original narrative/confidence values.
+
 ## 0.2.89 - Unreleased
 
 - Accept coherent DSH 0.1.7 hosts from rc.1 through the stable 0.1.7 release, including rc.2, without pinning every internal DSH package to one prerelease.

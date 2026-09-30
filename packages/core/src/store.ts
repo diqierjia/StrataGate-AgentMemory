@@ -59,6 +59,7 @@ import type {
   EventCardInput,
   EventExtractor,
   EventSearchResult,
+  EventTemporal,
   ExternalMemoryAction,
   ExternalMemoryCandidate,
   ExternalMemoryCommitOptions,
@@ -278,6 +279,22 @@ function agentEventCandidate(
 }
 
 const DERIVATION_BACKOFF_MS = 1_000;
+
+function restrictExtractionRelations(temporal: EventTemporal, allowedIds: ReadonlySet<string>): EventTemporal {
+  const result = { ...temporal };
+  if (typeof result.sameEventId !== 'string' || !allowedIds.has(result.sameEventId)) {
+    delete result.sameEventId;
+  }
+  for (const field of ['beforeEventIds', 'afterEventIds', 'supersedesEventIds', 'conflictsWithEventIds', 'relatedEventIds'] as const) {
+    const values = temporal[field];
+    const ids = Array.isArray(values)
+      ? [...new Set(values.filter((id): id is string => typeof id === 'string' && allowedIds.has(id)))]
+      : [];
+    if (ids.length > 0) result[field] = ids;
+    else delete result[field];
+  }
+  return result;
+}
 
 export class StrataGate {
   private blockTurnSizeValue: number;
@@ -2810,6 +2827,7 @@ export class StrataGate {
     });
 
     let result: Awaited<ReturnType<EventExtractor>>;
+    let allowedTimelineEventIds: ReadonlySet<string> = new Set();
     try {
       const query = [target.l0Title, target.l1Summary, ...(target.l2Keypoints ?? [])]
         .filter(Boolean).join(' ');
@@ -2830,11 +2848,14 @@ export class StrataGate {
       for (const event of recent) {
         if (!timelineEvents.has(event.id)) timelineEvents.set(event.id, event);
       }
+      // Capture permissions before calling any integration/custom extractor.
+      // Its mutable context must not broaden the historical relationship scope.
+      allowedTimelineEventIds = new Set(timelineEvents.keys());
       result = await this.extractor({
         previous: threadBlocks.slice(0, targetIndex).reverse().find((block) => block.l2Keypoints !== undefined) ?? null,
         target,
         next,
-        timeline: [...timelineEvents.values()].map((event) => ({ id: event.id, title: event.title, temporal: event.temporal })),
+        timeline: [...timelineEvents.values()].map((event) => ({ id: event.id, title: event.title, temporal: structuredClone(event.temporal) })),
       });
     } catch (error) {
       await this.commitMutation(() => {
@@ -2868,8 +2889,18 @@ export class StrataGate {
     }
 
     return this.commitMutation(() => {
+      // A timeline Event can be forgotten/archived while the model is running.
+      // Never let its later output revive or re-link that excluded memory.
+      const allowedIds = new Set([...allowedTimelineEventIds].filter((id) => {
+        const event = this.findEvent(id);
+        return event?.status === 'active' || event?.status === 'superseded';
+      }));
       const extracted = result.shouldExtract
-        ? result.events.map((event) => this.addEventInMemory({ ...event, sourceBlockId: target.id }))
+        ? result.events.map((event) => this.addEventInMemory({
+          ...event,
+          sourceBlockId: target.id,
+          ...(event.temporal ? { temporal: restrictExtractionRelations(event.temporal, allowedIds) } : {}),
+        }))
         : [];
       if (extracted.length > 0) {
         const ids = extracted.map(({ id }) => id);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StrataGate, type BlockSummarizer, type ExtractionContext } from '../src/index.js';
+import { StrataGate, type BlockSummarizer, type EventExtractor, type EventTemporal, type ExtractionContext } from '../src/index.js';
 
 const summarizer: BlockSummarizer = async (messages) => {
   const content = messages[0]?.content ?? '';
@@ -12,15 +12,16 @@ const summarizer: BlockSummarizer = async (messages) => {
   };
 };
 
-function fixture() {
+function fixture(extractor?: EventExtractor) {
   let tick = 0;
   let timeline: ExtractionContext['timeline'] = [];
   const memory = StrataGate.inMemory({
     blockTurnSize: 1,
     summarizer,
     now: () => new Date(Date.UTC(2026, 0, 1, 0, tick++, 0)),
-    extractor: async ({ timeline: selected }) => {
-      timeline = selected;
+    extractor: async (context) => {
+      timeline = context.timeline;
+      if (extractor) return extractor(context);
       return { shouldExtract: false, reason: 'timeline inspection', events: [] };
     },
   });
@@ -28,6 +29,90 @@ function fixture() {
 }
 
 describe('Event extraction timeline', () => {
+  it.each(['recent-3', 'outside'])('bounds all relationship IDs and validates sameEventId=%s', async (sameEventId) => {
+    const relationships = ['recent-3', 'outside', 'missing', 'extracted', 'recent-3'];
+    const { memory, timeline } = fixture(async ({ target }) => ({
+      shouldExtract: true, reason: 'New target-supported fact.', events: [{
+        id: 'extracted', title: 'A new decision', summary: 'A new target-supported decision.',
+        sourceBlockId: target.id, sourceMessageIds: [target.l5Raw[0]!.id],
+        temporal: {
+          sameEventId,
+          beforeEventIds: relationships, afterEventIds: relationships,
+          supersedesEventIds: relationships, conflictsWithEventIds: relationships,
+          relatedEventIds: relationships,
+          happenedStart: '2026-01-01', participants: ['Orchard'], eventType: 'decision',
+        },
+      }],
+    }));
+    const source = (await memory.appendTurn({ user: 'source', assistant: 'recorded' })).sealedBlock!;
+    const outside = await memory.addEvent({ id: 'outside', title: 'Older unrelated memory', summary: 'Unrelated history.',
+      sourceBlockId: source.id, sourceMessageIds: [source.l5Raw[0]!.id] });
+    for (let index = 0; index < 4; index += 1) {
+      await memory.addEvent({ id: `recent-${index}`, title: `Recent memory ${index}`, summary: 'Recent history.',
+        sourceBlockId: source.id, sourceMessageIds: [source.l5Raw[0]!.id] });
+    }
+    const before = structuredClone(outside);
+    await memory.appendTurn({ user: 'TARGET zephyr', assistant: 'confirmed' });
+    expect(timeline().map(({ id }) => id)).toEqual(['recent-3', 'recent-2', 'recent-1', 'recent-0']);
+    const extracted = memory.listEvents().find(({ id }) => id === 'extracted')!;
+    expect(extracted.temporal).toMatchObject({
+      beforeEventIds: ['recent-3'], afterEventIds: ['recent-3'], supersedesEventIds: ['recent-3'],
+      conflictsWithEventIds: ['recent-3'], relatedEventIds: ['recent-3'],
+      happenedStart: '2026-01-01', participants: ['Orchard'], eventType: 'decision',
+    });
+    if (sameEventId === 'recent-3') expect(extracted.temporal.sameEventId).toBe('recent-3');
+    else expect(extracted.temporal).not.toHaveProperty('sameEventId');
+    expect(outside).toEqual(before);
+    expect(memory.listEvents().find(({ id }) => id === 'recent-3')).toMatchObject({
+      status: 'superseded', supersededBy: 'extracted', weight: { forcedCap: 0.1 },
+    });
+  });
+
+  it('does not let an extractor mutate its timeline to widen relationship permissions or alter history', async () => {
+    const { memory } = fixture(async ({ target, timeline }) => {
+      timeline[0]!.id = 'outside';
+      timeline[0]!.temporal.participants!.push('Injected participant');
+      return { shouldExtract: true, reason: 'New fact.', events: [{
+        title: 'New fact', summary: 'Uses target evidence.', sourceBlockId: target.id,
+        sourceMessageIds: [target.l5Raw[0]!.id],
+        temporal: {
+          sameEventId: 'outside', supersedesEventIds: ['outside'], conflictsWithEventIds: ['outside'],
+          beforeEventIds: 'outside', afterEventIds: [null, 123], relatedEventIds: ['missing'],
+        } as unknown as EventTemporal,
+      }] };
+    });
+    const source = (await memory.appendTurn({ user: 'source', assistant: 'recorded' })).sealedBlock!;
+    for (let index = 0; index < 5; index += 1) {
+      await memory.addEvent({ id: index === 0 ? 'outside' : `recent-${index}`, title: `Stored memory ${index}`,
+        summary: 'Different subject.', sourceBlockId: source.id, sourceMessageIds: [source.l5Raw[0]!.id],
+        temporal: { participants: ['Original participant'] } });
+    }
+    const history = structuredClone(memory.listEvents());
+    await memory.appendTurn({ user: 'TARGET zephyr', assistant: 'confirmed' });
+    expect(memory.listEvents().slice(0, 5)).toEqual(history);
+    expect(memory.listEvents().at(-1)!.temporal).toEqual({ eventType: 'other' });
+  });
+
+  it('does not revive a timeline Event forgotten while the extractor is running', async () => {
+    const { memory } = fixture(async ({ target, timeline }) => {
+      expect(timeline.map(({ id }) => id)).toContain('old');
+      await memory.forgetEvent('old');
+      return { shouldExtract: true, reason: 'New fact.', events: [{
+        title: 'New decision', summary: 'Uses target evidence.', sourceBlockId: target.id,
+        sourceMessageIds: [target.l5Raw[0]!.id],
+        temporal: { sameEventId: 'old', supersedesEventIds: ['old'], conflictsWithEventIds: ['old'] },
+      }] };
+    });
+    const source = (await memory.appendTurn({ user: 'source', assistant: 'recorded' })).sealedBlock!;
+    const old = await memory.addEvent({ id: 'old', title: 'Historic decision', summary: 'Historic decision.',
+      sourceBlockId: source.id, sourceMessageIds: [source.l5Raw[0]!.id] });
+    await memory.appendTurn({ user: 'TARGET zephyr', assistant: 'confirmed' });
+    expect(old.status).toBe('forgotten');
+    expect(old.supersededBy).toBeNull();
+    expect(old.weight.forcedCap).not.toBe(0.1);
+    expect(memory.listEvents().at(-1)!.temporal).toEqual({ eventType: 'other' });
+  });
+
   it('keeps eight relevant Events and four recent Events when the database grows', async () => {
     const { memory, timeline } = fixture();
     const source = (await memory.appendTurn({ user: 'source', assistant: 'recorded' })).sealedBlock!;
