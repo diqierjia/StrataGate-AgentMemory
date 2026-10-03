@@ -1,5 +1,8 @@
 import { DatabaseSync } from 'node:sqlite'
 
+export const TOPIC_BOOTSTRAP_WINDOW_MS = 10 * 60_000
+export const TOPIC_BOOTSTRAP_WINDOW_CALLS = 2
+
 const METADATA_SCHEMA = `
 CREATE TABLE IF NOT EXISTS stratagate_dsh_settings (
   key TEXT PRIMARY KEY,
@@ -41,6 +44,39 @@ export class DshMetadataStore {
   constructor(filename: string) {
     this.database = new DatabaseSync(filename)
     this.database.exec(METADATA_SCHEMA)
+  }
+
+  /** Database-wide, durable reservation before any historical model attempt.
+   * Crashes or claim conflicts can waste a slot, but never refund a paid call.
+   */
+  reserveTopicBootstrapCall(now = Date.now()): boolean {
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'topicBootstrapBudget'")
+        .get() as { value: string } | undefined
+      let budget: { resetAt: number; used: number } = { resetAt: now + TOPIC_BOOTSTRAP_WINDOW_MS, used: 0 }
+      if (row) {
+        try {
+          const parsed = JSON.parse(row.value) as typeof budget
+          if (!Number.isFinite(parsed.resetAt) || !Number.isSafeInteger(parsed.used) || parsed.used < 0) throw new Error('Invalid budget')
+          budget = parsed.resetAt <= now ? budget : parsed
+        } catch {
+          // Corrupt bookkeeping must not silently give another paid allowance.
+          budget.used = TOPIC_BOOTSTRAP_WINDOW_CALLS
+          this.setSettingValue('topicBootstrapBudget', JSON.stringify(budget))
+        }
+      }
+      const permitted = budget.used < TOPIC_BOOTSTRAP_WINDOW_CALLS
+      if (permitted) {
+        budget.used += 1
+        this.setSettingValue('topicBootstrapBudget', JSON.stringify(budget))
+      }
+      this.database.exec('COMMIT')
+      return permitted
+    } catch (error) {
+      this.database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   blockTurnSize(): number | null {

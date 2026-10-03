@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openNativePath } from '@deepseek-ai/dsh-native-command'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
@@ -40,6 +41,7 @@ import {
   type SearchOptions,
   type SuccessfulModelResponse,
   type StrataGateSnapshot,
+  type MemoryTopic,
 } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import type {
@@ -52,6 +54,7 @@ import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
+import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
 
 export { estimateTokens }
 
@@ -398,6 +401,8 @@ export class StrataGateRuntime {
         : (await this.openAdminMemory(namespace, { derivation: true })).memory
       const owned = !active
       try {
+        await this.refreshExternalImportMemory(namespace, memory)
+        const canProjectTopics = typeof this.models.topicProjector === 'function'
         const runnable = [
           ...memory.listSummaryJobs(),
           ...memory.listExtractionJobs(),
@@ -405,6 +410,7 @@ export class StrataGateRuntime {
           || (job.status === 'failed' && job.nextRetryAt !== null
             && Date.parse(job.nextRetryAt) <= Date.now()))
           || memory.listGraphProjectionJobs().some((job) => graphProjectionCanRun(job))
+          || (canProjectTopics && memory.hasPendingTopicWork())
         if (!runnable) return
         const hasActiveSessionWork = [
           ...this.derivationTimers.keys(),
@@ -417,7 +423,32 @@ export class StrataGateRuntime {
         if (!this.models.isReady()) return
         const resumed = await this.models.runDetached(
           `stratagate-worker:${namespace}`,
-          () => memory.resumePendingWork(),
+          async () => {
+            const resumed = await memory.resumePendingWork()
+            if (canProjectTopics) {
+              let job = memory.hasPendingTopicWork('incremental')
+                ? await this.retryTopicWrite(namespace, memory, () => memory.claimNextTopicProjection('incremental'))
+                : null
+              if (!job && memory.hasPendingTopicWork('bootstrap')) {
+                const metadata = new DshMetadataStore(this.config.database)
+                let permitted: boolean
+                try { permitted = metadata.reserveTopicBootstrapCall() } finally { metadata.close() }
+                if (permitted) job = await this.retryTopicWrite(namespace, memory, () => memory.claimNextTopicProjection('bootstrap'))
+              }
+              if (job) {
+                try {
+                  const result = await this.models.topicProjector(job)
+                  // Another connection may have changed or forgotten sources while
+                  // the model was running. Validate against the durable head.
+                  await this.retryTopicWrite(namespace, memory, () => memory.completeTopicProjection(job.jobId, result))
+                } catch (error) {
+                  await this.retryTopicWrite(namespace, memory, () => memory.failTopicProjection(job.jobId, error))
+                  this.onIngestError(error)
+                }
+              }
+            }
+            return resumed
+          },
         )
         await this.persistSuccessfulResponses(memory)
         const sessionsToSync = new Set<Session>()
@@ -441,6 +472,19 @@ export class StrataGateRuntime {
     } finally {
       if (this.backgroundNamespaceRuns.get(namespace) === run) this.backgroundNamespaceRuns.delete(namespace)
     }
+  }
+
+  private async retryTopicWrite<T>(namespace: string, memory: StrataGate, operation: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await this.refreshExternalImportMemory(namespace, memory)
+      try {
+        return await operation()
+      } catch (error) {
+        if (!(error instanceof StorageConflictError) || attempt === 2) throw error
+        await memory.reloadFromStorage()
+      }
+    }
+    throw new Error('Topic storage conflict retry limit reached')
   }
 
   private wakeBackgroundWorker(): void {
@@ -567,10 +611,25 @@ export class StrataGateRuntime {
     }
   }
 
-  async searchEvents(session: Session, query: string, options: SearchOptions = {}): Promise<unknown> {
+  async searchEvents(session: Session, query: string, options: SearchOptions & { topicId?: string } = {}): Promise<unknown> {
     await this.flush()
-    const results = await (await this.space(session)).searchEvents(query, {
-      ...options,
+    const memory = await this.space(session)
+    const { topicId, ...searchOptions } = options
+    const offset = searchOptions.offset ?? 0
+    let eventIds = searchOptions.eventIds
+    let totalSourceEvents: number | null = null
+    if (topicId !== undefined) {
+      await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
+      const topic = this.visibleTopics(memory).find(({ id }) => id === topicId)
+      if (!topic) throw new Error(`Unknown or unavailable memory topic: ${topicId}`)
+      eventIds = topic.sourceEventIds
+      if (!query.trim() && searchOptions.temporalIntent === undefined) searchOptions.temporalIntent = 'first'
+      if (!query.trim() && !searchOptions.eventType && !searchOptions.participants?.length
+        && !searchOptions.happenedFrom && !searchOptions.happenedTo) totalSourceEvents = eventIds.length
+    }
+    const results = await memory.searchEvents(query, {
+      ...searchOptions,
+      ...(eventIds !== undefined ? { eventIds } : {}),
       // Agent-recorded events ride their own top-k lane and fuse with the
       // passive pool by the configured weight; they arrive as ordinary event
       // results with the same evidence refs and reinforcement path.
@@ -587,7 +646,63 @@ export class StrataGateRuntime {
         },
       })),
       results.map(({ event, score }) => compactEvent(event, score)),
+      topicId !== undefined ? {
+        topicId,
+        totalSourceEvents,
+        offset,
+        nextOffset: results.length === Math.max(1, Math.min(20, searchOptions.limit ?? 6))
+          && (totalSourceEvents === null || offset + results.length < totalSourceEvents)
+          ? offset + results.length : null,
+      } : {},
     )
+  }
+
+  /** A navigation read never creates a retrieval batch or reinforces sources. */
+  async listTopics(session: Session, options: TopicListOptions = {}): Promise<unknown> {
+    await this.flush()
+    const memory = await this.space(session)
+    await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
+    return {
+      namespace: this.namespaceFor(session),
+      ...topicPage(this.visibleTopics(memory), memory.listAllEvents(), options),
+    }
+  }
+
+  async expandTopic(session: Session, id: string): Promise<unknown> {
+    await this.flush()
+    const memory = await this.space(session)
+    await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
+    const topic = this.visibleTopics(memory).find((candidate) => candidate.id === id)
+    if (!topic) throw new Error(`Unknown or unavailable memory topic: ${id}`)
+    const envelope = {
+      namespace: this.namespaceFor(session),
+      navigationOnly: true,
+      eventRetrieval: { tool: 'memory_search_events', topic_id: id, query: '', offset: 0 },
+    }
+    return { ...envelope, topic: boundedTopic(topic, envelope) }
+  }
+
+  async buildMemoryDirectory(session: Session): Promise<string> {
+    await this.flush()
+    const memory = await this.space(session)
+    await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
+    return renderMemoryDirectory(this.visibleTopics(memory), memory.listAllEvents())
+  }
+
+  private visibleTopics(memory: StrataGate): MemoryTopic[] {
+    if (this.agentMemoryRetrievalWeight > 0) return memory.listMemoryTopics()
+    const events = memory.listEvents().filter((event) => event.status === 'active' || event.status === 'superseded')
+    const allowed = new Set(events.map(({ id }) => id))
+    // A mixed summary could contain agent-recorded information even if its
+    // displayed citations omit it. Hide the whole summary when that lane is off.
+    const visible = memory.listMemoryTopics([...allowed]).filter((topic) => !topic.isFallback
+      && topic.sourceEventIds.every((id) => allowed.has(id)))
+    const assigned = new Set(visible.flatMap(({ sourceEventIds }) => sourceEventIds))
+    return [...visible, ...events.filter(({ id }) => !assigned.has(id)).map((event): MemoryTopic => ({
+      id: `fallback:${event.id}`, title: event.title.slice(0, 120), description: '查看事件获得详情。',
+      sourceEventIds: [event.id], overview: [], createdAt: event.createdAt, updatedAt: event.updatedAt,
+      coverage: { totalEvents: 1, summarizedEvents: 0, omittedEvents: 1 }, isFallback: true,
+    }))]
   }
 
   async searchElements(session: Session, query: string, options: ElementSearchOptions = {}): Promise<unknown> {
@@ -1287,6 +1402,7 @@ export class StrataGateRuntime {
         const opening = this.spaces.get(namespace)
         if (opening) {
           const memory = await opening
+          if (memory.storageRevision !== revision) await memory.reloadFromStorage()
           const currentRevision = memory.storageRevision
           const cached = this.adminSnapshotCache.get(namespace)
           const entry = cached?.revision === currentRevision
@@ -1353,6 +1469,7 @@ export class StrataGateRuntime {
     const opening = this.spaces.get(key)
     if (opening) {
       const memory = await opening
+      await this.refreshExternalImportMemory(key, memory)
       const revision = memory.storageRevision
       const cached = this.adminSnapshotCache.get(key)
       if (cached?.revision === revision) return cached.snapshot
@@ -1643,11 +1760,16 @@ export class StrataGateRuntime {
     const remembered = this.workspaceNames.get(namespace)
     if (remembered) return remembered
     if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
-    const metadata = new DshMetadataStore(this.config.database)
+    const database = new DatabaseSync(this.config.database, { readOnly: true })
     try {
-      return metadata.workspaceName(namespace)
+      if (!database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stratagate_dsh_workspaces'").get()) {
+        return null
+      }
+      const row = database.prepare('SELECT display_name FROM stratagate_dsh_workspaces WHERE namespace = ?')
+        .get(namespace) as { display_name: string } | undefined
+      return row?.display_name ?? null
     } finally {
-      metadata.close()
+      database.close()
     }
   }
 

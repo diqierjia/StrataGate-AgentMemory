@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 - Unreleased
+
+- 升级长期记忆机制：默认提供精简的主题目录，支持按需展开主题概览，并通过 `memory_list_topics`、`memory_expand_topic` 和 `memory_search_events(topic_id)` 导航到真实事件。
+- 主题与概览是可重建的导航层，事实依据仍来自 Event 与原始消息；浏览目录不产生证据批次，也不强化记忆，实际使用仍经过原有证据评估与采用流程。
+- 兼容旧 schema-12 数据库。首次 writer 打开时冻结已有事件作为历史初始化集合，新命名空间立即完成空初始化；此后新增事件独立按增量整理，只读打开不迁移或写库。
+- 历史整理按批进行，全库共享每 10 分钟最多 2 个历史任务的持久预算；新增事件优先，重启后继续未完成历史任务，已完成批次不重复处理。
+- 校验所有生成来源的版本，来源修改、遗忘或归档后立即隐藏过期派生内容并拒绝迟到结果；稳定复用主题 ID，限制失败重试，避免失效主题或失败任务形成重复模型调用。
+
 ## 0.2.95 - Unreleased
 
 - Clarify the DSH `memory_search_events` tool description: search historical facts, decisions, plans, changes, preferences, outcomes, and timing with focused, distinctive queries; treat compact results as candidates and expand Events when needed to verify details.

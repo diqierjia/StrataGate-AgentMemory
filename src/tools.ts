@@ -65,10 +65,33 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
   }))
 
   ctx.tools.register(defineTool({
-    name: 'memory_search_events',
-    description: 'This tool is provided by the StrataGate plugin. Search durable Event memories for past facts, decisions, plans, changes, preferences, outcomes, and timing. Use a focused query with the most distinctive known names, entities, versions, tools, decisions, or outcomes. Results are compact candidates; rankScore reflects retrieval order only, not confidence or factual accuracy. Expand a relevant Event when its compact fields are not enough to verify the needed detail.',
+    name: 'memory_list_topics',
+    description: 'This tool is provided by the StrataGate plugin. 浏览当前记忆空间的主题目录。可按分类分页，或用 query 查主题名称及简介。未整理的事件也有入口。目录仅供导航，不创建证据批次，不强化记忆；找到相关主题后调用 memory_expand_topic，实际引用事实前检索并评估来源事件。',
     parameters: {
-      query: { type: 'string', required: true, description: 'A focused query for the target historical memory. Prefer explicit names, entities, versions, tools, decisions, or outcomes over vague references.' },
+      query: { type: 'string', description: '可选的主题关键词；省略时浏览完整目录。' },
+      category: { type: 'string', enum: ['preferences', 'decisions', 'work', 'relationships', 'other'] as const },
+      offset: { type: 'integer', description: '从第几项开始，使用返回的 nextOffset 继续。' },
+      limit: { type: 'integer', description: '每页 1-20 项，默认 12 项。' },
+    },
+    output: jsonOutput,
+    execute: async (args, exec) => runtime.listTopics(sessionOf(exec), args) as never,
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'memory_expand_topic',
+    description: 'This tool is provided by the StrataGate plugin. 展开一个记忆主题，查看有事件来源的历史、决定、变化和待确认事项；返回覆盖范围及省略数量。概览用于导航，不是事实证据，也不创建证据批次。使用 memory_search_events 的 topic_id 检索真实来源，再按既有评估与采用流程使用。概览尚未生成或已失效时，仍可通过关联事件继续检索。',
+    parameters: { id: { type: 'string', required: true, description: '目录返回的主题 ID。' } },
+    output: jsonOutput,
+    execute: async (args, exec) => runtime.expandTopic(sessionOf(exec), args.id) as never,
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'memory_search_events',
+    description: 'This tool is provided by the StrataGate plugin. Search durable Event memories for past facts, decisions, plans, changes, preferences, outcomes, and timing. Use a focused query with the most distinctive known names, entities, versions, tools, decisions, or outcomes. Results are compact candidates; rankScore reflects retrieval order only, not confidence or factual accuracy. Expand a relevant Event when its compact fields are not enough to verify the needed detail. Optionally pass topic_id to search within a navigated topic; query may be empty to browse its events, offset continues pagination, and temporalIntent first/latest controls chronology.',
+    parameters: {
+      query: { type: 'string', required: true, description: 'A focused query for the target historical memory. Prefer explicit names, entities, versions, tools, decisions, or outcomes over vague references. May be empty when browsing a supplied topic_id.' },
+      topic_id: { type: 'string', description: '目录中的主题 ID；限定真实来源事件，空 query 可浏览。' },
+      offset: { type: 'integer', description: '从第几项开始；主题浏览时用返回的 nextOffset 继续取证。' },
       limit: { type: 'integer', description: 'Maximum results, 1-20.' },
       temporalIntent: { type: 'string', enum: ['first', 'latest'] as const },
       eventType: { type: 'string' },
@@ -76,6 +99,8 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.searchEvents(sessionOf(exec), args.query, {
+      ...(args.topic_id !== undefined ? { topicId: args.topic_id } : {}),
+      ...(args.offset !== undefined ? { offset: args.offset } : {}),
       ...(args.limit !== undefined ? { limit: args.limit } : {}),
       ...(args.temporalIntent ? { temporalIntent: args.temporalIntent } : {}),
       ...(args.eventType ? { eventType: args.eventType } : {}),

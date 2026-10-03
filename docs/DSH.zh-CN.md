@@ -102,7 +102,10 @@ DSH_HOME/stratagate/memory.db
 
 插件注册以下工具：
 
+记忆目录默认提供约 400 词元的导航。`memory_list_topics` 可分类分页或查询主题，`memory_expand_topic` 展开有来源的概览；这两个工具不生成证据批次，也不强化记忆。概览中的事实需用 `memory_search_events` 的 `topic_id` 参数查证，再走证据评估和采用流程。后台从已有事件小批量整理，失败或尚未整理时仍保留事件入口。详见[记忆目录与主题整合](MEMORY_TOPICS.zh-CN.md)。
+
 ```text
+memory_list_topics    memory_expand_topic
 memory_search_events   memory_expand_event
 memory_search_graph    memory_expand_graph_node
 memory_search_raw      memory_get_blocks

@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import type { MemoryTopicState } from './topics.js';
 import {
   STRATAGATE_STORAGE_SCHEMA_VERSION,
   StorageConflictError,
@@ -525,6 +526,13 @@ CREATE TABLE IF NOT EXISTS graph_state (
   FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS memory_topic_state (
+  namespace TEXT PRIMARY KEY,
+  state_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS usage_receipts (
   namespace TEXT NOT NULL,
   receipt_id TEXT NOT NULL,
@@ -639,19 +647,21 @@ function encodedRawSearchTokens(content: string): string {
 }
 
 export class SqliteStorage implements StorageAdapter {
+  readonly readonly: boolean;
   private readonly database: DatabaseSync;
   private rawSearchFtsAvailable = false;
   private closed = false;
 
   constructor(options: SqliteStorageOptions) {
     if (!options.filename.trim()) throw new TypeError('SQLite filename must not be empty');
+    this.readonly = options.readonly ?? false;
     this.database = new DatabaseSync(options.filename, {
-      readOnly: options.readonly ?? false,
+      readOnly: this.readonly,
       timeout: Math.max(0, Math.floor(options.timeoutMs ?? 5_000)),
     });
     try {
       this.database.exec('PRAGMA foreign_keys = ON');
-      if (!(options.readonly ?? false)) {
+      if (!this.readonly) {
         this.database.exec('PRAGMA journal_mode = WAL');
         this.migrate();
       } else {
@@ -915,6 +925,11 @@ export class SqliteStorage implements StorageAdapter {
     const graphEdges = graphState ? parseJson<GraphEdge[]>(graphState.edges_json, 'graph_state.edges_json') : [];
     const graphProjectionJobs = graphState
       ? parseJson<GraphProjectionJob[]>(graphState.jobs_json, 'graph_state.jobs_json') : [];
+    // Existing schema-12 databases remain readable before a writer creates
+    // this optional, rebuildable table. A read-only admin must never migrate.
+    const hasTopics = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_topic_state'").get();
+    const topicState = hasTopics ? this.database.prepare('SELECT state_json FROM memory_topic_state WHERE namespace = ?')
+      .get(key) as { state_json: string } | undefined : undefined;
 
     const snapshot: StrataGateSnapshot = {
       schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION,
@@ -936,6 +951,7 @@ export class SqliteStorage implements StorageAdapter {
       ingestionReceipts,
       externalMemoryImportJobs,
       successfulModelResponses,
+      ...(topicState ? { memoryTopicState: parseJson<MemoryTopicState>(topicState.state_json, 'memory_topic_state.state_json') } : {}),
     };
     return { snapshot: cloneSnapshot(normalizeSnapshot(snapshot)), revision: space.revision };
   }
@@ -1535,6 +1551,11 @@ export class SqliteStorage implements StorageAdapter {
       JSON.stringify(snapshot.graphProjectionJobs),
       updatedAt,
     );
+
+    this.database.prepare(`
+      INSERT INTO memory_topic_state (namespace, state_json, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT (namespace) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at
+    `).run(namespace, JSON.stringify(snapshot.memoryTopicState ?? { topics: [], jobs: [], projectedVersions: {} }), updatedAt);
 
     const insertReceipt = this.database.prepare(`
       INSERT INTO usage_receipts (namespace, receipt_id, event_ids_json, element_ids_json, audit_json, created_at)

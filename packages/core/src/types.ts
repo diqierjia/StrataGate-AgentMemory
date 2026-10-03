@@ -535,6 +535,10 @@ export type GraphProjector = (context: GraphProjectionContext) => Promise<GraphP
 
 export interface SearchOptions {
   limit?: number;
+  /** Zero-based result offset after both retrieval pools are fused. */
+  offset?: number;
+  /** A hard candidate scope, applied before either retrieval pool is ranked. */
+  eventIds?: string[];
   temporalIntent?: boolean | 'first' | 'latest';
   participants?: string[];
   eventType?: string;
