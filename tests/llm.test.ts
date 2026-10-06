@@ -223,6 +223,71 @@ describe('Event Extractor v2 contracts', () => {
     }
   }
 
+  it.each(['tool', 'text'] as const)('retries an omitted scope in %s output and preserves the repaired session scope', async (format) => {
+    const card = { title: '本次答复简短', summary: '这次回复短一点。', sourceMessageIds: ['msg_v2'] }
+    const missing = { shouldExtract: true, reason: 'Local request.', events: [card] }
+    const repaired = { ...missing, events: [{ ...card, scope: 'session' }] }
+    const response = (tool: unknown) => format === 'tool' ? { tool } : { text: JSON.stringify(tool) }
+    const { bridge, session, calls } = modelBridge([response(missing), response(repaired)])
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: target(card.summary), next: null, timeline: [] }))
+    expect(calls).toHaveBeenCalledTimes(2)
+    expect(calls.mock.calls[0]![0].tools[0].parameters.properties.events.items.required).toContain('scope')
+    expect(calls.mock.calls[1]![0].system).toContain('Your previous response did not make one valid call')
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({ scope: 'session', sourceMessageIds: ['msg_v2'] })
+  })
+
+  it.each(['tool', 'text'].flatMap((format) => [
+    { format, label: 'missing', fields: {} },
+    { format, label: 'invalid enum', fields: { scope: 'global' } },
+    { format, label: 'invalid type', fields: { scope: null } },
+  ]))('rejects repeated $label scope in $format output without a project fallback', async ({ format, fields }) => {
+    const tool = { shouldExtract: true, reason: 'Local request.', events: [{
+      title: '本次答复简短', summary: '这次回复短一点。', sourceMessageIds: ['msg_v2'], ...fields,
+    }] }
+    const response = format === 'tool' ? { tool } : { text: JSON.stringify(tool) }
+    const { bridge, session, calls } = modelBridge([response, response])
+    await expect(bridge.run(session, () => bridge.extractor({ previous: null,
+      target: target('这次回复短一点。'), next: null, timeline: [] }))).rejects.toThrow(/scope/)
+    expect(calls).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['tool', 'text'] as const)('keeps failed scope extraction out of Event storage and preserves source ingestion (%s)', async (format) => {
+    const tool = { shouldExtract: true, reason: 'Local request.', events: [{
+      title: '本次答复简短', summary: '这次回复短一点。', sourceMessageIds: ['msg_1'],
+    }] }
+    const response = format === 'tool' ? { tool } : { text: JSON.stringify(tool) }
+    const { bridge, session, calls } = modelBridge([response, response])
+    let id = 0
+    const memory = StrataGate.inMemory({ blockTurnSize: 1, idFactory: (prefix) => `${prefix}_${++id}`,
+      summarizer: async () => ({ l0Title: '本次要求', l0Tags: [], l1Summary: '这次回复短一点。', l2Keypoints: [], shouldExtract: true }),
+      extractor: bridge.extractor,
+    })
+    const result = await bridge.run(session, () => memory.appendTurn({ user: '这次回复短一点。', assistant: '理解' }))
+    expect(result.extractedEvents).toEqual([])
+    expect(memory.listEvents()).toEqual([])
+    expect(memory.listBlocks()[0]!.l5Raw[0]).toMatchObject({ id: 'msg_1', content: '这次回复短一点。' })
+    expect(memory.listExtractionJobs()).toMatchObject([{ status: 'failed', lastError: expect.stringContaining('scope') }])
+    expect(memory.listElementProjectionJobs()).toEqual([])
+    expect(memory.listGraphProjectionJobs()).toEqual([])
+    expect(calls).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([undefined, ['工作方式', '答复风格']])('keeps the first exact duplicate card hints (%j) instead of merging categories', async (firstHints) => {
+    const card = { title: '本次答复简短', summary: '这次回复短一点。', sourceMessageIds: ['msg_v2'], scope: 'session' }
+    const block = target(card.summary)
+    block.l5Raw.push({ ...block.l5Raw[0]!, id: 'msg_repeat' })
+    const { bridge, session } = modelBridge([{ tool: { shouldExtract: true, reason: 'Equivalent cards.', events: [
+      { ...card, ...(firstHints === undefined ? {} : { catalogHints: firstHints }) },
+      { ...card, sourceMessageIds: ['msg_repeat'], catalogHints: ['表达要求', '写作'] },
+    ] } }])
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: block, next: null, timeline: [] }))
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]!.sourceMessageIds).toEqual(['msg_v2', 'msg_repeat'])
+    if (firstHints === undefined) expect(result.events[0]).not.toHaveProperty('catalogHints')
+    else expect(result.events[0]!.catalogHints).toEqual(firstHints)
+  })
+
   it.each([
     ['user future rule', '以后这种 PR 先审查，不直接修改。', 'user', 'user', 'preference'],
     ['one-off request', '这次回复短一点。', 'user', 'session', 'routine'],
@@ -248,7 +313,7 @@ describe('Event Extractor v2 contracts', () => {
 
   it('keeps a process-only rejection empty and retains an anchored final outcome with causes in summary', async () => {
     const content = '打开文件，运行测试，修改代码，重新测试。修复 Issue #102 并提交 PR #105；EventTemporal runtime validation 是已确认根因。'
-    const outcome = { title: '修复 Issue #102：EventTemporal 检索异常',
+    const outcome = { title: '修复 Issue #102：EventTemporal 检索异常', scope: 'project',
       summary: '修复 Issue #102 并提交 PR #105。EventTemporal runtime validation 是已确认根因。', sourceMessageIds: ['msg_v2'],
       catalogHints: ['缺陷修复', 'EventTemporal', '其他'] }
     const { bridge, session, calls } = modelBridge([
@@ -296,8 +361,8 @@ describe('Event Extractor v2 contracts', () => {
   it('does not merge distinct model facts hidden by existing text bounds', async () => {
     const prefix = 'detail '.repeat(200)
     const { bridge, session } = modelBridge([{ tool: { shouldExtract: true, reason: 'Distinct facts.', events: [
-      { title: 'A'.repeat(201), summary: `${prefix}first`, sourceMessageIds: ['msg_v2'] },
-      { title: `${'A'.repeat(200)}B`, summary: `${prefix}second`, sourceMessageIds: ['msg_v2'] },
+      { title: 'A'.repeat(201), summary: `${prefix}first`, sourceMessageIds: ['msg_v2'], scope: 'project' },
+      { title: `${'A'.repeat(200)}B`, summary: `${prefix}second`, sourceMessageIds: ['msg_v2'], scope: 'project' },
     ] } }])
     const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: target(prefix), next: null, timeline: [] }))
     expect(result.events).toHaveLength(2)
@@ -570,7 +635,7 @@ describe('DeepSeek Harness model JSON retries', () => {
     } as MemoryBlock
     const { bridge, session, calls } = modelBridge([{
       tool: { shouldExtract: true, reason: 'event', events: [{
-        title: 'Target event', summary: 'From target', sourceMessageIds: ['msg_target'],
+        title: 'Target event', summary: 'From target', sourceMessageIds: ['msg_target'], scope: 'project',
       }] },
     }])
 
@@ -629,8 +694,8 @@ describe('DeepSeek Harness model JSON retries', () => {
     } as MemoryBlock
     const { bridge, session } = modelBridge([{ tool: {
       shouldExtract: true, reason: 'Two decisions.', events: [
-        { title: 'SQLite selected', summary: 'The project selected SQLite.', sourceMessageIds: ['msg_a'] },
-        { title: 'pnpm selected', summary: 'The project selected pnpm.', sourceMessageIds: ['msg_b'] },
+        { title: 'SQLite selected', summary: 'The project selected SQLite.', sourceMessageIds: ['msg_a'], scope: 'project' },
+        { title: 'pnpm selected', summary: 'The project selected pnpm.', sourceMessageIds: ['msg_b'], scope: 'project' },
       ],
     } }])
     const result = await bridge.run(session, () => bridge.extractor({ previous: null, target, next: null, timeline: [] }))
@@ -647,7 +712,7 @@ describe('DeepSeek Harness model JSON retries', () => {
     const { bridge, session, calls } = modelBridge([
       { tool: { l0Title: 'SQLite decision', l0Tags: [], l1Summary: 'Use SQLite.', l2Keypoints: [], shouldExtract: true } },
       { tool: { shouldExtract: true, reason: 'Durable decision.', events: [{
-        title: 'SQLite decision', summary: 'Use SQLite.', sourceMessageIds: ['msg_1'],
+        title: 'SQLite decision', summary: 'Use SQLite.', sourceMessageIds: ['msg_1'], scope: 'project',
         temporal: { participants, originalText: 'Today', eventType: 'decision' },
       }] } },
     ])
@@ -683,7 +748,7 @@ describe('DeepSeek Harness model JSON retries', () => {
       pointerAnchorBlockPosition: 1, lastLiftedAt: null, lastLiftedBy: null, createdAt: '2026-01-01T00:00:00.000Z',
     } as MemoryBlock
     const { bridge, session } = modelBridge([{ tool: {
-      shouldExtract: false, reason: '', events: [{ title: 'SQLite', summary: 'Use SQLite.', sourceMessageIds: ['msg_final'] }],
+      shouldExtract: false, reason: '', events: [{ title: 'SQLite', summary: 'Use SQLite.', sourceMessageIds: ['msg_final'], scope: 'project' }],
     } }])
     const result = await bridge.run(session, () => bridge.extractor({ previous: null, target, next: null, timeline: [] }))
     expect(result).toMatchObject({ shouldExtract: false, reason: 'No durable evidence.', events: [] })
@@ -699,7 +764,7 @@ describe('DeepSeek Harness model JSON retries', () => {
     } as MemoryBlock
     const { bridge, session } = modelBridge([{
       tool: { shouldExtract: true, reason: 'wrong block', events: [{
-        title: 'Wrong source', summary: 'From neighbor', sourceMessageIds: ['msg_target', 'msg_next'],
+        title: 'Wrong source', summary: 'From neighbor', sourceMessageIds: ['msg_target', 'msg_next'], scope: 'project',
       }] },
     }])
 
@@ -708,7 +773,7 @@ describe('DeepSeek Harness model JSON retries', () => {
     expect(result.events).toHaveLength(0)
   })
 
-  it('exposes only the projector tool to the model', async () => {
+  it.each([false, true])('exposes only factual Event fields to the Element model (metadata=%s)', async (hasMetadata) => {
     const event = {
       id: 'evt_projector', title: 'Project decision', summary: 'StrataGate uses SQLite',
       tags: [], quotes: [], sourceMessageIds: ['msg_projector'], sourceBlockId: 'blk_projector',
@@ -724,9 +789,25 @@ describe('DeepSeek Harness model JSON retries', () => {
       }] },
     }])
 
+    const inputEvent = hasMetadata ? { ...event, catalogHints: ['目录专用提示'], extractorVersion: 2 } : event
+    const before = structuredClone(inputEvent)
+
     const result = await bridge.run(session, () => bridge.projector({
-      jobId: 'proj_1', events: [event], existingElements: [],
+      jobId: 'proj_1', events: [inputEvent], existingElements: [],
     }))
+
+    const payload = JSON.parse(String(calls.mock.calls[0]![0].messages[0].content[0].text))
+    expect(payload.events[0]).toEqual({
+      id: event.id, title: event.title, summary: event.summary, tags: event.tags, quotes: event.quotes,
+      sourceMessageIds: event.sourceMessageIds, sourceBlockId: event.sourceBlockId,
+      temporal: event.temporal, scope: event.scope, criticality: event.criticality,
+      status: event.status, supersededBy: event.supersededBy,
+    })
+    expect(payload.events[0]).not.toHaveProperty('catalogHints')
+    expect(payload.events[0]).not.toHaveProperty('extractorVersion')
+    expect(JSON.stringify(payload)).not.toContain('目录专用提示')
+    expect(payload).toMatchObject({ jobId: 'proj_1', existingElements: [] })
+    expect(inputEvent).toEqual(before)
 
     expect(result.changes).toHaveLength(1)
     expect(calls.mock.calls[0]?.[0].tools?.[0]?.name).toBe('stratagate_project_element_cards')

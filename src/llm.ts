@@ -38,7 +38,6 @@ import { ModelJsonResponseError, parseJsonResponse } from './json-response.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 
 const ELEMENT_TYPES = new Set<MemoryElementType>(['person', 'project', 'organization', 'tool', 'place'])
-const SCOPES = new Set<MemoryScope>(['user', 'project', 'session'])
 const CRITICALITIES = new Set<MemoryCriticality>(['routine', 'preference', 'identity', 'safety'])
 
 function object(value: unknown): Record<string, unknown> {
@@ -134,7 +133,7 @@ const EVENT_ITEM: ValueSchemaSpec = {
     quotes: { ...STRING_ARRAY, description: 'A few short verbatim excerpts that directly support the extracted event and whose exact wording has lasting evidential or retrieval value. Copy exactly from the source messages. Do not quote unrelated context, paraphrase, or select wording that changes the original meaning.' },
     sourceMessageIds: { ...STRING_ARRAY, description: 'The smallest set of exact message IDs from the target Block that directly supports every material claim in this event. Do not include merely related messages, and do not cite messages that support only background context.', required: true },
     temporal: { ...OPEN_OBJECT, description: 'Structured temporal and event metadata, including when the event happened or was mentioned, its event type, participants, precision, and basis. Preserve uncertainty and do not invent missing times, participants, chronology, or relationships.' },
-    scope: { type: 'string', enum: ['user', 'project', 'session'], description: 'The memory scope of the event: user for durable user-level facts or preferences, project for project-specific facts and decisions, and session only for temporary context that should not generalize beyond the current session.' },
+    scope: { type: 'string', enum: ['user', 'project', 'session'], description: 'The memory scope of the event: user for durable user-level facts or preferences, project for project-specific facts and decisions, and session only for temporary context that should not generalize beyond the current session. Always choose explicitly; never widen a local request to project or user.', required: true },
     criticality: { type: 'string', enum: ['routine', 'preference', 'identity', 'safety'], description: 'The event\'s persistence class: routine for ordinary facts and outcomes, preference for durable user preferences, identity for stable identity-related facts, and safety only for safety-critical information. Do not inflate criticality merely because an event seems important.' },
     catalogHints: { ...STRING_ARRAY, description: 'Optional navigation hints: at most two short, stable, broad reusable category phrases supported by the source. Empty or omitted when uncertain. Reuse simple category wording; no other/其他 fallback, Chapter/Section IDs or directory paths, title paraphrases, or new factual evidence. These do not decide a chapter or section.' },
   },
@@ -388,6 +387,21 @@ function renderBlocksForDiagnostics(blocks: readonly ContentBlock[], finish: str
   return rendered || `[no model blocks; finish=${finish}]`
 }
 
+/** Whitelist factual Event fields; navigation and diagnostic metadata stay out. */
+function elementProjectionPayload(context: ElementProjectionContext): unknown {
+  return {
+    jobId: context.jobId,
+    events: context.events.map((event) => ({
+      id: event.id, title: event.title, summary: event.summary,
+      tags: event.tags, quotes: event.quotes,
+      sourceMessageIds: event.sourceMessageIds, sourceBlockId: event.sourceBlockId,
+      temporal: event.temporal, scope: event.scope, criticality: event.criticality,
+      status: event.status, supersededBy: event.supersededBy,
+    })),
+    existingElements: context.existingElements,
+  }
+}
+
 function compactGraphProjectionContext(context: GraphProjectionContext): unknown {
   const compactValue = (value: string | string[]): string | string[] => Array.isArray(value)
     ? value.slice(0, 12).map((entry) => entry.slice(0, 160))
@@ -638,7 +652,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
     const candidates = (Array.isArray(raw.events) ? raw.events : []).map((candidate): EventCardInput | null => {
       const item = object(candidate)
       const sourceMessageIds = strings(item.sourceMessageIds).filter((id) => validMessageIds.has(id))
-      const scope = SCOPES.has(item.scope as MemoryScope) ? item.scope as MemoryScope : 'project'
+      // Required enum validated by callStructured on both tool/text responses.
+      const scope = item.scope as MemoryScope
       const criticality = CRITICALITIES.has(item.criticality as MemoryCriticality)
         ? item.criticality as MemoryCriticality
         : 'routine'
@@ -668,6 +683,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
       const key = exactKeys.get(event)!
       const prior = unique.get(key)
       if (!prior) { unique.set(key, event); continue }
+      // Navigation categories belong to the first equivalent card; do not
+      // grow or revise them when merging factual provenance from duplicates.
       prior.sourceMessageIds = [...new Set([...prior.sourceMessageIds, ...event.sourceMessageIds])]
       prior.tags = [...new Set([...(prior.tags ?? []), ...(event.tags ?? [])])].slice(0, 16)
       prior.quotes = [...new Set([...(prior.quotes ?? []), ...(event.quotes ?? [])])].slice(0, 12)
@@ -685,7 +702,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
     const eventIds = new Set(context.events.map((event) => event.id))
     const raw = object(await this.callStructured('projector',
       `Use only the supplied event ids and never create unsupported facts. catalogHints are navigation metadata only, never factual evidence; extractorVersion is diagnostic metadata. If events contain clear entities (people, projects, tools, orgs), include changes for them. Call ${STRUCTURED_TOOLS.projector.name} exactly once with the projected changes. Do not return the result as text.`,
-      context,
+      elementProjectionPayload(context),
     ))
     const changes = (Array.isArray(raw.changes) ? raw.changes : []).flatMap((candidate) => {
       const item = object(candidate)
