@@ -29,6 +29,29 @@ function fixture(extractor?: EventExtractor) {
 }
 
 describe('Event extraction timeline', () => {
+  it.each(['supersedesEventIds', 'conflictsWithEventIds', 'sameEventId'] as const)
+    ('retains history and target-only provenance for user %s', async (relation) => {
+      const { memory, timeline } = fixture(async ({ target }) => ({ shouldExtract: true, reason: 'User changed or reinforced the anchored rule.', events: [{
+        id: 'new-rule', title: 'PR 审查规则更新', summary: '以后这种 PR 先审查，不直接修改。', scope: 'project', criticality: 'preference',
+        sourceBlockId: target.id, sourceMessageIds: [target.l5Raw[0]!.id],
+        temporal: relation === 'sameEventId' ? { sameEventId: 'old-rule' } : { [relation]: ['old-rule'] },
+      }] }));
+      const source = (await memory.appendTurn({ user: 'PR #105 之前的规则', assistant: '记录' })).sealedBlock!;
+      const old = await memory.addEvent({ id: 'old-rule', title: 'PR #105 审查规则', summary: '先修再审。'.repeat(150),
+        sourceBlockId: source.id, sourceMessageIds: [source.l5Raw[0]!.id], scope: 'project', criticality: 'preference' });
+      const original = structuredClone(old);
+      const block = (await memory.appendTurn({ user: 'TARGET PR #105：之前那个规则改成以后先审查，不直接修改。', assistant: '记录' })).sealedBlock!;
+      expect(timeline()[0]).toMatchObject({ id: old.id, scope: 'project', criticality: 'preference', status: 'active', supersededBy: null });
+      expect(timeline()[0]!.summary).toHaveLength(400);
+      const current = memory.listEvents().find(({ id }) => id === 'new-rule')!;
+      expect(current.sourceMessageIds).toEqual([block.l5Raw[0]!.id]);
+      expect(current.sourceMessageIds).not.toContain(source.l5Raw[0]!.id);
+      expect(current.temporal[relation]).toEqual(relation === 'sameEventId' ? old.id : [old.id]);
+      expect(old.title).toBe(original.title);
+      expect(old.summary).toBe(original.summary);
+      if (relation === 'supersedesEventIds') expect(old).toMatchObject({ status: 'superseded', supersededBy: current.id });
+      else expect(old).toEqual(original);
+    });
   it.each(['recent-3', 'outside'])('bounds all relationship IDs and validates sameEventId=%s', async (sameEventId) => {
     const relationships = ['recent-3', 'outside', 'missing', 'extracted', 'recent-3'];
     const { memory, timeline } = fixture(async ({ target }) => ({
@@ -132,7 +155,7 @@ describe('Event extraction timeline', () => {
     ]);
     expect(timeline()).toHaveLength(12);
     expect(timeline()[0]).toEqual(expect.objectContaining({ id: 'relevant-0' }));
-    expect(Object.keys(timeline()[0]!)).toEqual(['id', 'title', 'temporal']);
+    expect(Object.keys(timeline()[0]!)).toEqual(['id', 'title', 'summary', 'scope', 'criticality', 'status', 'supersededBy', 'temporal']);
     for (let index = 36; index < 76; index += 1) {
       await memory.addEvent({ id: `filler-${index}`, title: `unrelated topic ${index}`,
         summary: 'A different subject.', sourceBlockId: source.id, sourceMessageIds: [source.l5Raw[0]!.id] });

@@ -38,7 +38,7 @@ import type {
   ToolTrace,
 } from './types.js';
 import { nowUtc8 } from './time.js';
-import { normalizeEventTemporal, normalizeStandardEventType } from './events.js';
+import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
 import { emptyProfile, isProfileField, PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, profileMaintenanceDue, validateProfile,
   type PersistentProfile, type ProfileChange, type ProfileChangeSource, type ProfileField } from './profile.js';
 import { searchTokens } from './search.js';
@@ -324,6 +324,16 @@ CREATE TABLE IF NOT EXISTS messages (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS messages_container_idx ON messages(namespace, block_id, position);
+
+-- Optional metadata shared by both Event pools. No historical backfill.
+CREATE TABLE IF NOT EXISTS event_metadata (
+  namespace TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  catalog_hints_json TEXT,
+  extractor_version INTEGER,
+  PRIMARY KEY (namespace, event_id),
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS events (
   namespace TEXT NOT NULL,
@@ -779,6 +789,20 @@ export class SqliteStorage implements StorageAdapter {
       SELECT * FROM agent_events WHERE namespace = ? ORDER BY position
     `).all(key) as unknown as EventRow[];
     const agentEvents: EventCard[] = mapEventRows(agentEventRows, agentSourcesByEvent, 'agent_events');
+    // Read-only schema-12 databases may predate this additive optional table.
+    const hasEventMetadata = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_metadata'").get();
+    if (hasEventMetadata) {
+      const metadataRows = this.database.prepare('SELECT event_id, catalog_hints_json, extractor_version FROM event_metadata WHERE namespace = ?')
+        .all(key) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null }>;
+      const byId = new Map([...events, ...agentEvents].map((event) => [event.id, event]));
+      for (const row of metadataRows) {
+        const event = byId.get(row.event_id);
+        if (event) Object.assign(event, normalizeEventMetadata({
+          ...(row.catalog_hints_json === null ? {} : { catalogHints: parseJson<unknown>(row.catalog_hints_json, 'event_metadata.catalog_hints_json') }),
+          extractorVersion: row.extractor_version,
+        }));
+      }
+    }
 
     const elementSourceRows = this.database.prepare(`
       SELECT element_id, event_id, position FROM element_sources
@@ -1386,6 +1410,17 @@ export class SqliteStorage implements StorageAdapter {
       for (const [position, messageId] of event.sourceMessageIds.entries()) {
         insertAgentEventSource.run(namespace, event.id, messageId, position);
       }
+    }
+
+    this.database.prepare('DELETE FROM event_metadata WHERE namespace = ?').run(namespace);
+    const insertEventMetadata = this.database.prepare(`
+      INSERT INTO event_metadata (namespace, event_id, catalog_hints_json, extractor_version) VALUES (?, ?, ?, ?)
+    `);
+    for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
+      const metadata = normalizeEventMetadata(event);
+      if (metadata.catalogHints === undefined && metadata.extractorVersion === undefined) continue;
+      insertEventMetadata.run(namespace, event.id,
+        metadata.catalogHints === undefined ? null : JSON.stringify(metadata.catalogHints), metadata.extractorVersion ?? null);
     }
 
     const insertElement = this.database.prepare(`

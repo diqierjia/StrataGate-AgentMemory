@@ -1,5 +1,25 @@
 import { normalizeSearchText } from './search.js';
-import type { EventTemporal, StandardEventType } from './types.js';
+import type { EventCardInput, EventTemporal, StandardEventType } from './types.js';
+
+export const EVENT_EXTRACTOR_VERSION = 2;
+
+/** Optional metadata is bounded at admission and load, without inventing defaults. */
+export function normalizeEventMetadata(value: unknown): Pick<EventCardInput, 'catalogHints' | 'extractorVersion'> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const item = value as Record<string, unknown>;
+  const metadata: Pick<EventCardInput, 'catalogHints' | 'extractorVersion'> = {};
+  if (Array.isArray(item.catalogHints)) {
+    metadata.catalogHints = [...new Set(item.catalogHints.filter((hint): hint is string => typeof hint === 'string')
+      .map((hint) => hint.trim()).filter((hint) => hint.length > 0 && [...hint].length <= 64
+        && !/^(other|其他|其它)$/i.test(hint)
+        && !/^(chapter|section|topic|chap|sec)[_:：-]/i.test(hint)
+        && !/^[\/\\]|[\/\\].*[\/\\]|[>→]/.test(hint)))].slice(0, 2);
+  }
+  if (Number.isSafeInteger(item.extractorVersion) && (item.extractorVersion as number) > 0) {
+    metadata.extractorVersion = item.extractorVersion as number;
+  }
+  return metadata;
+}
 
 /**
  * Validate only the runtime shapes consumed by Event code. Keep valid values

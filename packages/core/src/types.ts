@@ -119,6 +119,10 @@ export interface EventCardInput {
   temporal?: EventTemporal;
   scope?: MemoryScope;
   criticality?: MemoryCriticality;
+  /** Optional navigation categories, never factual evidence or directory IDs. */
+  catalogHints?: string[];
+  /** Rules used by the conversation extractor; absent on legacy/manual Events. */
+  extractorVersion?: number;
 }
 
 export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> {
@@ -147,7 +151,8 @@ export interface ExtractionContext {
   previous: MemoryBlock | null;
   target: MemoryBlock;
   next: MemoryBlock | null;
-  timeline: Array<Pick<EventCard, 'id' | 'title' | 'temporal'>>;
+  timeline: Array<Pick<EventCard, 'id' | 'title' | 'temporal'>
+    & Partial<Pick<EventCard, 'summary' | 'scope' | 'criticality' | 'status' | 'supersededBy'>>>;
 }
 
 export interface ExtractionResult {

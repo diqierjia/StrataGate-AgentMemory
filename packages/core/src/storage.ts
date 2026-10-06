@@ -1,5 +1,5 @@
 import { BLOCK_DECAY_LAMBDA } from './blocks.js';
-import { normalizeEventTemporal, normalizeStandardEventType } from './events.js';
+import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
 import type { ElementCard, EventCard, ExternalMemoryImportJob, GraphEdge, GraphNode, MemoryBlock, RawMessage } from './types.js';
 import type { MemoryTopicState } from './topics.js';
 
@@ -411,6 +411,10 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
   }
   const sourceBlockMap = new Map(snapshot.blocks.map((block) => [block.id, block]));
   for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
+    const metadata = normalizeEventMetadata(event);
+    delete event.catalogHints;
+    delete event.extractorVersion;
+    Object.assign(event, metadata);
     // Older snapshots can carry these retired Event fields. Keep their other
     // metadata intact while removing them from the live Event model.
     delete (event as EventCard & { narrative?: string }).narrative;

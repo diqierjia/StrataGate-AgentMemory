@@ -171,6 +171,20 @@ async function request(url: string, method = 'GET', targetRuntime = runtime, bod
 }
 
 describe('StrataGate admin routes', () => {
+  it('exposes optional Event metadata while keeping legacy API cards unchanged', async () => {
+    const copy = structuredClone(snapshot);
+    copy.events[0]!.catalogHints = ['工作方式', '包管理'];
+    copy.events[0]!.extractorVersion = 2;
+    const metadataRuntime = { ...runtime, adminSnapshot: async () => copy } as unknown as StrataGateRuntime;
+    const url = '/api/stratagate/memories?namespace=dsh%3Aproject%3Atest&kind=events&q=pnpm';
+    const current = await request(url, 'GET', metadataRuntime);
+    expect(current.status).toBe(200);
+    expect(current.body.items[0]).toMatchObject({ catalogHints: ['工作方式', '包管理'], extractorVersion: 2 });
+    const legacy = await request(url);
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.items[0]).not.toHaveProperty('catalogHints');
+    expect(legacy.body.items[0]).not.toHaveProperty('extractorVersion');
+  });
   it('reports and opens only the configured StrataGate data directory', async () => {
     const opened: string[] = []
     const storageRuntime = {

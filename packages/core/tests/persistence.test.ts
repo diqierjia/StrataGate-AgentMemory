@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   StorageConflictError,
   StrataGate,
@@ -58,6 +58,89 @@ const extractor: EventExtractor = async ({ target }) => ({
 });
 
 describe('SQLite persistence', () => {
+  it('round-trips optional hints/version through SQLite, snapshots, retrieval, and Topic input', async () => {
+    const filename = await databasePath();
+    const options = { database: filename, namespace: 'metadata', blockTurnSize: 1, summarizer: nonExtractingSummarizer,
+      disableElementProjection: true };
+    const memory = await StrataGate.open(options);
+    const block = (await memory.appendTurn({ user: '以后这种 PR 先审查，不直接修改。', assistant: '理解' })).sealedBlock!;
+    const event = await memory.addEvent({ title: 'PR 审查规则', summary: '以后这种 PR 先审查，不直接修改。',
+      sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id], scope: 'user', criticality: 'preference',
+      catalogHints: ['工作方式', 'PR 审查'], extractorVersion: 2 });
+    await memory.close();
+    const reopened = await StrataGate.open(options);
+    expect(reopened.listEvents()[0]).toEqual(event);
+    expect(reopened.exportSnapshot().events[0]).toMatchObject({ catalogHints: ['工作方式', 'PR 审查'], extractorVersion: 2 });
+    expect((await reopened.searchEvents('PR 审查'))[0]!.event).toMatchObject({ id: event.id, extractorVersion: 2 });
+    expect((await reopened.claimNextTopicProjection())!.events[0]).toMatchObject({ catalogHints: event.catalogHints });
+    await reopened.close();
+    // The optional table covers both pools and removes stale metadata on save.
+    const storage = new SqliteStorage({ filename });
+    try {
+      const loaded = (await storage.load(options.namespace))!;
+      loaded.snapshot.agentEvents.push({ ...structuredClone(event), id: 'agent_with_metadata' });
+      const revision = await storage.save(options.namespace, loaded.snapshot, loaded.revision);
+      expect((await storage.load(options.namespace))!.snapshot.agentEvents[0]).toMatchObject({
+        id: 'agent_with_metadata', catalogHints: event.catalogHints, extractorVersion: 2,
+      });
+      loaded.snapshot.agentEvents = [];
+      await storage.save(options.namespace, loaded.snapshot, revision);
+    } finally {
+      await storage.close();
+    }
+    const db = new Database(filename, { readonly: true });
+    try {
+      expect(db.prepare('SELECT event_id FROM event_metadata ORDER BY event_id').all()).toEqual([{ event_id: event.id }]);
+    } finally { db.close(); }
+  });
+
+  it('reads an old schema-12 database without the metadata table and never reextracts or backfills ready history', async () => {
+    const filename = await databasePath();
+    const options = { database: filename, namespace: 'legacy:extractor', blockTurnSize: 1,
+      summarizer: async () => ({ l0Title: '历史', l0Tags: [], l1Summary: '历史', l2Keypoints: [], shouldExtract: true }),
+      disableElementProjection: true };
+    const memory = await StrataGate.open({ ...options, extractor });
+    await memory.appendTurn({ user: '既有小事实', assistant: '记录' });
+    const original = structuredClone(memory.listEvents()[0]!);
+    const jobs = structuredClone(memory.listExtractionJobs());
+    await memory.close();
+    const db = new Database(filename);
+    db.exec('DROP TABLE event_metadata');
+    db.close();
+    const readonly = new SqliteStorage({ filename, readonly: true });
+    const loaded = await readonly.load(options.namespace);
+    expect(loaded!.snapshot.events[0]).toEqual(original);
+    expect(loaded!.snapshot.events[0]).not.toHaveProperty('catalogHints');
+    expect(loaded!.snapshot.events[0]).not.toHaveProperty('extractorVersion');
+    await readonly.close();
+    const newExtractor = vi.fn(extractor);
+    const upgraded = await StrataGate.open({ ...options, extractor: newExtractor,
+      graphProjector: async () => ({ reason: 'Legacy graph input accepted.', nodes: [], edges: [] }) });
+    try {
+      expect(upgraded.listEvents()[0]).toEqual(original);
+      const graphBatch = (await upgraded.claimNextGraphProjection())!;
+      expect(graphBatch.events[0]).toMatchObject({ id: original.id });
+      expect(graphBatch.events[0]).not.toHaveProperty('catalogHints');
+      await upgraded.completeGraphProjection(graphBatch.jobId, { reason: 'Accepted.', nodes: [], edges: [] });
+      await upgraded.resumePendingWork();
+      expect(newExtractor).not.toHaveBeenCalled();
+      // Graph may add derived participantNodeIds; the original factual card is preserved.
+      expect(upgraded.listEvents()[0]).toMatchObject(original);
+      expect(upgraded.listEvents()[0]).not.toHaveProperty('catalogHints');
+      expect(upgraded.listEvents()[0]).not.toHaveProperty('extractorVersion');
+      expect(upgraded.listExtractionJobs()).toEqual(jobs);
+      expect((await upgraded.searchEvents('既有小事实'))[0]!.event.id).toBe(original.id);
+      const topicBatch = (await upgraded.claimNextTopicProjection())!;
+      expect(topicBatch.events[0]).toMatchObject({ id: original.id, title: original.title });
+      expect(topicBatch.events[0]).not.toHaveProperty('catalogHints');
+    } finally {
+      await upgraded.close();
+    }
+    const after = new Database(filename, { readonly: true });
+    expect(after.prepare('SELECT COUNT(*) AS n FROM event_metadata').get()).toEqual({ n: 0 });
+    expect(after.pragma('user_version', { simple: true })).toBe(12);
+    after.close();
+  });
   it('loads legacy Event columns and snapshots without exposing retired fields', async () => {
     const filename = await databasePath();
     const options = { database: filename, namespace: 'legacy:events', blockTurnSize: 1,

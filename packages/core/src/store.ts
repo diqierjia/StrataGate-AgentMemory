@@ -8,7 +8,7 @@ import {
   normalizeBlockLevel,
 } from './blocks.js';
 import { applyElementChanges, elementViewAt } from './elements.js';
-import { normalizeEventTemporal, normalizeStandardEventType } from './events.js';
+import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
 import { externalMemoryJsonExtractor, parseExternalMemoryExport } from './external-memory.js';
 import { GRAPH_PROVENANCE_LIMIT, applyGraphProjection, boundEffectiveGraphNodeView, effectiveGraphNodeView, graphTimeline } from './graph.js';
 import { normalizeRetrievalAssessment, type RetrievalAssessment, type RetrievalAssessmentInput } from './retrieval.js';
@@ -2360,6 +2360,7 @@ export class StrataGate {
       formedTurn: parts.formedTurn,
       title: input.title.trim(),
       summary: input.summary.trim(),
+      ...normalizeEventMetadata(input),
       tags: [...new Set(input.tags ?? [])].slice(0, 12),
       quotes: [...new Set(input.quotes ?? [])].slice(0, 12),
       sourceMessageIds: parts.sourceMessageIds,
@@ -2974,7 +2975,11 @@ export class StrataGate {
         previous: threadBlocks.slice(0, targetIndex).reverse().find((block) => block.l2Keypoints !== undefined) ?? null,
         target,
         next,
-        timeline: [...timelineEvents.values()].map((event) => ({ id: event.id, title: event.title, temporal: normalizeEventTemporal(structuredClone(event.temporal)) })),
+        timeline: [...timelineEvents.values()].map((event) => ({
+          id: event.id, title: event.title, summary: event.summary.slice(0, 400),
+          scope: event.scope, criticality: event.criticality, status: event.status, supersededBy: event.supersededBy,
+          temporal: normalizeEventTemporal(structuredClone(event.temporal)),
+        })),
       });
     } catch (error) {
       await this.commitMutation(() => {

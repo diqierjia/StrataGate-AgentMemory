@@ -442,6 +442,8 @@ function eventSummary(event: EventCard, snapshot?: StrataGateSnapshot): unknown 
     temporal: event.temporal,
     scope: event.scope,
     criticality: event.criticality,
+    ...(event.catalogHints === undefined ? {} : { catalogHints: event.catalogHints }),
+    ...(event.extractorVersion === undefined ? {} : { extractorVersion: event.extractorVersion }),
     status: event.status,
     supersededBy: event.supersededBy,
     weight: event.weight,

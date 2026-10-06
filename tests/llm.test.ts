@@ -210,6 +210,100 @@ function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?
   return { bridge, session, calls }
 }
 
+// Mocked model outputs exercise prompt/schema contracts and normalization;
+// they are not measurements of a live model's semantic extraction accuracy.
+describe('Event Extractor v2 contracts', () => {
+  function target(content: string, role: 'user' | 'assistant' = 'user'): MemoryBlock {
+    return {
+      id: 'blk_v2', sequence: 1, startTurn: 1, endTurn: 1,
+      l0Title: 'source', l0Tags: [], l1Summary: '', l2Keypoints: [], l3Condensed: '', l4Readable: '',
+      l5Raw: [{ id: 'msg_v2', role, content, createdAt: '2026-10-06T08:00:00+08:00' }],
+      shouldExtract: true, processingStatus: 'pending', pointerCurrentLevel: 5, pointerAnchorLevel: 5,
+      pointerAnchorBlockPosition: 1, lastLiftedAt: null, lastLiftedBy: null, createdAt: '2026-10-06T08:00:00+08:00',
+    }
+  }
+
+  it.each([
+    ['user future rule', '以后这种 PR 先审查，不直接修改。', 'user', 'user', 'preference'],
+    ['one-off request', '这次回复短一点。', 'user', 'session', 'routine'],
+    ['project rule', 'StrataGate README 以后尽量写短。', 'user', 'project', 'preference'],
+    ['local aesthetic feedback', '这张展示图蓝色偏色明显。', 'user', 'session', 'routine'],
+    ['small independently answerable fact', '我家猫叫阿橙。', 'user', 'user', 'routine'],
+    ['confirmed agent limitation', '已确认 DSH 当前 API 不允许插件替换这部分上下文。', 'assistant', 'project', 'routine'],
+  ] as const)('preserves model-supported %s without raising scope or criticality', async (_, content, role, scope, criticality) => {
+    const { bridge, session, calls } = modelBridge([{ tool: { shouldExtract: true, reason: 'Useful supported detail.',
+      events: [{ title: content, summary: content, sourceMessageIds: ['msg_v2'], scope, criticality }] } }])
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: target(content, role), next: null, timeline: [] }))
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({ summary: content, scope, criticality, extractorVersion: 2, sourceMessageIds: ['msg_v2'] })
+    expect(result.events[0]).not.toHaveProperty('catalogHints')
+    const prompt = calls.mock.calls[0]![0].system
+    for (const rule of ['low admission threshold', 'higher threshold for assistant/tool process', 'small independently answerable details',
+      'criticality remains a separate persistence class', 'not a permanent user writing preference', 'not evidence that the user dislikes blue generally',
+      'confirmed root causes, platform limits', 'Within this Block extract equivalent repeated guidance once',
+      'sameEventId for continuation', 'supersedesEventIds for explicit replacement/correction', 'conflictsWithEventIds',
+      'keyword similarity', 'Omit uncertain links', 'Only target.messages', 'never supply new facts or broaden scope',
+      'Reduce meaningless process, not independently useful detail']) expect(prompt).toContain(rule)
+  })
+
+  it('keeps a process-only rejection empty and retains an anchored final outcome with causes in summary', async () => {
+    const content = '打开文件，运行测试，修改代码，重新测试。修复 Issue #102 并提交 PR #105；EventTemporal runtime validation 是已确认根因。'
+    const outcome = { title: '修复 Issue #102：EventTemporal 检索异常',
+      summary: '修复 Issue #102 并提交 PR #105。EventTemporal runtime validation 是已确认根因。', sourceMessageIds: ['msg_v2'],
+      catalogHints: ['缺陷修复', 'EventTemporal', '其他'] }
+    const { bridge, session, calls } = modelBridge([
+      { tool: { shouldExtract: false, reason: 'Disposable execution steps.', events: [] } },
+      { tool: { shouldExtract: true, reason: 'Final supported outcome.', events: [outcome] } },
+    ])
+    expect(await bridge.run(session, () => bridge.extractor({ previous: null,
+      target: target('打开文件，运行测试，修改代码，重新测试。', 'assistant'), next: null, timeline: [] })))
+      .toMatchObject({ shouldExtract: false, events: [] })
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: target(content, 'assistant'), next: null, timeline: [] }))
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({ ...outcome, catalogHints: ['缺陷修复', 'EventTemporal'], extractorVersion: 2 })
+    expect(calls.mock.calls[1]![0].system).toContain('A supported final outcome normally absorbs those disposable steps')
+  })
+
+  it('coalesces only exact same-Block duplicates while preserving distinct facts and scopes', async () => {
+    const block = target('回答短一点。')
+    block.l5Raw.push({ ...block.l5Raw[0]!, id: 'msg_repeat', content: '不要写这么长。信息密度高一点。' })
+    const card = { title: '本次答复简短', summary: '本次答复简洁并提高信息密度。', scope: 'session', criticality: 'routine' }
+    const { bridge, session } = modelBridge([{ tool: { shouldExtract: true, reason: 'Repeated current guidance and independent fact.', events: [
+      { ...card, sourceMessageIds: ['msg_v2'] }, { ...card, sourceMessageIds: ['msg_repeat'] },
+      { ...card, summary: '不要重复用户原话。', sourceMessageIds: ['msg_repeat'] },
+      { ...card, scope: 'project', sourceMessageIds: ['msg_repeat'] },
+      { ...card, temporal: { status: 'cancelled' }, sourceMessageIds: ['msg_repeat'] },
+      { ...card, sourceMessageIds: ['msg_neighbor'] },
+    ] } }])
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: block, next: null, timeline: [] }))
+    expect(result.events).toHaveLength(4)
+    expect(result.events[0]!.sourceMessageIds).toEqual(['msg_v2', 'msg_repeat'])
+    expect(result.events[1]!.summary).toBe('不要重复用户原话。')
+    expect(result.events[2]!.scope).toBe('project')
+    expect(result.events[3]!.temporal?.status).toBe('cancelled')
+  })
+
+  it('keeps the high-recall Summarizer pre-screen aligned with user guidance and reusable agent lessons', async () => {
+    const { bridge, session, calls } = modelBridge([{ tool: {
+      l0Title: '用户指导', l0Tags: [], l1Summary: '以后先审查', l2Keypoints: [], shouldExtract: true,
+    } }])
+    await bridge.run(session, () => bridge.summarizer(target('以后这种 PR 先审查，不直接修改。').l5Raw))
+    expect(calls.mock.calls[0]![0].system).toContain('reusable guidance about how the Agent should work')
+    expect(calls.mock.calls[0]![0].system).toContain('small detail with future independent question-answer value')
+    expect(calls.mock.calls[0]![0].system).toContain('confirmed platform limits, reusable failure causes')
+  })
+
+  it('does not merge distinct model facts hidden by existing text bounds', async () => {
+    const prefix = 'detail '.repeat(200)
+    const { bridge, session } = modelBridge([{ tool: { shouldExtract: true, reason: 'Distinct facts.', events: [
+      { title: 'A'.repeat(201), summary: `${prefix}first`, sourceMessageIds: ['msg_v2'] },
+      { title: `${'A'.repeat(200)}B`, summary: `${prefix}second`, sourceMessageIds: ['msg_v2'] },
+    ] } }])
+    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: target(prefix), next: null, timeline: [] }))
+    expect(result.events).toHaveLength(2)
+  })
+})
+
 describe('DeepSeek Harness model JSON retries', () => {
   it('sends maintenance only the current Profile and rejects added facts in protected fields', async () => {
     const input = { ...emptyProfile(), preferredLanguage: '中文', reasoningLanguage: 'English', currentCity: '杭州', responsePreferences: '简洁。简洁。' }
@@ -510,7 +604,7 @@ describe('DeepSeek Harness model JSON retries', () => {
     expect(schema.properties.events.description).toContain('atomic')
     const eventFields = schema.properties.events.items.properties as Record<string, { description: string }>
     expect(Object.keys(eventFields)).toEqual([
-      'title', 'summary', 'tags', 'quotes', 'sourceMessageIds', 'temporal', 'scope', 'criticality',
+      'title', 'summary', 'tags', 'quotes', 'sourceMessageIds', 'temporal', 'scope', 'criticality', 'catalogHints',
     ])
     expect(Object.values(eventFields).every((field) => field.description.length > 80)).toBe(true)
     expect(eventFields).not.toHaveProperty('narrative')
@@ -722,7 +816,8 @@ describe('DeepSeek Harness model JSON retries', () => {
       relation: 'related', status: 'active' as const, confidence: 0.8, sourceEventIds: [event.id],
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-09-14T00:00:00.000Z',
     }))
-    const context = { jobId: 'gproj_compact', projectorVersion: 1, events: [event], existingNodes, existingEdges }
+    const context = { jobId: 'gproj_compact', projectorVersion: 1,
+      events: [{ ...event, catalogHints: ['目录提示不是事实'], extractorVersion: 2 }], existingNodes, existingEdges }
     const proposedNodes = [
       ...Array.from({ length: 6 }, (_, index) => ({
         ref: `invalid_${index}`, name: `Invalid ${index}`, type: 'project', tags: [], metadataProvenance: { name: ['evt_unknown'] }, sourceEventIds: ['evt_unknown'],
@@ -750,6 +845,8 @@ describe('DeepSeek Harness model JSON retries', () => {
     const request = calls.mock.calls[0]?.[0] as any
     const payload = JSON.parse(request.messages[0].content[0].text)
     expect(payload.existingNodes).toHaveLength(32)
+    expect(payload.events[0]).not.toHaveProperty('catalogHints')
+    expect(payload.events[0]).not.toHaveProperty('extractorVersion')
     expect(payload.existingEdges).toHaveLength(60)
     expect(payload.existingNodes[0].currentState).toHaveLength(600)
     expect(payload.existingNodes[0].facts).toHaveLength(12)
@@ -787,6 +884,21 @@ describe('DeepSeek Harness model JSON retries', () => {
 })
 
 describe('memory topic model projection', () => {
+  it('exposes optional catalog hints only to Topic routing, with legacy Events still valid', async () => {
+    const input = context()
+    input.events = [event('evt_hint', '摄影活动已完成。'), event('evt_legacy', '旧事项。')]
+    input.events[0]!.catalogHints = ['摄影', '生活经历']
+    input.events[0]!.extractorVersion = 2
+    const { bridge, session, calls } = modelBridge([{ tool: { topics: [{ title: '生活', description: '活动记录',
+      sourceEventIds: ['evt_hint', 'evt_legacy'], overview: [] }] } }])
+    await bridge.run(session, () => bridge.topicProjector(input))
+    const request = calls.mock.calls[0]![0] as any
+    const payload = JSON.parse(request.messages[0].content[0].text)
+    expect(payload.events[0].catalogHints).toEqual(['摄影', '生活经历'])
+    expect(payload.events[1]).not.toHaveProperty('catalogHints')
+    expect(payload.events[0]).not.toHaveProperty('extractorVersion')
+    expect(request.system).toContain('不能决定 Chapter / Section、充当事实证据或据此推导新的事实')
+  })
   it('requests lasting categories for concrete bug and release Events without merging their facts', async () => {
     const input = context();
     input.existingTopics = [];
