@@ -126,6 +126,8 @@
     },
     "permissions": [
       "harness:tool",
+      "ui:extend",
+      "webserver:register",
       "filesystem:read",
       "filesystem:write",
       "network:none",
