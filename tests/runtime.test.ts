@@ -113,7 +113,7 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
-  it('consumes persisted graph jobs without a new host session event', async () => {
+  it.each(['pending', 'legacy-name-schema-terminal'] as const)('consumes persisted %s graph jobs without a new host session event', async (jobState) => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-background-worker-'))
     const database = join(directory, 'memory.db')
     const namespace = 'dsh:project:background-worker'
@@ -132,6 +132,16 @@ describe('DSH runtime ingestion', () => {
         sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id],
       })
       expect(seed.listGraphProjectionJobs()).toHaveLength(1)
+      if (jobState === 'legacy-name-schema-terminal') {
+        const job = seed.listGraphProjectionJobs()[0]!
+        delete job.nameProvenanceRecoveryVersion
+        job.attempts = 3
+        await seed.failGraphProjection(job.id, new Error(
+          'StrataGate model did not produce a valid stratagate_project_knowledge_graph call after 2 attempts: '
+          + 'StrataGate stratagate_project_knowledge_graph arguments were invalid: "nodes[0].metadataProvenance.name[0]" must be a string',
+        ))
+        expect(job).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null })
+      }
       await seed.close()
 
       const runtime = new StrataGateRuntime({
@@ -145,7 +155,7 @@ describe('DSH runtime ingestion', () => {
         await vi.waitFor(async () => {
           const snapshot = await runtime.adminSnapshot(namespace)
           expect(snapshot?.graphProjectionJobs).toEqual([
-            expect.objectContaining({ status: 'completed', attempts: 1 }),
+            expect.objectContaining({ status: 'completed', attempts: 1, nameProvenanceRecoveryVersion: 1 }),
           ])
           expect(snapshot?.blocks).toEqual([
             expect.objectContaining({ id: block.id, processingStatus: 'ready' }),

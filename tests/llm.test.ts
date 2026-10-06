@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { EventCard, ExtractionContext, MemoryBlock, TopicProjectionContext, TopicProjectionResult } from '@diqier/stratagate'
+import type { EventCard, ExtractionContext, GraphProjectionContext, MemoryBlock, TopicProjectionContext, TopicProjectionResult } from '@diqier/stratagate'
 import { describe, expect, it, vi } from 'vitest'
 import { ModelJsonResponseError, parseJsonResponse } from '../src/json-response.js'
 import { DshModelBridge } from '../src/llm.js'
@@ -55,6 +55,110 @@ describe('DeepSeek Harness model JSON parsing', () => {
     expect((error as Error).message).toContain(response.slice(0, 80))
     expect((error as Error).message).not.toContain(response.slice(0, 501))
     expect((error as ModelJsonResponseError).fullMessage).toContain(response)
+  })
+})
+
+describe('Graph canonical-name provenance compatibility (#113)', () => {
+  const event: EventCard = {
+    id: 'evt_name_shape', title: 'Graph names', summary: 'StrataGate uses SQLite.',
+    tags: [], quotes: [], sourceMessageIds: ['msg_shape'], sourceBlockId: 'blk_shape', temporal: {},
+    scope: 'project', criticality: 'routine', status: 'active', supersededBy: null,
+    weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
+    createdAt: '2026-10-06T00:00:00.000Z', updatedAt: '2026-10-06T00:00:00.000Z',
+  }
+  const context: GraphProjectionContext = {
+    jobId: 'gproj_shape', projectorVersion: 1, events: [event], existingNodes: [], existingEdges: [],
+  }
+  const node = (nameProvenance: unknown, name = 'StrataGate') => ({
+    ref: name, name, type: 'project', aliases: [`${name}_alias`], tags: ['memory-plugin'],
+    metadataProvenance: {
+      name: nameProvenance,
+      aliases: [{ value: `${name}_alias`, sourceEventIds: [event.id] }],
+      tags: [{ value: 'memory-plugin', sourceEventIds: [event.id] }],
+    },
+    facts: [{ key: 'database', value: 'SQLite', sourceEventIds: [event.id] }], sourceEventIds: [event.id],
+  })
+  const response = (nodes: unknown[]) => ({ reason: 'projected', nodes, edges: [] })
+
+  it.each(['tool', 'text'] as const)('normalizes all equivalent names before strict %s output validation and completes the job', async (format) => {
+    const tool = response([
+      node([{ value: 'StrataGate', sourceEventIds: [event.id] }, { value: 'StrataGate', sourceEventIds: [event.id] }]),
+      node([{ value: 'SQLite', sourceEventIds: [event.id] }], 'SQLite'),
+      node([event.id], 'Canonical'),
+    ])
+    const { bridge, session, calls } = modelBridge([format === 'tool' ? { tool } : { text: JSON.stringify(tool) }])
+    const memory = StrataGate.inMemory({
+      blockTurnSize: 1,
+      summarizer: async () => ({ l0Title: 'seed', l0Tags: [], l1Summary: 'seed', l2Keypoints: [], shouldExtract: false }),
+      graphProjector: (batch) => bridge.run(session, () => bridge.graphProjector(batch)),
+    })
+    await memory.appendTurn({ user: 'StrataGate uses SQLite.', assistant: 'stored' })
+    const block = memory.listBlocks()[0]!
+    await memory.addEvent({ id: event.id, title: event.title, summary: event.summary,
+      sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] })
+    await memory.resumePendingWork()
+    expect(memory.listGraphProjectionJobs()[0]).toMatchObject({ status: 'completed', attempts: 1 })
+    expect(calls).toHaveBeenCalledTimes(1)
+    expect(memory.listGraphNodes()).toHaveLength(3)
+    for (const projected of memory.listGraphNodes()) {
+      expect(projected.metadataProvenance?.name).toEqual([event.id])
+      expect(projected.metadataProvenance?.aliases).toEqual([{ value: `${projected.name}_alias`, sourceEventIds: [event.id] }])
+      expect(projected.metadataProvenance?.tags).toEqual([{ value: 'memory-plugin', sourceEventIds: [event.id] }])
+      expect(projected.facts[0]).toMatchObject({ key: 'database', value: 'SQLite', sourceEventIds: [event.id] })
+    }
+    expect((await memory.searchGraphNodes('memory-plugin')).length).toBeGreaterThan(0)
+    await memory.forgetEvent(event.id)
+    expect(await memory.searchGraphNodes('StrataGate')).toEqual([])
+    const schema = calls.mock.calls[0]?.[0].tools[0].parameters.properties.nodes.items.properties.metadataProvenance.properties
+    expect(schema.name.items.type).toBe('string')
+    expect(schema.name.description).toContain('NOT an array')
+    expect(schema.aliases.items.type).toBe('object')
+    expect(schema.tags.items.type).toBe('object')
+    expect(calls.mock.calls[0]?.[0].system).toContain('metadataProvenance.name is an Event ID string array')
+  })
+
+  it.each([
+    ['different value', [{ value: 'Wrong', sourceEventIds: [event.id] }]],
+    ['case variant', [{ value: 'stratagate', sourceEventIds: [event.id] }]],
+    ['one mismatched entry', [{ value: 'StrataGate', sourceEventIds: [event.id] }, { value: 'Wrong', sourceEventIds: [event.id] }]],
+    ['mixed strings and objects', [event.id, { value: 'StrataGate', sourceEventIds: [event.id] }]],
+    ['non-string id', [{ value: 'StrataGate', sourceEventIds: [event.id, 42] }]],
+    ['extra field', [{ value: 'StrataGate', sourceEventIds: [event.id], extra: true }]],
+    ['missing ids', [{ value: 'StrataGate' }]],
+    ['empty ids', [{ value: 'StrataGate', sourceEventIds: [] }]],
+  ])('rejects %s without silently discarding any entry', async (_, name) => {
+    const tool = response([node(name)])
+    const { bridge, session, calls } = modelBridge([{ tool }, { tool }])
+    await expect(bridge.run(session, () => bridge.graphProjector(context))).rejects.toThrow(/metadataProvenance.name/)
+    expect(calls).toHaveBeenCalledTimes(2)
+    expect(calls.mock.calls[1]?.[0].system).toContain('nodes[0].metadataProvenance.name[')
+    expect(calls.mock.calls[1]?.[0].system).toContain('Only aliases/tags use')
+  })
+
+  it('filters unsupplied and invalid string Event IDs through the existing boundary', async () => {
+    const { bridge, session } = modelBridge([{ tool: response([node([
+      { value: 'StrataGate', sourceEventIds: [event.id, 'evt_unrelated', 'not-an-event', ''] },
+    ])]) }])
+    const result = await bridge.run(session, () => bridge.graphProjector(context))
+    expect(result.nodes[0]?.metadataProvenance?.name).toEqual([event.id])
+  })
+
+  it('rejects equivalent objects with no supplied canonical-name evidence', async () => {
+    const { bridge, session } = modelBridge([{ tool: response([node([
+      { value: 'StrataGate', sourceEventIds: ['evt_unrelated', 'not-an-event'] },
+    ])]) }])
+    await expect(bridge.run(session, () => bridge.graphProjector(context))).rejects.toThrow(/lacks valid metadata provenance/)
+  })
+
+  it('lets the structured retry repair a name mismatch with the exact affected field', async () => {
+    const { bridge, session, calls } = modelBridge([
+      { tool: response([node([{ value: 'Wrong', sourceEventIds: [event.id] }])]) },
+      { tool: response([node([event.id])]) },
+    ])
+    const result = await bridge.run(session, () => bridge.graphProjector(context))
+    expect(result.nodes[0]?.metadataProvenance?.name).toEqual([event.id])
+    expect(calls).toHaveBeenCalledTimes(2)
+    expect(calls.mock.calls[1]?.[0].system).toContain('Do not substitute provenance for a different name')
   })
 })
 

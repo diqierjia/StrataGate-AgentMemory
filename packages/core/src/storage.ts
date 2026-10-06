@@ -77,6 +77,8 @@ export interface GraphProjectionJob {
   reason: string | null;
   lastError: string | null;
   nextRetryAt: string | null;
+  /** Issue #113 recovery applied (or job created by the fixed projector). */
+  nameProvenanceRecoveryVersion?: 1;
   createdAt: string;
   updatedAt: string;
 }

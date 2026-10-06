@@ -193,10 +193,34 @@ const GRAPH_METADATA_ENTRY: ValueSchemaSpec = {
 const GRAPH_METADATA_PROVENANCE: ValueSchemaSpec = {
   type: 'object', additionalProperties: false,
   properties: {
-    name: { ...STRING_ARRAY, required: true },
-    aliases: { type: 'array', items: GRAPH_METADATA_ENTRY },
-    tags: { type: 'array', items: GRAPH_METADATA_ENTRY },
+    name: { ...STRING_ARRAY, description: 'Exact supplied Event ID strings supporting node.name, e.g. ["evt_x"]. Unlike aliases/tags, this is NOT an array of { value, sourceEventIds } objects.', required: true },
+    aliases: { type: 'array', items: GRAPH_METADATA_ENTRY, description: 'One { value, sourceEventIds: ["evt_x"] } object per supported alias; value is the alias.' },
+    tags: { type: 'array', items: GRAPH_METADATA_ENTRY, description: 'One { value, sourceEventIds: ["evt_x"] } object per supported tag; value is the tag.' },
   },
+}
+
+// Issue #113: accept only the exact equivalent spelling of canonical-name
+// provenance. Leave every other shape for the unchanged strict schema to reject.
+// Event membership is still enforced by graphProjector and the core store.
+function normalizeGraphNameProvenance(value: unknown): unknown {
+  const result = object(value)
+  if (!Array.isArray(result.nodes)) return value
+  for (const candidate of result.nodes) {
+    const node = object(candidate)
+    const metadata = object(node.metadataProvenance)
+    const entries = metadata.name
+    if (typeof node.name !== 'string' || !Array.isArray(entries) || entries.length === 0) continue
+    if (!entries.every((candidateEntry) => {
+      const entry = object(candidateEntry)
+      return entry.value === node.name
+        && Object.keys(entry).every((key) => key === 'value' || key === 'sourceEventIds')
+        && Array.isArray(entry.sourceEventIds)
+        && entry.sourceEventIds.length > 0
+        && entry.sourceEventIds.every((id) => typeof id === 'string')
+    })) continue
+    metadata.name = [...new Set(entries.flatMap((entry) => entry.sourceEventIds as string[]))]
+  }
+  return value
 }
 
 const GRAPH_NODE: ValueSchemaSpec = {
@@ -660,7 +684,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
   readonly graphProjector: GraphProjector = async (context: GraphProjectionContext): Promise<GraphProjectionResult> => {
     const eventIds = new Set(context.events.map((event) => event.id))
     const raw = object(await this.callStructured('graphProjector',
-      `Project the supplied Events into the current Knowledge Graph, then call ${STRUCTURED_TOOLS.graphProjector.name} exactly once. Events are the sole source of truth; never use legacy Element data. Return only nodes and edges touched by the supplied Events; never echo unchanged historical graph records. Return at most 24 nodes and 32 edges. Use stable entity nodes for people, projects, organizations, tools, and places. Use aliases to merge spelling/case/separator variants. Give every returned node 1-6 concise semantic role tags such as benchmark, evaluation, memory-plugin, parser, or development-tool; tags describe the node's specific role and never replace its person/project/organization/tool/place type. Reuse stable tag wording when possible. For every node name, alias, and tag, include metadataProvenance with the exact supplied Event ids that support that individual value; never use an unrelated active Event as a substitute. Put attributes in node facts and every relationship in a directed edge using fromRef/toRef—never encode a relationship as a fact string. Prefer concise canonical Chinese relation labels such as 使用、属于、创建、参与、贡献、依赖、位于、相关. Every node, fact, edge, and metadata provenance id must cite only supplied Event ids. Do not return text.`,
+      `Project the supplied Events into the current Knowledge Graph, then call ${STRUCTURED_TOOLS.graphProjector.name} exactly once. Events are the sole source of truth; never use legacy Element data. Return only nodes and edges touched by the supplied Events; never echo unchanged historical graph records. Return at most 24 nodes and 32 edges. Use stable entity nodes for people, projects, organizations, tools, and places. Use aliases to merge spelling/case/separator variants. Give every returned node 1-6 concise semantic role tags such as benchmark, evaluation, memory-plugin, parser, or development-tool; tags describe the node's specific role and never replace its person/project/organization/tool/place type. Reuse stable tag wording when possible. For every node name, alias, and tag, include metadataProvenance with the exact supplied Event ids that support that individual value; never use an unrelated active Event as a substitute. The shapes are different: metadataProvenance.name is an Event ID string array, e.g. ["evt_x"], supporting node.name; it is never an array of objects. Only metadataProvenance.aliases and metadataProvenance.tags are arrays of { value, sourceEventIds: ["evt_x"] } objects for each alias/tag. Example for node.name="StrataGate": metadataProvenance={"name":["evt_x"],"aliases":[{"value":"strata_gate","sourceEventIds":["evt_x"]}],"tags":[{"value":"memory-plugin","sourceEventIds":["evt_x"]}]}. Put attributes in node facts and every relationship in a directed edge using fromRef/toRef—never encode a relationship as a fact string. Prefer concise canonical Chinese relation labels such as 使用、属于、创建、参与、贡献、依赖、位于、相关. Every node, fact, edge, and metadata provenance id must cite only supplied Event ids. Do not return text.`,
       compactGraphProjectionContext(context),
     ))
     const nodes = (Array.isArray(raw.nodes) ? raw.nodes : []).flatMap((candidate) => {
@@ -802,6 +826,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
     let lastResponse = ''
     let attemptsUsed = 0
     let noAdapterRetried = false
+    let graphRetryFeedback = ''
     for (let attempt = 1; attempt <= JSON_RESPONSE_ATTEMPTS; attempt += 1) {
       attemptsUsed = attempt
       const message = createUserMessage({
@@ -813,7 +838,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
         ...baseRoute,
         ...(useOff ? { reasoningEffort: 'off' as ReasoningEffortId } : {}),
         messages: [message],
-        system: attempt === 1 ? system : `${system}\n\n${JSON_RETRY_INSTRUCTION}`,
+        system: attempt === 1 ? system : `${system}\n\n${JSON_RETRY_INSTRUCTION}${graphRetryFeedback}`,
         tools: [{
           name: STRUCTURED_TOOLS[kind].name,
           description: STRUCTURED_TOOLS[kind].description,
@@ -894,8 +919,15 @@ Use project scope for repository decisions, user scope for stable preferences/id
             )
           }
         }
+        if (kind === 'graphProjector') parsed = normalizeGraphNameProvenance(parsed)
         const violations = validateArgs(STRUCTURED_TOOLS[kind].parameters, parsed)
         if (violations.length > 0) {
+          if (kind === 'graphProjector') {
+            const paths = violations.flatMap((violation) => violation.match(/nodes\[\d+\]\.metadataProvenance\.name(?:\[\d+\])?/g) ?? [])
+            graphRetryFeedback = paths.length > 0
+              ? `\nCorrect these canonical-name provenance fields: ${[...new Set(paths)].slice(0, 24).join(', ')}. metadataProvenance.name must be an array of supplied Event ID strings, e.g. ["evt_x"], supporting the actual node.name. Only aliases/tags use { value, sourceEventIds } objects. Do not substitute provenance for a different name.`
+              : ''
+          }
           throw new ModelJsonResponseError(
             `StrataGate ${expectedTool} arguments were invalid: ${kind === 'topicProjector' ? 'structured topic schema mismatch' : violations.join('; ')}`,
             { response: responseForError },

@@ -506,7 +506,10 @@ export class StrataGate {
           }
         });
       }
-      if (memory.graphProjector) await memory.commitMutation(() => memory.queueMissingGraphProjections());
+      if (memory.graphProjector) await memory.commitMutation(() => {
+        memory.recoverGraphNameProvenanceFailures();
+        memory.queueMissingGraphProjections();
+      });
     }
     return memory;
   }
@@ -1594,6 +1597,7 @@ export class StrataGate {
         return event ? [event] : [];
       });
       if (events.length === 0) throw new Error(`Graph projection ${job.id} has no available source events`);
+      job.nameProvenanceRecoveryVersion = 1;
       job.status = 'running';
       job.attempts += 1;
       job.lastError = null;
@@ -2614,10 +2618,36 @@ export class StrataGate {
       id: this.graphIdFactory('gproj'), sourceEventIds: ids,
       projectorVersion: KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
       status: 'pending', attempts: 0, priority, nodeIds: [], edgeIds: [],
+      nameProvenanceRecoveryVersion: 1,
       reason: null, lastError: null, nextRetryAt: null, createdAt: now, updatedAt: now,
     };
     this.graphProjectionJobs.set(job.id, job);
     return job;
+  }
+
+  private recoverGraphNameProvenanceFailures(): void {
+    // Match only the old structured schema failure, never a raw-response mention
+    // of that text or a mixed/unrelated validation error. No full graph rebuild.
+    const signature = /^StrataGate model did not produce a valid stratagate_project_knowledge_graph call after 2 attempts: StrataGate stratagate_project_knowledge_graph arguments were invalid: "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string(?:; "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string)*$/;
+    for (const job of this.graphProjectionJobs.values()) {
+      if (job.projectorVersion !== KNOWLEDGE_GRAPH_PROJECTOR_VERSION
+        || job.nameProvenanceRecoveryVersion !== undefined || job.status !== 'failed'
+        || (job.attempts < DERIVATION_MAX_ATTEMPTS && job.nextRetryAt !== null)
+        || !signature.test((job.lastError ?? '').split('\n')[0]!.trim())
+        || job.sourceEventIds.length === 0
+        || !job.sourceEventIds.every((id) => {
+          const event = this.findEvent(id);
+          return event && (event.status === 'active' || event.status === 'superseded');
+        })) continue;
+      // Persist with the normal mutation transaction before any worker can claim
+      // it. Reopening after another terminal failure cannot reset attempts again.
+      job.nameProvenanceRecoveryVersion = 1;
+      job.status = 'pending';
+      job.attempts = 0;
+      job.lastError = null;
+      job.nextRetryAt = null;
+      job.updatedAt = toUtc8Iso(this.now());
+    }
   }
 
   private queueMissingGraphProjections(): void {
