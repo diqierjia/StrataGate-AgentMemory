@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.2 - Unreleased
+
+- 优化 Event Extractor：更敏感地保留有独立用途的用户信息，保守判断 session/project/user 范围，减少 Agent 操作流水账，并保留已验证的根因、限制和结果。
+- 收敛原子事件标题，约束历史关系锚点；同次提取的精确重复事实合并来源并保留首份目录提示，不重写或重新提取旧 Event。
+- 增加可选 catalogHints 和 extractorVersion，使用兼容 schema-12 的 metadata 旁表持久化。目录提示仅用于导航，Element/Graph 事实投影输入均物理排除这些 metadata。
+- 将模型输出的 scope 设为必填枚举；遗漏或非法值触发有限结构化重试，避免临时要求静默扩大为项目长期记忆。
+
 ## 0.3.1 - Unreleased
 
 - 修复 #113：明确 Graph canonical name 的来源是 Event ID 字符串数组，aliases/tags 才使用 `{ value, sourceEventIds }[]`。严格 schema 校验前，仅将 value 与实际 node.name 完全一致、字段与来源类型合法的对象数组归一为 name 来源；不匹配或异常结构仍拒绝，重试提示指出具体字段，原有 supplied Event 边界不变。
