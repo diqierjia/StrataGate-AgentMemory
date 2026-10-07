@@ -83,7 +83,6 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
       - run: npm run check
       - run: npm test
       - name: Build and verify package contents
@@ -119,6 +118,19 @@ jobs:
           cmp "$versioned" stratagate-dsh.tgz
           sha256sum "$versioned" stratagate-dsh.tgz "$source_asset"
           echo "SOURCE_ASSET=$source_asset" >> "$GITHUB_ENV"
+      - name: Audit the exact DSH package runtime dependencies
+        shell: bash
+        run: |
+          # The repository lock also contains the separately shipped WorkBuddy
+          # workspace. Audit the release artifact in an isolated consumer root.
+          # DSH peers belong to the host and are covered by the host smoke above.
+          package_asset="$GITHUB_WORKSPACE/stratagate-dsh-${VERSION}.tgz"
+          audit_root="$(mktemp -d "$RUNNER_TEMP/stratagate-dsh-audit.XXXXXX")"
+          trap 'rm -rf -- "$audit_root"' EXIT
+          cd "$audit_root"
+          npm init --yes
+          npm install "$package_asset" --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
       - name: Publish exact package artifact
         run: npm publish "stratagate-dsh-${VERSION}.tgz" --provenance --access public
       - name: Create GitHub release from pushed tag
