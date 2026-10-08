@@ -1,12 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { bm25Rank, weightedSearchTokens } from './search.js';
 import type { EventCard } from './types.js';
-import { TopicProjectionError, safeTopicDiagnostics, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
+import { TopicProjectionError, safeTopicDiagnostics, validateTopicOverviewText, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
+import { TopicOverviewRepairGuard, uniqueTopicOverviewEntries, carryTopicOverviewRepairs, topicOverviewRepairsFromError, topicOverviewRepairsForHistoricalFailure, partitionTopicOverviewRepairs, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
 
 export const MEMORY_TOPIC_PROJECTOR_VERSION = 3;
 export const TOPIC_BATCH_LIMIT = 12;
 export const TOPIC_CANDIDATE_LIMIT = 12;
 export const TOPIC_MAX_ATTEMPTS = 3;
+// One writer-open recovery cycle for Issue #119, independent of prose rebuilds.
+export const TOPIC_RECOVERY_VERSION = 1;
 export const TOPIC_LEASE_MS = 5 * 60_000;
 export type MemoryTopicOverviewKind = 'history' | 'decision' | 'change' | 'open-question' | 'scope';
 
@@ -53,6 +56,7 @@ export interface TopicProjectionCandidate {
 
 export interface TopicProjectionContext {
   jobId: string;
+  overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   events: EventCard[];
   existingTopics: TopicProjectionCandidate[];
   /** Extremely large sources are navigation-only until read in full. */
@@ -101,6 +105,8 @@ export interface TopicProjectionJob {
   superseded?: boolean;
   sectionBackfillTopicId?: string;
   diagnostics?: TopicProjectionDiagnostics | undefined;
+  /** Retry integrity ledger, separate from content-free diagnostics. */
+  overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   /** Bounded binary split ancestry; manual retry starts a fresh cycle. */
   splitDepth?: number;
 }
@@ -111,7 +117,7 @@ export interface TopicBootstrapState {
   projectorVersion: number;
   /** Frozen at writer open; newly added/changed sources have priority. */
   sourceVersions: Record<string, string>;
-  status: 'pending' | 'running' | 'completed';
+  status: 'pending' | 'running' | 'completed' | 'failed';
   startedAt: string;
   completedAt: string | null;
   /** Exhausted inputs remain navigable through fallback, without paid retries. */
@@ -127,6 +133,8 @@ export interface MemoryTopicState {
   rebuildVersions?: Record<string, string>;
   /** Writer-open upgrade marker, independent of the prose projector version. */
   sectionMembershipVersion?: number;
+  /** Durable writer-open marker: never reset retries on reads or restarts. */
+  recoveryVersion?: number;
   /** Missing relations, keyed by chapter and immutable Event fingerprint. */
   sectionBackfill?: Record<string, Record<string, string>>;
 }
@@ -206,6 +214,16 @@ function jobInputsCurrent(job: TopicProjectionJob, versions: ReadonlyMap<string,
   return job.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION
     && Object.entries({ ...job.sourceVersions, ...job.dependencyVersions }).every(([id, version]) =>
     versions.get(id) === version);
+}
+
+/** Current fault/work classification, independent of frozen Bootstrap history. */
+export function memoryTopicUnfinishedJobEventIds(job: TopicProjectionJob, state: MemoryTopicState,
+  versions: ReadonlyMap<string, string>): string[] {
+  if (job.superseded || job.status === 'completed' || !jobInputsCurrent(job, versions)) return [];
+  return job.sourceEventIds.filter((id) => versions.has(id) && job.sourceVersions[id] === versions.get(id)
+    && (job.sectionBackfillTopicId
+      ? state.sectionBackfill?.[job.sectionBackfillTopicId]?.[id] === versions.get(id)
+      : state.projectedVersions[id] !== versions.get(id)));
 }
 
 function topicView(topic: StoredMemoryTopic, events: ReadonlyMap<string, EventCard>, versions: ReadonlyMap<string, string>): MemoryTopic | null {
@@ -294,7 +312,8 @@ export class MemoryTopicDirectory {
 
   needsInitialization(): boolean {
     return this.state.bootstrap?.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION
-      || this.state.sectionMembershipVersion !== 1;
+      || this.state.sectionMembershipVersion !== 1
+      || (this.state.recoveryVersion ?? 0) < TOPIC_RECOVERY_VERSION;
   }
 
   initializeBootstrap(events: readonly EventCard[], now: string): void {
@@ -313,10 +332,40 @@ export class MemoryTopicDirectory {
       this.state.sectionBackfill = missing;
       this.state.sectionMembershipVersion = 1;
     }
+    this.recoverFailures(events, now);
     if (this.state.bootstrap?.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION) return;
     this.state.bootstrap = { projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
       sourceVersions: Object.fromEntries(sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])))),
       status: 'pending', startedAt: now, completedAt: null, failedEvents: 0 };
+    this.synchronize(events, now);
+  }
+
+  private recoverFailures(events: readonly EventCard[], now: string): void {
+    if ((this.state.recoveryVersion ?? 0) >= TOPIC_RECOVERY_VERSION) return;
+    // initializeBootstrap is committed in the owner's mutation transaction.
+    // Persist even when no failures exist: failures created by this version
+    // never acquire an extra cycle merely because the process restarts.
+    this.state.recoveryVersion = TOPIC_RECOVERY_VERSION;
+    const versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])));
+    for (const previous of [...this.state.jobs]) {
+      if (previous.superseded || previous.status !== 'failed' || previous.attempts < TOPIC_MAX_ATTEMPTS
+        || previous.nextRetryAt !== null || !jobInputsCurrent(previous, versions)) continue;
+      const work = memoryTopicUnfinishedJobEventIds(previous, this.state, versions);
+      if (!work.length) continue;
+      // Other queued/leased/retrying jobs own their work already. Overlapping
+      // terminal history must not suppress recovery or duplicate those calls.
+      const ids = work.filter((id) => !this.state.jobs.some((job) => job.id !== previous.id && !job.superseded
+        && jobInputsCurrent(job, versions) && job.sectionBackfillTopicId === previous.sectionBackfillTopicId
+        && job.sourceVersions[id] === versions.get(id)
+        && (job.status === 'pending' || job.status === 'running'
+          || (job.status === 'failed' && job.attempts < TOPIC_MAX_ATTEMPTS && job.nextRetryAt !== null))));
+      if (!ids.length) {
+        previous.superseded = true;
+        previous.updatedAt = now;
+        continue;
+      }
+      this.requeue(previous, ids, versions, now);
+    }
     this.synchronize(events, now);
   }
 
@@ -396,15 +445,25 @@ export class MemoryTopicDirectory {
         || versions.get(id) !== version || assigned.has(id)) delete pending[id];
       if (!Object.keys(pending).length) delete this.state.sectionBackfill![topicId];
     }
+    for (const job of this.state.jobs) if (job.status === 'failed' && !job.superseded
+      && jobInputsCurrent(job, versions) && !memoryTopicUnfinishedJobEventIds(job, this.state, versions).length) {
+      // Keep the original failure as history; never pretend it succeeded.
+      job.superseded = true; job.context = null; job.nextRetryAt = null; job.leaseUntil = null; job.updatedAt = now;
+    }
     const bootstrap = this.state.bootstrap;
     if (bootstrap && bootstrap.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION) {
       const outstanding = Object.entries(bootstrap.sourceVersions).filter(([id, version]) =>
         versions.get(id) === version && this.state.projectedVersions[id] !== version);
       bootstrap.failedEvents = outstanding.filter(([id, version]) => this.state.jobs.some((job) =>
-        !job.superseded && job.status === 'failed' && job.attempts >= TOPIC_MAX_ATTEMPTS
+        !job.superseded && job.sectionBackfillTopicId === undefined && job.status === 'failed' && job.attempts >= TOPIC_MAX_ATTEMPTS
         && job.sourceVersions[id] === version && jobInputsCurrent(job, versions))).length;
-      if (outstanding.length === bootstrap.failedEvents && bootstrap.status !== 'completed') {
-        bootstrap.status = 'completed'; bootstrap.completedAt = now;
+      if (outstanding.length === 0) {
+        if (bootstrap.status !== 'completed') bootstrap.completedAt = now;
+        bootstrap.status = 'completed';
+      } else {
+        bootstrap.completedAt = null;
+        if (outstanding.length === bootstrap.failedEvents) bootstrap.status = 'failed';
+        else if (bootstrap.status === 'completed' || bootstrap.status === 'failed') bootstrap.status = 'running';
       }
     }
   }
@@ -581,7 +640,8 @@ export class MemoryTopicDirectory {
     if (job.sectionBackfillTopicId && !existingTopics.some((topic) => topic.id === job.sectionBackfillTopicId)) {
       throw new Error('Section backfill chapter cannot fit the projection input budget.');
     }
-    job.context = { jobId: job.id, events: batch.map(compactEvent), existingTopics, truncatedEventIds,
+    job.context = { jobId: job.id,
+      ...(job.overviewRepairRequirements?.length ? { overviewRepairRequirements: structuredClone(job.overviewRepairRequirements) } : {}), events: batch.map(compactEvent), existingTopics, truncatedEventIds,
       ...(job.sectionBackfillTopicId ? { sectionBackfillTopicId: job.sectionBackfillTopicId } : {}) };
     const storedById = new Map(this.state.topics.map((topic) => [topic.id, topic]));
     job.candidateVersions = Object.fromEntries(existingTopics.map((topic) => [topic.id, digest(storedById.get(topic.id))]));
@@ -602,6 +662,17 @@ export class MemoryTopicDirectory {
   }
 
   complete(id: string, result: TopicProjectionResult, events: readonly EventCard[], now: string): { topicIds: string[] } {
+    const job = this.requireJob(id);
+    const repairs = new TopicOverviewRepairGuard(job.overviewRepairRequirements);
+    if (job.context) repairs.observe(result, job.context);
+    try { return this.completeValidated(id, result, events, now, repairs); }
+    catch (error) {
+      if (error instanceof TopicProjectionError) throw carryTopicOverviewRepairs(error, repairs.requirements);
+      throw error;
+    }
+  }
+
+  private completeValidated(id: string, result: TopicProjectionResult, events: readonly EventCard[], now: string, repairs: TopicOverviewRepairGuard): { topicIds: string[] } {
     const job = this.requireJob(id);
     if (job.status === 'completed') return { topicIds: [...job.topicIds] };
     if (job.status !== 'running' || !job.context) throw new Error(`Topic projection ${id} is not running`);
@@ -630,7 +701,7 @@ export class MemoryTopicDirectory {
         || ids.some((eventId) => typeof eventId !== 'string' || !allowed.has(eventId))) throw new TopicProjectionError('validation-failed', `Invalid topic ${label} source events.`);
       return ids;
     };
-    for (const proposal of result.topics) {
+    for (const [topicIndex, proposal] of result.topics.entries()) {
       const ids = checkIds(proposal.sourceEventIds, 'membership');
       // An unambiguous membership continuation keeps its storage identity even
       // when the model omits topicId. Ambiguous regrouping is not inferred.
@@ -665,11 +736,11 @@ export class MemoryTopicDirectory {
         || typeof proposal.description !== 'string' || !proposal.description.trim() || [...proposal.description].length > 400) throw new TopicProjectionError('validation-failed', 'Invalid topic title or description.');
       for (const eventId of ids) if (batchIds.has(eventId)) covered.add(eventId);
       if (!Array.isArray(proposal.overview) || proposal.overview.length > 8) throw new TopicProjectionError('validation-failed', 'Topic projection must contain at most 8 overview paragraphs per chapter per batch.');
-      for (const part of proposal.overview) {
+      for (const [overviewIndex, part] of proposal.overview.entries()) {
         if (part.title !== undefined && (typeof part.title !== 'string' || !part.title.trim()
           || [...part.title].length > 80)) throw new TopicProjectionError('validation-failed', 'Invalid topic overview title.');
-        if (!['history', 'decision', 'change', 'open-question', 'scope'].includes(part.kind)
-          || typeof part.text !== 'string' || !part.text.trim() || [...part.text].length > 600) throw new TopicProjectionError('validation-failed', 'Invalid topic overview section.');
+        if (!['history', 'decision', 'change', 'open-question', 'scope'].includes(part.kind)) throw new TopicProjectionError('validation-failed', 'Invalid topic overview section.');
+        validateTopicOverviewText(part.text, `topics[${topicIndex}].overview[${overviewIndex}].text`);
         checkIds(part.sourceEventIds, 'overview');
         if (part.kind !== 'scope' && part.sourceEventIds.some((eventId) => job.context!.truncatedEventIds?.includes(eventId))) {
           throw new TopicProjectionError('validation-failed', 'Truncated topic sources permit navigation scope only, not factual overview.');
@@ -718,8 +789,7 @@ export class MemoryTopicDirectory {
           throw new TopicProjectionError('validation-failed', 'New topic overview must match a final topic section.');
         }
       }
-      const overview = unique(proposal.overview.filter((part) => memoryTopicOverviewMatchesSection(part, titles))
-        .map((part) => JSON.stringify(part))).map((part) => JSON.parse(part) as MemoryTopicOverview);
+      const overview = uniqueTopicOverviewEntries(proposal.overview.filter((part) => memoryTopicOverviewMatchesSection(part, titles))).map((part) => structuredClone(part));
       // Eight limits one model response, not accumulated prose. Keep old prose
       // only while its section exists; never restore membership to save prose.
       for (const part of inherited) if (memoryTopicOverviewMatchesSection(part, titles)
@@ -733,6 +803,10 @@ export class MemoryTopicDirectory {
         createdAt: existing?.createdAt ?? now, updatedAt: now });
     }
     if (job.sourceEventIds.some((eventId) => !covered.has(eventId))) throw new TopicProjectionError('validation-failed', 'every supplied batch Event must be assigned to a topic');
+    repairs.assert(result);
+    // Validate the exact post-filter/deduplication state before committing any
+    // Topic, Event projection ledger or Backfill progress.
+    repairs.assert({ topics: proposals });
     for (const topic of proposals) {
       const index = this.state.topics.findIndex((current) => current.id === topic.id);
       if (index < 0) this.state.topics.push(topic); else this.state.topics[index] = topic;
@@ -751,6 +825,7 @@ export class MemoryTopicDirectory {
     this.state.topics = this.state.topics.filter((topic) => !topic.invalidated
       || topic.sourceEventIds.some((eventId) => sources.has(eventId)
         && this.state.projectedVersions[eventId] !== versions.get(eventId)));
+    job.overviewRepairRequirements = undefined;
     job.status = 'completed'; job.topicIds = proposals.map((topic) => topic.id); job.context = null;
     job.leaseUntil = null; job.dependencyVersions = {}; job.candidateVersions = {};
     job.lastError = null; job.nextRetryAt = null; job.updatedAt = now;
@@ -761,6 +836,10 @@ export class MemoryTopicDirectory {
     const job = this.state.jobs.find((candidate) => candidate.id === id);
     if (!job || job.status !== 'running') return;
     const diagnostic = error instanceof TopicProjectionError ? safeTopicDiagnostics(error.diagnostics) : undefined;
+    const repairs = new TopicOverviewRepairGuard(job.overviewRepairRequirements);
+    const observed = topicOverviewRepairsFromError(error);
+    repairs.merge(observed.length ? observed : topicOverviewRepairsForHistoricalFailure(diagnostic));
+    job.overviewRepairRequirements = repairs.requirements.length ? repairs.requirements : undefined;
     const message = error instanceof Error ? error.message : String(error);
     const category = diagnostic?.category ?? (/timeout|timed out/i.test(message) ? 'timeout'
       : /source.*changed|stale|not running/i.test(message) ? 'source-changed' : 'worker-failed');
@@ -783,6 +862,7 @@ export class MemoryTopicDirectory {
       for (const ids of [job.sourceEventIds.slice(0, middle), job.sourceEventIds.slice(middle)]) {
         this.state.jobs.push({ ...structuredClone(job), id: `tproj_${randomUUID()}`,
           sourceEventIds: ids, sourceVersions: Object.fromEntries(ids.map((id) => [id, job.sourceVersions[id]!])),
+          overviewRepairRequirements: partitionTopicOverviewRepairs(job.overviewRepairRequirements, job.sourceEventIds, ids),
           dependencyVersions: {}, candidateVersions: {}, status: 'pending', attempts: 0,
           diagnostics: undefined, splitDepth: (job.splitDepth ?? 0) + 1,
           topicIds: [], superseded: false, lastError: null, nextRetryAt: job.nextRetryAt,
@@ -798,19 +878,12 @@ export class MemoryTopicDirectory {
     return job;
   }
 
-  retry(id: string, events: readonly EventCard[], now: string): { jobId: string; status: 'pending' } {
-    const previous = this.requireJob(id);
-    const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
-    const versions = sourceVersions(sources);
-    if (previous.superseded || previous.status !== 'failed' || previous.attempts < TOPIC_MAX_ATTEMPTS
-      || previous.nextRetryAt !== null || !jobInputsCurrent(previous, versions)
-      || previous.sourceEventIds.some((eventId) => this.state.projectedVersions[eventId] === versions.get(eventId)
-        && (!previous.sectionBackfillTopicId
-          || this.state.sectionBackfill?.[previous.sectionBackfillTopicId]?.[eventId] !== versions.get(eventId)))) {
-      throw new Error('Topic retry conflict: failure is no longer current or retryable.');
-    }
+  private requeue(previous: TopicProjectionJob, ids: readonly string[], versions: ReadonlyMap<string, string>, now: string): TopicProjectionJob {
     const job: TopicProjectionJob = {
-      ...structuredClone(previous), id: `tproj_${randomUUID()}`, status: 'pending', attempts: 0,
+      ...structuredClone(previous), sourceEventIds: [...ids],
+      overviewRepairRequirements: partitionTopicOverviewRepairs(previous.overviewRepairRequirements ?? topicOverviewRepairsForHistoricalFailure(safeTopicDiagnostics(previous.diagnostics)), previous.sourceEventIds, ids),
+      sourceVersions: Object.fromEntries(ids.map((id) => [id, previous.sourceVersions[id]!])),
+      id: `tproj_${randomUUID()}`, status: 'pending', attempts: 0,
       superseded: false, context: null, dependencyVersions: {}, candidateVersions: {}, topicIds: [],
       diagnostics: undefined, splitDepth: 0,
       lastError: null, nextRetryAt: null, leaseUntil: null, createdAt: now, updatedAt: now,
@@ -823,6 +896,19 @@ export class MemoryTopicDirectory {
       bootstrap.status = 'pending';
       bootstrap.completedAt = null;
     }
+    return job;
+  }
+
+  retry(id: string, events: readonly EventCard[], now: string): { jobId: string; status: 'pending' } {
+    const previous = this.requireJob(id);
+    const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
+    const versions = sourceVersions(sources);
+    const ids = memoryTopicUnfinishedJobEventIds(previous, this.state, versions);
+    if (previous.superseded || previous.status !== 'failed' || previous.attempts < TOPIC_MAX_ATTEMPTS
+      || previous.nextRetryAt !== null || !jobInputsCurrent(previous, versions) || !ids.length) {
+      throw new Error('Topic retry conflict: failure is no longer current or retryable.');
+    }
+    const job = this.requeue(previous, ids, versions, now);
     this.synchronize(events, now);
     return { jobId: job.id, status: 'pending' };
   }

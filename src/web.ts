@@ -13,6 +13,7 @@ import {
   MEMORY_TOPIC_PROJECTOR_VERSION,
   MemoryTopicDirectory,
   memoryTopicEventFingerprint,
+  memoryTopicUnfinishedJobEventIds,
   memoryWeightAt,
   TOPIC_MAX_ATTEMPTS,
   safeTopicDiagnostics,
@@ -42,7 +43,7 @@ function currentPluginVersion(): string {
 const STRATAGATE_DSH_VERSION = currentPluginVersion()
 // Invalidate cached paragraph-based views even for prerelease builds that share
 // a package version and unchanged database revision.
-const TOPIC_DIRECTORY_VIEW_VERSION = 5
+const TOPIC_DIRECTORY_VIEW_VERSION = 7
 
 function graphProjectionIsProcessing(job: {
   status: string
@@ -530,7 +531,7 @@ function topicDirectoryProjection(snapshot: StrataGateSnapshot, agentMemoryWeigh
       || !Object.entries({ ...job.sourceVersions, ...job.dependencyVersions })
         .every(([id, version]) => versions.get(id) === version)) return []
     const diagnostics = safeTopicDiagnostics(job.diagnostics)
-    const ids = job.sourceEventIds.filter((id) => {
+    const ids = memoryTopicUnfinishedJobEventIds(job, state, versions).filter((id) => {
       const key = relationKey(job.sectionBackfillTopicId, id, job.sourceVersions[id]!)
       if (!outstandingWork.has(key)) return false
       failedWork.add(key); return true
@@ -549,10 +550,9 @@ function topicDirectoryProjection(snapshot: StrataGateSnapshot, agentMemoryWeigh
   const total = new Set([...history.map(([id]) => id), ...backfillRelations.map(({ id }) => id)]).size
   const failedRelations = backfillRelations.filter(({ topicId, id, version }) => failedWork.has(relationKey(topicId, id, version))).length
   const bootstrap = frozen ? {
-    status: backfillRelations.length > 0 && outstandingWork.size === failedWork.size ? 'failed'
-      : Object.keys(state.rebuildVersions ?? {}).length > 0 || backfillRelations.length > 0
-      ? (outstandingWork.size === failedWork.size ? 'completed' : 'running')
-      : frozen.status,
+    status: outstandingWork.size === 0 ? 'completed'
+      : outstandingWork.size === failedWork.size ? 'failed'
+      : frozen.status === 'pending' ? 'pending' : 'running',
     total,
     completed: total - outstanding.size,
     failedEvents: new Set(failures.flatMap(({ eventIds }) => eventIds)).size,
@@ -770,7 +770,13 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         sourceEventIds: job.sourceEventIds,
       }
     }
-    const topicJobs = (snapshot.memoryTopicState?.jobs ?? []).filter((job) => !job.superseded)
+    const topicEvents = [...snapshot.events, ...((runtime.adminAgentMemoryRetrievalWeight?.() ?? 1) > 0 ? snapshot.agentEvents : [])]
+      .filter((event) => event.status === 'active' || event.status === 'superseded')
+    const topicDirectory = new MemoryTopicDirectory(); topicDirectory.restore(snapshot.memoryTopicState)
+    const topicState = topicDirectory.snapshot(topicEvents)
+    const topicVersions = new Map(topicEvents.map((event) => [event.id, memoryTopicEventFingerprint(event)]))
+    const topicJobs = topicState.jobs.filter((job) => !job.superseded
+      && (job.status === 'completed' || memoryTopicUnfinishedJobEventIds(job, topicState, topicVersions).length > 0))
     const describeTopicJob = (job: (typeof topicJobs)[number]) => {
       const diagnostics = safeTopicDiagnostics(job.diagnostics)
       const lastError = diagnostics ? `${diagnostics.category}: ${diagnostics.reason}`
@@ -778,7 +784,8 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       return { id: job.id, kind: 'topic-projection' as const,
         state: derivationJobState(job, job.status === 'completed'), status: job.status,
         attempts: job.attempts, nextRetryAt: job.nextRetryAt, updatedAt: job.updatedAt,
-        lastError, lastErrorFull: lastError, diagnostics, eventCount: job.sourceEventIds.length,
+        lastError, lastErrorFull: lastError, diagnostics, eventCount: job.status === 'completed' ? job.sourceEventIds.length
+          : memoryTopicUnfinishedJobEventIds(job, topicState, topicVersions).length,
         blockIds: [], threadIds: [], blockDetails: [] }
     }
     const topicStatus = summarizeDerivationJobs(topicJobs, (job) => job.status === 'completed')

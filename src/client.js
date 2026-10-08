@@ -2276,7 +2276,7 @@ window.__ModuleLoader__.load({
       if (!working && !failures) return null
       return h('aside', { className: 'sg-topic-bootstrap ' + (failures ? 'attention' : 'processing'), 'aria-label': '历史记忆整理状态' },
         h('div', { className: 'sg-topic-bootstrap-line', role: 'status', 'aria-live': 'polite' }, h('span', { className: working ? 'sg-processing-icon' : 'sg-topic-warning', 'aria-hidden': 'true' }, working ? '↻' : '⚠'),
-          h('span', null, working ? '正在整理历史记忆 · ' + Number(bootstrap.completed || 0) + ' / ' + Number(bootstrap.total || 0) : failures + ' 条历史记忆暂未完成整理'),
+          h('span', null, working ? '正在整理历史记忆 · ' + Number(bootstrap.completed || 0) + ' / ' + Number(bootstrap.total || 0) : '历史记忆部分完成 · ' + Number(bootstrap.completed || 0) + ' / ' + Number(bootstrap.total || 0)),
           bootstrap.failures?.[0] ? h(TopicRetryButton, { key: bootstrap.failures[0].jobId, failure: bootstrap.failures[0], namespace, revision, onDirectoryChanged }) : null,
           failures ? h('button', { type: 'button', className: 'sg-topic-status-details', 'aria-expanded': detailsOpen, 'aria-controls': 'sg-topic-bootstrap-details', onClick: () => setDetailsOpen((current) => !current) }, detailsOpen ? '收起详情' : '查看详情') : null),
         h('p', { className: 'sg-topic-bootstrap-copy' }, working ? '不影响正常使用，未整理记忆仍可正常检索' : '原始记忆仍然保留，可正常检索'),
@@ -2284,7 +2284,7 @@ window.__ModuleLoader__.load({
           '仍有 ' + Number(bootstrap.sectionBackfill.pendingRelations) + ' 项小节归属待补齐'
           + (Number(bootstrap.sectionBackfill.failedRelations || 0) > 0 ? '，其中 ' + Number(bootstrap.sectionBackfill.failedRelations) + ' 项需要重新整理' : '')) : null,
         failures ? h('p', { className: 'sg-topic-bootstrap-copy' }, '展开详情可重新整理失败批次；提交后按历史额度排队。') : null,
-        working && failures ? h('p', { className: 'sg-topic-bootstrap-copy' }, failures + ' 条历史记忆暂未完成整理') : null,
+        failures ? h('p', { className: 'sg-topic-bootstrap-copy' }, failures + ' 条历史记忆暂未完成整理') : null,
         h(DirectoryFold, { open: detailsOpen, id: 'sg-topic-bootstrap-details' }, h('div', { className: 'sg-topic-failures' },
           (bootstrap.failures || []).map((failure, index) => h('div', { key: failure.jobId, className: 'sg-topic-failure' }, h('p', null, '自动整理已停止' + (failure.attempts ? ' · 已尝试 ' + failure.attempts + ' 次' : '')),
             index > 0 ? h(TopicRetryButton, { failure, namespace, revision, onDirectoryChanged }) : null,

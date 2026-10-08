@@ -5,6 +5,10 @@ export type TopicFailureCategory = 'max-tokens' | 'schema-invalid' | 'validation
 export interface TopicProjectionDiagnostics {
   category: TopicFailureCategory;
   reason: string;
+  fieldPath?: string;
+  actualCharacters?: number;
+  minCharacters?: number;
+  maxCharacters?: number;
   eventCount?: number;
   candidateTopicCount?: number;
   estimatedInputTokens?: number;
@@ -45,6 +49,7 @@ const TOPIC_SAFE_REASONS = new Set<string>([
   'Topic projection must contain at most 8 overview paragraphs per chapter per batch.',
   'Topic projection must return 1-12 topics.',
   'Topic projection omitted batch events.',
+  'Topic retry must replace invalid overview without removing entries.',
   'Topic projection source version changed; stale result rejected.',
   'Topic sections omitted batch events.',
   'Truncated topic sources permit navigation scope only, not factual overview.',
@@ -60,6 +65,10 @@ const TOPIC_SAFE_REASONS = new Set<string>([
   'overview must contain 0-8 source-grounded entries',
   'overview.sourceEventIds must contain unique, supplied Event ids (at most 12)',
   'overview.text must be nonempty and at most 600 characters',
+  'overview.text must be a string',
+  'overview.text is empty',
+  'overview.text contains only whitespace',
+  'overview.text exceeds the character limit',
   'overview.title must be nonempty and at most 80 characters',
   'section backfill must update only its existing chapter',
   'section.sourceEventIds must contain unique, supplied Event ids',
@@ -89,9 +98,12 @@ export function safeTopicDiagnostics(value: unknown): TopicProjectionDiagnostics
     reason: typeof input.reason === 'string' && TOPIC_SAFE_REASONS.has(input.reason)
       ? input.reason : 'topic worker failed' };
   for (const key of ['eventCount', 'candidateTopicCount', 'estimatedInputTokens', 'requestedOutputTokens',
-    'maxOutputTokens', 'modelCalls', 'attempt', 'splitDepth'] as const) {
+    'maxOutputTokens', 'modelCalls', 'attempt', 'splitDepth', 'actualCharacters', 'minCharacters', 'maxCharacters'] as const) {
     const number = input[key];
     if (typeof number === 'number' && Number.isSafeInteger(number) && number >= 0) result[key] = number;
+  }
+  if (typeof input.fieldPath === 'string' && /^topics\[\d{1,5}\]\.overview\[\d{1,5}\]\.text$/.test(input.fieldPath)) {
+    result.fieldPath = input.fieldPath;
   }
   if (['stop', 'max-tokens', 'error', 'aborted', 'tool-calls', 'unknown'].includes(String(input.finishReason))) {
     result.finishReason = input.finishReason as string;
@@ -112,4 +124,17 @@ export class TopicProjectionError extends Error {
     this.name = 'TopicProjectionError';
     this.diagnostics = diagnostics;
   }
+}
+
+/** Count Unicode code points consistently across the bridge and commit gate. */
+export function validateTopicOverviewText(value: unknown, fieldPath: string,
+  category: TopicFailureCategory = 'validation-failed'): asserts value is string {
+  const count = typeof value === 'string' ? Array.from(value).length : undefined;
+  const metadata = { fieldPath, minCharacters: 1, maxCharacters: 600,
+    ...(count === undefined ? {} : { actualCharacters: count }) };
+  const reason = typeof value !== 'string' ? 'overview.text must be a string'
+    : value.length === 0 ? 'overview.text is empty'
+    : !value.trim() ? 'overview.text contains only whitespace'
+    : count! > 600 ? 'overview.text exceeds the character limit' : null;
+  if (reason) throw new TopicProjectionError(category, reason, metadata);
 }
