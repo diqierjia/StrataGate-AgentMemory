@@ -100,6 +100,8 @@ DSH_HOME/stratagate/memory.db
 
 其余行为与普通 Event 一致：agent 记录会投影进 Knowledge Graph，跨会话持久保存，走同样的 turn 衰减与引用强化生命周期（`memory_assess` → `memory_record_use`），也可以通过该生命周期遗忘。检索为两个池各开一条独立的 top-k 通道 —— 被动池与 agent 池分别独立排序，再按加权 RRF 融合，任何一方都无法把另一方挤出结果窗口。agent 通道的占比由 `agentMemoryRetrievalWeight` 配置（默认 `1` = 平权；`0` = 记录保留但不再浮现；更大值提升 agent 记录的排序权重），卡片带 `source: 'agent-recorded'` 标记。记忆面板通过 `/api/stratagate/agent-memories`（查询参数 `session` 与 `includeArchived=true`）展示这些记录。可用 `agentMemoryEnabled: false` 整体关闭该功能，同时注销对应工具。
 
+主动 Event 可直接引用真实开放尾部消息，因此可能没有 `sourceBlockId`；搜索卡片仅在该字段存在时返回它。检索返回的原始结构必须通过 DSH 的无损 JSON 规则后，才登记可评估的证据批次；无效返回不会留下未解决批次。此处理不删除 Event 或改写来源，排序、证据引用和后续采用强化沿用原有流程。
+
 插件注册以下工具：
 
 记忆目录默认提供约 400 词元的导航。`memory_list_topics` 可分类分页或查询主题，`memory_expand_topic` 展开有来源的概览；这两个工具不生成证据批次，也不强化记忆。概览中的事实需用 `memory_search_events` 的 `topic_id` 参数查证，再走证据评估和采用流程。后台从已有事件小批量整理，失败或尚未整理时仍保留事件入口。详见[记忆目录与主题整合](MEMORY_TOPICS.zh-CN.md)。
