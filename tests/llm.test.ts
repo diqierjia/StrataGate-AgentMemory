@@ -162,7 +162,7 @@ describe('Graph canonical-name provenance compatibility (#113)', () => {
   })
 })
 
-function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?: string; reasoning?: string; error?: string; finish?: 'stop' | 'max-tokens'; toolArguments?: string; stall?: boolean; providerFinish?: 'error' | 'aborted' }>,
+function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?: string; reasoning?: string; error?: string; finish?: 'stop' | 'max-tokens' | 'tool-calls'; toolArguments?: string; stall?: boolean; providerFinish?: 'error' | 'aborted' }>,
   setup: { resolveModelInfo?: () => Promise<any>; timeoutMs?: number } = {}): {
   bridge: DshModelBridge
   session: Session
@@ -1364,6 +1364,58 @@ describe('memory topic model projection', () => {
     expect(calls).toHaveBeenCalledTimes(1)
     expect(bridge.takeSuccessfulResponses()).toEqual([])
   })
+  it.each([
+    ['', 'overview.text is empty', 0],
+    [' \t\n', 'overview.text contains only whitespace', 3],
+    ['私'.repeat(601), 'overview.text exceeds the character limit', 601],
+  ])('feeds exact overview text errors back before accepting a complete corrected result (%s)', async (value, reason, count) => {
+    const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = value as string;
+    const valid = proposal(); valid.topics[0]!.overview[1]!.text = '字'.repeat(600);
+    const { bridge, session, calls } = modelBridge([{ tool: invalid }, { tool: valid }]);
+    expect(await bridge.run(session, () => bridge.topicProjector(context()))).toEqual(valid);
+    expect(calls).toHaveBeenCalledTimes(2);
+    const feedback = calls.mock.calls[1]![0].system.split('Correct the previous Topic output')[1]!;
+    expect(feedback).toContain(reason as string);
+    expect(feedback).toContain('topics[0].overview[1].text');
+    expect(feedback).toContain(`"actualCharacters":${count}`);
+    expect(feedback).toContain('"maxCharacters":600');
+    expect(feedback).not.toContain('私');
+    expect(feedback).not.toContain('SQLite');
+    expect(bridge.takeSuccessfulResponses()).toEqual([]);
+  });
+
+  it.each([undefined, 123, { private: 'PRIVATE OUTPUT' }])('returns safe field feedback for Schema-rejected overview text (%j)', async (value) => {
+    const invalid = proposal() as any; invalid.topics[0].overview[1].text = value;
+    const { bridge, session, calls } = modelBridge([{ tool: invalid }, { tool: proposal() }]);
+    expect(await bridge.run(session, () => bridge.topicProjector(context()))).toEqual(proposal());
+    const feedback = calls.mock.calls[1]![0].system.split('Correct the previous Topic output')[1]!;
+    expect(feedback).toContain('schema-invalid');
+    expect(feedback).toContain('topics[0].overview[1].text');
+    expect(feedback).toContain('overview.text must be a string');
+    expect(feedback).not.toContain('PRIVATE');
+  });
+
+  it('rejects repeated violations with final exact metadata and no partial result', async () => {
+    const first = proposal(), second = proposal();
+    first.topics[0]!.overview[1]!.text = '';
+    second.topics[0]!.overview[1]!.text = '敏'.repeat(601);
+    const { bridge, session, calls } = modelBridge([{ tool: first, finish: 'tool-calls' }, { tool: second, finish: 'tool-calls' }]);
+    const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
+    expect(error.diagnostics).toMatchObject({ category: 'validation-failed', reason: 'overview.text exceeds the character limit',
+      fieldPath: 'topics[0].overview[1].text', actualCharacters: 601, minCharacters: 1, maxCharacters: 600, modelCalls: 2,
+      finishReason: 'tool-calls', requestedOutputTokens: 32768, maxOutputTokens: 32768 });
+    expect(calls).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(error)).not.toMatch(/敏|SQLite/);
+    expect(bridge.takeSuccessfulResponses()).toEqual([]);
+  });
+
+  it('counts supplementary Unicode characters once and preserves valid text verbatim', async () => {
+    const output = proposal(); output.topics[0]!.overview[1]!.text = '𠮷'.repeat(600);
+    const { bridge, session, calls } = modelBridge([{ tool: output }]);
+    expect(await bridge.run(session, () => bridge.topicProjector(context()))).toEqual(output);
+    expect(calls).toHaveBeenCalledTimes(1);
+  });
+
   it('records explicit max-tokens and reasoning metadata without raw output even for complete JSON', async () => {
     const { bridge, session, calls } = modelBridge([{ tool: proposal(), reasoning: 'PRIVATE REASONING', finish: 'max-tokens' }],
       { resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'off' }] } }) });

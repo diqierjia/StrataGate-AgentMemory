@@ -42,7 +42,7 @@ function currentPluginVersion(): string {
 const STRATAGATE_DSH_VERSION = currentPluginVersion()
 // Invalidate cached paragraph-based views even for prerelease builds that share
 // a package version and unchanged database revision.
-const TOPIC_DIRECTORY_VIEW_VERSION = 5
+const TOPIC_DIRECTORY_VIEW_VERSION = 6
 
 function graphProjectionIsProcessing(job: {
   status: string
@@ -549,10 +549,9 @@ function topicDirectoryProjection(snapshot: StrataGateSnapshot, agentMemoryWeigh
   const total = new Set([...history.map(([id]) => id), ...backfillRelations.map(({ id }) => id)]).size
   const failedRelations = backfillRelations.filter(({ topicId, id, version }) => failedWork.has(relationKey(topicId, id, version))).length
   const bootstrap = frozen ? {
-    status: backfillRelations.length > 0 && outstandingWork.size === failedWork.size ? 'failed'
-      : Object.keys(state.rebuildVersions ?? {}).length > 0 || backfillRelations.length > 0
-      ? (outstandingWork.size === failedWork.size ? 'completed' : 'running')
-      : frozen.status,
+    status: outstandingWork.size === 0 ? 'completed'
+      : outstandingWork.size === failedWork.size ? 'failed'
+      : frozen.status === 'pending' ? 'pending' : 'running',
     total,
     completed: total - outstanding.size,
     failedEvents: new Set(failures.flatMap(({ eventIds }) => eventIds)).size,

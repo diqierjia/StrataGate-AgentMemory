@@ -32,7 +32,7 @@ import type {
   TopicProjector,
   TopicProjectionDiagnostics,
 } from '@diqier/stratagate'
-import { TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
+import { validateTopicOverviewText, TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
 import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, validateProfile, type PersistentProfile } from '@diqier/stratagate'
 import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
 import { dshMessageSource } from './dsh-compatibility.js'
@@ -530,7 +530,7 @@ function parseTopicProjection(value: unknown, context: TopicProjectionContext): 
     return value as string[]
   }
   const rawTopics = raw.topics as unknown[];
-  const topics = rawTopics.map((candidate) => {
+  const topics = rawTopics.map((candidate, topicIndex) => {
     const item = object(candidate)
     const title = boundedText(item.title, 'topic.title', 120)
     const label = title.normalize('NFKC').replace(/\s+/g, ' ').toLowerCase()
@@ -564,12 +564,13 @@ function parseTopicProjection(value: unknown, context: TopicProjectionContext): 
     if (!Array.isArray(item.overview) || item.overview.length > 8) fail('overview must contain 0-8 source-grounded entries')
     const overviewTitles = [...sections.map((section) => section.title),
       ...(existing?.sectionTitles ?? memoryTopicMembershipSections(existing ?? { overview: [] }).map((section) => section.title))]
-    const overview: MemoryTopicOverview[] = (item.overview as unknown[]).map((candidateEntry) => {
+    const overview: MemoryTopicOverview[] = (item.overview as unknown[]).map((candidateEntry, overviewIndex) => {
       const entry = object(candidateEntry)
       if (Object.keys(entry).some((key) => !['kind', 'title', 'text', 'sourceEventIds'].includes(key))) fail('unexpected overview field')
       const sectionTitle = entry.title === undefined ? undefined : boundedText(entry.title, 'overview.title', 80)
       if (!TOPIC_OVERVIEW_KINDS.includes(entry.kind as MemoryTopicOverviewKind)) fail('unknown overview kind')
-      const paragraph = boundedText(entry.text, 'overview.text', 600)
+      validateTopicOverviewText(entry.text, `topics[${topicIndex}].overview[${overviewIndex}].text`)
+      const paragraph = entry.text
       const paragraphSources = sourceIds(entry.sourceEventIds, 'overview.sourceEventIds', new Set(sources), 12)
       if (entry.kind !== 'scope' && paragraphSources.some((id) => truncatedIds.has(id))) fail('truncated Event evidence may only support scope entries')
       const preserved = existing?.overview.some((old) =>
@@ -929,6 +930,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
     let attemptsUsed = 0
     let noAdapterRetried = false
     let graphRetryFeedback = ''
+    let topicRetryFeedback = ''
     let offFallback = false
     for (let attempt = 1; attempt <= JSON_RESPONSE_ATTEMPTS; attempt += 1) {
       attemptsUsed = attempt
@@ -941,7 +943,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
         ...baseRoute,
         ...(useOff ? { reasoningEffort: 'off' as ReasoningEffortId } : {}),
         messages: [message],
-        system: attempt === 1 ? system : `${system}\n\n${JSON_RETRY_INSTRUCTION}${graphRetryFeedback}`,
+        system: attempt === 1 ? system : `${system}\n\n${JSON_RETRY_INSTRUCTION}${graphRetryFeedback}${topicRetryFeedback}`,
         tools: [{
           name: STRUCTURED_TOOLS[kind].name,
           description: STRUCTURED_TOOLS[kind].description,
@@ -1064,7 +1066,18 @@ Use project scope for repository decisions, user scope for stable preferences/id
         if (kind === 'graphProjector') parsed = normalizeGraphNameProvenance(parsed)
         const violations = validateArgs(STRUCTURED_TOOLS[kind].parameters, parsed)
         if (violations.length > 0) {
-          if (isTopic) throw topicError('schema-invalid', 'structured topic schema mismatch')
+          if (isTopic) {
+            // Schema rejects missing/non-string text before semantic validation.
+            // Derive metadata from known positions, never validator messages.
+            const topics = object(parsed).topics
+            if (Array.isArray(topics)) topics.forEach((topic, topicIndex) => {
+              const overview = object(topic).overview
+              if (Array.isArray(overview)) overview.forEach((part, overviewIndex) => {
+                validateTopicOverviewText(object(part).text, `topics[${topicIndex}].overview[${overviewIndex}].text`, 'schema-invalid')
+              })
+            })
+            throw topicError('schema-invalid', 'structured topic schema mismatch')
+          }
           if (kind === 'graphProjector') {
             const paths = violations.flatMap((violation) => violation.match(/nodes\[\d+\]\.metadataProvenance\.name(?:\[\d+\])?/g) ?? [])
             graphRetryFeedback = paths.length > 0
@@ -1088,7 +1101,9 @@ Use project scope for repository decisions, user scope for stable preferences/id
         try {
           validate?.(parsed)
         } catch (error) {
-          if (isTopic) throw topicError('validation-failed', error instanceof TopicProjectionError ? error.diagnostics.reason : 'topic semantic validation failed')
+          if (isTopic) throw error instanceof TopicProjectionError
+            ? new TopicProjectionError(error.diagnostics.category, error.diagnostics.reason, { ...topicDiagnostics, ...error.diagnostics })
+            : topicError('validation-failed', 'topic semantic validation failed')
           throw new ModelJsonResponseError(`StrataGate ${expectedTool} arguments were invalid: ${error instanceof Error ? error.message : String(error)}`,
             { cause: error, response: responseForError })
         }
@@ -1104,12 +1119,18 @@ Use project scope for repository decisions, user scope for stable preferences/id
         return parsed
       } catch (error) {
         if (!(error instanceof ModelJsonResponseError) && !(isTopic && error instanceof TopicProjectionError)) throw error
+        let retryError: ModelJsonResponseError | TopicProjectionError = error
+        if (isTopic && error instanceof TopicProjectionError) {
+          const safe = new TopicProjectionError(error.diagnostics.category, error.diagnostics.reason, { ...topicDiagnostics, ...error.diagnostics })
+          topicRetryFeedback = `\nCorrect the previous Topic output using these validation errors: ${JSON.stringify(safe.diagnostics)}. Return the complete result; preserve evidence, references and Event assignments. Do not truncate, delete or fabricate content to bypass validation.`
+          retryError = safe
+        }
         lastError = finish.kind === 'max-tokens'
           ? new ModelJsonResponseError(
             `StrataGate ${STRUCTURED_TOOLS[kind].name} call was truncated before valid arguments`,
-            { cause: error, response: responseForError },
+            { cause: retryError, response: responseForError },
           )
-          : error
+          : retryError
         if ((kind === 'graphProjector' || kind === 'topicProjector') && finish.kind === 'max-tokens') break
         if (attempt < JSON_RESPONSE_ATTEMPTS) {
           this.ctx.logger.warn(`stratagate-memory model returned an invalid structured tool call; retrying (${attempt}/${JSON_RESPONSE_ATTEMPTS})`)

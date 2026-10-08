@@ -563,7 +563,7 @@ describe('rebuildable Event-backed topic directory', () => {
       if (attempt < 2) context = directory.claim(events, new Date(clock).toISOString(), 'bootstrap')!;
     }
     directory.synchronize(events, new Date(clock).toISOString());
-    expect(directory.bootstrap()).toMatchObject({ status: 'completed', failedEvents: 2 });
+    expect(directory.bootstrap()).toMatchObject({ status: 'failed', failedEvents: 2 });
     const oldId = context.jobId;
     const retry = directory.retry(oldId, events, new Date(clock).toISOString());
     expect(retry.jobId).not.toBe(oldId);
@@ -583,7 +583,7 @@ describe('rebuildable Event-backed topic directory', () => {
     directory.synchronize(events, new Date(clock).toISOString());
     expect(directory.jobs().find(({ id }) => id === context.jobId)!.attempts).toBe(3);
     expect(directory.hasPending(events, clock)).toBe(false);
-    expect(directory.bootstrap()).toMatchObject({ status: 'completed', failedEvents: 2 });
+    expect(directory.bootstrap()).toMatchObject({ status: 'failed', failedEvents: 2 });
     directory.retry(context.jobId, events, new Date(clock).toISOString());
     context = directory.claim(events, new Date(clock).toISOString(), 'bootstrap')!;
     directory.complete(context.jobId, projection(context), events, new Date(clock).toISOString());

@@ -268,7 +268,7 @@ describe('read-only Topic Directory admin data', () => {
     const retry = vi.fn(async () => ({ jobId: 'new-rebuild', status: 'pending' as const }));
     runtime.adminRetryTopicProjection = retry;
     const directory = (await request(runtime)).body;
-    expect(directory.bootstrap).toMatchObject({ total: 1, completed: 0, failedEvents: 1, status: 'completed' });
+    expect(directory.bootstrap).toMatchObject({ total: 1, completed: 0, failedEvents: 1, status: 'failed' });
     expect(directory.bootstrap.failures[0]).toMatchObject({ jobId: 'rebuild-failure', eventCount: 1 });
     expect(directory.pending.total).toBe(0);
     const page = await request(runtime, `topic-events&topicId=pending&sectionKey=failure:rebuild-failure&expectedRevision=${directory.revision}`);
@@ -792,7 +792,7 @@ describe('read-only Topic Directory admin data', () => {
     })]
     const result = await request(fakeRuntime(snapshot))
     expect(result.body.bootstrap).toMatchObject({
-      status: 'completed', total: 2, completed: 1, failedEvents: 1,
+      status: 'failed', total: 2, completed: 1, failedEvents: 1,
       failures: [{ jobId: 'failed-job', eventCount: 1, attempts: 3, lastError: 'worker-failed' }],
     })
     expect(JSON.stringify(result.body)).not.toContain('RAW SECRET MODEL RESPONSE')
@@ -815,6 +815,42 @@ describe('read-only Topic Directory admin data', () => {
     const result = await request(fakeRuntime(snapshot))
     expect(result.body.bootstrap).toMatchObject({ status: 'pending', total: 2, completed: 1, failedEvents: 0, failures: [] })
   })
+
+  it('reports 74/86 truthfully before recovery, while queued, after success and after exhaustion', async () => {
+    const snapshot = emptySnapshot(); snapshot.events = Array.from({ length: 86 }, (_, i) => event(`history-${i}`));
+    snapshot.memoryTopicState = freeze(snapshot.events);
+    snapshot.memoryTopicState.projectedVersions = versions(snapshot.events.slice(0, 74));
+    snapshot.memoryTopicState.jobs = [failedJob('old-failure', snapshot.events.slice(74), { lastError: 'invalid-output' })];
+    snapshot.memoryTopicState.bootstrap!.status = 'completed';
+    delete snapshot.memoryTopicState.recoveryVersion;
+    const original = structuredClone(snapshot.memoryTopicState);
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'failed', total: 86, completed: 74, failedEvents: 12 });
+    // Read-only API calls do not recover jobs or consume the recovery marker.
+    expect(snapshot.memoryTopicState).toEqual(original);
+    const directory = new MemoryTopicDirectory(); directory.restore(snapshot.memoryTopicState);
+    directory.initializeBootstrap(snapshot.events, now);
+    snapshot.memoryTopicState = directory.snapshot();
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'pending', total: 86, completed: 74, failedEvents: 0, failures: [] });
+    const queued = structuredClone(snapshot.memoryTopicState);
+    const claim = directory.claim(snapshot.events, now)!;
+    snapshot.memoryTopicState = directory.snapshot();
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'running', total: 86, completed: 74 });
+    directory.complete(claim.jobId, { topics: [{ title: '历史', description: '历史资料', sourceEventIds: claim.events.map(({ id }) => id), overview: [] }] }, snapshot.events, now);
+    snapshot.memoryTopicState = directory.snapshot();
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'completed', total: 86, completed: 86, failedEvents: 0, failures: [] });
+    directory.restore(queued);
+    let clock = Date.parse(now);
+    for (let i = 0; i < 3; i++) {
+      const claim = directory.claim(snapshot.events, new Date(clock).toISOString())!;
+      directory.fail(claim.jobId, new TopicProjectionError('validation-failed', 'overview.text is empty'), new Date(clock).toISOString());
+      clock += 120000;
+    }
+    snapshot.memoryTopicState = directory.snapshot();
+    const failed = (await request(fakeRuntime(snapshot))).body.bootstrap;
+    expect(failed).toMatchObject({ status: 'failed', total: 86, completed: 74, failedEvents: 12 });
+    expect(failed.failures).toHaveLength(1);
+    expect(failed.failures[0]).toMatchObject({ attempts: 3, eventCount: 12, lastError: 'validation-failed: overview.text is empty' });
+  });
 
   it('returns a completed empty Bootstrap without an active-processing signal', async () => {
     const snapshot = emptySnapshot()
