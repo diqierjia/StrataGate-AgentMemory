@@ -4,7 +4,7 @@ import type { EventCard, ExtractionContext, GraphProjectionContext, MemoryBlock,
 import { describe, expect, it, vi } from 'vitest'
 import { ModelJsonResponseError, parseJsonResponse } from '../src/json-response.js'
 import { DshModelBridge } from '../src/llm.js'
-import { emptyProfile, estimateTokens, StrataGate, TopicProjectionError } from '@diqier/stratagate'
+import { emptyProfile, estimateTokens, StrataGate, TopicProjectionError, topicOverviewRepairsFromError } from '@diqier/stratagate'
 
 describe('DeepSeek Harness model JSON parsing', () => {
   it('extracts fenced JSON without being confused by braces in strings', () => {
@@ -1407,6 +1407,68 @@ describe('memory topic model projection', () => {
     expect(calls).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(error)).not.toMatch(/敏|SQLite/);
     expect(bridge.takeSuccessfulResponses()).toEqual([]);
+  });
+
+  it.each(['all', 'invalid-only', 'kind', 'sources', 'schema'] as const)('rejects dropping or disguising a required overview replacement (%s)', async (mode) => {
+    const first = proposal(), second = proposal();
+    first.topics[0]!.overview[1]!.text = '敏'.repeat(601);
+    if (mode === 'all' || mode === 'schema') second.topics[0]!.overview = [];
+    if (mode === 'invalid-only') second.topics[0]!.overview.pop();
+    if (mode === 'kind') second.topics[0]!.overview[1]!.kind = 'scope';
+    if (mode === 'sources') second.topics[0]!.overview[1] = structuredClone(second.topics[0]!.overview[0]!);
+    if (mode === 'schema') (first.topics[0]!.overview[1] as any).text = { private: 'PRIVATE MODEL OUTPUT' };
+    const { bridge, session, calls } = modelBridge([{ tool: first }, { tool: second }]);
+    const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
+    expect(error).toBeInstanceOf(TopicProjectionError);
+    expect(error.diagnostics).toMatchObject({ category: 'validation-failed', reason: 'Topic retry must replace invalid overview without removing entries.', modelCalls: 2 });
+    expect(calls).toHaveBeenCalledTimes(2);
+    const payload = JSON.parse(calls.mock.calls[1]![0].messages[0].content[0].text);
+    expect(payload.overviewRepairRequirements).toEqual([{ kind: 'open-question', sourceEventIds: ['evt_topic_new'], minimumEntries: 1 }]);
+    expect(JSON.stringify(error)).not.toMatch(/敏|PRIVATE|evt_topic_new|SQLite/);
+    expect(bridge.takeSuccessfulResponses()).toEqual([]);
+  });
+
+  it.each([
+    [{ error: 'PRIVATE PROVIDER OUTPUT' }, 'provider-failed'],
+    [{ stall: true }, 'timeout'],
+    [{ text: '{', finish: 'max-tokens' }, 'max-tokens'],
+  ])('carries repair constraints when the next response fails before validation (%s)', async (response, category) => {
+    const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(601);
+    const { bridge, session, calls } = modelBridge([{ tool: invalid }, response as any], { timeoutMs: 50 });
+    const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
+    expect(error.diagnostics.category).toBe(category);
+    expect(calls).toHaveBeenCalledTimes(2);
+    expect(topicOverviewRepairsFromError(error)).toEqual([{ kind: 'open-question', sourceEventIds: ['evt_topic_new'], minimumEntries: 1 }]);
+    expect(JSON.stringify(error)).not.toMatch(/PRIVATE|字|evt_topic_new/);
+  });
+
+  it('does not let a valid duplicate replace a removed invalid overview entry', async () => {
+    const first = proposal(), second = proposal();
+    first.topics[0]!.overview.push(structuredClone(first.topics[0]!.overview[1]!));
+    first.topics[0]!.overview[2]!.text = '字'.repeat(601);
+    const { bridge, session, calls } = modelBridge([{ tool: first }, { tool: second }]);
+    await expect(bridge.run(session, () => bridge.topicProjector(context()))).rejects.toThrow('must replace invalid overview');
+    expect(JSON.parse(calls.mock.calls[1]![0].messages[0].content[0].text).overviewRepairRequirements[0].minimumEntries).toBe(2);
+  });
+
+  it('refines a legacy nonempty repair floor into a specific replacement without requiring extra paragraphs', async () => {
+    const input = context(); input.overviewRepairRequirements = [{ sourceEventIds: [], minimumEntries: 1 }];
+    const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(601);
+    const corrected = proposal(); corrected.topics[0]!.overview.shift();
+    const { bridge, session, calls } = modelBridge([{ tool: invalid }, { tool: corrected }]);
+    expect(await bridge.run(session, () => bridge.topicProjector(input))).toEqual(corrected);
+    expect(calls).toHaveBeenCalledTimes(2);
+  });
+
+  it('accepts legal replacements after chapter/paragraph reordering and keeps ordinary first-call empty overview legal', async () => {
+    const invalid = proposal(), corrected = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(601);
+    corrected.topics[0]!.overview.reverse();
+    const repaired = modelBridge([{ tool: invalid }, { tool: corrected }]);
+    expect(await repaired.bridge.run(repaired.session, () => repaired.bridge.topicProjector(context()))).toEqual(corrected);
+    const empty = proposal(); empty.topics[0]!.overview = [];
+    const fresh = modelBridge([{ tool: empty }]);
+    expect(await fresh.bridge.run(fresh.session, () => fresh.bridge.topicProjector(context()))).toEqual(empty);
+    expect(fresh.calls).toHaveBeenCalledTimes(1);
   });
 
   it('counts supplementary Unicode characters once and preserves valid text verbatim', async () => {

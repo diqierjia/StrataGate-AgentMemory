@@ -49,6 +49,7 @@ const TOPIC_SAFE_REASONS = new Set<string>([
   'Topic projection must contain at most 8 overview paragraphs per chapter per batch.',
   'Topic projection must return 1-12 topics.',
   'Topic projection omitted batch events.',
+  'Topic retry must replace invalid overview without removing entries.',
   'Topic projection source version changed; stale result rejected.',
   'Topic sections omitted batch events.',
   'Truncated topic sources permit navigation scope only, not factual overview.',
