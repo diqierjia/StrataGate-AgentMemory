@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { bm25Rank, weightedSearchTokens } from './search.js';
 import type { EventCard } from './types.js';
 import { TopicProjectionError, safeTopicDiagnostics, validateTopicOverviewText, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
-import { TopicOverviewRepairGuard, carryTopicOverviewRepairs, topicOverviewRepairsFromError, topicOverviewRepairsForHistoricalFailure, partitionTopicOverviewRepairs, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
+import { TopicOverviewRepairGuard, uniqueTopicOverviewEntries, carryTopicOverviewRepairs, topicOverviewRepairsFromError, topicOverviewRepairsForHistoricalFailure, partitionTopicOverviewRepairs, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
 
 export const MEMORY_TOPIC_PROJECTOR_VERSION = 3;
 export const TOPIC_BATCH_LIMIT = 12;
@@ -789,8 +789,7 @@ export class MemoryTopicDirectory {
           throw new TopicProjectionError('validation-failed', 'New topic overview must match a final topic section.');
         }
       }
-      const overview = unique(proposal.overview.filter((part) => memoryTopicOverviewMatchesSection(part, titles))
-        .map((part) => JSON.stringify(part))).map((part) => JSON.parse(part) as MemoryTopicOverview);
+      const overview = uniqueTopicOverviewEntries(proposal.overview.filter((part) => memoryTopicOverviewMatchesSection(part, titles))).map((part) => structuredClone(part));
       // Eight limits one model response, not accumulated prose. Keep old prose
       // only while its section exists; never restore membership to save prose.
       for (const part of inherited) if (memoryTopicOverviewMatchesSection(part, titles)
@@ -805,6 +804,9 @@ export class MemoryTopicDirectory {
     }
     if (job.sourceEventIds.some((eventId) => !covered.has(eventId))) throw new TopicProjectionError('validation-failed', 'every supplied batch Event must be assigned to a topic');
     repairs.assert(result);
+    // Validate the exact post-filter/deduplication state before committing any
+    // Topic, Event projection ledger or Backfill progress.
+    repairs.assert({ topics: proposals });
     for (const topic of proposals) {
       const index = this.state.topics.findIndex((current) => current.id === topic.id);
       if (index < 0) this.state.topics.push(topic); else this.state.topics[index] = topic;

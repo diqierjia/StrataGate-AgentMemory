@@ -13,11 +13,22 @@ const ids = (value: unknown): string[] => Array.isArray(value)
   ? [...new Set(value.filter((id): id is string => typeof id === 'string'))].sort() : [];
 const key = (row: Pick<TopicOverviewRepairRequirement, 'kind' | 'sourceEventIds'>) => JSON.stringify([row.kind ?? null, row.sourceEventIds]);
 const validText = (value: unknown): boolean => typeof value === 'string' && !!value.trim() && Array.from(value).length <= 600;
+/** The same semantic identity is used for repair counts and persisted deduplication.
+ * Source/property order cannot turn a copied paragraph into another replacement. */
+export function uniqueTopicOverviewEntries<T>(parts: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return parts.filter((part) => {
+    const row = record(part);
+    const identity = JSON.stringify([row.kind, row.title ?? null, row.text, ids(row.sourceEventIds)]);
+    if (seen.has(identity)) return false;
+    seen.add(identity); return true;
+  });
+}
 function entries(value: unknown): Record<string, unknown>[] {
   const topics = record(value).topics;
   return Array.isArray(topics) ? topics.flatMap((topic) => {
     const overview = record(topic).overview;
-    return Array.isArray(overview) ? overview.map(record) : [];
+    return Array.isArray(overview) ? uniqueTopicOverviewEntries(overview).map(record) : [];
   }) : [];
 }
 
@@ -66,7 +77,7 @@ export class TopicOverviewRepairGuard {
       const item = record(topic), overview = item.overview;
       const candidate = context.existingTopics.find(({ id }) => id === item.topicId);
       const allowed = new Set([...context.events.map(({ id }) => id), ...(candidate?.sourceEventIds ?? [])]);
-      return Array.isArray(overview) ? overview.map((entry) => {
+      return Array.isArray(overview) ? uniqueTopicOverviewEntries(overview).map((entry) => {
         const part = record(entry);
         const row: TopicOverviewRepairRequirement = {
           ...(kinds.includes(String(part.kind)) ? { kind: part.kind as MemoryTopicOverviewKind } : {}),
@@ -94,7 +105,7 @@ export class TopicOverviewRepairGuard {
   }
   assert(value: unknown): void {
     if (!this.required.length) return;
-    const actual = entries(value).filter((part) => validText(part.text)).map((part) => ({
+    const actual = uniqueTopicOverviewEntries(entries(value)).filter((part) => validText(part.text)).map((part) => ({
       kind: part.kind, sourceEventIds: ids(part.sourceEventIds),
     }));
     // Constraints overlap intentionally: a legacy nonempty floor and a

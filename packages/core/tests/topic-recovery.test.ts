@@ -196,6 +196,41 @@ describe('Issue #119 writer-open recovery', () => {
     } finally { await memory.close(); await rm(folder, { recursive: true, force: true }); }
   });
 
+  it('rejects copied replacements atomically and persists genuinely different reordered replacements', async () => {
+    const { events, legacy, clock } = await fixture(1, 0);
+    legacy.jobs.at(-1)!.overviewRepairRequirements = [{ kind: 'history', sourceEventIds: [events[0]!.id], minimumEntries: 2 }];
+    const directory = new MemoryTopicDirectory(); directory.restore(legacy);
+    directory.initializeBootstrap(events, new Date(clock).toISOString());
+    const claim = directory.claim(events, new Date(clock).toISOString())!;
+    const copied = result(claim); copied.topics[0]!.overview.push(structuredClone(copied.topics[0]!.overview[0]!));
+    const before = directory.snapshot();
+    expect(() => directory.complete(claim.jobId, copied, events, new Date(clock).toISOString())).toThrow('must replace invalid overview');
+    expect(directory.snapshot()).toEqual(before);
+    copied.topics[0]!.overview[1]!.text = '另一个有来源的历史进展。'; copied.topics[0]!.overview.reverse();
+    directory.complete(claim.jobId, copied, events, new Date(clock).toISOString());
+    expect(directory.snapshot().topics[0]!.overview).toEqual(copied.topics[0]!.overview);
+    expect(directory.snapshot(events).bootstrap).toMatchObject({ status: 'completed', failedEvents: 0 });
+  });
+
+  it('checks repair integrity after obsolete inherited sections are filtered from persisted overview', async () => {
+    const { events, legacy, clock } = await fixture(2, 1);
+    const old = { kind: 'history' as const, title: '旧节', text: '以前的记录。', sourceEventIds: [events[1]!.id] };
+    legacy.topics[0]!.sourceEventIds = events.map(({ id }) => id); legacy.topics[0]!.sourceVersions = versions(events);
+    legacy.topics[0]!.overview = [old]; legacy.topics[0]!.sections = [
+      { title: '旧节', sourceEventIds: [events[1]!.id] }, { title: '历史', sourceEventIds: [events[0]!.id] },
+    ];
+    legacy.jobs.at(-1)!.overviewRepairRequirements = [{ kind: 'history', sourceEventIds: [events[1]!.id], minimumEntries: 1 }];
+    const directory = new MemoryTopicDirectory(); directory.restore(legacy);
+    directory.initializeBootstrap(events, new Date(clock).toISOString());
+    const claim = directory.claim(events, new Date(clock).toISOString())!;
+    const output = { topics: [{ ...result(claim).topics[0]!, topicId: legacy.topics[0]!.id, overview: [structuredClone(old)],
+      sections: [{ title: '历史', sourceEventIds: [events[1]!.id] }],
+    }] };
+    const before = directory.snapshot();
+    expect(() => directory.complete(claim.jobId, output, events, new Date(clock).toISOString())).toThrow('must replace invalid overview');
+    expect(directory.snapshot()).toEqual(before);
+  });
+
   it('preserves repair obligations when max-tokens splits a later attempt', async () => {
     const { events, clock } = await fixture(2, 0);
     const directory = new MemoryTopicDirectory(); directory.initializeBootstrap(events, new Date(clock).toISOString());

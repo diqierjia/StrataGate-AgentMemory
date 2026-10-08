@@ -1451,6 +1451,26 @@ describe('memory topic model projection', () => {
     expect(JSON.parse(calls.mock.calls[1]![0].messages[0].content[0].text).overviewRepairRequirements[0].minimumEntries).toBe(2);
   });
 
+  it.each(['exact', 'property-order', 'source-order'] as const)('rejects copied valid replacements after distinct counting (%s)', async (mode) => {
+    const input = context(), first = proposal(), second = proposal();
+    if (mode === 'source-order') {
+      const event = structuredClone(input.events[0]!); event.id = 'evt_topic_other'; input.events.push(event);
+      for (const output of [first, second]) {
+        output.topics[0]!.sourceEventIds.push(event.id);
+        output.topics[0]!.sections![0]!.sourceEventIds.push(event.id);
+        output.topics[0]!.overview[1]!.sourceEventIds.push(event.id);
+      }
+    }
+    first.topics[0]!.overview.push({ ...structuredClone(first.topics[0]!.overview[1]!), text: '字'.repeat(601) });
+    const valid = second.topics[0]!.overview[1]!;
+    const copy = mode === 'property-order' ? { sourceEventIds: valid.sourceEventIds, text: valid.text, ...(valid.title !== undefined ? { title: valid.title } : {}), kind: valid.kind } : structuredClone(valid);
+    if (mode === 'source-order') copy.sourceEventIds.reverse();
+    second.topics[0]!.overview.push(copy);
+    const { bridge, session, calls } = modelBridge([{ tool: first }, { tool: second }]);
+    await expect(bridge.run(session, () => bridge.topicProjector(input))).rejects.toThrow('must replace invalid overview');
+    expect(calls).toHaveBeenCalledTimes(2);
+  });
+
   it('refines a legacy nonempty repair floor into a specific replacement without requiring extra paragraphs', async () => {
     const input = context(); input.overviewRepairRequirements = [{ sourceEventIds: [], minimumEntries: 1 }];
     const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(601);
