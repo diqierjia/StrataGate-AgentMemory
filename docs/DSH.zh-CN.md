@@ -100,6 +100,8 @@ DSH_HOME/stratagate/memory.db
 
 其余行为与普通 Event 一致：agent 记录会投影进 Knowledge Graph，跨会话持久保存，走同样的 turn 衰减与引用强化生命周期（`memory_assess` → `memory_record_use`），也可以通过该生命周期遗忘。检索为两个池各开一条独立的 top-k 通道 —— 被动池与 agent 池分别独立排序，再按加权 RRF 融合，任何一方都无法把另一方挤出结果窗口。agent 通道的占比由 `agentMemoryRetrievalWeight` 配置（默认 `1` = 平权；`0` = 记录保留但不再浮现；更大值提升 agent 记录的排序权重），卡片带 `source: 'agent-recorded'` 标记。记忆面板通过 `/api/stratagate/agent-memories`（查询参数 `session` 与 `includeArchived=true`）展示这些记录。可用 `agentMemoryEnabled: false` 整体关闭该功能，同时注销对应工具。
 
+主动 Event 可直接引用真实开放尾部消息，因此可能没有 `sourceBlockId`；搜索卡片仅在该字段存在时返回它。检索返回的原始结构必须通过 DSH 的无损 JSON 规则后，才登记可评估的证据批次；无效返回不会留下未解决批次。此处理不删除 Event 或改写来源，排序、证据引用和后续采用强化沿用原有流程。
+
 插件注册以下工具：
 
 记忆目录默认提供约 400 词元的导航。`memory_list_topics` 可分类分页或查询主题，`memory_expand_topic` 展开有来源的概览；这两个工具不生成证据批次，也不强化记忆。概览中的事实需用 `memory_search_events` 的 `topic_id` 参数查证，再走证据评估和采用流程。后台从已有事件小批量整理，失败或尚未整理时仍保留事件入口。详见[记忆目录与主题整合](MEMORY_TOPICS.zh-CN.md)。
@@ -176,7 +178,9 @@ Topic Projection 使用独立的 32,768 token 输出上限；若宿主公布了�
 
 Topic 技术详情及 `/api/stratagate/overview` 的任务详情会区分 `max-tokens`、`schema-invalid`、`validation-failed`、`timeout`、`provider-failed`、`worker-failed` 和 `source-changed`。诊断仅记录安全校验规则、数量、估算 token、请求预算、finish reason、reasoning off 请求/回退状态和尝试次数，不记录原始聊天、Event/Topic 正文、完整模型响应或 reasoning。`requested-unverified` 表示发送了 off 请求，不能证明 provider 实际关闭了 reasoning；若仍观察到 reasoning，会明确标记。
 
-只有明确的 `finish=max-tokens` 才会二分失败批次，最多四层，单条批次最多尝试三次；每个历史子批次仍受共用 Bootstrap 额度约束，不裁剪 Event 证据。其他错误维持原有有限重试与退避。自动尝试耗尽后，可通过目录“重新整理这 N 条”（`POST /api/stratagate/topics/retry`，携带 namespace、jobId 和 expectedRevision），或 `POST /api/stratagate/jobs/retry?namespace=...&kind=topic-projection&jobId=...` 重新排队。两条路径均开启新 jobId 周期，检查来源版本并拒绝旧结果，状态在重启后保留。升级不会自动复活历史终态失败。
+模型已经生成不合格 overview 时，后续请求必须提供合法替代，不能删除错误段落或清空 overview 后显示成功。任务单独持久化 `overviewRepairRequirements`：仅保存合法来源编号、类型及最低替代数量，不保存段落正文；结构化重试、任务重试、重启和拆批均继承对应约束。已知旧 overview 字段失败没有段落身份时，至少要求一个合法替代；首次正常空 overview 仍合法。已成功完成的失败记录保留原失败历史并退出当前故障统计；目录、Dashboard 和任务详情都只展示仍有效且存在未完成工作的失败，人工重试只处理剩余 Event。
+
+只有明确的 `finish=max-tokens` 才会二分失败批次，最多四层，单条批次最多尝试三次；每个历史子批次仍受共用 Bootstrap 额度约束，不裁剪 Event 证据。其他错误维持原有有限重试与退避。自动尝试耗尽后，可通过目录“重新整理这 N 条”（`POST /api/stratagate/topics/retry`，携带 namespace、jobId 和 expectedRevision），或 `POST /api/stratagate/jobs/retry?namespace=...&kind=topic-projection&jobId=...` 重新排队。两条路径均开启新 jobId 周期，检查来源版本并拒绝旧结果，状态在重启后保留。包含 #119 修复的版本在首次 writer 初始化时，使用独立的持久化 Recovery Version 为当前有效、仍有未完成工作的 Topic 终态失败任务自动开启一次新的最多三次任务尝试，仍消耗已有历史额度。已成功、来源过期及失效的历史记录不重跑；恢复标记与新任务一起提交，重启、刷新和重复初始化不再次清零。本轮再次失败后保留部分完成进度、错误详情和人工重试入口。只有当前应完成工作全部通过校验才返回 `completed`，仅剩终态失败时返回 `failed`。
 
 配置文件中的 `blockTurnSize` 和 `blockDecayLambda` 是初始后备值；一旦在“高级设置”中修改，持久化的界面值优先生效。λ 默认值为 `0.3`；数字越小，记忆遗忘越慢、消耗 token 越多，不建议大于 `0.4`。
 

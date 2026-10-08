@@ -32,7 +32,7 @@ import type {
   TopicProjector,
   TopicProjectionDiagnostics,
 } from '@diqier/stratagate'
-import { TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
+import { TopicOverviewRepairGuard, carryTopicOverviewRepairs, validateTopicOverviewText, TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
 import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, validateProfile, type PersistentProfile } from '@diqier/stratagate'
 import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
 import { dshMessageSource } from './dsh-compatibility.js'
@@ -303,7 +303,8 @@ Topic 是长期的大章节，按项目、生活领域或长期关系组织，�
 导航层级是章 → 节 → Event。Event 保持具体、独立；节必须能持续容纳同类事件。单个 bug、版本号、某天进展、一次安装或一个修复方案不能单独成节，也不要照抄 Event 标题作为节标题。例如“0.2.4 提取根因暴露过程”“0.2.6 提取仍 0 产出”“0.2.7 修复方案”“封块异常待排查”都进入“缺陷排查与修复”；“今日版本迭代 0.2.1→0.2.7”“0.2.8 安装与验证”进入“版本发布与安装”。具体版本、时间、根因、处置过程和状态放在节内概要及原 Event 中。“计划修复”“修复中”“已修复”属于同一类别的不同状态，不另起节。同一类别可以有多个有来源的段落，不要为段落另起标题。
 先找本章已有类别；它能容纳时必须复用。新章先归纳少量长期类别，不把每个 Event 各建一节；后续批次沿用这些类别，每批通常只新增 0-2 个节。类别数量由真实内容决定，不设硬节数上限，也不要把无关类别硬塞进“其他”。以上是项目章的例子，不是全局固定分类表；求职章可用“投递与面试”“职业选择”“入职与适应”，生活章使用其自身适合的长期类别。竞品分析、实验评测、安全与隐私等内容需要时各归入相应类别，不统一塞进修 bug。
 
-title 是可识别的主题名称；description 用一句话说明这里存有哪些资料，例如“包含部署选型、迁移经过和遗留问题”，不要把历史结论写成当前事实。overview 的 kind 仅允许 scope（背景或覆盖范围）、history（历史进展）、decision（当时的决定）、change（有依据的变化）、open-question（待确认事项）。保留明确时点、过去式、计划、取消、争议和不确定性；没有新的支持不能把旧事实升格为当前结论，不能把计划写成已完成、建议写成已决定、推测写成原因。决定曾经成立不等于现在仍有效。相关事件矛盾时保留矛盾和待确认状态。
+title 是可识别的主题名称；description 用一句话说明这里存有哪些资料，例如“包含部署选型、迁移经过和遗留问题”，不要把历史结论写成当前事实。overviewRepairRequirements 如存在，表示此前不合格概要必须提供合法替代：保留对应 kind、来源编号和至少 minimumEntries 条；不得删除段落、清空 overview、换掉来源或降低事实性质来绕过校验。首次没有修复约束时，正常的空 overview 仍合法。
+overview 的 kind 仅允许 scope（背景或覆盖范围）、history（历史进展）、decision（当时的决定）、change（有依据的变化）、open-question（待确认事项）。保留明确时点、过去式、计划、取消、争议和不确定性；没有新的支持不能把旧事实升格为当前结论，不能把计划写成已完成、建议写成已决定、推测写成原因。决定曾经成立不等于现在仍有效。相关事件矛盾时保留矛盾和待确认状态。
 
 sections 独立保存事件的小节归属，与 overview 的来源引用分开。每个归入本章的本批事件必须至少分配到一个 sections 小节，即使总览没有引用它。sections 只写本批事件编号；旧归属由存储层继承。优先逐字复用 existingTopics.sectionTitles 中适合的标题；小节沿用上述长期类别规则。新 overview 的展示标题必须匹配本轮 sections.title 或重分类后仍存在的已有小节标题，不能靠总览单独创建小节；省略 title 时，其 kind 的默认展示标题也必须有对应的最终小节。若重分类移走旧小节的全部事件，存储层丢弃该节的旧总览，即使本轮原样回传也不会保留。overview.title 只决定概括文字显示在哪个小节，不决定事件归属；无需为每条事件写总览，也不要为了覆盖目录而虚增来源引用。
 若输入含 sectionBackfillTopicId，这是升级后的旧事件补归类：只返回该 topicId 的一个章节，保留原章名和描述，为全部本批事件写入适当的小节；不得换章或新建章。已有小节标题可能只展示前 120 个，优先复用适合的已有标题。此任务无需重写总览，overview 可以为空，存储层保留有效旧总览。
@@ -488,6 +489,7 @@ function topicProjectionPayload(context: TopicProjectionContext, outputTokenBudg
       ...(context.sectionBackfillTopicId ? { sectionBackfillTopicId: context.sectionBackfillTopicId } : {}),
       evidenceCompleteness: 'bounded-navigation-cards; retrieve Event and original-source evidence before relying on factual content',
       outputTokenBudget,
+      ...(context.overviewRepairRequirements?.length ? { overviewRepairRequirements: context.overviewRepairRequirements } : {}),
       events,
       truncatedEventIds: context.truncatedEventIds ?? [],
       existingTopics: existingTopics.map((topic) => ({
@@ -530,7 +532,7 @@ function parseTopicProjection(value: unknown, context: TopicProjectionContext): 
     return value as string[]
   }
   const rawTopics = raw.topics as unknown[];
-  const topics = rawTopics.map((candidate) => {
+  const topics = rawTopics.map((candidate, topicIndex) => {
     const item = object(candidate)
     const title = boundedText(item.title, 'topic.title', 120)
     const label = title.normalize('NFKC').replace(/\s+/g, ' ').toLowerCase()
@@ -564,12 +566,13 @@ function parseTopicProjection(value: unknown, context: TopicProjectionContext): 
     if (!Array.isArray(item.overview) || item.overview.length > 8) fail('overview must contain 0-8 source-grounded entries')
     const overviewTitles = [...sections.map((section) => section.title),
       ...(existing?.sectionTitles ?? memoryTopicMembershipSections(existing ?? { overview: [] }).map((section) => section.title))]
-    const overview: MemoryTopicOverview[] = (item.overview as unknown[]).map((candidateEntry) => {
+    const overview: MemoryTopicOverview[] = (item.overview as unknown[]).map((candidateEntry, overviewIndex) => {
       const entry = object(candidateEntry)
       if (Object.keys(entry).some((key) => !['kind', 'title', 'text', 'sourceEventIds'].includes(key))) fail('unexpected overview field')
       const sectionTitle = entry.title === undefined ? undefined : boundedText(entry.title, 'overview.title', 80)
       if (!TOPIC_OVERVIEW_KINDS.includes(entry.kind as MemoryTopicOverviewKind)) fail('unknown overview kind')
-      const paragraph = boundedText(entry.text, 'overview.text', 600)
+      validateTopicOverviewText(entry.text, `topics[${topicIndex}].overview[${overviewIndex}].text`)
+      const paragraph = entry.text
       const paragraphSources = sourceIds(entry.sourceEventIds, 'overview.sourceEventIds', new Set(sources), 12)
       if (entry.kind !== 'scope' && paragraphSources.some((id) => truncatedIds.has(id))) fail('truncated Event evidence may only support scope entries')
       const preserved = existing?.overview.some((old) =>
@@ -843,18 +846,20 @@ Use project scope for repository decisions, user scope for stable preferences/id
 
   readonly topicProjector: TopicProjector = async (context: TopicProjectionContext): Promise<TopicProjectionResult> => {
     const { payload, shownContext } = topicProjectionPayload(context, TOPIC_OUTPUT_TOKEN_BUDGET)
+    const repairs = new TopicOverviewRepairGuard(context.overviewRepairRequirements)
     try {
       const raw = await this.callStructured('topicProjector', TOPIC_PROJECTOR_SYSTEM_PROMPT, payload,
-        (value) => { parseTopicProjection(value, shownContext) },
+        (value) => { parseTopicProjection(value, shownContext); repairs.assert(value) },
         { eventCount: shownContext.events.length, candidateTopicCount: shownContext.existingTopics.length },
+        { guard: repairs, context: shownContext },
       )
       return parseTopicProjection(raw, shownContext)
     } catch (error) {
-      if (error instanceof TopicProjectionError) throw error
+      if (error instanceof TopicProjectionError) throw carryTopicOverviewRepairs(error, repairs.requirements)
       if (error instanceof Error && /^StrataGate structured model task timed out after \d+ms$/.test(error.message)) {
-        throw new TopicProjectionError('timeout', 'structured model task timed out')
+        throw carryTopicOverviewRepairs(new TopicProjectionError('timeout', 'structured model task timed out'), repairs.requirements)
       }
-      throw new TopicProjectionError('provider-failed', 'provider or route error')
+      throw carryTopicOverviewRepairs(new TopicProjectionError('provider-failed', 'provider or route error'), repairs.requirements)
     }
   }
 
@@ -910,7 +915,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
   }
 
   private async callStructured(kind: SuccessfulModelResponseKind, system: string, payload: unknown,
-    validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>): Promise<unknown> {
+    validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>,
+    topicRepair?: { guard: TopicOverviewRepairGuard; context: TopicProjectionContext }): Promise<unknown> {
     const execution = this.sessions.getStore()
     if (!execution) throw new Error('StrataGate model callback ran without an execution context')
     // Structured memory jobs need a bounded machine-readable response. Prefer
@@ -929,11 +935,14 @@ Use project scope for repository decisions, user scope for stable preferences/id
     let attemptsUsed = 0
     let noAdapterRetried = false
     let graphRetryFeedback = ''
+    let topicRetryFeedback = ''
     let offFallback = false
     for (let attempt = 1; attempt <= JSON_RESPONSE_ATTEMPTS; attempt += 1) {
       attemptsUsed = attempt
+      const requestPayload = topicRepair?.guard.requirements.length
+        ? { ...(payload as Record<string, unknown>), overviewRepairRequirements: topicRepair.guard.requirements } : payload
       const message = createUserMessage({
-        content: [{ type: 'text', text: JSON.stringify(payload) }],
+        content: [{ type: 'text', text: JSON.stringify(requestPayload) }],
         source: dshMessageSource(),
       })
       const assembler = new BlockAssembler()
@@ -941,7 +950,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
         ...baseRoute,
         ...(useOff ? { reasoningEffort: 'off' as ReasoningEffortId } : {}),
         messages: [message],
-        system: attempt === 1 ? system : `${system}\n\n${JSON_RETRY_INSTRUCTION}${graphRetryFeedback}`,
+        system: attempt === 1 ? system : `${system}\n\n${JSON_RETRY_INSTRUCTION}${graphRetryFeedback}${topicRetryFeedback}`,
         tools: [{
           name: STRUCTURED_TOOLS[kind].name,
           description: STRUCTURED_TOOLS[kind].description,
@@ -970,7 +979,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
         // a smaller integer cannot increase the input estimate. Tell the model
         // the actual budget on every request, including JSON/off fallback retries.
         request.messages = [{ ...message, content: [{ type: 'text', text: JSON.stringify({
-          ...(payload as Record<string, unknown>), outputTokenBudget: request.maxTokens,
+          ...(requestPayload as Record<string, unknown>), outputTokenBudget: request.maxTokens,
         }) }] }]
         inputTokens = estimateInput()
         delete topicDiagnostics.finishReason
@@ -1061,10 +1070,22 @@ Use project scope for repository decisions, user scope for stable preferences/id
             )
           }
         }
+        topicRepair?.guard.observe(parsed, topicRepair.context)
         if (kind === 'graphProjector') parsed = normalizeGraphNameProvenance(parsed)
         const violations = validateArgs(STRUCTURED_TOOLS[kind].parameters, parsed)
         if (violations.length > 0) {
-          if (isTopic) throw topicError('schema-invalid', 'structured topic schema mismatch')
+          if (isTopic) {
+            // Schema rejects missing/non-string text before semantic validation.
+            // Derive metadata from known positions, never validator messages.
+            const topics = object(parsed).topics
+            if (Array.isArray(topics)) topics.forEach((topic, topicIndex) => {
+              const overview = object(topic).overview
+              if (Array.isArray(overview)) overview.forEach((part, overviewIndex) => {
+                validateTopicOverviewText(object(part).text, `topics[${topicIndex}].overview[${overviewIndex}].text`, 'schema-invalid')
+              })
+            })
+            throw topicError('schema-invalid', 'structured topic schema mismatch')
+          }
           if (kind === 'graphProjector') {
             const paths = violations.flatMap((violation) => violation.match(/nodes\[\d+\]\.metadataProvenance\.name(?:\[\d+\])?/g) ?? [])
             graphRetryFeedback = paths.length > 0
@@ -1088,7 +1109,9 @@ Use project scope for repository decisions, user scope for stable preferences/id
         try {
           validate?.(parsed)
         } catch (error) {
-          if (isTopic) throw topicError('validation-failed', error instanceof TopicProjectionError ? error.diagnostics.reason : 'topic semantic validation failed')
+          if (isTopic) throw error instanceof TopicProjectionError
+            ? new TopicProjectionError(error.diagnostics.category, error.diagnostics.reason, { ...topicDiagnostics, ...error.diagnostics })
+            : topicError('validation-failed', 'topic semantic validation failed')
           throw new ModelJsonResponseError(`StrataGate ${expectedTool} arguments were invalid: ${error instanceof Error ? error.message : String(error)}`,
             { cause: error, response: responseForError })
         }
@@ -1104,12 +1127,18 @@ Use project scope for repository decisions, user scope for stable preferences/id
         return parsed
       } catch (error) {
         if (!(error instanceof ModelJsonResponseError) && !(isTopic && error instanceof TopicProjectionError)) throw error
+        let retryError: ModelJsonResponseError | TopicProjectionError = error
+        if (isTopic && error instanceof TopicProjectionError) {
+          const safe = new TopicProjectionError(error.diagnostics.category, error.diagnostics.reason, { ...topicDiagnostics, ...error.diagnostics })
+          topicRetryFeedback = `\nCorrect the previous Topic output using these validation errors: ${JSON.stringify(safe.diagnostics)}. Return the complete result; preserve evidence, references and Event assignments. Do not truncate, delete or fabricate content to bypass validation.`
+          retryError = safe
+        }
         lastError = finish.kind === 'max-tokens'
           ? new ModelJsonResponseError(
             `StrataGate ${STRUCTURED_TOOLS[kind].name} call was truncated before valid arguments`,
-            { cause: error, response: responseForError },
+            { cause: retryError, response: responseForError },
           )
-          : error
+          : retryError
         if ((kind === 'graphProjector' || kind === 'topicProjector') && finish.kind === 'max-tokens') break
         if (attempt < JSON_RESPONSE_ATTEMPTS) {
           this.ctx.logger.warn(`stratagate-memory model returned an invalid structured tool call; retrying (${attempt}/${JSON_RESPONSE_ATTEMPTS})`)

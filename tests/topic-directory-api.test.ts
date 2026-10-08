@@ -268,7 +268,7 @@ describe('read-only Topic Directory admin data', () => {
     const retry = vi.fn(async () => ({ jobId: 'new-rebuild', status: 'pending' as const }));
     runtime.adminRetryTopicProjection = retry;
     const directory = (await request(runtime)).body;
-    expect(directory.bootstrap).toMatchObject({ total: 1, completed: 0, failedEvents: 1, status: 'completed' });
+    expect(directory.bootstrap).toMatchObject({ total: 1, completed: 0, failedEvents: 1, status: 'failed' });
     expect(directory.bootstrap.failures[0]).toMatchObject({ jobId: 'rebuild-failure', eventCount: 1 });
     expect(directory.pending.total).toBe(0);
     const page = await request(runtime, `topic-events&topicId=pending&sectionKey=failure:rebuild-failure&expectedRevision=${directory.revision}`);
@@ -345,6 +345,52 @@ describe('read-only Topic Directory admin data', () => {
     expect(JSON.stringify(overview.failedJobDetails)).not.toContain('PRIVATE');
     expect(overview.failedJobDetails[0]).not.toHaveProperty('context');
   });
+  it('agrees on 86/86 and zero current failures while retaining the original historical records', async () => {
+    const snapshot = emptySnapshot(); snapshot.events = Array.from({ length: 86 }, (_, i) => event(`solved-${i}`));
+    snapshot.memoryTopicState = freeze(snapshot.events);
+    snapshot.memoryTopicState.projectedVersions = versions(snapshot.events);
+    const completedChapter = topic('completed', snapshot.events); completedChapter.overview = [];
+    completedChapter.sections = [{ title: '历史', sourceEventIds: snapshot.events.map(({ id }) => id) }];
+    snapshot.memoryTopicState.topics = [completedChapter];
+    snapshot.memoryTopicState.jobs = [failedJob('solved-failure', snapshot.events.slice(74)),
+      failedJob('solved-retryable', snapshot.events.slice(74), { attempts: 1, nextRetryAt: now })];
+    const original = structuredClone(snapshot);
+    const runtime = fakeRuntime(snapshot);
+    const dashboard = (await request(runtime, 'dashboard')).body;
+    expect(dashboard.data.topicDirectory.bootstrap).toMatchObject({ status: 'completed', total: 86, completed: 86, failedEvents: 0, failures: [] });
+    const row = dashboard.overview.namespaces[0];
+    expect(row).toMatchObject({ failedJobs: 0, processingJobs: 0, failedJobDetails: [], processingJobDetails: [] });
+    expect(row.taskStatus.topicProjection).toMatchObject({ terminalFailed: 0, retryable: 0, processing: 0 });
+    expect(dashboard.processing).toBe(false);
+    expect((await request(runtime, 'overview')).body.namespaces[0].failedJobs).toBe(0);
+    expect(snapshot).toEqual(original); // every read is a clone; history is retained
+    const directory = new MemoryTopicDirectory(); directory.restore(snapshot.memoryTopicState); directory.synchronize(snapshot.events, now);
+    snapshot.memoryTopicState = directory.snapshot();
+    expect(snapshot.memoryTopicState.jobs.every((job) => job.status === 'failed' && job.superseded)).toBe(true);
+    expect((await request(runtime, 'dashboard')).body.overview.namespaces[0].failedJobs).toBe(0);
+  });
+
+  it('counts only remaining ordinary/Backfill work and excludes stale, hidden and solved Topic failures in every task view', async () => {
+    const snapshot = emptySnapshot(); snapshot.events = [event('done'), event('remaining'), event('stale'), event('backfill')];
+    snapshot.agentEvents = [event('hidden')]; snapshot.memoryTopicState = freeze(snapshot.events);
+    snapshot.memoryTopicState.projectedVersions = versions([snapshot.events[0]!, snapshot.events[3]!]);
+    const chapter = topic('chapter', [snapshot.events[3]!]); chapter.overview = []; chapter.sections = [];
+    snapshot.memoryTopicState.topics = [chapter];
+    snapshot.memoryTopicState.sectionBackfill = { chapter: versions([snapshot.events[3]!]) };
+    snapshot.memoryTopicState.jobs = [failedJob('partial', snapshot.events.slice(0, 2)),
+      failedJob('stale', [snapshot.events[2]!]), failedJob('solved', [snapshot.events[0]!]),
+      failedJob('backfill', [snapshot.events[3]!], { sectionBackfillTopicId: 'chapter' }),
+      failedJob('hidden', snapshot.agentEvents)];
+    snapshot.events[2]!.summary = 'new version';
+    const dashboard = (await request(fakeRuntime(snapshot, () => 0), 'dashboard')).body;
+    const row = dashboard.overview.namespaces[0];
+    expect(row.failedJobs).toBe(2);
+    expect(row.taskStatus.topicProjection.terminalFailed).toBe(2);
+    expect(row.failedJobDetails.map(({ id, eventCount }: any) => [id, eventCount])).toEqual([['partial', 1], ['backfill', 1]]);
+    expect(dashboard.data.topicDirectory.bootstrap.failedEvents).toBe(2);
+    expect(dashboard.data.topicDirectory.bootstrap.failures.map(({ jobId, eventCount }: any) => [jobId, eventCount])).toEqual([['partial', 1], ['backfill', 1]]);
+  });
+
   it('drops forged diagnostic fields, arbitrary reason strings and raw model data at the API boundary', async () => {
     const snapshot = emptySnapshot(); snapshot.events = [event('history')]; snapshot.memoryTopicState = freeze(snapshot.events);
     snapshot.memoryTopicState.jobs = [failedJob('failure', snapshot.events, { diagnostics: {
@@ -792,7 +838,7 @@ describe('read-only Topic Directory admin data', () => {
     })]
     const result = await request(fakeRuntime(snapshot))
     expect(result.body.bootstrap).toMatchObject({
-      status: 'completed', total: 2, completed: 1, failedEvents: 1,
+      status: 'failed', total: 2, completed: 1, failedEvents: 1,
       failures: [{ jobId: 'failed-job', eventCount: 1, attempts: 3, lastError: 'worker-failed' }],
     })
     expect(JSON.stringify(result.body)).not.toContain('RAW SECRET MODEL RESPONSE')
@@ -815,6 +861,42 @@ describe('read-only Topic Directory admin data', () => {
     const result = await request(fakeRuntime(snapshot))
     expect(result.body.bootstrap).toMatchObject({ status: 'pending', total: 2, completed: 1, failedEvents: 0, failures: [] })
   })
+
+  it('reports 74/86 truthfully before recovery, while queued, after success and after exhaustion', async () => {
+    const snapshot = emptySnapshot(); snapshot.events = Array.from({ length: 86 }, (_, i) => event(`history-${i}`));
+    snapshot.memoryTopicState = freeze(snapshot.events);
+    snapshot.memoryTopicState.projectedVersions = versions(snapshot.events.slice(0, 74));
+    snapshot.memoryTopicState.jobs = [failedJob('old-failure', snapshot.events.slice(74), { lastError: 'invalid-output' })];
+    snapshot.memoryTopicState.bootstrap!.status = 'completed';
+    delete snapshot.memoryTopicState.recoveryVersion;
+    const original = structuredClone(snapshot.memoryTopicState);
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'failed', total: 86, completed: 74, failedEvents: 12 });
+    // Read-only API calls do not recover jobs or consume the recovery marker.
+    expect(snapshot.memoryTopicState).toEqual(original);
+    const directory = new MemoryTopicDirectory(); directory.restore(snapshot.memoryTopicState);
+    directory.initializeBootstrap(snapshot.events, now);
+    snapshot.memoryTopicState = directory.snapshot();
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'pending', total: 86, completed: 74, failedEvents: 0, failures: [] });
+    const queued = structuredClone(snapshot.memoryTopicState);
+    const claim = directory.claim(snapshot.events, now)!;
+    snapshot.memoryTopicState = directory.snapshot();
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'running', total: 86, completed: 74 });
+    directory.complete(claim.jobId, { topics: [{ title: '历史', description: '历史资料', sourceEventIds: claim.events.map(({ id }) => id), overview: [] }] }, snapshot.events, now);
+    snapshot.memoryTopicState = directory.snapshot();
+    expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'completed', total: 86, completed: 86, failedEvents: 0, failures: [] });
+    directory.restore(queued);
+    let clock = Date.parse(now);
+    for (let i = 0; i < 3; i++) {
+      const claim = directory.claim(snapshot.events, new Date(clock).toISOString())!;
+      directory.fail(claim.jobId, new TopicProjectionError('validation-failed', 'overview.text is empty'), new Date(clock).toISOString());
+      clock += 120000;
+    }
+    snapshot.memoryTopicState = directory.snapshot();
+    const failed = (await request(fakeRuntime(snapshot))).body.bootstrap;
+    expect(failed).toMatchObject({ status: 'failed', total: 86, completed: 74, failedEvents: 12 });
+    expect(failed.failures).toHaveLength(1);
+    expect(failed.failures[0]).toMatchObject({ attempts: 3, eventCount: 12, lastError: 'validation-failed: overview.text is empty' });
+  });
 
   it('returns a completed empty Bootstrap without an active-processing signal', async () => {
     const snapshot = emptySnapshot()

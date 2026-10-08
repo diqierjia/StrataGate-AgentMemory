@@ -1082,7 +1082,7 @@ describe('memory topic runtime boundaries', () => {
     }
   })
 
-  it('charges retries to the same backfill budget and permanently settles exhausted inputs with fallback', async () => {
+  it.each(['manual', 'upgrade'] as const)('charges %s recovery to the same backfill budget and persists it across restart', async (recovery) => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-topic-budget-retry-'))
     const database = join(directory, 'memory.db')
     const namespace = 'dsh:project:history-retry'
@@ -1094,10 +1094,10 @@ describe('memory topic runtime boundaries', () => {
       return { topics: [{ title: '其余部署记录', description: '查看来源核实',
         sourceEventIds: context.events.map(({ id }) => id), overview: [] }] }
     })
-    const runtime = new StrataGateRuntime(makeConfig(database), {
+    let runtime = new StrataGateRuntime(makeConfig(database), {
       ...makeModels().models, isReady: () => true, topicProjector,
     } as unknown as DshModelBridge)
-    const worker = manualWorker(runtime)
+    let worker = manualWorker(runtime)
     try {
       await seed(database, namespace, Array.from({ length: 14 }, (_, index) => ({
         id: `retry-history-${index}`, title: '部署历史', summary: '历史来源', topic: '部署历史',
@@ -1119,7 +1119,7 @@ describe('memory topic runtime boundaries', () => {
       expect(topicProjector.mock.calls[1]![0].events.map(({ id }) => id)).toEqual(failedIds)
       expect(topicProjector.mock.calls[2]![0].events.map(({ id }) => id)).toEqual(failedIds)
       const state = (await runtime.adminSnapshot(namespace))!.memoryTopicState!
-      expect(state.bootstrap).toMatchObject({ status: 'completed', failedEvents: 12 })
+      expect(state.bootstrap).toMatchObject({ status: 'failed', failedEvents: 12 })
       expect(state.jobs.find((job) => !job.superseded && job.status === 'failed'))
         .toMatchObject({ attempts: 3, nextRetryAt: null, lastError: 'worker-failed', context: null })
       expect(JSON.stringify(state)).not.toContain('海棠')
@@ -1139,7 +1139,24 @@ describe('memory topic runtime boundaries', () => {
         expect(metadata.reserveTopicBootstrapCall(now)).toBe(true)
       } finally { metadata.close() }
       const budgetBeforeRetry = topicBudget(database)
-      const queued = await runtime.adminRetryTopicProjection(namespace, exhausted.id)
+      let queued: { jobId: string; status: 'pending' }
+      if (recovery === 'upgrade') {
+        await runtime.close()
+        const storage = new SqliteStorage({ filename: database })
+        try {
+          const loaded = (await storage.load(namespace))!
+          delete loaded.snapshot.memoryTopicState!.recoveryVersion
+          await storage.save(namespace, loaded.snapshot, loaded.revision)
+        } finally { await storage.close() }
+        runtime = new StrataGateRuntime(makeConfig(database), {
+          ...makeModels().models, isReady: () => true, topicProjector,
+        } as unknown as DshModelBridge)
+        worker = manualWorker(runtime)
+        await worker.runBackgroundNamespace(namespace)
+        expect(topicProjector).toHaveBeenCalledTimes(4) // exhausted budget survives upgrade
+        const pending = (await runtime.adminSnapshot(namespace))!.memoryTopicState!.jobs.find((job) => job.status === 'pending')!
+        queued = { jobId: pending.id, status: 'pending' }
+      } else queued = await runtime.adminRetryTopicProjection(namespace, exhausted.id)
       manualWorker(runtime)
       expect(queued).toMatchObject({ status: 'pending' })
       await expect(runtime.adminRetryTopicProjection(namespace, exhausted.id)).rejects.toThrow(/conflict/)

@@ -881,6 +881,21 @@ describe('Topic Directory client interactions', () => {
     expect(buttons(tree, '重新整理这 1 条')).toHaveLength(1);
   });
 
+  it.each(['pending', 'running', 'failed', 'completed'])('shows truthful 74/86 recovery progress for %s', (status) => {
+    const client = clientRenderer(), directory = fixture();
+    const failed = status === 'failed';
+    directory.bootstrap = { status, total: 86, completed: status === 'completed' ? 86 : 74, failedEvents: failed ? 12 : 0,
+      failures: failed ? [{ jobId: 'failed-recovery', eventCount: 12, attempts: 3, lastError: 'validation-failed: overview.text is empty' }] : [] } as any;
+    const tree = client.render(client.TopicDirectory, { directory, openEvent: vi.fn() });
+    if (failed) {
+      expect(tree.text).toContain('历史记忆部分完成 · 74 / 86');
+      expect(tree.text).toContain('12 条历史记忆暂未完成整理');
+      expect(buttons(tree, '重新整理这 12 条')).toHaveLength(1);
+    } else if (status === 'completed') {
+      expect(find(tree, (node) => String(node.props.className || '').startsWith('sg-topic-bootstrap '))).toHaveLength(0);
+    } else expect(tree.text).toContain('正在整理历史记忆 · 74 / 86');
+  });
+
   it('removes completed successful/empty bootstrap notices and loads failure titles only on inspection', async () => {
     const client = clientRenderer(true)
     const props = { directory: fixture(), namespace: 'dsh:project:test', openEvent: vi.fn() }
