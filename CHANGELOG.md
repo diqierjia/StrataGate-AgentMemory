@@ -2,6 +2,8 @@
 
 ## 0.3.5 - Unreleased
 
+- 修复 [#125](https://github.com/diqierjia/StrataGate-AgentMemory/issues/125)：`memory_search_events` 搜索无来源块编号的主动 Event 时返回 `undefined`，被 DSH 无损 JSON 输出校验拒绝的问题；缺失的可选字段不生成属性，保留有效 Event、排序和证据引用。完整检索返回通过 DSH JSON 规则后才登记证据批次，失败不留下未解决批次或覆盖已有批次。
+
 - UI 明确标注裁剪后的默认目录仅含部分内容，在摘要末尾提供“查看完整目录”，可定位并展开全部章节的小节导航，不自动读取事件或展开总览。
 - 默认记忆目录加入 Chapter 下的 Section 标题，继续保留章标题和 description，不注入 `.0` / overview 正文。目录始终限制在 400 个估算 token 内；超限时保留分类、分页和展开入口，先展示章信息，再逐轮补充各章的小节标题。
 - 默认目录单独读取时复用活跃 Memory 或使用只读存储，不启动迁移、派生任务、模型调用或记忆强化。正常 prompt 组装先计算 Auto Context，再生成目录，最终注入仍为目录在前，冷启动不再重复完整读取 Memory。

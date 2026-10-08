@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openNativePath } from '@deepseek-ai/dsh-native-command'
+import { validateArgs } from '@deepseek-ai/dsh-tools'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import {
   DERIVATION_MAX_ATTEMPTS,
@@ -2296,9 +2297,16 @@ export class StrataGateRuntime {
     results: unknown,
     metadata: Record<string, unknown> = {},
   ): unknown {
-    const sequence = ++this.batchSequence
+    const sequence = this.batchSequence + 1
     const id = `batch_${sequence}`
     const refs = new Map(evidence.map(({ ref, target }) => [ref, target]))
+    const output = { batchId: id, evidenceRefs: [...refs.keys()], results, ...metadata }
+    // Inspect the original value with DSH's JSON schema rule before publishing
+    // evidence state. Stringification would silently remove undefined fields.
+    if (validateArgs({ retrieval: { type: 'json', required: true } }, { retrieval: output }).length) {
+      throw new TypeError('StrataGate retrieval output is not lossless JSON')
+    }
+    this.batchSequence = sequence
     const key = String(session.id)
     let sessionBatches = this.batches.get(key)
     if (!sessionBatches) {
@@ -2307,7 +2315,7 @@ export class StrataGateRuntime {
     }
     sessionBatches.set(id, { id, sequence, refs, status: 'unresolved' })
     this.latestBatchIds.set(key, id)
-    return { batchId: id, evidenceRefs: [...refs.keys()], results, ...metadata }
+    return output
   }
 
   private requireBatch(session: Session, batchId: string | undefined, operation: string): RetrievalBatch {
@@ -2658,7 +2666,7 @@ function compactEvent(event: EventCard, score: number): Record<string, unknown> 
     summary: compactText(event.summary),
     sourceTime: event.temporal.happenedStart ?? event.temporal.mentionedAt ?? event.createdAt,
     temporal: compactTemporal(event),
-    sourceBlockId: event.sourceBlockId,
+    ...(event.sourceBlockId !== undefined ? { sourceBlockId: event.sourceBlockId } : {}),
     status: event.status,
     scope: event.scope,
     criticality: event.criticality,
