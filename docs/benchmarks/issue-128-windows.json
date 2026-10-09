@@ -1,0 +1,103 @@
+{
+  "baselineSha": "e954eaf2f2cbbef4bb6226a2ebb35191424868c2",
+  "capturedAt": "2026-10-09T14:26:54.222Z",
+  "scope": "Synthetic DSH runtime on Windows; not the user database or full DSH UI process.",
+  "scenarios": [
+    {
+      "name": "small",
+      "namespaces": 100,
+      "rawUserCharsPerNamespace": 8192,
+      "databaseBytes": 8949760,
+      "rounds": 3,
+      "intervalMs": 3000,
+      "measurements": {
+        "before": {
+          "pollsMs": [
+            1559.2007,
+            2646.6144999999997,
+            2287.6314999999995
+          ],
+          "meanPollMs": 2164.482233333333,
+          "fullMemoryLoads": 300,
+          "cpuMs": 3547,
+          "wallMs": 15505.109400000001,
+          "processCpuPercent": 22.876330043824133,
+          "rssBefore": 56803328,
+          "rssAfter": 73904128,
+          "peakRss": 74313728,
+          "node": "v24.19.0",
+          "platform": "win32",
+          "arch": "x64",
+          "cpuMeasurementNote": "A zero CPU delta means below Windows counter resolution in this sample, not zero actual CPU work."
+        },
+        "after": {
+          "pollsMs": [
+            17.57029999999999,
+            3.0478000000002794,
+            4.158300000000054
+          ],
+          "meanPollMs": 8.258800000000107,
+          "fullMemoryLoads": 0,
+          "cpuMs": 16,
+          "wallMs": 9039.4974,
+          "processCpuPercent": 0.17700099122767599,
+          "rssBefore": 56590336,
+          "rssAfter": 54194176,
+          "peakRss": 57184256,
+          "node": "v24.19.0",
+          "platform": "win32",
+          "arch": "x64",
+          "cpuMeasurementNote": "A zero CPU delta means below Windows counter resolution in this sample, not zero actual CPU work."
+        }
+      }
+    },
+    {
+      "name": "large",
+      "namespaces": 100,
+      "rawUserCharsPerNamespace": 1572864,
+      "databaseBytes": 1519833088,
+      "rounds": 3,
+      "intervalMs": 3000,
+      "measurements": {
+        "before": {
+          "pollsMs": [
+            13949.606099999999,
+            12921.8561,
+            12388.245900000002
+          ],
+          "meanPollMs": 13086.569366666668,
+          "fullMemoryLoads": 300,
+          "cpuMs": 32203,
+          "wallMs": 48289.1154,
+          "processCpuPercent": 66.687906235698,
+          "rssBefore": 56573952,
+          "rssAfter": 180330496,
+          "peakRss": 284123136,
+          "node": "v24.19.0",
+          "platform": "win32",
+          "arch": "x64",
+          "cpuMeasurementNote": "A zero CPU delta means below Windows counter resolution in this sample, not zero actual CPU work."
+        },
+        "after": {
+          "pollsMs": [
+            40.84779999999998,
+            3.018500000000131,
+            3.4000999999998385
+          ],
+          "meanPollMs": 15.75546666666665,
+          "fullMemoryLoads": 0,
+          "cpuMs": 63,
+          "wallMs": 9055.1278,
+          "processCpuPercent": 0.6957383859342107,
+          "rssBefore": 56807424,
+          "rssAfter": 54194176,
+          "peakRss": 57184256,
+          "node": "v24.19.0",
+          "platform": "win32",
+          "arch": "x64",
+          "cpuMeasurementNote": "A zero CPU delta means below Windows counter resolution in this sample, not zero actual CPU work."
+        }
+      }
+    }
+  ]
+}

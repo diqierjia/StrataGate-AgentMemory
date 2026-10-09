@@ -280,6 +280,7 @@ export class StrataGateRuntime {
   private backgroundWorkerWakePending = false
   private profileMaintenanceRun: Promise<boolean> | undefined
   private readonly disposeAdaptersUpdated: () => void
+  private readonly disposeWorkChanged: () => void
   private settingsTail: Promise<void> = Promise.resolve()
   private batchSequence = 0
   private closed = false
@@ -300,6 +301,7 @@ export class StrataGateRuntime {
     this.blockDecayLambda = config.blockDecayLambda
     this.agentMemoryRetrievalWeight = config.agentMemoryRetrievalWeight ?? 1
     this.disposeAdaptersUpdated = this.models.onAdaptersUpdated(() => this.wakeModelWorkers())
+    this.disposeWorkChanged = SqliteStorage.onBackgroundWorkChanged(config.database, () => this.wakeBackgroundWorker())
     this.scheduleBackgroundWorker(BACKGROUND_WORKER_INITIAL_DELAY_MS)
   }
 
@@ -316,7 +318,7 @@ export class StrataGateRuntime {
       this.backgroundWorkerRun = run
       void run.finally(() => {
         if (this.backgroundWorkerRun === run) this.backgroundWorkerRun = undefined
-        const delay = this.backgroundWorkerWakePending ? 0 : BACKGROUND_WORKER_INTERVAL_MS
+        const delay = this.backgroundWorkerWakePending ? 0 : this.backgroundWorkerDelay()
         this.backgroundWorkerWakePending = false
         this.scheduleBackgroundWorker(delay)
       })
@@ -329,7 +331,18 @@ export class StrataGateRuntime {
     void this.runProfileMaintenance().catch((error: unknown) => this.onIngestError(error))
     let namespaces: string[]
     try {
-      namespaces = await this.adminNamespaces()
+      if (this.config.database === ':memory:') {
+        // In-memory spaces use separate SQLite connections; only their already-open state exists.
+        namespaces = [...this.spaces.keys()]
+      } else {
+        if (!existsSync(this.config.database)) return
+        const storage = this.profileStore()
+        if (await storage.rebuildBackgroundWorkIndex(8, (error) => this.onIngestError(error))) this.backgroundWorkerWakePending = true
+        const metadata = new DshMetadataStore(this.config.database)
+        try {
+          namespaces = storage.dueBackgroundNamespaces(Date.now(), typeof this.models.topicProjector === 'function', metadata.topicBootstrapNotBefore())
+        } finally { metadata.close() }
+      }
     } catch (error) {
       this.onIngestError(error)
       return
@@ -342,6 +355,19 @@ export class StrataGateRuntime {
         this.onIngestError(error)
       }
     }
+  }
+
+  private backgroundWorkerDelay(): number {
+    if (!this.profileStorage || !this.models.isReady() || this.config.database === ':memory:') return BACKGROUND_WORKER_INTERVAL_MS
+    let metadata: DshMetadataStore | undefined
+    try {
+      metadata = new DshMetadataStore(this.config.database)
+      const time = this.profileStorage.nextBackgroundWorkAt(typeof this.models.topicProjector === 'function', metadata.topicBootstrapNotBefore())
+      // The 3s cap discovers other processes and independently checks Profile maintenance.
+      // Due-but-busy namespaces wait for their session worker or the next lightweight poll.
+      return time !== null && time > Date.now() ? Math.min(BACKGROUND_WORKER_INTERVAL_MS, time - Date.now()) : BACKGROUND_WORKER_INTERVAL_MS
+    } catch (error) { this.onIngestError(error); return BACKGROUND_WORKER_INTERVAL_MS }
+    finally { metadata?.close() }
   }
 
   async runProfileMaintenance(now = Date.now()): Promise<boolean> {
@@ -407,10 +433,16 @@ export class StrataGateRuntime {
         const runnable = [
           ...memory.listSummaryJobs(),
           ...memory.listExtractionJobs(),
-        ].some((job) => job.status === 'pending'
+        ].some((job) => job.status === 'running' && (!job.leaseUntil || Date.parse(job.leaseUntil) <= Date.now())
+          || job.status === 'pending'
           || (job.status === 'failed' && job.nextRetryAt !== null
             && Date.parse(job.nextRetryAt) <= Date.now()))
           || memory.listGraphProjectionJobs().some((job) => graphProjectionCanRun(job))
+          || memory.listGraphProjectionJobs().some((job) => job.status === 'running'
+            && (!job.leaseUntil || Date.parse(job.leaseUntil) <= Date.now()))
+          || memory.listBlocks().some((block) => block.processingStatus === 'pending'
+            && memory.listSummaryJobs().some((job) => job.blockId === block.id && job.status === 'succeeded')
+            && !memory.listExtractionJobs().some((job) => job.blockId === block.id))
           || (canProjectTopics && memory.hasPendingTopicWork())
         if (!runnable) return
         const hasActiveSessionWork = [
@@ -1179,6 +1211,7 @@ export class StrataGateRuntime {
     if (this.closed) return
     this.closed = true
     this.disposeAdaptersUpdated()
+    this.disposeWorkChanged()
     if (this.backgroundWorkerTimer) clearTimeout(this.backgroundWorkerTimer)
     this.backgroundWorkerTimer = undefined
     for (const timer of this.migrationTimers.values()) clearTimeout(timer)
@@ -1531,8 +1564,8 @@ export class StrataGateRuntime {
     if (this.config.database === ':memory:' || !existsSync(this.config.database)) return
     const storage = new SqliteStorage({ filename: this.config.database, readonly: true })
     try {
-      const head = storage.listNamespaceRevisions().find((entry) => entry.namespace === namespace)
-      if (head && head.revision !== memory.storageRevision) await memory.reloadFromStorage()
+      const revision = storage.namespaceRevision(namespace)
+      if (revision !== null && revision !== memory.storageRevision) await memory.reloadFromStorage()
     } finally {
       await storage.close()
     }

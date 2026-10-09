@@ -481,9 +481,7 @@ export class MemoryTopicDirectory {
     }
   }
 
-  private pendingWork(events: readonly EventCard[]): Array<{ event: EventCard; sectionBackfillTopicId?: string }> {
-    const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
-    const versions = sourceVersions(sources);
+  private pendingWork(events: readonly EventCard[], versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])))): Array<{ event: EventCard; sectionBackfillTopicId?: string }> {
     const dirtyIds = new Set(this.state.topics.filter((topic) => topic.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION
       || Object.entries(topic.dependencyVersions ?? topic.sourceVersions).some(([id, version]) => versions.get(id) !== version))
       .flatMap((topic) => topic.sourceEventIds));
@@ -521,14 +519,36 @@ export class MemoryTopicDirectory {
   hasPending(events: readonly EventCard[], now: number, mode: TopicProjectionMode = 'all'): boolean {
     const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
     const versions = sourceVersions(sources);
+    return this.hasPendingWithVersions(events, versions, now, mode);
+  }
+
+  private hasPendingWithVersions(events: readonly EventCard[], versions: ReadonlyMap<string, string>, now: number, mode: TopicProjectionMode): boolean {
     const running = this.state.jobs.find((job) => job.status === 'running');
     if (running) return Date.parse(running.leaseUntil ?? running.updatedAt) <= now
       || !jobInputsCurrent(running, versions);
-    return this.pendingWork(events).some(({ event, sectionBackfillTopicId }) => this.matchesMode([event.id], versions, mode, sectionBackfillTopicId)) || this.state.jobs.some((job) =>
+    return this.pendingWork(events, versions).some(({ event, sectionBackfillTopicId }) => this.matchesMode([event.id], versions, mode, sectionBackfillTopicId)) || this.state.jobs.some((job) =>
       !job.superseded && job.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION && job.attempts < TOPIC_MAX_ATTEMPTS
       && ((job.status === 'pending' && (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= now)) || (job.status === 'failed'
         && job.nextRetryAt !== null && Date.parse(job.nextRetryAt) <= now))
       && jobInputsCurrent(job, versions) && this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId));
+  }
+
+  /** Derived wake time, using exactly the claim eligibility rules, including work without a Job. */
+  nextWakeTimes(events: readonly EventCard[], now: number): { incremental: number | null; bootstrap: number | null } {
+    const versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])));
+    const times = new Set([now]);
+    for (const job of this.state.jobs) {
+      const time = Date.parse(job.status === 'running' ? job.leaseUntil ?? job.updatedAt : job.nextRetryAt ?? '');
+      if (Number.isFinite(time) && time > now) times.add(time);
+    }
+    const result: { incremental: number | null; bootstrap: number | null } = { incremental: null, bootstrap: null };
+    for (const time of [...times].sort((a, b) => a - b)) {
+      for (const mode of ['incremental', 'bootstrap'] as const) {
+        if (result[mode] === null && this.hasPendingWithVersions(events, versions, time, mode)) result[mode] = time === now ? 0 : time;
+      }
+      if (result.incremental !== null && result.bootstrap !== null) break;
+    }
+    return result;
   }
 
   claim(events: readonly EventCard[], now: string, mode: TopicProjectionMode = 'all'): TopicProjectionContext | null {

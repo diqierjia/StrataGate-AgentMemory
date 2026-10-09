@@ -79,6 +79,18 @@ export class DshMetadataStore {
     }
   }
 
+  /** Read-only scheduling gate; reservations still happen immediately before a claim. */
+  topicBootstrapNotBefore(now = Date.now()): number {
+    const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'topicBootstrapBudget'")
+      .get() as { value: string } | undefined
+    if (!row) return now
+    try {
+      const budget = JSON.parse(row.value) as { used: number; resetAt: number }
+      if (!Number.isFinite(budget.resetAt) || !Number.isSafeInteger(budget.used) || budget.used < 0) return now
+      return budget.used >= TOPIC_BOOTSTRAP_WINDOW_CALLS && budget.resetAt > now ? budget.resetAt : now
+    } catch { return now }
+  }
+
   blockTurnSize(): number | null {
     const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'blockTurnSize'")
       .get() as { value: string } | undefined

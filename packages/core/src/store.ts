@@ -25,6 +25,8 @@ import {
   STRATAGATE_STORAGE_SCHEMA_VERSION,
   KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
   DERIVATION_MAX_ATTEMPTS,
+  DERIVATION_LEASE_MS,
+  graphProjectionNeedsRecovery,
   StorageConflictError,
   cloneSnapshot,
   isSyntheticSourceThreadId,
@@ -445,36 +447,8 @@ export class StrataGate {
     if (options.storage.readonly) return memory;
     await memory.initializeTopicBootstrap();
     if (loaded && loadedSnapshot) {
-      const interruptedSummaries = [...memory.summaryJobs.values()].filter((job) => job.status === 'running');
-      if (interruptedSummaries.length > 0) {
-        await memory.commitMutation(() => {
-          const now = toUtc8Iso(memory.now());
-          for (const job of interruptedSummaries) {
-            memory.summaryJobs.set(job.blockId, {
-              ...job,
-              status: 'failed',
-              lastError: 'Block summarization was interrupted before completion.',
-              nextRetryAt: now,
-              updatedAt: now,
-            });
-          }
-        });
-      }
-      const interrupted = [...memory.extractionJobs.values()].filter((job) => job.status === 'running');
-      if (interrupted.length > 0) {
-        await memory.commitMutation(() => {
-          const now = toUtc8Iso(memory.now());
-          for (const job of interrupted) {
-            memory.extractionJobs.set(job.blockId, {
-              ...job,
-              status: 'failed',
-              lastError: 'Extraction was interrupted before completion.',
-              nextRetryAt: now,
-              updatedAt: now,
-            });
-          }
-        });
-      }
+      await memory.recoverExpiredDerivations();
+      /* Legacy element projection has no concurrent DSH worker. */
       const interruptedProjections = [...memory.elementProjectionJobs.values()]
         .filter((job) => job.status === 'running');
       if (interruptedProjections.length > 0) {
@@ -482,36 +456,70 @@ export class StrataGate {
           const now = toUtc8Iso(memory.now());
           for (const job of interruptedProjections) {
             memory.elementProjectionJobs.set(job.id, {
-              ...job,
-              status: 'failed',
-              lastError: 'Element projection was interrupted before completion.',
-              updatedAt: now,
+              ...job, status: 'failed', lastError: 'Element projection was interrupted before completion.', updatedAt: now,
             });
           }
         });
       }
-      const interruptedGraphProjections = [...memory.graphProjectionJobs.values()]
-        .filter((job) => job.status === 'running');
-      if (interruptedGraphProjections.length > 0) {
-        await memory.commitMutation(() => {
-          const now = toUtc8Iso(memory.now());
-          for (const job of interruptedGraphProjections) {
-            memory.graphProjectionJobs.set(job.id, {
-              ...job,
-              status: 'failed',
-              lastError: 'Graph projection was interrupted before completion.',
-              nextRetryAt: memory.retryAt(job.attempts),
-              updatedAt: now,
-            });
-          }
-        });
-      }
-      if (memory.graphProjector) await memory.commitMutation(() => {
+      const covered = new Set(memory.listGraphProjectionJobs()
+        .filter((job) => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION).flatMap((job) => job.sourceEventIds));
+      if (memory.graphProjector && (memory.listGraphProjectionJobs().some((job) => graphProjectionNeedsRecovery(job, memory.listAllEvents()))
+        || memory.listAllEvents().some((event) => event.status !== 'forgotten' && event.status !== 'archived' && !covered.has(event.id)))) await memory.commitMutation(() => {
         memory.recoverGraphNameProvenanceFailures();
         memory.queueMissingGraphProjections();
       });
     }
     return memory;
+  }
+
+  private async recoverExpiredDerivations(): Promise<void> {
+    const expired = (job: { status: string; leaseUntil?: string | null }): boolean => job.status === 'running'
+      && (!job.leaseUntil || Date.parse(job.leaseUntil) <= this.now().getTime());
+    const interruptedSummaries = [...this.summaryJobs.values()].filter(expired);
+    if (interruptedSummaries.length > 0) {
+      await this.commitMutation(() => {
+        const now = toUtc8Iso(this.now());
+        for (const job of interruptedSummaries) {
+          this.summaryJobs.set(job.blockId, {
+            ...job,
+            status: 'failed',
+            lastError: 'Block summarization was interrupted before completion.',
+            nextRetryAt: now,
+            updatedAt: now,
+          });
+        }
+      });
+    }
+    const interrupted = [...this.extractionJobs.values()].filter(expired);
+    if (interrupted.length > 0) {
+      await this.commitMutation(() => {
+        const now = toUtc8Iso(this.now());
+        for (const job of interrupted) {
+          this.extractionJobs.set(job.blockId, {
+            ...job,
+            status: 'failed',
+            lastError: 'Extraction was interrupted before completion.',
+            nextRetryAt: now,
+            updatedAt: now,
+          });
+        }
+      });
+    }
+    const interruptedGraphProjections = [...this.graphProjectionJobs.values()].filter(expired);
+    if (interruptedGraphProjections.length > 0) {
+      await this.commitMutation(() => {
+        const now = toUtc8Iso(this.now());
+        for (const job of interruptedGraphProjections) {
+          this.graphProjectionJobs.set(job.id, {
+            ...job,
+            status: 'failed',
+            lastError: 'Graph projection was interrupted before completion.',
+            nextRetryAt: this.retryAt(job.attempts),
+            updatedAt: now,
+          });
+        }
+      });
+    }
   }
 
   private async initializeTopicBootstrap(): Promise<void> {
@@ -908,6 +916,7 @@ export class StrataGate {
     if (options.deferDerivation === true) {
       return { sealedBlocks, readyBlocks, extractedEvents, projectedElements };
     }
+    await this.recoverExpiredDerivations();
     for (const block of this.blocks) {
       if (options.threadId !== undefined && block.threadId !== options.threadId) continue;
       if (block.processingStatus === 'ready') continue;
@@ -1599,6 +1608,7 @@ export class StrataGate {
       if (events.length === 0) throw new Error(`Graph projection ${job.id} has no available source events`);
       job.nameProvenanceRecoveryVersion = 1;
       job.status = 'running';
+      job.leaseUntil = new Date(this.now().getTime() + DERIVATION_LEASE_MS).toISOString();
       job.attempts += 1;
       job.lastError = null;
       job.updatedAt = toUtc8Iso(this.now());
@@ -2629,17 +2639,8 @@ export class StrataGate {
   private recoverGraphNameProvenanceFailures(): void {
     // Match only the old structured schema failure, never a raw-response mention
     // of that text or a mixed/unrelated validation error. No full graph rebuild.
-    const signature = /^StrataGate model did not produce a valid stratagate_project_knowledge_graph call after 2 attempts: StrataGate stratagate_project_knowledge_graph arguments were invalid: "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string(?:; "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string)*$/;
     for (const job of this.graphProjectionJobs.values()) {
-      if (job.projectorVersion !== KNOWLEDGE_GRAPH_PROJECTOR_VERSION
-        || job.nameProvenanceRecoveryVersion !== undefined || job.status !== 'failed'
-        || (job.attempts < DERIVATION_MAX_ATTEMPTS && job.nextRetryAt !== null)
-        || !signature.test((job.lastError ?? '').split('\n')[0]!.trim())
-        || job.sourceEventIds.length === 0
-        || !job.sourceEventIds.every((id) => {
-          const event = this.findEvent(id);
-          return event && (event.status === 'active' || event.status === 'superseded');
-        })) continue;
+      if (!graphProjectionNeedsRecovery(job, this.listAllEvents())) continue;
       // Persist with the normal mutation transaction before any worker can claim
       // it. Reopening after another terminal failure cannot reset attempts again.
       job.nameProvenanceRecoveryVersion = 1;
@@ -2825,6 +2826,7 @@ export class StrataGate {
           attempts: current.attempts + 1,
           lastError: null,
           nextRetryAt: null,
+          leaseUntil: new Date(this.now().getTime() + DERIVATION_LEASE_MS).toISOString(),
           updatedAt: toUtc8Iso(this.now()),
         });
         return true;
@@ -2942,6 +2944,7 @@ export class StrataGate {
         attempts: (existing?.attempts ?? 0) + 1,
         lastError: null,
         nextRetryAt: null,
+        leaseUntil: new Date(this.now().getTime() + DERIVATION_LEASE_MS).toISOString(),
         updatedAt: toUtc8Iso(this.now()),
       });
     });
