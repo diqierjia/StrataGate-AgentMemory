@@ -2,14 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { bm25Rank, weightedSearchTokens } from './search.js';
 import type { EventCard } from './types.js';
 import { TopicProjectionError, safeTopicDiagnostics, validateTopicOverviewText, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
-import { TopicOverviewRepairGuard, uniqueTopicOverviewEntries, carryTopicOverviewRepairs, topicOverviewRepairsFromError, topicOverviewRepairsForHistoricalFailure, partitionTopicOverviewRepairs, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
+import { uniqueTopicOverviewEntries, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
 
 export const MEMORY_TOPIC_PROJECTOR_VERSION = 3;
 export const TOPIC_BATCH_LIMIT = 12;
 export const TOPIC_CANDIDATE_LIMIT = 12;
 export const TOPIC_MAX_ATTEMPTS = 3;
 // One writer-open recovery cycle for Issue #119, independent of prose rebuilds.
-export const TOPIC_RECOVERY_VERSION = 1;
+export const TOPIC_RECOVERY_VERSION = 2;
 export const TOPIC_LEASE_MS = 5 * 60_000;
 export type MemoryTopicOverviewKind = 'history' | 'decision' | 'change' | 'open-question' | 'scope';
 
@@ -105,7 +105,7 @@ export interface TopicProjectionJob {
   superseded?: boolean;
   sectionBackfillTopicId?: string;
   diagnostics?: TopicProjectionDiagnostics | undefined;
-  /** Retry integrity ledger, separate from content-free diagnostics. */
+  /** Legacy unsaved-draft metadata; ignored by current projection/commit rules. */
   overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   /** Bounded binary split ancestry; manual retry starts a fresh cycle. */
   splitDepth?: number;
@@ -350,6 +350,17 @@ export class MemoryTopicDirectory {
     for (const previous of [...this.state.jobs]) {
       if (previous.superseded || previous.status !== 'failed' || previous.attempts < TOPIC_MAX_ATTEMPTS
         || previous.nextRetryAt !== null || !jobInputsCurrent(previous, versions)) continue;
+      // Recover only the changed overview/budget paths and the original
+      // pre-diagnostics Issue #119 signature, preserving unrelated budgets.
+      const diagnostic = safeTopicDiagnostics(previous.diagnostics);
+      const affected = !!previous.overviewRepairRequirements?.length
+        || diagnostic?.category === 'provider-failed'
+        || ((diagnostic?.category === 'validation-failed' || diagnostic?.category === 'schema-invalid')
+          && (diagnostic.reason.startsWith('overview.text ')
+            || diagnostic.reason === 'Topic retry must replace invalid overview without removing entries.'))
+        || previous.lastError === 'invalid-output'
+        || /^(?:validation-failed|schema-invalid): (?:overview\.text |Topic retry must replace invalid overview)/.test(previous.lastError ?? '');
+      if (!affected) continue;
       const work = memoryTopicUnfinishedJobEventIds(previous, this.state, versions);
       if (!work.length) continue;
       // Other queued/leased/retrying jobs own their work already. Overlapping
@@ -641,7 +652,7 @@ export class MemoryTopicDirectory {
       throw new Error('Section backfill chapter cannot fit the projection input budget.');
     }
     job.context = { jobId: job.id,
-      ...(job.overviewRepairRequirements?.length ? { overviewRepairRequirements: structuredClone(job.overviewRepairRequirements) } : {}), events: batch.map(compactEvent), existingTopics, truncatedEventIds,
+      events: batch.map(compactEvent), existingTopics, truncatedEventIds,
       ...(job.sectionBackfillTopicId ? { sectionBackfillTopicId: job.sectionBackfillTopicId } : {}) };
     const storedById = new Map(this.state.topics.map((topic) => [topic.id, topic]));
     job.candidateVersions = Object.fromEntries(existingTopics.map((topic) => [topic.id, digest(storedById.get(topic.id))]));
@@ -662,17 +673,6 @@ export class MemoryTopicDirectory {
   }
 
   complete(id: string, result: TopicProjectionResult, events: readonly EventCard[], now: string): { topicIds: string[] } {
-    const job = this.requireJob(id);
-    const repairs = new TopicOverviewRepairGuard(job.overviewRepairRequirements);
-    if (job.context) repairs.observe(result, job.context);
-    try { return this.completeValidated(id, result, events, now, repairs); }
-    catch (error) {
-      if (error instanceof TopicProjectionError) throw carryTopicOverviewRepairs(error, repairs.requirements);
-      throw error;
-    }
-  }
-
-  private completeValidated(id: string, result: TopicProjectionResult, events: readonly EventCard[], now: string, repairs: TopicOverviewRepairGuard): { topicIds: string[] } {
     const job = this.requireJob(id);
     if (job.status === 'completed') return { topicIds: [...job.topicIds] };
     if (job.status !== 'running' || !job.context) throw new Error(`Topic projection ${id} is not running`);
@@ -803,10 +803,6 @@ export class MemoryTopicDirectory {
         createdAt: existing?.createdAt ?? now, updatedAt: now });
     }
     if (job.sourceEventIds.some((eventId) => !covered.has(eventId))) throw new TopicProjectionError('validation-failed', 'every supplied batch Event must be assigned to a topic');
-    repairs.assert(result);
-    // Validate the exact post-filter/deduplication state before committing any
-    // Topic, Event projection ledger or Backfill progress.
-    repairs.assert({ topics: proposals });
     for (const topic of proposals) {
       const index = this.state.topics.findIndex((current) => current.id === topic.id);
       if (index < 0) this.state.topics.push(topic); else this.state.topics[index] = topic;
@@ -836,10 +832,7 @@ export class MemoryTopicDirectory {
     const job = this.state.jobs.find((candidate) => candidate.id === id);
     if (!job || job.status !== 'running') return;
     const diagnostic = error instanceof TopicProjectionError ? safeTopicDiagnostics(error.diagnostics) : undefined;
-    const repairs = new TopicOverviewRepairGuard(job.overviewRepairRequirements);
-    const observed = topicOverviewRepairsFromError(error);
-    repairs.merge(observed.length ? observed : topicOverviewRepairsForHistoricalFailure(diagnostic));
-    job.overviewRepairRequirements = repairs.requirements.length ? repairs.requirements : undefined;
+    job.overviewRepairRequirements = undefined;
     const message = error instanceof Error ? error.message : String(error);
     const category = diagnostic?.category ?? (/timeout|timed out/i.test(message) ? 'timeout'
       : /source.*changed|stale|not running/i.test(message) ? 'source-changed' : 'worker-failed');
@@ -862,7 +855,7 @@ export class MemoryTopicDirectory {
       for (const ids of [job.sourceEventIds.slice(0, middle), job.sourceEventIds.slice(middle)]) {
         this.state.jobs.push({ ...structuredClone(job), id: `tproj_${randomUUID()}`,
           sourceEventIds: ids, sourceVersions: Object.fromEntries(ids.map((id) => [id, job.sourceVersions[id]!])),
-          overviewRepairRequirements: partitionTopicOverviewRepairs(job.overviewRepairRequirements, job.sourceEventIds, ids),
+          overviewRepairRequirements: undefined,
           dependencyVersions: {}, candidateVersions: {}, status: 'pending', attempts: 0,
           diagnostics: undefined, splitDepth: (job.splitDepth ?? 0) + 1,
           topicIds: [], superseded: false, lastError: null, nextRetryAt: job.nextRetryAt,
@@ -881,7 +874,7 @@ export class MemoryTopicDirectory {
   private requeue(previous: TopicProjectionJob, ids: readonly string[], versions: ReadonlyMap<string, string>, now: string): TopicProjectionJob {
     const job: TopicProjectionJob = {
       ...structuredClone(previous), sourceEventIds: [...ids],
-      overviewRepairRequirements: partitionTopicOverviewRepairs(previous.overviewRepairRequirements ?? topicOverviewRepairsForHistoricalFailure(safeTopicDiagnostics(previous.diagnostics)), previous.sourceEventIds, ids),
+      overviewRepairRequirements: undefined,
       sourceVersions: Object.fromEntries(ids.map((id) => [id, previous.sourceVersions[id]!])),
       id: `tproj_${randomUUID()}`, status: 'pending', attempts: 0,
       superseded: false, context: null, dependencyVersions: {}, candidateVersions: {}, topicIds: [],

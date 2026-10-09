@@ -4,7 +4,7 @@ import type { EventCard, ExtractionContext, GraphProjectionContext, MemoryBlock,
 import { describe, expect, it, vi } from 'vitest'
 import { ModelJsonResponseError, parseJsonResponse } from '../src/json-response.js'
 import { DshModelBridge } from '../src/llm.js'
-import { emptyProfile, estimateTokens, StrataGate, TopicProjectionError, topicOverviewRepairsFromError } from '@diqier/stratagate'
+import { emptyProfile, estimateTokens, StrataGate, TopicProjectionError, TOPIC_OVERVIEW_MAX_CHARACTERS } from '@diqier/stratagate'
 
 describe('DeepSeek Harness model JSON parsing', () => {
   it('extracts fenced JSON without being confused by braces in strings', () => {
@@ -1239,7 +1239,7 @@ describe('memory topic model projection', () => {
     ['unknown overview kind', (output: any) => { output.topics[0].overview[1].kind = 'experience' }],
     ['extra experience layer', (output: any) => { output.experience = ['invented lesson'] }],
     ['empty title', (output: any) => { output.topics[0].title = '' }],
-    ['overlong paragraph', (output: any) => { output.topics[0].overview[1].text = '甲'.repeat(601) }],
+    ['overlong paragraph', (output: any) => { output.topics[0].overview[1].text = '甲'.repeat(1001) }],
     ['overlong title', (output: any) => { output.topics[0].title = '甲'.repeat(121) }],
     ['overlong description', (output: any) => { output.topics[0].description = '甲'.repeat(401) }],
     ['too many overview paragraphs', (output: any) => { output.topics[0].overview = Array.from({ length: 9 }, () => output.topics[0].overview[1]) }],
@@ -1367,7 +1367,7 @@ describe('memory topic model projection', () => {
   it.each([
     ['', 'overview.text is empty', 0],
     [' \t\n', 'overview.text contains only whitespace', 3],
-    ['私'.repeat(601), 'overview.text exceeds the character limit', 601],
+    ['私'.repeat(1001), 'overview.text exceeds the character limit', 1001],
   ])('feeds exact overview text errors back before accepting a complete corrected result (%s)', async (value, reason, count) => {
     const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = value as string;
     const valid = proposal(); valid.topics[0]!.overview[1]!.text = '字'.repeat(600);
@@ -1378,7 +1378,7 @@ describe('memory topic model projection', () => {
     expect(feedback).toContain(reason as string);
     expect(feedback).toContain('topics[0].overview[1].text');
     expect(feedback).toContain(`"actualCharacters":${count}`);
-    expect(feedback).toContain('"maxCharacters":600');
+    expect(feedback).toContain('"maxCharacters":1000');
     expect(feedback).not.toContain('私');
     expect(feedback).not.toContain('SQLite');
     expect(bridge.takeSuccessfulResponses()).toEqual([]);
@@ -1398,90 +1398,46 @@ describe('memory topic model projection', () => {
   it('rejects repeated violations with final exact metadata and no partial result', async () => {
     const first = proposal(), second = proposal();
     first.topics[0]!.overview[1]!.text = '';
-    second.topics[0]!.overview[1]!.text = '敏'.repeat(601);
+    second.topics[0]!.overview[1]!.text = '敏'.repeat(1001);
     const { bridge, session, calls } = modelBridge([{ tool: first, finish: 'tool-calls' }, { tool: second, finish: 'tool-calls' }]);
     const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
     expect(error.diagnostics).toMatchObject({ category: 'validation-failed', reason: 'overview.text exceeds the character limit',
-      fieldPath: 'topics[0].overview[1].text', actualCharacters: 601, minCharacters: 1, maxCharacters: 600, modelCalls: 2,
+      fieldPath: 'topics[0].overview[1].text', actualCharacters: 1001, minCharacters: 1, maxCharacters: 1000, modelCalls: 2,
       finishReason: 'tool-calls', requestedOutputTokens: 32768, maxOutputTokens: 32768 });
     expect(calls).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(error)).not.toMatch(/敏|SQLite/);
     expect(bridge.takeSuccessfulResponses()).toEqual([]);
   });
 
-  it.each(['all', 'invalid-only', 'kind', 'sources', 'schema'] as const)('rejects dropping or disguising a required overview replacement (%s)', async (mode) => {
-    const first = proposal(), second = proposal();
-    first.topics[0]!.overview[1]!.text = '敏'.repeat(601);
-    if (mode === 'all' || mode === 'schema') second.topics[0]!.overview = [];
-    if (mode === 'invalid-only') second.topics[0]!.overview.pop();
-    if (mode === 'kind') second.topics[0]!.overview[1]!.kind = 'scope';
-    if (mode === 'sources') second.topics[0]!.overview[1] = structuredClone(second.topics[0]!.overview[0]!);
-    if (mode === 'schema') (first.topics[0]!.overview[1] as any).text = { private: 'PRIVATE MODEL OUTPUT' };
-    const { bridge, session, calls } = modelBridge([{ tool: first }, { tool: second }]);
-    const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
-    expect(error).toBeInstanceOf(TopicProjectionError);
-    expect(error.diagnostics).toMatchObject({ category: 'validation-failed', reason: 'Topic retry must replace invalid overview without removing entries.', modelCalls: 2 });
-    expect(calls).toHaveBeenCalledTimes(2);
-    const payload = JSON.parse(calls.mock.calls[1]![0].messages[0].content[0].text);
-    expect(payload.overviewRepairRequirements).toEqual([{ kind: 'open-question', sourceEventIds: ['evt_topic_new'], minimumEntries: 1 }]);
-    expect(JSON.stringify(error)).not.toMatch(/敏|PRIVATE|evt_topic_new|SQLite/);
-    expect(bridge.takeSuccessfulResponses()).toEqual([]);
+  it.each([656, 778, 1000])('accepts %i Unicode characters on the first model call', async (length) => {
+    const output = proposal(); output.topics[0]!.overview[1]!.text = '𠮷'.repeat(length);
+    const { bridge, session, calls } = modelBridge([{ tool: output }]);
+    expect(await bridge.run(session, () => bridge.topicProjector(context()))).toEqual(output);
+    expect(calls).toHaveBeenCalledTimes(1);
+    const request = calls.mock.calls[0]![0];
+    expect(request.system).toContain(String(TOPIC_OVERVIEW_MAX_CHARACTERS));
+    expect(request.system).toContain('300～600');
+    expect(request.system).toContain('首要任务是将本批所有 Event 准确归入章节和小节');
+    const schema = request.tools[0].parameters.properties.topics.items.properties.overview.items.properties.text;
+    expect(schema.description).toContain(String(TOPIC_OVERVIEW_MAX_CHARACTERS));
+    expect(schema.description).toContain('300-600');
+    expect(schema).not.toHaveProperty('maxLength'); // DSH DSL does not support it.
   });
 
-  it.each([
-    [{ error: 'PRIVATE PROVIDER OUTPUT' }, 'provider-failed'],
-    [{ stall: true }, 'timeout'],
-    [{ text: '{', finish: 'max-tokens' }, 'max-tokens'],
-  ])('carries repair constraints when the next response fails before validation (%s)', async (response, category) => {
-    const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(601);
-    const { bridge, session, calls } = modelBridge([{ tool: invalid }, response as any], { timeoutMs: 50 });
-    const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
-    expect(error.diagnostics.category).toBe(category);
+  it.each([false, true])('permits discarding unsaved drafts, including legacy repair metadata (%s)', async (legacy) => {
+    const input = context();
+    if (legacy) input.overviewRepairRequirements = [{ kind: 'history', sourceEventIds: ['evt_topic_new'], minimumEntries: 99 }];
+    const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(1001);
+    const empty = proposal(); empty.topics[0]!.overview = [];
+    const { bridge, session, calls } = modelBridge([{ tool: invalid }, { tool: empty }]);
+    expect(await bridge.run(session, () => bridge.topicProjector(input))).toEqual(empty);
     expect(calls).toHaveBeenCalledTimes(2);
-    expect(topicOverviewRepairsFromError(error)).toEqual([{ kind: 'open-question', sourceEventIds: ['evt_topic_new'], minimumEntries: 1 }]);
-    expect(JSON.stringify(error)).not.toMatch(/PRIVATE|字|evt_topic_new/);
-  });
-
-  it('does not let a valid duplicate replace a removed invalid overview entry', async () => {
-    const first = proposal(), second = proposal();
-    first.topics[0]!.overview.push(structuredClone(first.topics[0]!.overview[1]!));
-    first.topics[0]!.overview[2]!.text = '字'.repeat(601);
-    const { bridge, session, calls } = modelBridge([{ tool: first }, { tool: second }]);
-    await expect(bridge.run(session, () => bridge.topicProjector(context()))).rejects.toThrow('must replace invalid overview');
-    expect(JSON.parse(calls.mock.calls[1]![0].messages[0].content[0].text).overviewRepairRequirements[0].minimumEntries).toBe(2);
-  });
-
-  it.each(['exact', 'property-order', 'source-order'] as const)('rejects copied valid replacements after distinct counting (%s)', async (mode) => {
-    const input = context(), first = proposal(), second = proposal();
-    if (mode === 'source-order') {
-      const event = structuredClone(input.events[0]!); event.id = 'evt_topic_other'; input.events.push(event);
-      for (const output of [first, second]) {
-        output.topics[0]!.sourceEventIds.push(event.id);
-        output.topics[0]!.sections![0]!.sourceEventIds.push(event.id);
-        output.topics[0]!.overview[1]!.sourceEventIds.push(event.id);
-      }
-    }
-    first.topics[0]!.overview.push({ ...structuredClone(first.topics[0]!.overview[1]!), text: '字'.repeat(601) });
-    const valid = second.topics[0]!.overview[1]!;
-    const copy = mode === 'property-order' ? { sourceEventIds: valid.sourceEventIds, text: valid.text, ...(valid.title !== undefined ? { title: valid.title } : {}), kind: valid.kind } : structuredClone(valid);
-    if (mode === 'source-order') copy.sourceEventIds.reverse();
-    second.topics[0]!.overview.push(copy);
-    const { bridge, session, calls } = modelBridge([{ tool: first }, { tool: second }]);
-    await expect(bridge.run(session, () => bridge.topicProjector(input))).rejects.toThrow('must replace invalid overview');
-    expect(calls).toHaveBeenCalledTimes(2);
-  });
-
-  it('refines a legacy nonempty repair floor into a specific replacement without requiring extra paragraphs', async () => {
-    const input = context(); input.overviewRepairRequirements = [{ sourceEventIds: [], minimumEntries: 1 }];
-    const invalid = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(601);
-    const corrected = proposal(); corrected.topics[0]!.overview.shift();
-    const { bridge, session, calls } = modelBridge([{ tool: invalid }, { tool: corrected }]);
-    expect(await bridge.run(session, () => bridge.topicProjector(input))).toEqual(corrected);
-    expect(calls).toHaveBeenCalledTimes(2);
+    for (const [request] of calls.mock.calls) expect(JSON.parse(request.messages[0].content[0].text)).not.toHaveProperty('overviewRepairRequirements');
+    expect(calls.mock.calls[1]![0].system).toContain('Unsaved invalid overview drafts may be omitted');
   });
 
   it('accepts legal replacements after chapter/paragraph reordering and keeps ordinary first-call empty overview legal', async () => {
-    const invalid = proposal(), corrected = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(601);
+    const invalid = proposal(), corrected = proposal(); invalid.topics[0]!.overview[1]!.text = '字'.repeat(1001);
     corrected.topics[0]!.overview.reverse();
     const repaired = modelBridge([{ tool: invalid }, { tool: corrected }]);
     expect(await repaired.bridge.run(repaired.session, () => repaired.bridge.topicProjector(context()))).toEqual(corrected);
@@ -1542,9 +1498,25 @@ describe('memory topic model projection', () => {
     await bridge.run(session, () => bridge.summarizer([]));
     expect(calls.mock.calls[1]![0].maxTokens).toBe(256);
   });
+  it.each([512, 1024, 4096, 8192, 65536])('keeps the independent Topic budget for a complete 12-Event response (route default=%i)', async (defaultMaxTokens) => {
+    const input = context(); input.existingTopics = [];
+    input.events = Array.from({ length: 12 }, (_, index) => event(`evt_topic_${index}`));
+    const sourceEventIds = input.events.map(({ id }) => id);
+    const output: TopicProjectionResult = { topics: [{ title: 'StrataGate', description: '数据库与迁移资料', sourceEventIds,
+      sections: [{ title: '数据库与迁移', sourceEventIds }],
+      overview: [0, 1].map(index => ({ kind: 'scope', title: '数据库与迁移', text: String(index) + '字'.repeat(999), sourceEventIds })),
+    }] };
+    if (defaultMaxTokens <= 1024) expect(estimateTokens(JSON.stringify(output))).toBeGreaterThan(defaultMaxTokens);
+    const { bridge, session, calls } = modelBridge([{ tool: output }], { resolveModelInfo: async () => ({ defaultMaxTokens }) });
+    expect(await bridge.run(session, () => bridge.topicProjector(input))).toEqual(output);
+    expect(calls).toHaveBeenCalledTimes(1);
+    expect(calls.mock.calls[0]![0].maxTokens).toBe(32768);
+    expect(JSON.parse(calls.mock.calls[0]![0].messages[0].content[0].text).outputTokenBudget).toBe(32768);
+  });
+
   it('recomputes the declared Topic budget for the longer JSON repair request', async () => {
     const { bridge, session, calls } = modelBridge([{ tool: { topics: 'PRIVATE' } }, { text: '{', finish: 'max-tokens' }],
-      { resolveModelInfo: async () => ({ context: { contextWindow: 8000 } }) });
+      { resolveModelInfo: async () => ({ defaultMaxTokens: 512, context: { contextWindow: 8000 } }) });
     const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
     expect(calls).toHaveBeenCalledTimes(2);
     for (const [request] of calls.mock.calls) {
@@ -1559,7 +1531,7 @@ describe('memory topic model projection', () => {
   it('fails safely before streaming when the input alone exceeds an advertised context window', async () => {
     const { bridge, session, calls } = modelBridge([], { resolveModelInfo: async () => ({ context: { contextWindow: 500 } }) });
     const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
-    expect(error.diagnostics).toMatchObject({ category: 'validation-failed', reason: 'topic input exceeds model context capacity', modelCalls: 0 });
+    expect(error.diagnostics).toMatchObject({ category: 'provider-failed', reason: 'topic input exceeds model context capacity', modelCalls: 0 });
     expect(calls).not.toHaveBeenCalled();
   });
   it('records a single explicit off rejection fallback and the final request budget', async () => {
