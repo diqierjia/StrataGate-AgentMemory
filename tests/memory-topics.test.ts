@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { Session } from '@deepseek-ai/dsh-session'
 import {
-  estimateTokens, memoryTopicEventFingerprint, StorageConflictError, StrataGate, type MemoryTopic, type StrataGateSnapshot,
+  estimateTokens, memoryTopicEventFingerprint, StorageConflictError, StrataGate, TopicProjectionError, type MemoryTopic, type StrataGateSnapshot,
   type TopicProjectionContext, type TopicProjectionResult,
 } from '@diqier/stratagate'
 import { describe, expect, it, vi } from 'vitest'
@@ -1090,7 +1090,7 @@ describe('memory topic runtime boundaries', () => {
     let now = Date.now()
     vi.setSystemTime(now)
     const topicProjector = vi.fn(async (context: TopicProjectionContext): Promise<TopicProjectionResult> => {
-      if (topicProjector.mock.calls.length <= 3) throw new Error('模型暂时失败，含海棠敏感响应')
+      if (topicProjector.mock.calls.length <= 3) throw new TopicProjectionError('provider-failed', 'provider or route error')
       return { topics: [{ title: '其余部署记录', description: '查看来源核实',
         sourceEventIds: context.events.map(({ id }) => id), overview: [] }] }
     })
@@ -1121,7 +1121,7 @@ describe('memory topic runtime boundaries', () => {
       const state = (await runtime.adminSnapshot(namespace))!.memoryTopicState!
       expect(state.bootstrap).toMatchObject({ status: 'failed', failedEvents: 12 })
       expect(state.jobs.find((job) => !job.superseded && job.status === 'failed'))
-        .toMatchObject({ attempts: 3, nextRetryAt: null, lastError: 'worker-failed', context: null })
+        .toMatchObject({ attempts: 3, nextRetryAt: null, lastError: 'provider-failed', context: null })
       expect(JSON.stringify(state)).not.toContain('海棠')
       now += TOPIC_BOOTSTRAP_WINDOW_MS; vi.setSystemTime(now)
       await worker.runBackgroundNamespace(namespace)

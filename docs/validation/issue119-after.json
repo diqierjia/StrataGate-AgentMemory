@@ -1,0 +1,30 @@
+{
+  "verification": "deterministic mocked streams, not live model generation",
+  "base": "e954eaf2f2cbbef4bb6226a2ebb35191424868c2",
+  "rows": [
+    {
+      "initialCharacters": 656,
+      "retryOverview": "same",
+      "success": true,
+      "calls": 1
+    },
+    {
+      "initialCharacters": 778,
+      "retryOverview": "same",
+      "success": true,
+      "calls": 1
+    },
+    {
+      "initialCharacters": 1000,
+      "retryOverview": "same",
+      "success": true,
+      "calls": 1
+    },
+    {
+      "initialCharacters": 1001,
+      "retryOverview": "empty",
+      "success": true,
+      "calls": 2
+    }
+  ]
+}
