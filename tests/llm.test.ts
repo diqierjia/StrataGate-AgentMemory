@@ -1498,23 +1498,25 @@ describe('memory topic model projection', () => {
     await bridge.run(session, () => bridge.summarizer([]));
     expect(calls.mock.calls[1]![0].maxTokens).toBe(256);
   });
-  it.each([4096, 8192, 65536])('honors exact-route configured output cap (%i)', async (defaultMaxTokens) => {
-    const { bridge, session, calls } = modelBridge([{ tool: proposal() }], { resolveModelInfo: async () => ({ defaultMaxTokens }) });
-    await bridge.run(session, () => bridge.topicProjector(context()));
-    expect(calls.mock.calls[0]![0].maxTokens).toBe(Math.min(defaultMaxTokens, 32768));
-    expect(JSON.parse(calls.mock.calls[0]![0].messages[0].content[0].text).outputTokenBudget).toBe(Math.min(defaultMaxTokens, 32768));
-  });
-
-  it.each([0, -1, 1.5, NaN, Infinity])('diagnoses invalid model output configuration before streaming (%s)', async (defaultMaxTokens) => {
-    const { bridge, session, calls } = modelBridge([], { resolveModelInfo: async () => ({ defaultMaxTokens }) });
-    const error = await bridge.run(session, () => bridge.topicProjector(context())).catch(error => error);
-    expect(error.diagnostics).toMatchObject({ category: 'provider-failed', reason: 'invalid model output token configuration', modelCalls: 0 });
-    expect(calls).not.toHaveBeenCalled();
+  it.each([512, 1024, 4096, 8192, 65536])('keeps the independent Topic budget for a complete 12-Event response (route default=%i)', async (defaultMaxTokens) => {
+    const input = context(); input.existingTopics = [];
+    input.events = Array.from({ length: 12 }, (_, index) => event(`evt_topic_${index}`));
+    const sourceEventIds = input.events.map(({ id }) => id);
+    const output: TopicProjectionResult = { topics: [{ title: 'StrataGate', description: '数据库与迁移资料', sourceEventIds,
+      sections: [{ title: '数据库与迁移', sourceEventIds }],
+      overview: [0, 1].map(index => ({ kind: 'scope', title: '数据库与迁移', text: String(index) + '字'.repeat(999), sourceEventIds })),
+    }] };
+    if (defaultMaxTokens <= 1024) expect(estimateTokens(JSON.stringify(output))).toBeGreaterThan(defaultMaxTokens);
+    const { bridge, session, calls } = modelBridge([{ tool: output }], { resolveModelInfo: async () => ({ defaultMaxTokens }) });
+    expect(await bridge.run(session, () => bridge.topicProjector(input))).toEqual(output);
+    expect(calls).toHaveBeenCalledTimes(1);
+    expect(calls.mock.calls[0]![0].maxTokens).toBe(32768);
+    expect(JSON.parse(calls.mock.calls[0]![0].messages[0].content[0].text).outputTokenBudget).toBe(32768);
   });
 
   it('recomputes the declared Topic budget for the longer JSON repair request', async () => {
     const { bridge, session, calls } = modelBridge([{ tool: { topics: 'PRIVATE' } }, { text: '{', finish: 'max-tokens' }],
-      { resolveModelInfo: async () => ({ context: { contextWindow: 8000 } }) });
+      { resolveModelInfo: async () => ({ defaultMaxTokens: 512, context: { contextWindow: 8000 } }) });
     const error = await bridge.run(session, () => bridge.topicProjector(context())).catch((error) => error);
     expect(calls).toHaveBeenCalledTimes(2);
     for (const [request] of calls.mock.calls) {

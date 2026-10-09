@@ -598,13 +598,11 @@ function parseTopicProjection(value: unknown, context: TopicProjectionContext): 
 }
 
 // Dedicated bound: DSH accepts explicit maxTokens; defaultMaxTokens is a
-// default, not an advertised hard cap. Use a known adapter-configured request cap and context
-// capacity before falling back to this ceiling. The default is not a claim
-// about the provider hard maximum. Unknown provider limits remain explicit provider failures.
+// default, not an advertised hard cap. Only exact-route context capacity can
+// lower this request; unknown provider limits remain explicit provider failures.
 export const TOPIC_OUTPUT_TOKEN_BUDGET = 32_768
 
 export class DshModelBridge {
-  private readonly outputBudgets = new Map<string, number>()
   private readonly contextWindows = new Map<string, number>()
   private readonly sessions = new AsyncLocalStorage<{ session?: Session; sessionId: Session['id'] }>()
   private readonly successfulResponses: SuccessfulModelResponse[] = []
@@ -619,7 +617,6 @@ export class DshModelBridge {
     this.ctx.on?.('llm/adapters-updated', () => {
       this.offCapabilities.clear()
       this.contextWindows.clear()
-      this.outputBudgets.clear()
       for (const listener of this.adaptersUpdatedListeners) listener()
     })
   }
@@ -924,10 +921,9 @@ Use project scope for repository decisions, user scope for stable preferences/id
     const baseRoute = this.resolveRoute(execution.session)
     const routeKey = `${baseRoute.provider}\u0000${baseRoute.model}`
     let useOff = await this.shouldUseOff(baseRoute)
-    const topicBudget = this.outputBudgets.get(routeKey) ?? TOPIC_OUTPUT_TOKEN_BUDGET
     const isTopic = kind === 'topicProjector'
     const topicDiagnostics: Partial<TopicProjectionDiagnostics> = { ...topicMetadata,
-      requestedOutputTokens: topicBudget, modelCalls: 0 }
+      requestedOutputTokens: TOPIC_OUTPUT_TOKEN_BUDGET, modelCalls: 0 }
     const topicError = (category: TopicProjectionDiagnostics['category'], reason: string) =>
       new TopicProjectionError(category, reason, topicDiagnostics)
     let lastError: ModelJsonResponseError | TopicProjectionError | undefined
@@ -939,9 +935,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
     let offFallback = false
     for (let attempt = 1; attempt <= JSON_RESPONSE_ATTEMPTS; attempt += 1) {
       attemptsUsed = attempt
-      const requestPayload = payload
       const message = createUserMessage({
-        content: [{ type: 'text', text: JSON.stringify(requestPayload) }],
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
         source: dshMessageSource(),
       })
       const assembler = new BlockAssembler()
@@ -961,12 +956,11 @@ Use project scope for repository decisions, user scope for stable preferences/id
         },
         maxTokens: kind === 'profileMaintenance'
           ? Math.max(this.config.maxOutputTokens, Math.min(12_000, 512 + 2 * Array.from(JSON.stringify(payload)).length))
-          : isTopic ? topicBudget : this.config.maxOutputTokens,
+          : isTopic ? TOPIC_OUTPUT_TOKEN_BUDGET : this.config.maxOutputTokens,
         sessionId: execution.sessionId,
         purpose: 'compaction',
       }
       if (isTopic) {
-        if (topicBudget < 1) throw topicError('provider-failed', 'invalid model output token configuration')
         const estimateInput = () => estimateTokens(JSON.stringify({ system: request.system, tools: request.tools, messages: request.messages }))
         let inputTokens = estimateInput()
         const window = this.contextWindows.get(routeKey)
@@ -974,12 +968,12 @@ Use project scope for repository decisions, user scope for stable preferences/id
           Object.assign(topicDiagnostics, { estimatedInputTokens: inputTokens, maxOutputTokens: 0 })
           throw topicError('provider-failed', 'topic input exceeds model context capacity')
         }
-        if (window !== undefined) request.maxTokens = Math.min(topicBudget, Math.floor(window - inputTokens - 1_024))
+        if (window !== undefined) request.maxTokens = Math.min(TOPIC_OUTPUT_TOKEN_BUDGET, Math.floor(window - inputTokens - 1_024))
         // Clamp with the ceiling-sized payload first: replacing its budget with
         // a smaller integer cannot increase the input estimate. Tell the model
         // the actual budget on every request, including JSON/off fallback retries.
         request.messages = [{ ...message, content: [{ type: 'text', text: JSON.stringify({
-          ...(requestPayload as Record<string, unknown>), outputTokenBudget: request.maxTokens,
+          ...(payload as Record<string, unknown>), outputTokenBudget: request.maxTokens,
         }) }] }]
         inputTokens = estimateInput()
         delete topicDiagnostics.finishReason
@@ -1183,10 +1177,6 @@ Use project scope for repository decisions, user scope for stable preferences/id
         }),
       ])
       if (Number.isFinite(info.context?.contextWindow) && info.context!.contextWindow > 0) this.contextWindows.set(key, info.context!.contextWindow)
-      if (info.defaultMaxTokens !== undefined) {
-        this.outputBudgets.set(key, Number.isSafeInteger(info.defaultMaxTokens) && info.defaultMaxTokens > 0
-          ? Math.min(TOPIC_OUTPUT_TOKEN_BUDGET, info.defaultMaxTokens) : 0)
-      }
       if (!info.reasoning) return this.currentStructuredReasoningEffort() === 'force-off'
       const supported = info.reasoning.efforts.some(({ id }) => String(id) === 'off')
       this.offCapabilities.set(key, supported ? 'supported' : 'unsupported')

@@ -86,7 +86,7 @@ const TOPIC_SAFE_REASONS = new Set<string>([
   'unexpected topic field',
   'unknown or repeated topicId',
   'unknown overview kind',
-  'topic input exceeds model context capacity', 'invalid model output token configuration', 'output token limit reached', 'structured topic schema mismatch', 'tool arguments are not valid JSON',
+  'topic input exceeds model context capacity', 'output token limit reached', 'structured topic schema mismatch', 'tool arguments are not valid JSON',
   'expected exactly one structured topic call', 'topic semantic validation failed',
   'structured model task timed out', 'provider or route error', 'topic worker failed',
   'source version changed; stale result rejected', 'topic projection lease expired',
