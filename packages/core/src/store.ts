@@ -284,6 +284,7 @@ function agentEventCandidate(
 }
 
 const DERIVATION_BACKOFF_MS = 1_000;
+const GRAPH_PROJECTION_BATCH_SIZE = 8;
 
 function restrictExtractionRelations(temporal: EventTemporal, allowedIds: ReadonlySet<string>): EventTemporal {
   const result = { ...temporal };
@@ -1642,6 +1643,17 @@ export class StrataGate {
         .sort((left, right) => Number(left.status !== 'pending') - Number(right.status !== 'pending')
           || right.priority - left.priority || left.createdAt.localeCompare(right.createdAt))[0];
       if (!job) return null;
+      // Split legacy batches in the same durable claim transaction. Siblings
+      // inherit attempts/backoff; completed or exhausted jobs are never claimed.
+      const sourceEventIds = job.sourceEventIds;
+      for (let index = GRAPH_PROJECTION_BATCH_SIZE; index < sourceEventIds.length; index += GRAPH_PROJECTION_BATCH_SIZE) {
+        const id = this.graphIdFactory('gproj');
+        this.graphProjectionJobs.set(id, {
+          ...job, id, sourceEventIds: sourceEventIds.slice(index, index + GRAPH_PROJECTION_BATCH_SIZE),
+          nodeIds: [], edgeIds: [],
+        });
+      }
+      job.sourceEventIds = sourceEventIds.slice(0, GRAPH_PROJECTION_BATCH_SIZE);
       const events = job.sourceEventIds.flatMap((id) => {
         const event = this.findEvent(id);
         return event ? [event] : [];
@@ -2656,8 +2668,8 @@ export class StrataGate {
     return job;
   }
 
-  private queueGraphProjection(sourceEventIds: readonly string[], priority: number): GraphProjectionJob | null {
-    if (!this.graphProjector) return null;
+  private queueGraphProjection(sourceEventIds: readonly string[], priority: number): void {
+    if (!this.graphProjector) return;
     const completed = new Set([...this.graphProjectionJobs.values()]
       .filter((job) => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION && job.status === 'completed')
       .flatMap((job) => job.sourceEventIds));
@@ -2666,17 +2678,17 @@ export class StrataGate {
       .flatMap((job) => job.sourceEventIds));
     const ids = [...new Set(sourceEventIds.filter((id) => this.findEvent(id)
       && !completed.has(id) && !queued.has(id)))];
-    if (ids.length === 0) return null;
     const now = toUtc8Iso(this.now());
-    const job: GraphProjectionJob = {
-      id: this.graphIdFactory('gproj'), sourceEventIds: ids,
-      projectorVersion: KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
-      status: 'pending', attempts: 0, priority, nodeIds: [], edgeIds: [],
-      nameProvenanceRecoveryVersion: 1,
-      reason: null, lastError: null, nextRetryAt: null, createdAt: now, updatedAt: now,
-    };
-    this.graphProjectionJobs.set(job.id, job);
-    return job;
+    for (let index = 0; index < ids.length; index += GRAPH_PROJECTION_BATCH_SIZE) {
+      const job: GraphProjectionJob = {
+        id: this.graphIdFactory('gproj'), sourceEventIds: ids.slice(index, index + GRAPH_PROJECTION_BATCH_SIZE),
+        projectorVersion: KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
+        status: 'pending', attempts: 0, priority, nodeIds: [], edgeIds: [],
+        nameProvenanceRecoveryVersion: 1,
+        reason: null, lastError: null, nextRetryAt: null, createdAt: now, updatedAt: now,
+      };
+      this.graphProjectionJobs.set(job.id, job);
+    }
   }
 
   private recoverGraphNameProvenanceFailures(): void {
@@ -2704,8 +2716,8 @@ export class StrataGate {
           + (Date.parse(event.temporal.happenedStart ?? event.temporal.mentionedAt ?? event.updatedAt) || 0) / 1e12;
         return score(right) - score(left);
       });
-    for (let index = 0; index < candidates.length; index += 8) {
-      this.queueGraphProjection(candidates.slice(index, index + 8).map(({ id }) => id), candidates.length - index);
+    for (let index = 0; index < candidates.length; index += GRAPH_PROJECTION_BATCH_SIZE) {
+      this.queueGraphProjection(candidates.slice(index, index + GRAPH_PROJECTION_BATCH_SIZE).map(({ id }) => id), candidates.length - index);
     }
   }
 

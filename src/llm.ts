@@ -610,6 +610,7 @@ function parseTopicProjection(value: unknown, context: TopicProjectionContext): 
 // default, not an advertised hard cap. Only exact-route context capacity can
 // lower this request; unknown provider limits remain explicit provider failures.
 export const TOPIC_OUTPUT_TOKEN_BUDGET = 32_768
+export const GRAPH_OUTPUT_TOKEN_BUDGET = 32_768
 
 export class DshModelBridge {
   private readonly contextWindows = new Map<string, number>()
@@ -947,6 +948,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
     const routeKey = `${baseRoute.provider}\u0000${baseRoute.model}`
     let useOff = await this.shouldUseOff(baseRoute)
     const isTopic = kind === 'topicProjector'
+    const isGraph = kind === 'graphProjector'
     const topicDiagnostics: Partial<TopicProjectionDiagnostics> = { ...topicMetadata,
       requestedOutputTokens: TOPIC_OUTPUT_TOKEN_BUDGET, modelCalls: 0 }
     const topicError = (category: TopicProjectionDiagnostics['category'], reason: string) =>
@@ -970,7 +972,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
         }
       }
       const message = createUserMessage({
-        content: [{ type: 'text', text: JSON.stringify(payload) }],
+        content: [{ type: 'text', text: JSON.stringify(isGraph
+          ? { ...object(payload), outputTokenBudget: GRAPH_OUTPUT_TOKEN_BUDGET } : payload) }],
         source: dshMessageSource(),
       })
       const assembler = new BlockAssembler()
@@ -990,7 +993,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
         },
         maxTokens: kind === 'dreamingStep' ? TOPIC_OUTPUT_TOKEN_BUDGET : kind === 'profileMaintenance'
           ? Math.max(this.config.maxOutputTokens, Math.min(12_000, 512 + 2 * Array.from(JSON.stringify(payload)).length))
-          : isTopic ? TOPIC_OUTPUT_TOKEN_BUDGET : this.config.maxOutputTokens,
+          : isTopic ? TOPIC_OUTPUT_TOKEN_BUDGET : isGraph ? GRAPH_OUTPUT_TOKEN_BUDGET : this.config.maxOutputTokens,
         sessionId: execution.sessionId,
         purpose: 'compaction',
       }
@@ -1001,6 +1004,17 @@ Use project scope for repository decisions, user scope for stable preferences/id
           if (window - input - 1_024 < 256) throw new Error('Dreaming input exceeds model context capacity; reduce the source page')
           request.maxTokens = Math.min(TOPIC_OUTPUT_TOKEN_BUDGET, Math.floor(window - input - 1_024))
         }
+      }
+      if (isGraph) {
+        const input = estimateTokens(JSON.stringify({ system: request.system, tools: request.tools, messages: request.messages }))
+        const window = this.contextWindows.get(routeKey)
+        if (window !== undefined) {
+          if (window - input - 1_024 < 256) throw new Error('Graph input exceeds model context capacity; reduce the source batch')
+          request.maxTokens = Math.min(GRAPH_OUTPUT_TOKEN_BUDGET, Math.floor(window - input - 1_024))
+        }
+        request.messages = [{ ...message, content: [{ type: 'text', text: JSON.stringify({
+          ...object(payload), outputTokenBudget: request.maxTokens,
+        }) }] }]
       }
       if (isTopic) {
         const estimateInput = () => estimateTokens(JSON.stringify({ system: request.system, tools: request.tools, messages: request.messages }))
@@ -1079,6 +1093,10 @@ Use project scope for repository decisions, user scope for stable preferences/id
       const responseForError = isTopic ? '' : `${renderBlocksForDiagnostics(blocks, finish.kind)}\n[finish=${finish.kind}; toolCalls=${calls.length}]`
       lastResponse = responseForError
       try {
+        // Complete JSON cannot establish that a truncated batch was finished.
+        if (isGraph && finish.kind === 'max-tokens') {
+          throw new ModelJsonResponseError('StrataGate Graph output token limit reached', { response: responseForError })
+        }
         const expectedTool = STRUCTURED_TOOLS[kind].name
         let parsed: unknown
         if (calls.length !== 1 || calls[0]?.name !== expectedTool) {

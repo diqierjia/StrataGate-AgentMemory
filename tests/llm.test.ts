@@ -80,6 +80,42 @@ describe('Graph canonical-name provenance compatibility (#113)', () => {
   })
   const response = (nodes: unknown[]) => ({ reason: 'projected', nodes, edges: [] })
 
+  it.each(['tool', 'text'] as const)('rejects schema-valid truncated %s output without completing the job or bypassing backoff', async (format) => {
+    const tool = response([node([event.id])])
+    const truncated = { ...(format === 'tool' ? { tool } : { text: JSON.stringify(tool) }), finish: 'max-tokens' as const }
+    const { bridge, session, calls } = modelBridge([truncated, truncated, truncated])
+    let now = new Date('2026-10-16T00:00:00Z')
+    const memory = StrataGate.inMemory({
+      blockTurnSize: 1, disableElementProjection: true, now: () => now,
+      summarizer: async () => ({ l0Title: 'seed', l0Tags: [], l1Summary: 'seed', l2Keypoints: [], shouldExtract: false }),
+      graphProjector: batch => bridge.run(session, () => bridge.graphProjector(batch)),
+    })
+    await memory.appendTurn({ user: 'StrataGate uses SQLite.', assistant: 'stored' })
+    const block = memory.listBlocks()[0]!
+    await memory.addEvent({ id: event.id, title: event.title, summary: event.summary,
+      sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] })
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await memory.resumePendingWork()
+      const job = memory.listGraphProjectionJobs()[0]!
+      expect(job).toMatchObject({ status: 'failed', attempts: attempt, nodeIds: [], edgeIds: [] })
+      expect(job.lastError).toContain('after 1 attempt')
+      expect(job.lastError).toContain('truncated')
+      expect(job.nextRetryAt === null).toBe(attempt === 3)
+      expect(calls).toHaveBeenCalledTimes(attempt)
+      expect(memory.listGraphNodes()).toEqual([])
+      expect(memory.listGraphEdges()).toEqual([])
+      expect(memory.listEvents()).toHaveLength(1)
+      expect(bridge.takeSuccessfulResponses()).toEqual([])
+      await memory.resumePendingWork()
+      expect(calls).toHaveBeenCalledTimes(attempt)
+      now = new Date(now.getTime() + 1_000 * 2 ** (attempt - 1))
+    }
+    now = new Date(now.getTime() + 60_000)
+    await memory.resumePendingWork()
+    expect(calls).toHaveBeenCalledTimes(3)
+  })
+
   it.each(['tool', 'text'] as const)('normalizes all equivalent names before strict %s output validation and completes the job', async (format) => {
     const tool = response([
       node([{ value: 'StrataGate', sourceEventIds: [event.id] }, { value: 'StrataGate', sourceEventIds: [event.id] }]),
@@ -876,6 +912,8 @@ describe('DeepSeek Harness model JSON retries', () => {
     expect(calls.mock.calls[0]?.[0].tools?.[0]?.parameters?.properties?.nodes?.items?.required).toContain('metadataProvenance')
     expect(calls.mock.calls[0]?.[0].tools?.[0]?.parameters?.properties?.nodes?.items?.properties?.metadataProvenance?.required).toContain('name')
     expect(calls.mock.calls[0]?.[0].system).toContain('tags describe the node')
+    expect(calls.mock.calls[0]?.[0].maxTokens).toBe(32_768)
+    expect(JSON.parse(calls.mock.calls[0]?.[0].messages[0].content[0].text).outputTokenBudget).toBe(32_768)
   })
 
   it('rejects a structured Graph node that omits canonical-name provenance', async () => {
@@ -984,6 +1022,46 @@ describe('DeepSeek Harness model JSON retries', () => {
       jobId: 'gproj_truncated', projectorVersion: 1, events: [event], existingNodes: [], existingEdges: [],
     }))).rejects.toThrow('after 1 attempt')
     expect(calls).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Graph output budget', () => {
+  const context: GraphProjectionContext = {
+    jobId: 'gproj_budget', projectorVersion: 1, events: [], existingNodes: [], existingEdges: [],
+  }
+
+  it.each([8_000, 16_000])('fits the route context on both the first request and schema repair (%i)', async (contextWindow) => {
+    const { bridge, session, calls } = modelBridge([
+      { text: 'I will update the graph.' }, { tool: { reason: 'done', nodes: [], edges: [] } },
+      { tool: { l0Title: 'ok', l0Tags: [], l1Summary: 'ok', l2Keypoints: [], shouldExtract: false } },
+    ], { resolveModelInfo: async () => ({ context: { contextWindow }, defaultMaxTokens: 2_048 }) })
+    await bridge.run(session, () => bridge.graphProjector(context))
+    for (const [request] of calls.mock.calls) {
+      const input = estimateTokens(JSON.stringify({ system: request.system, tools: request.tools, messages: request.messages }))
+      expect(request.maxTokens).toBeGreaterThan(2_048)
+      expect(request.maxTokens).toBeLessThanOrEqual(contextWindow - input - 1_024)
+      expect(JSON.parse(request.messages[0].content[0].text).outputTokenBudget).toBe(request.maxTokens)
+    }
+    expect(calls.mock.calls[1]![0].maxTokens).toBeLessThan(calls.mock.calls[0]![0].maxTokens)
+    await bridge.run(session, () => bridge.summarizer([]))
+    expect(calls.mock.calls[2]![0].maxTokens).toBe(256)
+  })
+
+  it('retains its budget after reasoning-off fallback', async () => {
+    const { bridge, session, calls } = modelBridge([
+      { error: 'reasoningEffort off is unsupported' }, { tool: { reason: 'done', nodes: [], edges: [] } },
+    ], { resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'off' }] }, defaultMaxTokens: 2_048 }) })
+    await bridge.run(session, () => bridge.graphProjector(context))
+    expect(calls.mock.calls.map(([request]) => request.reasoningEffort)).toEqual(['off', undefined])
+    expect(calls.mock.calls.map(([request]) => request.maxTokens)).toEqual([32_768, 32_768])
+  })
+
+  it('fails before sending a request when the input leaves no output capacity', async () => {
+    const { bridge, session, calls } = modelBridge([], {
+      resolveModelInfo: async () => ({ context: { contextWindow: 1_024 } }),
+    })
+    await expect(bridge.run(session, () => bridge.graphProjector(context))).rejects.toThrow('Graph input exceeds model context capacity')
+    expect(calls).not.toHaveBeenCalled()
   })
 })
 
