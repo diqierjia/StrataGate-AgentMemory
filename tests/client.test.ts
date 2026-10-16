@@ -2,12 +2,13 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
-function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string, unknown> = {}) {
-  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string, unknown> = {}, legacyGitHub?: boolean) {
+  let source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  if (legacyGitHub !== undefined) source = source.replace('const GITHUB_FEEDBACK_ENABLED = false', 'const GITHUB_FEEDBACK_ENABLED = ' + legacyGitHub)
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
-    "    exports.__test = { feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, ProfilePage, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  )
+    "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, ProfilePage, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
+  ).replace('exports.__test = {', 'exports.__test = { LongTermPage,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -39,6 +40,12 @@ function elementProps(tree: unknown): any[] {
   if (!Array.isArray(tree)) return []
   const props = tree[1] && typeof tree[1] === 'object' ? [tree[1]] : []
   return props.concat(tree.slice(2).flatMap(elementProps))
+}
+
+function buttonProps(tree: any, label: string): any {
+  if (!Array.isArray(tree)) return undefined
+  if (tree[0] === 'button' && tree.slice(2).includes(label)) return tree[1]
+  return tree.slice(2).map((child) => buttonProps(child, label)).find(Boolean)
 }
 
 function deepElementProps(tree: unknown): any[] {
@@ -851,7 +858,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("return '证据不足，继续检索'")
   })
 
-  it('shows the unified project brand, mascot, usage count, and GitHub Star link', () => {
+  it('keeps the project brand, mascot, usage count, and archived GitHub markup', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const buildSource = readFileSync(new URL('../scripts/build-client.mjs', import.meta.url), 'utf8')
     expect(source).toContain("'StrataGate'")
@@ -868,9 +875,160 @@ describe('StrataGate Web client contract', () => {
     expect(buildSource).toContain(".replaceAll('__STRATAGATE_CLIENT_VERSION__', packageVersion)")
   })
 
+  it('replaces the header community links with email contact and preserves the dormant Star link', () => {
+    const { HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED } = loadSupportHelpers()
+    expect(GITHUB_FEEDBACK_ENABLED).toBe(false)
+    const tree = HeaderCommunityLinks()
+    const hrefs = elementProps(tree).map((props) => props.href).filter(Boolean)
+    expect(hrefs).toHaveLength(0)
+    expect(elementProps(tree).find((props) => props['aria-controls'] === 'sg-contact-author-panel')['aria-expanded']).toBe(false)
+    expect(JSON.stringify(tree)).toContain('联系作者')
+    expect(JSON.stringify(tree)).not.toContain('GitHub')
+    expect(JSON.stringify(tree)).not.toContain('Issue / PR')
+    expect(JSON.stringify(tree)).not.toContain('点个')
+    const archived = loadSupportHelpers([], {}, true).HeaderCommunityLinks()
+    expect(elementProps(archived).filter((props) => props.href)).toHaveLength(2)
+    expect(JSON.stringify(archived)).toContain('给 StrataGate 点个')
+  })
+
+  it.each(['available', 'missing', 'rejected'])('shows contact details and handles %s clipboard without requiring a mail application', async (clipboardState) => {
+    const values: any[] = []
+    let stateIndex = 0
+    const copied: string[] = [], composed: string[] = []
+    const React = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState: (initial: unknown) => {
+        const index = stateIndex++
+        if (!(index in values)) values[index] = initial
+        return [values[index], (value: any) => { values[index] = typeof value === 'function' ? value(values[index]) : value }]
+      },
+      useEffect: () => {}, useRef: (initial: unknown) => ({ current: initial }),
+    }
+    const clipboard = clipboardState === 'missing' ? undefined : { writeText: async (value: string) => {
+      if (clipboardState === 'rejected') throw new Error('permission denied')
+      copied.push(value)
+    } }
+    const { HeaderCommunityLinks } = loadSupportHelpers([], { react: React, navigator: { clipboard }, window: { location: { set href(value: string) { composed.push(value) } } } })
+    const render = () => { stateIndex = 0; return HeaderCommunityLinks() }
+    const button = (tree: any, label: string): any => {
+      if (!Array.isArray(tree)) return undefined
+      if (tree[0] === 'button' && tree.slice(2).includes(label)) return tree[1]
+      return tree.slice(2).map((child) => button(child, label)).find(Boolean)
+    }
+    let tree = render()
+    expect(JSON.stringify(tree)).not.toContain('jiahongcheng61@gmail.com')
+    button(tree, '联系作者 →').onClick()
+    tree = render()
+    expect(JSON.stringify(tree)).toContain('jiahongcheng61@gmail.com')
+    expect(elementProps(tree).find((props) => props['aria-label'] === '联系作者')).toBeDefined()
+    expect(composed).toEqual([])
+    await button(tree, '复制邮箱').onClick()
+    tree = render()
+    expect(copied).toEqual(clipboardState === 'available' ? ['jiahongcheng61@gmail.com'] : [])
+    expect(JSON.stringify(tree)).toContain(clipboardState === 'available' ? '邮箱已复制' : '手动复制')
+    button(tree, '打开邮件应用').onClick()
+    tree = render()
+    expect(new URL(composed[0]!).pathname).toBe('jiahongcheng61@gmail.com')
+    expect(JSON.stringify(tree)).toContain('若没有打开，请复制邮箱')
+    expect(JSON.stringify(tree)).not.toContain('邮件已发送')
+    elementProps(tree).find((props) => props['aria-label'] === '关闭联系方式').onClick()
+    expect(JSON.stringify(render())).not.toContain('jiahongcheng61@gmail.com')
+    button(render(), '联系作者 →').onClick()
+    expect(JSON.stringify(render())).not.toContain('已尝试打开邮件应用')
+  })
+
+  it('keeps contact details and manual fallback visible when desktop mail navigation throws', () => {
+    const values: any[] = [true, '']
+    let stateIndex = 0
+    const React = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState: () => { const index = stateIndex++; return [values[index], (value: any) => { values[index] = value }] },
+      useEffect: () => {}, useRef: () => ({ current: null }),
+    }
+    const { HeaderCommunityLinks } = loadSupportHelpers([], { react: React, window: { location: { set href(_value: string) { throw new Error('unsupported protocol') } } } })
+    const tree = HeaderCommunityLinks()
+    // Find the mail button by its callback rather than depending on layout indexes.
+    const buttons = (value: any): any[] => Array.isArray(value) ? (value[0] === 'button' && value.includes('打开邮件应用') ? [value] : value.slice(2).flatMap(buttons)) : []
+    expect(() => buttons(tree)[0][1].onClick()).not.toThrow()
+    stateIndex = 0
+    const updated = JSON.stringify(HeaderCommunityLinks())
+    expect(updated).toContain('未能打开邮件应用，请复制邮箱')
+    expect(updated).toContain('jiahongcheng61@gmail.com')
+  })
+
+  it('encodes an email subject while keeping the report out of the mailto URL', async () => {
+    const { feedbackEmailUrl, copyReportAndComposeEmail, EMAIL_BODY_HINT } = loadSupportHelpers()
+    const title = '中文 & ? #\r\n另一个标题'
+    const url = new URL(feedbackEmailUrl(title))
+    expect(url.protocol).toBe('mailto:')
+    expect(url.pathname).toBe('jiahongcheng61@gmail.com')
+    expect(url.searchParams.get('subject')).toBe('StrataGate 反馈：中文 & ? # 另一个标题')
+    expect(url.searchParams.get('body')).toBe(EMAIL_BODY_HINT)
+    expect([...url.searchParams.keys()].sort()).toEqual(['body', 'subject'])
+    const report = 'private report ' + 'x'.repeat(20_000)
+    const calls: string[] = []
+    let resolveCopy: (() => void) | undefined
+    const pending = copyReportAndComposeEmail(report, { writeText: (value: string) => {
+      expect(value).toBe(report)
+      calls.push('copy')
+      return new Promise<void>((resolve) => { resolveCopy = resolve })
+    } }, (target: string) => {
+      expect(target).not.toContain('private report')
+      expect(target.length).toBeLessThan(1000)
+      calls.push('compose')
+    }, title)
+    expect(calls).toEqual(['copy', 'compose'])
+    resolveCopy!()
+    expect(await pending).toEqual({ copied: true, composeRequested: true, error: '' })
+  })
+
+  it.each(['missing', 'throws', 'rejects'])('retains a manual report fallback when the clipboard %s', async (failure) => {
+    const { copyReportAndComposeEmail, handleFeedbackEmailResult } = loadSupportHelpers()
+    const clipboard = failure === 'missing' ? null : { writeText: () => {
+      if (failure === 'throws') throw new Error('clipboard denied')
+      return Promise.reject(new Error('clipboard denied'))
+    } }
+    let composed = ''
+    const result = await copyReportAndComposeEmail('retained report', clipboard, (url: string) => { composed = url })
+    expect(result).toMatchObject({ copied: false, composeRequested: true })
+    expect(composed).toMatch(/^mailto:jiahongcheng61@gmail\.com/)
+    let expanded = false
+    let error = '保存反馈草稿失败：disk full'
+    handleFeedbackEmailResult(result, {
+      setPreviewOpen: (value: boolean) => { expanded = value },
+      setError: (update: (current: string) => string) => { error = update(error) },
+    })
+    expect(expanded).toBe(true)
+    expect(error).toContain('disk full')
+    expect(error).toContain('报告仍保留在预览中')
+    expect(error).toContain('jiahongcheng61@gmail.com')
+  })
+
+  it('keeps the copied report and offers the email address when mail application launch fails', async () => {
+    const { copyReportAndComposeEmail, handleFeedbackEmailResult } = loadSupportHelpers()
+    const result = await copyReportAndComposeEmail('report', { writeText: async () => {} }, () => { throw new Error('no mail app') })
+    expect(result).toEqual({ copied: true, composeRequested: false, error: '' })
+    let status = ''
+    handleFeedbackEmailResult(result, { setStatus: (value: string) => { status = value } })
+    expect(status).toContain('复制邮箱自行发送')
+    expect(status).not.toContain('已发送')
+  })
+
+  it('copies the visible feedback email address without opening a mail application', async () => {
+    const copied: string[] = []
+    const { SupportPage } = loadSupportHelpers([false, false, false, '', '', '', '问题', false, false, false, 2, { text: '报告', title: '' }], {
+      navigator: { clipboard: { writeText: async (value: string) => { copied.push(value) } } },
+    })
+    const tree = SupportPage({ namespace: '', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
+    const button = buttonProps(tree, '复制邮箱')
+    expect(button).toBeDefined()
+    await button!.onClick()
+    expect(copied).toEqual(['jiahongcheng61@gmail.com'])
+  })
+
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus })')
+    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, onOpenDreamingSession })')
     expect(source).toContain("settingsScope.bind({ namespace: 'stratagate-memory' })")
     expect(source).toContain("pluginSettingsScope.set('structuredReasoningEffort', mode)")
     expect(source).toContain("pluginSettingsScope.unset('structuredReasoningEffort')")
@@ -890,6 +1048,8 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the memory-first three-part information architecture', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("'/' + run.total + ' 批次'")
+    expect(source).toContain('Dreaming 整理进度（批次）')
     expect(source).toContain("const [section, setSection] = React.useState('short')")
     expect(source).toContain("[['profile', '常驻画像'], ['short', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
     expect(source).toContain('块衰减总览')
@@ -932,7 +1092,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("h(EventMemoryDetails, { event: detailedEvent")
     expect(source).toContain("onPointerDown: (event) => event.stopPropagation()")
     expect(source).toContain("onOpenGraphNode: (namespace, nodeId) => navigateToGraphNode(ctx, namespace, nodeId)")
-    expect(source).toContain('正在更新知识图谱 · ')
+    expect(source).toContain('正在更新知识图谱')
     expect(source).toContain('搜索记忆、人物、项目、概念')
     expect(source).not.toContain("['overview', '概览']")
     expect(source).not.toContain('sg-stats')
@@ -1407,8 +1567,8 @@ describe('StrataGate Web client contract', () => {
     expect([...importance.values()].every(({ radius }: { radius: number }) => radius >= 30 && radius <= 54)).toBe(true)
   })
 
-  it('keeps all feedback data local and puts only the paste hint in Feedback Issue URLs', () => {
-    const { SupportPage, ISSUE_URL, ISSUE_BODY_HINT } = loadSupportHelpers()
+  it('keeps all feedback data local and puts only the paste hint in email links', () => {
+    const { SupportPage, FEEDBACK_EMAIL, EMAIL_BODY_HINT } = loadSupportHelpers([false, false, false, '', '', '', '问题', false, false, false, 2, { text: '报告', title: '' }])
     const privateChat = 'private chat content'
     const logContent = 'diagnostic log content'
     const graphContent = 'private graph state'
@@ -1424,14 +1584,14 @@ describe('StrataGate Web client contract', () => {
       onBack: () => {},
     })
     const hrefs = elementProps(tree).map((props) => props.href).filter(Boolean)
-    expect(hrefs.length).toBeGreaterThanOrEqual(3)
-    const issueLinks = hrefs.filter((href) => href.startsWith(ISSUE_URL))
-    expect(issueLinks).toHaveLength(2)
-    const feedbackIssue = issueLinks.find((href) => href !== ISSUE_URL)!
-    expect(new URL(feedbackIssue).searchParams.get('body')).toBe(ISSUE_BODY_HINT)
-    expect(ISSUE_BODY_HINT).toContain('Ctrl+V / ⌘V')
-    expect(ISSUE_BODY_HINT).not.toContain('<!--')
-    expect(ISSUE_BODY_HINT).not.toContain('-->')
+    expect(hrefs).toHaveLength(0)
+    expect(JSON.stringify(tree)).toContain(FEEDBACK_EMAIL)
+    expect(JSON.stringify(tree)).toContain('尚未发送')
+    expect(hrefs.every((href) => href.startsWith('mailto:' + FEEDBACK_EMAIL))).toBe(true)
+    for (const href of hrefs) expect(new URL(href).searchParams.get('body')).toBe(EMAIL_BODY_HINT)
+    expect(JSON.stringify(tree)).not.toContain('GitHub')
+    expect(JSON.stringify(tree)).not.toContain('AI 帮我填')
+    expect(JSON.stringify(tree)).not.toContain('提交 PR')
     for (const href of hrefs) {
       expect(href).not.toContain(privateChat)
       expect(href).not.toContain(logContent)
@@ -1445,7 +1605,7 @@ describe('StrataGate Web client contract', () => {
     const props = elementProps(tree)
     expect(props.find((value) => value['aria-label'] === '本地反馈报告预览')).toBeUndefined()
     expect(props.some((value) => value.disabled === true && value.children === undefined)).toBe(true)
-    expect(JSON.stringify(tree)).toContain('请先描述问题，或使用 AI 帮你填写。')
+    expect(JSON.stringify(tree)).toContain('填写问题描述后，可以检查报告。')
     expect(FEEDBACK_AI_PROMPT).toContain('feedback_prepare')
     expect(FEEDBACK_AI_PROMPT).toContain('不要猜测')
     expect(feedbackDraftMarkdown({
@@ -1470,6 +1630,7 @@ describe('StrataGate Web client contract', () => {
     const { SupportPage, FEEDBACK_AI_PROMPT } = loadSupportHelpers(
       [false, false, false, '', '', '', '', false, true],
       { navigator: { clipboard: { writeText: async (value: string) => { copied = value } } } },
+      true, // Exercise the preserved GitHub UI only in this isolated test.
     )
     const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
     const serialized = JSON.stringify(tree)
@@ -1624,34 +1785,35 @@ describe('StrataGate Web client contract', () => {
     expect(popupBlocked).toEqual({ copied: true, opened: false, error: '' })
   })
 
-  it('starts the Issue action immediately instead of waiting for the local draft save', async () => {
-    let resolveSave: ((value: unknown) => void) | undefined
+  it('keeps copying and email activation separate while draft saving is pending', async () => {
     const calls: string[] = []
     const { SupportPage } = loadSupportHelpers(
-      [false, false, false, '', '', '', '## 问题描述\n\nLocal failure', false],
+      [false, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false, 2, { text: 'reviewed report', title: 'feedback' }],
       {
-        fetch: () => new Promise((resolve) => { resolveSave = resolve }),
+        fetch: () => new Promise(() => {}),
         navigator: { clipboard: { writeText: () => { calls.push('copy'); return Promise.resolve() } } },
-        window: { open: () => { calls.push('open'); return {} } },
+        window: { location: { set href(url: string) { expect(url).toMatch(/^mailto:jiahongcheng61@gmail\.com/); calls.push('compose') } } },
       },
     )
     const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
     const button = elementProps(tree).find((props) => props.className === 'sg-primary-link')
     expect(button).toBeDefined()
-    button!.onClick()
-    expect(calls).toEqual(['copy', 'open'])
-    resolveSave!({ ok: true, json: async () => ({}) })
-    await Promise.resolve()
-    await Promise.resolve()
+    await button!.onClick()
+    expect(calls).toEqual(['copy'])
+    const mailButton = buttonProps(tree, '尝试打开邮件应用')
+    expect(mailButton).toBeDefined()
+    mailButton!.onClick()
+    expect(calls).toEqual(['copy', 'compose'])
   })
 
   it('shows the report only on demand and reuses the exact preview for copy and download', async () => {
-    const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false])
+    const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false, 2, { text: 'reviewed report', title: '' }])
     const closedTree = closedHelpers.SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
     expect(elementProps(closedTree).find((props) => props['aria-label'] === '本地反馈报告预览')).toBeUndefined()
     expect(elementProps(closedTree).find((props) => props.children === undefined && props['aria-expanded'] === false)).toBeDefined()
 
-    const { copyReportAndOpenIssue, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true])
+    const report = '## 问题描述\n\nLocal failure\n\n## 诊断日志\nlocal-only-error'
+    const { copyReportAndComposeEmail, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true, 2, { text: report, title: '' }])
     let objectUrlCalls = 0
     let revokeCalls = 0
     let clickCalls = 0
@@ -1677,7 +1839,7 @@ describe('StrataGate Web client contract', () => {
     expect(clickCalls).toBe(0)
     expect(openCalls).toBe(0)
 
-    await copyReportAndOpenIssue(preview, { writeText: async (value: string) => { copied.push(value) } }, () => { openCalls += 1; return null })
+    await copyReportAndComposeEmail(preview, { writeText: async (value: string) => { copied.push(value) } }, () => { openCalls += 1 })
     const blob = downloadSupportReport(preview, documentRef, urlRef)
     expect(copied).toEqual([preview])
     expect(await blob.text()).toBe(preview)
@@ -1727,8 +1889,9 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('function MemoryStatusAlert')
     expect(source).toContain('sg-memory-alert')
     expect(source).toContain("'正在压缩 ' + status.blockSummary.processing + ' 个短期记忆块'")
-    expect(source).toContain("'正在更新知识图谱 · ' + graphProgress")
-    expect(source).toContain("'知识图谱更新未完成 · ' + graphProgress")
+    expect(source).toContain('function graphMigrationNotice')
+    expect(source).toContain('graphMigrationNotice(migration, graphState, graphFailed)')
+    expect(source).toContain('graphMigrationNotice(migration, migrationState)')
     expect(source).toContain("migrationState === 'failed' ? '查看详情并手动重试。' : '查看详情。'")
     expect(source).toContain('可查看详情并手动重试。')
     expect(source).not.toContain('sg-processing-alert')
@@ -1744,6 +1907,61 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('pollFast ? 2500 : 30000')
     expect(source).not.toContain('window.setInterval')
     expect(source).toContain("status === 'waiting'")
+  })
+
+  it.each([undefined, null, {}, { graphMigration: null }])('does not warn before a workspace memory snapshot exists (%j)', (overview) => {
+    const { MemoryStatusAlert } = loadSupportHelpers()
+    expect(MemoryStatusAlert({ overview, onOpen: () => {} })).toBeNull()
+  })
+
+  it('preserves real task notices when Event counts are missing or zero', () => {
+    const { MemoryStatusAlert } = loadSupportHelpers()
+    const render = (overview: any) => JSON.stringify(MemoryStatusAlert({ overview, onOpen: () => {} }))
+    expect(render({ processingJobDetails: [{ kind: 'block-summary', id: 'b1' }] })).toContain('正在压缩 1 个短期记忆块')
+    expect(render({ failedJobDetails: [{ kind: 'event-extraction', id: 'e1', attempts: 3 }] })).toContain('1 个长期记忆提取失败')
+    expect(render({ events: 0, processingJobDetails: [{ kind: 'graph-projection', id: 'g1' }] })).toContain('正在更新知识图谱')
+    expect(render({ events: 0, failedJobDetails: [{ kind: 'graph-projection', id: 'g1', attempts: 3 }] })).toContain('知识图谱有 1 批更新失败')
+    expect(render({ graphMigration: { processing: 1, failed: 2, projected: 0, total: 0 } })).toContain('知识图谱更新中，2 批失败')
+    expect(render({ graphMigration: { failed: 2, projected: 0, total: 0 } })).toContain('知识图谱有 2 批更新失败')
+    expect(render({ graphMigration: { processing: 1, projected: 1, total: 0 } })).not.toContain('1/0 Events')
+    expect(render({ graphMigration: { failed: 1, projected: 3, total: 2 } })).not.toContain('3/2 Events')
+  })
+
+  it.each(['graph', 'timeline'])('keeps the empty long-term %s view quiet while preserving actual graph work', (mode) => {
+    const render = (migration: any) => {
+      let stateIndex = 0
+      const React = {
+        createContext: (value: unknown) => ({ Provider: 'provider', value }),
+        createElement: (...args: unknown[]) => args,
+        Fragment: 'fragment',
+        useState: (initial: any) => [stateIndex++ === 0 ? mode : typeof initial === 'function' ? initial() : initial, () => {}],
+        useEffect: () => {},
+        useRef: (initial: unknown) => ({ current: initial }),
+        useMemo: (factory: () => unknown) => factory(),
+      }
+      const { LongTermPage } = loadSupportHelpers([], { react: React })
+      return JSON.stringify(LongTermPage({
+        events: [], eventPage: { total: 0, offset: 0, limit: 40 },
+        graph: { nodes: [], edges: [], migration }, project: '', query: '', setQuery: () => {}, namespace: '',
+      }))
+    }
+    expect(render(null)).not.toContain('sg-migration')
+    expect(render({ projected: 0, total: 0, state: 'incomplete', complete: false })).not.toContain('sg-migration')
+    expect(render({ projected: 0, total: 0, state: 'complete', complete: true })).not.toContain('sg-migration')
+    expect(render({ projected: 0, total: 1, state: 'incomplete', complete: false })).toContain('知识图谱更新未完成 · 0/1 Events')
+    expect(render({ projected: 0, total: 0, processing: 1, state: 'processing', complete: false })).toContain('正在更新知识图谱')
+    expect(render({ projected: 0, total: 0, failed: 1, state: 'failed', complete: false })).toContain('知识图谱有 1 批更新失败')
+    for (const migration of [
+      { projected: 1, total: 0, processing: 1, state: 'complete', complete: true },
+      { projected: 3, total: 2, failed: 1, state: 'failed', complete: false },
+    ]) {
+      const tree = render(migration)
+      expect(tree).toContain('sg-migration')
+      expect(tree).not.toMatch(/\d+\/\d+ Events/)
+    }
+    expect(render({ projected: 0, total: 0, failed: 0, complete: true, state: 'complete' })).not.toContain('sg-migration')
+    expect(render({ state: 'processing' })).toContain('正在更新知识图谱')
+    expect(render({ state: 'failed' })).toContain('知识图谱更新失败')
   })
 
   it('renders separate product states for summary, extraction, and graph work', () => {

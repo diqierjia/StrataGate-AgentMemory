@@ -618,6 +618,9 @@ export interface RawSearchHit {
 }
 
 export interface RawSearchOptions {
+  /** Read-only restricted retrieval, applied before ranking. */
+  messageIds?: readonly string[];
+  offset?: number;
   /** Limit raw-message candidates to one conversation thread. */
   threadId?: string;
   /** Preserve the legacy session behavior that includes namespace-level messages. */

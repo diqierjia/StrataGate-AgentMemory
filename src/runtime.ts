@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -56,6 +57,16 @@ import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
 import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
+import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, type DreamingAction } from './dreaming.js'
+import type { DreamingRun, DreamingCommand, DreamingDirectoryOperation } from '@diqier/stratagate'
+
+export interface DreamingHost {
+  run(namespace: string, run: DreamingRun, signal: AbortSignal): Promise<void>
+  open(namespace: string, run: DreamingRun): Promise<string>
+  close(): Promise<void>
+}
+type ClaimedDreamingCommand = Extract<DreamingCommand, { owner: string; epoch: number }>
+export type DreamingOperation = ClaimedDreamingCommand extends infer T ? T extends ClaimedDreamingCommand ? Omit<T, 'id' | 'owner' | 'epoch'> : never : never
 
 export { estimateTokens }
 
@@ -154,7 +165,12 @@ function workspaceDisplayName(cwd: string | undefined): string {
 }
 
 function feedbackText(value: unknown, maximum: number): string {
-  return typeof value === 'string' ? value.trim().slice(0, maximum) : ''
+  if (typeof value !== 'string') return ''
+  // With /u, paired surrogates are one code point and do not match this range.
+  // Replace malformed historical text, then preserve the UTF-16 size limit
+  // without splitting a valid surrogate pair at the boundary.
+  const text = value.trim().replace(/[\uD800-\uDFFF]/gu, '\uFFFD').slice(0, maximum)
+  return text.replace(/[\uD800-\uDBFF]$/, '')
 }
 
 const FEEDBACK_MARKDOWN_HEADINGS: Record<string, string> = {
@@ -265,6 +281,10 @@ export class StrataGateRuntime {
   private readonly pendingSurfaceSync = new Map<string, { namespace: string; blockId: string }>()
   private readonly adminSnapshotCache = new Map<string, AdminSnapshotEntry>()
   private readonly externalImportRuns = new Map<string, Promise<void>>()
+  private readonly dreamingRuns = new Map<string, Promise<void>>()
+  private readonly dreamingControllers = new Map<string, AbortController>()
+  private readonly dreamingOwner = randomUUID()
+  private dreamingHost: DreamingHost | undefined
   private readonly adminJobRetryRuns = new Map<string, Promise<unknown>>()
   private readonly feedbackDrafts = new Map<string, FeedbackDraft>()
   private readonly pendingFeedbackSuggestionSessions = new Set<string>()
@@ -280,6 +300,7 @@ export class StrataGateRuntime {
   private backgroundWorkerWakePending = false
   private profileMaintenanceRun: Promise<boolean> | undefined
   private readonly disposeAdaptersUpdated: () => void
+  private readonly disposeWorkChanged: () => void
   private settingsTail: Promise<void> = Promise.resolve()
   private batchSequence = 0
   private closed = false
@@ -300,6 +321,7 @@ export class StrataGateRuntime {
     this.blockDecayLambda = config.blockDecayLambda
     this.agentMemoryRetrievalWeight = config.agentMemoryRetrievalWeight ?? 1
     this.disposeAdaptersUpdated = this.models.onAdaptersUpdated(() => this.wakeModelWorkers())
+    this.disposeWorkChanged = SqliteStorage.onBackgroundWorkChanged(config.database, () => this.wakeBackgroundWorker())
     this.scheduleBackgroundWorker(BACKGROUND_WORKER_INITIAL_DELAY_MS)
   }
 
@@ -316,7 +338,7 @@ export class StrataGateRuntime {
       this.backgroundWorkerRun = run
       void run.finally(() => {
         if (this.backgroundWorkerRun === run) this.backgroundWorkerRun = undefined
-        const delay = this.backgroundWorkerWakePending ? 0 : BACKGROUND_WORKER_INTERVAL_MS
+        const delay = this.backgroundWorkerWakePending ? 0 : this.backgroundWorkerDelay()
         this.backgroundWorkerWakePending = false
         this.scheduleBackgroundWorker(delay)
       })
@@ -329,7 +351,19 @@ export class StrataGateRuntime {
     void this.runProfileMaintenance().catch((error: unknown) => this.onIngestError(error))
     let namespaces: string[]
     try {
-      namespaces = await this.adminNamespaces()
+      if (this.config.database === ':memory:') {
+        // In-memory spaces use separate SQLite connections; only their already-open state exists.
+        namespaces = [...this.spaces.keys()]
+      } else {
+        if (!existsSync(this.config.database)) return
+        const storage = this.profileStore()
+        if (await storage.rebuildBackgroundWorkIndex(8, (error) => this.onIngestError(error))) this.backgroundWorkerWakePending = true
+        const metadata = new DshMetadataStore(this.config.database)
+        try {
+          const now = Date.now()
+          namespaces = storage.dueBackgroundNamespaces(now, typeof this.models.topicProjector === 'function', metadata.topicBootstrapNotBefore(now))
+        } finally { metadata.close() }
+      }
     } catch (error) {
       this.onIngestError(error)
       return
@@ -342,6 +376,20 @@ export class StrataGateRuntime {
         this.onIngestError(error)
       }
     }
+  }
+
+  private backgroundWorkerDelay(): number {
+    if (!this.profileStorage || !this.models.isReady() || this.config.database === ':memory:') return BACKGROUND_WORKER_INTERVAL_MS
+    let metadata: DshMetadataStore | undefined
+    try {
+      metadata = new DshMetadataStore(this.config.database)
+      const now = Date.now()
+      const time = this.profileStorage.nextBackgroundWorkAt(typeof this.models.topicProjector === 'function', metadata.topicBootstrapNotBefore(now))
+      // The 3s cap discovers other processes and independently checks Profile maintenance.
+      // Due-but-busy namespaces wait for their session worker or the next lightweight poll.
+      return time !== null && time > now ? Math.min(BACKGROUND_WORKER_INTERVAL_MS, time - now) : BACKGROUND_WORKER_INTERVAL_MS
+    } catch (error) { this.onIngestError(error); return BACKGROUND_WORKER_INTERVAL_MS }
+    finally { metadata?.close() }
   }
 
   async runProfileMaintenance(now = Date.now()): Promise<boolean> {
@@ -404,13 +452,19 @@ export class StrataGateRuntime {
       try {
         await this.refreshExternalImportMemory(namespace, memory)
         const canProjectTopics = typeof this.models.topicProjector === 'function'
-        const runnable = [
+        const runnable = memory.hasSealableTail() || [
           ...memory.listSummaryJobs(),
           ...memory.listExtractionJobs(),
-        ].some((job) => job.status === 'pending'
+        ].some((job) => job.status === 'running' && (!job.leaseUntil || Date.parse(job.leaseUntil) <= Date.now())
+          || job.status === 'pending'
           || (job.status === 'failed' && job.nextRetryAt !== null
             && Date.parse(job.nextRetryAt) <= Date.now()))
           || memory.listGraphProjectionJobs().some((job) => graphProjectionCanRun(job))
+          || memory.listGraphProjectionJobs().some((job) => job.status === 'running'
+            && (!job.leaseUntil || Date.parse(job.leaseUntil) <= Date.now()))
+          || memory.listBlocks().some((block) => block.processingStatus === 'pending'
+            && memory.listSummaryJobs().some((job) => job.blockId === block.id && job.status === 'succeeded')
+            && !memory.listExtractionJobs().some((job) => job.blockId === block.id))
           || (canProjectTopics && memory.hasPendingTopicWork())
         if (!runnable) return
         const hasActiveSessionWork = [
@@ -438,7 +492,7 @@ export class StrataGateRuntime {
               }
               if (job) {
                 try {
-                  const result = await this.models.topicProjector(job)
+                  const result = await memory.runTopicProjectionModel(job.jobId, () => this.models.topicProjector(job!))
                   // Another connection may have changed or forgotten sources while
                   // the model was running. Validate against the durable head.
                   await this.retryTopicWrite(namespace, memory, () => memory.completeTopicProjection(job.jobId, result))
@@ -518,6 +572,7 @@ export class StrataGateRuntime {
   }
 
   acceptEvent(session: Session, event: SessionEvent): void {
+    if (this.isDreamingSession(session)) return
     if (this.closed) return
     if (!this.config.ingestSubagents && session.header.origin === 'subagent') return
     const turn = this.folder.accept(session, event)
@@ -1178,7 +1233,9 @@ export class StrataGateRuntime {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    for (const controller of this.dreamingControllers.values()) controller.abort(new Error('宿主已关闭，任务保留为暂停'))
     this.disposeAdaptersUpdated()
+    this.disposeWorkChanged()
     if (this.backgroundWorkerTimer) clearTimeout(this.backgroundWorkerTimer)
     this.backgroundWorkerTimer = undefined
     for (const timer of this.migrationTimers.values()) clearTimeout(timer)
@@ -1200,13 +1257,16 @@ export class StrataGateRuntime {
     await Promise.allSettled(this.migrationRuns.values())
     await Promise.allSettled(this.derivationRuns.values())
     await Promise.allSettled(this.externalImportRuns.values())
+    await Promise.allSettled(this.dreamingRuns.values())
+    await this.dreamingHost?.close()
     await Promise.all(settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.close()] : []))
     if (this.profileStorage) await this.profileStorage.close()
     this.sessionsById.clear()
+    this.pendingFeedbackSuggestionSessions.clear()
     if (flushError !== undefined) throw flushError
   }
 
-  namespaceFor(session: Session): string {
+  namespaceFor(session: Pick<Session, 'id' | 'header'>): string {
     const prefix = this.config.namespacePrefix
     if (this.config.namespaceMode === 'global') return `${prefix}:global:${this.config.globalNamespace}`
     if (this.config.namespaceMode === 'session') return `${prefix}:session:${String(session.id)}`
@@ -1338,10 +1398,11 @@ export class StrataGateRuntime {
   }
 
   notePluginError(session: Session, _error?: unknown): void {
-    if (!this.closed) this.pendingFeedbackSuggestionSessions.add(String(session.id))
+    if (AGENT_FEEDBACK_ENABLED && !this.closed) this.pendingFeedbackSuggestionSessions.add(String(session.id))
   }
 
   takeFeedbackSuggestion(session: Session, now = Date.now()): string {
+    if (!AGENT_FEEDBACK_ENABLED) return ''
     const sessionId = String(session.id)
     if (!this.pendingFeedbackSuggestionSessions.delete(sessionId)) return ''
     const last = this.lastFeedbackPromptAt()
@@ -1531,8 +1592,8 @@ export class StrataGateRuntime {
     if (this.config.database === ':memory:' || !existsSync(this.config.database)) return
     const storage = new SqliteStorage({ filename: this.config.database, readonly: true })
     try {
-      const head = storage.listNamespaceRevisions().find((entry) => entry.namespace === namespace)
-      if (head && head.revision !== memory.storageRevision) await memory.reloadFromStorage()
+      const revision = storage.namespaceRevision(namespace)
+      if (revision !== null && revision !== memory.storageRevision) await memory.reloadFromStorage()
     } finally {
       await storage.close()
     }
@@ -1542,6 +1603,157 @@ export class StrataGateRuntime {
     const opening = this.spaces.get(namespace)
     if (!opening) return
     await (await opening).reloadFromStorage()
+  }
+
+  async adminDreamingStatus(namespace: string): Promise<unknown> {
+    const snapshot = await this.adminSnapshot(namespace)
+    if (!snapshot) throw new Error('Unknown memory namespace')
+    const run = snapshot.memoryTopicState?.dreaming
+    if (!run) return { namespace, run: null }
+    return { namespace, run: dreamingStatus(run) }
+  }
+
+  setDreamingHost(host: DreamingHost): void { this.dreamingHost = host }
+
+  isDreamingSession(session: Session): boolean { return String(session.id).startsWith('stratagate-dreaming:') }
+
+  async dreamingRun(namespace: string, id: string): Promise<DreamingRun> {
+    const run = (await this.adminSnapshot(namespace))?.memoryTopicState?.dreaming
+    if (!run || run.id !== id) throw new Error('Dreaming run changed')
+    return structuredClone(run)
+  }
+
+  async dreamingMutate(namespace: string, run: DreamingRun, operation: DreamingOperation): Promise<DreamingRun> {
+    return this.retryExternalImportWrite(namespace, memory => memory.dreaming({ ...operation, id: run.id, owner: this.dreamingOwner, epoch: run.epoch } as DreamingCommand))
+  }
+
+  async dreamingContext(namespace: string, id: string): Promise<{ run: DreamingRun; payload: unknown }> {
+    let run = await this.dreamingRun(namespace, id)
+    run = await this.dreamingMutate(namespace, run, { kind: 'prepare' })
+    const { memory, owned } = await this.openAdminMemory(namespace)
+    try { await this.refreshExternalImportMemory(namespace, memory); return { run, payload: run.status === 'running' ? dreamingPayload(memory, run) : null } }
+    finally { if (owned) await memory.close() }
+  }
+
+  async dreamingExecute(namespace: string, id: string, action: DreamingAction, expectedEpoch?: number): Promise<unknown> {
+    const run = await this.dreamingRun(namespace, id)
+    if (!['running', 'pausing'].includes(run.status) || (expectedEpoch !== undefined && expectedEpoch !== run.epoch)) throw new Error('Dreaming claim changed')
+    let result: unknown
+    let evidenceIds: string[] = []
+    try {
+      if (action.tool === 'dreaming_directory') {
+        const next = await this.dreamingMutate(namespace, run, { kind: 'apply', operations: action.args.operations as DreamingDirectoryOperation[] })
+        result = { saved: next.changedBatches > run.changedBatches, changedBatches: next.changedBatches }
+      } else if (action.tool === 'dreaming_finish') {
+        const next = await this.dreamingMutate(namespace, run, { kind: 'finish-unit' })
+        return { status: next.status, completed: next.cursor, total: next.units.length, changedBatches: next.changedBatches }
+      } else {
+        const opened = await this.openAdminMemory(namespace)
+        try {
+          await this.refreshExternalImportMemory(namespace, opened.memory)
+          const read = await dreamingTool(opened.memory, run, action)
+          result = read.result; evidenceIds = read.evidenceIds
+        } finally { if (opened.owned) await opened.memory.close() }
+      }
+    } catch (error) { result = { error: error instanceof Error ? error.message : 'Tool failed' } }
+    await this.dreamingMutate(namespace, run, { kind: 'checkpoint', trace: { ...action, result }, evidenceIds, estimatedTokens: 0 })
+    return result
+  }
+
+  async adminDreamingSession(namespace: string, id: string): Promise<unknown> {
+    if (this.closed) throw new Error('Runtime is closed')
+    if (!this.dreamingHost) throw new Error('当前宿主未提供 Dreaming 会话接口')
+    const run = await this.dreamingRun(namespace, id)
+    return { sessionId: await this.dreamingHost.open(namespace, run) }
+  }
+
+  async adminDreamingControl(namespace: string, action: string, id?: string): Promise<unknown> {
+    if (this.closed) throw new Error('Runtime is closed')
+    if ((action === 'start' || action === 'resume') && [...this.dreamingRuns.keys()].some(key => key !== namespace)) {
+      throw new Error('另一个记忆空间正在 Dreaming，请等待完成或先暂停它')
+    }
+    let command: DreamingCommand
+    if (action === 'start') command = { kind: 'start', owner: this.dreamingOwner }
+    else if (action === 'resume' && id) command = { kind: 'resume', id, owner: this.dreamingOwner }
+    else if ((action === 'pause' || action === 'terminate') && id) command = { kind: action, id }
+    else throw new Error('Invalid Dreaming control')
+    const run = await this.retryExternalImportWrite(namespace, memory => memory.dreaming(command.kind === 'start' && this.agentMemoryRetrievalWeight <= 0
+      ? { ...command, allowedEventIds: memory.listEvents().filter(event => event.status !== 'forgotten' && event.status !== 'archived').map(event => event.id) } : command))
+    if (action === 'terminate') this.dreamingControllers.get(namespace)?.abort(new Error('用户已终止本轮 Dreaming'))
+    if (action === 'start' || action === 'resume') this.startDreaming(namespace, run)
+    return this.adminDreamingStatus(namespace)
+  }
+
+  private startDreaming(namespace: string, initial: DreamingRun): void {
+    const previous = this.dreamingRuns.get(namespace)
+    if (previous) { void previous.then(() => { if (!this.closed) this.startDreaming(namespace, initial) }); return }
+    const controller = new AbortController()
+    this.dreamingControllers.set(namespace, controller)
+    const claim = { id: initial.id, owner: this.dreamingOwner, epoch: initial.epoch }
+    const mutate = (command: DreamingCommand) => this.retryExternalImportWrite(namespace, memory => memory.dreaming(command))
+    let renewing = false
+    const heartbeat = setInterval(() => {
+      if (renewing || controller.signal.aborted) return
+      renewing = true
+      void mutate({ kind: 'heartbeat', ...claim }).catch(() => controller.abort(new Error('Dreaming 任务认领已变化'))).finally(() => { renewing = false })
+    }, 20_000)
+    heartbeat.unref?.()
+    const task = (async () => {
+      try {
+        if (this.dreamingHost) {
+          await this.dreamingHost.run(namespace, initial, controller.signal)
+          return
+        }
+        while (!this.closed && !controller.signal.aborted) {
+          const run = await mutate({ kind: 'prepare', ...claim })
+          if (run.status !== 'running') return
+          const { memory, owned } = await this.openAdminMemory(namespace)
+          let payload: unknown
+          try { await this.refreshExternalImportMemory(namespace, memory); payload = dreamingPayload(memory, run) }
+          finally { if (owned) await memory.close() }
+          const action = await this.models.runDetached(`dreaming:${run.id}`, () => this.models.dreamingStep(payload), controller.signal)
+          if (controller.signal.aborted) return
+          const repeated = run.trace.filter(entry => entry.tool === action.tool && JSON.stringify(entry.args) === JSON.stringify(action.args)).length
+          if (repeated >= 3) {
+            await mutate({ kind: 'suspend', ...claim, reason: '重复调用未带来有效进展，已暂停并保留断点' })
+            return
+          }
+          if (action.tool === 'finish') {
+            await mutate({ kind: 'checkpoint', ...claim, trace: { ...action, result: { completed: true } }, estimatedTokens: dreamingEstimatedTokens(payload, action) })
+            const next = await mutate({ kind: 'finish-unit', ...claim })
+            if (next.status === 'completed' || next.status === 'paused') return
+          } else {
+            let result: unknown
+            let evidenceIds: string[] = []
+            try {
+              if (action.tool === 'dreaming_directory') {
+                const written = await mutate({ kind: 'apply', ...claim, operations: action.args.operations as DreamingDirectoryOperation[] })
+                result = { saved: written.changedBatches > run.changedBatches, changedBatches: written.changedBatches }
+              } else {
+                const opened = await this.openAdminMemory(namespace)
+                try {
+                  await this.refreshExternalImportMemory(namespace, opened.memory)
+                  const read = await dreamingTool(opened.memory, run, action as DreamingAction)
+                  result = read.result; evidenceIds = read.evidenceIds
+                } finally { if (opened.owned) await opened.memory.close() }
+              }
+            } catch (error) {
+              result = { error: error instanceof Error ? error.message : 'Tool failed' }
+            }
+            const saved = await mutate({ kind: 'checkpoint', ...claim, trace: { ...action, result }, evidenceIds, estimatedTokens: dreamingEstimatedTokens(payload, action) })
+            if (saved.status !== 'running') return
+          }
+          // Yield between paid calls and allow normal foreground activity to run.
+          await new Promise<void>(resolve => setTimeout(resolve, 100))
+        }
+      } catch (error) {
+        await mutate({ kind: 'suspend', ...claim, reason: this.closed ? '宿主已关闭，进度已保存' : error instanceof Error ? error.message.slice(0, 300) : '运行失败，进度已保存' }).catch(() => {})
+      } finally { clearInterval(heartbeat) }
+    })().finally(() => {
+      if (this.dreamingRuns.get(namespace) === task) this.dreamingRuns.delete(namespace)
+      if (this.dreamingControllers.get(namespace) === controller) this.dreamingControllers.delete(namespace)
+    })
+    this.dreamingRuns.set(namespace, task)
   }
 
   private async retryExternalImportWrite<T>(
@@ -2135,7 +2347,7 @@ export class StrataGateRuntime {
     })
   }
 
-  private scheduleBlockDerivation(session: Session, memory: StrataGate): void {
+  private scheduleBlockDerivation(session: Session, memory: StrataGate, minimumDelayMs = 0): void {
     const threadId = String(session.id)
     const key = `${this.namespaceFor(session)}\u0000${threadId}`
     if (this.closed || !this.models.isReady(session) || this.derivationTimers.has(key) || this.derivationRuns.has(key)) return
@@ -2146,16 +2358,17 @@ export class StrataGateRuntime {
     const retryTimes = [
       ...memory.listSummaryJobs(),
       ...memory.listExtractionJobs(),
-    ].filter((job) => pendingBlockIds.has(job.blockId)
+    ].filter((job) => pendingBlockIds.has(job.blockId) && job.attempts < DERIVATION_MAX_ATTEMPTS
       && (job.status === 'pending' || (job.status === 'failed' && job.nextRetryAt !== null)))
       .map((job) => job.nextRetryAt ? Date.parse(job.nextRetryAt) : Date.now())
       .filter(Number.isFinite)
     if (retryTimes.length === 0) return
-    const delay = Math.max(0, Math.min(...retryTimes) - Date.now())
+    const delay = Math.max(minimumDelayMs, Math.min(...retryTimes) - Date.now())
     const timer = setTimeout(() => {
       this.derivationTimers.delete(key)
       if (this.closed || !this.models.isReady(session)) return
       const failedBefore = this.failedCoreJobs(memory)
+      let retryDelay = 0
       const run = this.models.run(session, () => memory.resumePendingWork({ threadId }))
         .then(async (resumed) => {
           await this.persistSuccessfulResponses(memory)
@@ -2177,13 +2390,19 @@ export class StrataGateRuntime {
           changed = this.syncDecayedBlockSurface(session, memory, contexts) || changed
           if (changed) await this.flushNativeSession(session)
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
+          // A heartbeat can race the expiry preflight. Refresh its claim even
+          // at the same revision, and never spin on a still-due pending Block.
+          retryDelay = BACKGROUND_WORKER_INTERVAL_MS
+          if (error instanceof StorageConflictError) {
+            try { await memory.reloadFromStorage(); return } catch (refreshError) { error = refreshError }
+          }
           this.notePluginError(session, error)
           this.onIngestError(error)
         })
         .finally(() => {
           this.derivationRuns.delete(key)
-          this.scheduleBlockDerivation(session, memory)
+          this.scheduleBlockDerivation(session, memory, retryDelay)
         })
       this.derivationRuns.set(key, run)
     }, delay)

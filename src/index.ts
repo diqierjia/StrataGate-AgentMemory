@@ -14,7 +14,9 @@ import {
 import { DshModelBridge } from './llm.js'
 import { dropLegacyAgentMemoriesTable } from './metadata.js'
 import { StrataGateRuntime } from './runtime.js'
+import { DshDreamingSessions } from './dreaming-session.js'
 import { registerMemoryTools } from './tools.js'
+import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 import { registerAdminRoutes } from './web.js'
 import { assertCompatibleDshRuntime } from './dsh-compatibility.js'
 import { installRetrievalFinalization } from './retrieval-finalization.js'
@@ -120,8 +122,10 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
   const runtime = new StrataGateRuntime(resolved, models, (error) => {
     ctx.logger.error(`stratagate-memory ingestion failed: ${renderError(error)}`)
   }, async (session) => {
-    await ctx.sessions.flush(session)
+    const sessions = ctx.get('sessions') as Context['sessions'] | undefined
+    if (sessions) await sessions.flush(session)
   }, () => feedbackWebOrigin(ctx))
+  runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => models.dreamingModelOptions()))
   await runtime.syncConfiguredSettings()
 
   const effortEntry: EffortSettings = {
@@ -148,9 +152,10 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
   })
 
   ctx.systemPrompt.section({ name: 'tool:stratagate-memory', order: 113, text: MEMORY_PROTOCOL })
-  ctx.systemPrompt.section({ name: 'tool:stratagate-feedback', order: 114, text: FEEDBACK_PROTOCOL })
+  if (AGENT_FEEDBACK_ENABLED) ctx.systemPrompt.section({ name: 'tool:stratagate-feedback', order: 114, text: FEEDBACK_PROTOCOL })
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
     const assembled = await next()
+    if (context.agent?.session && runtime.isDreamingSession(context.agent.session)) return assembled
     const contexts = [...assembled.contexts]
     try {
       const profile = runtime.renderProfileContext()
@@ -169,24 +174,24 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
       autoMemory = { name: 'stratagate:auto-memory', text }
     } catch (error) {
       ctx.logger.warn(`stratagate-memory auto-context failed: ${renderError(error)}`)
-      runtime.notePluginError(session, error)
+      if (AGENT_FEEDBACK_ENABLED) runtime.notePluginError(session, error)
     }
     try {
       const directory = await runtime.buildMemoryDirectory(session)
       if (directory) contexts.push({ name: 'stratagate:memory-directory', text: directory })
     } catch (error) {
       ctx.logger.warn(`stratagate-memory directory failed: ${renderError(error)}`)
-      runtime.notePluginError(session, error)
+      if (AGENT_FEEDBACK_ENABLED) runtime.notePluginError(session, error)
     }
     if (autoMemory) contexts.push(autoMemory)
-    const feedbackSuggestion = runtime.takeFeedbackSuggestion(session)
+    const feedbackSuggestion = AGENT_FEEDBACK_ENABLED ? runtime.takeFeedbackSuggestion(session) : ''
     if (feedbackSuggestion) contexts.push({ name: 'stratagate:feedback-suggestion', text: feedbackSuggestion })
     return { ...assembled, contexts }
   })
   installRetrievalFinalization(ctx, runtime)
   registerMemoryTools(ctx, runtime)
   ctx.on('tools/result', (exec, result) => {
-    if (!result.isError || !exec.agent) return
+    if (!AGENT_FEEDBACK_ENABLED || !result.isError || !exec.agent) return
     if (exec.name === 'feedback_prepare' || exec.name.startsWith('memory_')) {
       runtime.notePluginError(exec.agent.session, result.error.message)
     }

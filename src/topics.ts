@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
-import { bm25Rank, estimateTokens, memoryTopicMembershipSections, memoryTopicSectionTitle, weightedSearchTokens, type EventCard, type MemoryTopic } from '@diqier/stratagate'
+import { bm25Rank, estimateTokens, memoryTopicMembershipSections, memoryTopicSectionTitle, memoryTopicSectionIdentity, weightedSearchTokens, type EventCard, type MemoryTopic } from '@diqier/stratagate'
 
 export function memoryTopicSectionKey(title: string): string {
-  const identity = title.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase()
-  return 'section:' + createHash('sha256').update(identity).digest('hex')
+  return memoryTopicSectionIdentity(title)
 }
 
 /** Paragraph evidence and directory membership are independent. */
@@ -12,14 +11,14 @@ export function memoryTopicSections(topic: Pick<MemoryTopic, 'overview' | 'sourc
   topic.sourceEventIds.forEach((id, index) => { if (!memberPositions.has(id)) memberPositions.set(id, index) })
   const sections = new Map<string, { key: string; title: string; paragraphs: MemoryTopic['overview']; sourceEventIds: string[] }>()
   for (const membership of memoryTopicMembershipSections(topic)) {
-    const key = memoryTopicSectionKey(membership.title)
+    const key = membership.id ?? memoryTopicSectionKey(membership.title)
     const section = sections.get(key) ?? { key, title: membership.title, paragraphs: [], sourceEventIds: [] }
     section.sourceEventIds.push(...membership.sourceEventIds.filter((id) => memberPositions.has(id)))
     sections.set(key, section)
   }
   for (const part of topic.overview) {
     const title = memoryTopicSectionTitle(part)
-    const identity = memoryTopicSectionKey(title)
+    const identity = [...sections.values()].find(section => section.title === title)?.key ?? memoryTopicSectionKey(title)
     let section = sections.get(identity)
     if (!section) {
       section = { key: identity, title, paragraphs: [], sourceEventIds: [] }

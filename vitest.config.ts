@@ -11,5 +11,8 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     testTimeout: process.env.CI ? 30_000 : 5_000,
+    // Concurrent SQLite fixtures and process startup compete on Windows CI.
+    // Bound the pool rather than increasing individual test timeouts.
+    ...(process.env.CI && process.platform === 'win32' ? { maxWorkers: 2, minWorkers: 1 } : {}),
   },
 });

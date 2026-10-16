@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryTopicDirectory, StrataGate, TOPIC_RECOVERY_VERSION, TopicProjectionError,
-  memoryTopicEventFingerprint, safeTopicDiagnostics,
+  memoryTopicEventFingerprint, safeTopicDiagnostics, TOPIC_OVERVIEW_MAX_CHARACTERS,
   type EventCard, type LoadedStrataGateState, type TopicProjectionContext, type TopicProjectionJob } from '../src/index.js';
 import { SqliteStorage } from '../src/sqlite.js';
 
@@ -40,14 +40,17 @@ async function fixture(count = 14, completed = 2) {
   }
   const legacy = directory.snapshot(events);
   delete legacy.recoveryVersion;
-  for (const job of legacy.jobs) delete job.diagnostics; // Older DBs did not have diagnostics.
+  for (const job of legacy.jobs) {
+    delete job.diagnostics; // Older DBs did not have diagnostics.
+    job.lastError = 'invalid-output';
+  }
   const snapshot = memory.exportSnapshot(); snapshot.memoryTopicState = legacy;
   await memory.close();
   return { events, legacy, snapshot, clock, oldContext };
 }
 
 describe('Issue #119 writer-open recovery', () => {
-  it.each(['', ' \t\n', '字'.repeat(601), '𠮷'.repeat(601)])('rejects invalid overview text atomically at the core commit gate (%s)', async (text) => {
+  it.each(['', ' \t\n', '字'.repeat(1001), '𠮷'.repeat(1001)])('rejects invalid overview text atomically at the core commit gate (%s)', async (text) => {
     const { events } = await fixture(1, 0);
     const directory = new MemoryTopicDirectory(); directory.initializeBootstrap(events, new Date(initialClock).toISOString());
     const claim = directory.claim(events, new Date(initialClock).toISOString())!;
@@ -57,13 +60,13 @@ describe('Issue #119 writer-open recovery', () => {
     catch (caught) { error = caught as TopicProjectionError; }
     expect(error).toBeInstanceOf(TopicProjectionError);
     expect(error.diagnostics).toMatchObject({ category: 'validation-failed', fieldPath: 'topics[0].overview[0].text',
-      actualCharacters: Array.from(text).length, minCharacters: 1, maxCharacters: 600 });
+      actualCharacters: Array.from(text).length, minCharacters: 1, maxCharacters: 1000 });
     expect(error.diagnostics.reason).toBe(!text ? 'overview.text is empty' : !text.trim() ? 'overview.text contains only whitespace' : 'overview.text exceeds the character limit');
     expect(directory.snapshot()).toEqual(before);
     expect(JSON.stringify(error)).not.toContain('PRIVATE');
   });
 
-  it.each(['字'.repeat(600), '𠮷'.repeat(600)])('commits a complete 600-character overview verbatim', async (text) => {
+  it.each([656, 778, 1000].flatMap(length => ['字'.repeat(length), '𠮷'.repeat(length)]))('commits legal Unicode overview verbatim', async (text) => {
     const { events } = await fixture(1, 0);
     const directory = new MemoryTopicDirectory(); directory.initializeBootstrap(events, new Date(initialClock).toISOString());
     const claim = directory.claim(events, new Date(initialClock).toISOString())!;
@@ -83,7 +86,7 @@ describe('Issue #119 writer-open recovery', () => {
     const calls = vi.fn(async (context: TopicProjectionContext, attempt: number) => {
       if (outcome === 'success' && attempt === 3) return result(context);
       throw new TopicProjectionError('validation-failed', 'overview.text exceeds the character limit', {
-        fieldPath: 'topics[0].overview[0].text', actualCharacters: 601, maxCharacters: 600, minCharacters: 1 });
+        fieldPath: 'topics[0].overview[0].text', actualCharacters: 1001, maxCharacters: 1000, minCharacters: 1 });
     });
     try {
       expect(memory.exportSnapshot().memoryTopicState!.recoveryVersion).toBe(TOPIC_RECOVERY_VERSION);
@@ -138,115 +141,109 @@ describe('Issue #119 writer-open recovery', () => {
     } finally { await memory.close(); await rm(folder, { recursive: true, force: true }); }
   });
 
-  it('requires a real replacement when upgrading a legacy field failure without saved paragraph identities', async () => {
+  it.each(['historical', 'saved-requirements'] as const)('ignores legacy unsaved-draft obligations (%s)', async mode => {
     const { events, legacy, clock } = await fixture(2, 0);
+    legacy.recoveryVersion = 1;
     legacy.jobs.at(-1)!.diagnostics = new TopicProjectionError('validation-failed',
       'overview.text must be nonempty and at most 600 characters').diagnostics;
+    if (mode === 'saved-requirements') legacy.jobs.at(-1)!.overviewRepairRequirements = [{ sourceEventIds: [], minimumEntries: 99 }];
     const directory = new MemoryTopicDirectory(); directory.restore(legacy);
     directory.initializeBootstrap(events, new Date(clock).toISOString());
-    const claim = directory.claim(events, new Date(clock).toISOString())!;
-    expect(claim.overviewRepairRequirements).toEqual([{ sourceEventIds: [], minimumEntries: 1 }]);
+    const state = directory.snapshot();
+    const reopened = new MemoryTopicDirectory(); reopened.restore(state); reopened.initializeBootstrap(events, new Date(clock).toISOString());
+    const claim = reopened.claim(events, new Date(clock).toISOString())!;
+    expect(claim.overviewRepairRequirements).toBeUndefined();
     const empty = result(claim); empty.topics[0]!.overview = [];
-    expect(() => directory.complete(claim.jobId, empty, events, new Date(clock).toISOString())).toThrow('must replace invalid overview');
-    expect(directory.snapshot().projectedVersions).toEqual({});
-    directory.complete(claim.jobId, result(claim), events, new Date(clock).toISOString());
-    expect(Object.keys(directory.snapshot().projectedVersions)).toHaveLength(2);
+    const done = reopened.complete(claim.jobId, empty, events, new Date(clock).toISOString());
+    reopened.synchronize(events, new Date(clock).toISOString());
+    const settled = reopened.snapshot();
+    expect(reopened.complete(claim.jobId, empty, events, new Date(clock).toISOString())).toEqual(done);
+    expect(reopened.snapshot()).toEqual(settled);
+    expect(Object.keys(settled.projectedVersions)).toHaveLength(2);
+    reopened.initializeBootstrap(events, new Date(clock).toISOString());
+    expect(reopened.claim(events, new Date(clock).toISOString())).toBeNull();
   });
 
-  it('persists overview repair obligations across attempts/restarts and manual retry without fake completion', async () => {
-    const folder = await mkdtemp(join(tmpdir(), 'stratagate-overview-integrity-'));
-    const database = join(folder, 'fixture.sqlite'), namespace = 'overview-integrity';
-    const old = await fixture(1, 0);
+  it('discards an invalid draft across SQLite reopen while preserving committed overview, sources and assignments', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'stratagate-overview-draft-'));
+    const database = join(folder, 'fixture.sqlite'), namespace = 'draft';
+    const old = await fixture(2, 1);
+    const paragraph = { kind: 'history' as const, title: '历史', text: '已确认的历史资料', sourceEventIds: [old.events[0]!.id] };
+    old.snapshot.memoryTopicState!.topics[0]!.overview = [paragraph];
     const setup = new SqliteStorage({ filename: database }); await setup.save(namespace, old.snapshot, 0); await setup.close();
     let clock = old.clock;
     const open = () => StrataGate.open({ ...options, database, namespace, now: () => new Date(clock) });
     let memory = await open();
     try {
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        const claim = (await memory.claimNextTopicProjection('bootstrap'))!;
-        const output = result(claim, '敏'.repeat(601));
-        if (attempt > 1) output.topics[0]!.overview = [];
-        const before = memory.exportSnapshot().memoryTopicState!.projectedVersions;
-        const error = await memory.completeTopicProjection(claim.jobId, output).catch((error) => error);
-        expect(error).toBeInstanceOf(TopicProjectionError);
-        expect(error.diagnostics.reason).toBe(attempt === 1 ? 'overview.text exceeds the character limit' : 'Topic retry must replace invalid overview without removing entries.');
-        expect(memory.exportSnapshot().memoryTopicState!.projectedVersions).toEqual(before);
-        await memory.failTopicProjection(claim.jobId, error);
-        expect(memory.listTopicProjectionJobs().at(-1)!.overviewRepairRequirements).toEqual([
-          { kind: 'history', sourceEventIds: ['event-0'], minimumEntries: 1 },
-        ]);
-        expect(JSON.stringify(error)).not.toMatch(/敏|PRIVATE|event-0/);
-        expect(JSON.stringify(memory.listTopicProjectionJobs())).not.toMatch(/敏|PRIVATE/);
-        clock += 120000; await memory.close(); memory = await open();
-      }
-      expect(await memory.claimNextTopicProjection()).toBeNull();
-      expect(memory.getTopicBootstrapState()).toMatchObject({ status: 'failed', failedEvents: 1 });
-      const failed = memory.listTopicProjectionJobs().at(-1)!;
-      const retry = await memory.retryTopicProjection(failed.id);
-      await memory.close(); memory = await open();
-      const claim = (await memory.claimNextTopicProjection())!;
-      expect(claim.jobId).toBe(retry.jobId);
-      expect(claim.overviewRepairRequirements).toEqual(failed.overviewRepairRequirements);
-      const empty = result(claim); empty.topics[0]!.overview = [];
-      await expect(memory.completeTopicProjection(claim.jobId, empty)).rejects.toThrow('must replace invalid overview');
-      await memory.completeTopicProjection(claim.jobId, result(claim));
-      expect(memory.getTopicBootstrapState()).toMatchObject({ status: 'completed', failedEvents: 0 });
-      expect(memory.listEvents()).toEqual(old.events);
+      let claim = (await memory.claimNextTopicProjection('bootstrap'))!;
+      const draft = result(claim, '敏'.repeat(TOPIC_OVERVIEW_MAX_CHARACTERS + 1));
+      const before = memory.exportSnapshot().memoryTopicState!.projectedVersions;
+      const error = await memory.completeTopicProjection(claim.jobId, draft).catch(error => error);
+      expect(error).toBeInstanceOf(TopicProjectionError);
+      expect(memory.exportSnapshot().memoryTopicState!.projectedVersions).toEqual(before);
+      await memory.failTopicProjection(claim.jobId, error);
       expect(memory.listTopicProjectionJobs().at(-1)!.overviewRepairRequirements).toBeUndefined();
+      clock += 120000; await memory.close(); memory = await open();
+      claim = (await memory.claimNextTopicProjection('bootstrap'))!;
+      const output = { topics: [{ topicId: 'completed-topic', title: '已完成章节', description: '资料',
+        sourceEventIds: claim.events.map(e => e.id), overview: [], sections: [{ title: '历史', sourceEventIds: claim.events.map(e => e.id) }] }] };
+      // Omitting a batch Event cannot become success even with an empty overview.
+      const omitted = structuredClone(output); omitted.topics[0]!.sourceEventIds = [old.events[0]!.id];
+      await expect(memory.completeTopicProjection(claim.jobId, omitted)).rejects.toThrow();
+      const forged = structuredClone(output); forged.topics[0]!.overview = [{ ...paragraph, text: '虚构', sourceEventIds: [old.events[0]!.id] }] as never;
+      await expect(memory.completeTopicProjection(claim.jobId, forged)).rejects.toThrow();
+      const done = await memory.completeTopicProjection(claim.jobId, output);
+      expect(await memory.completeTopicProjection(claim.jobId, output)).toEqual(done);
+      const stored = memory.exportSnapshot().memoryTopicState!.topics[0]!;
+      expect(stored.overview).toEqual([paragraph]);
+      expect(stored.sourceEventIds).toEqual(old.events.map(e => e.id));
+      expect(stored.sections![0]!.sourceEventIds).toEqual(old.events.map(e => e.id));
+      expect(memory.listEvents()).toEqual(old.events);
+      await memory.close(); memory = await open();
+      expect(memory.exportSnapshot().memoryTopicState!.topics[0]).toEqual(stored);
+      expect(await memory.claimNextTopicProjection()).toBeNull();
     } finally { await memory.close(); await rm(folder, { recursive: true, force: true }); }
   });
 
-  it('rejects copied replacements atomically and persists genuinely different reordered replacements', async () => {
-    const { events, legacy, clock } = await fixture(1, 0);
-    legacy.jobs.at(-1)!.overviewRepairRequirements = [{ kind: 'history', sourceEventIds: [events[0]!.id], minimumEntries: 2 }];
-    const directory = new MemoryTopicDirectory(); directory.restore(legacy);
-    directory.initializeBootstrap(events, new Date(clock).toISOString());
-    const claim = directory.claim(events, new Date(clock).toISOString())!;
-    const copied = result(claim); copied.topics[0]!.overview.push(structuredClone(copied.topics[0]!.overview[0]!));
-    const before = directory.snapshot();
-    expect(() => directory.complete(claim.jobId, copied, events, new Date(clock).toISOString())).toThrow('must replace invalid overview');
-    expect(directory.snapshot()).toEqual(before);
-    copied.topics[0]!.overview[1]!.text = '另一个有来源的历史进展。'; copied.topics[0]!.overview.reverse();
-    directory.complete(claim.jobId, copied, events, new Date(clock).toISOString());
-    expect(directory.snapshot().topics[0]!.overview).toEqual(copied.topics[0]!.overview);
-    expect(directory.snapshot(events).bootstrap).toMatchObject({ status: 'completed', failedEvents: 0 });
-  });
-
-  it('checks repair integrity after obsolete inherited sections are filtered from persisted overview', async () => {
-    const { events, legacy, clock } = await fixture(2, 1);
-    const old = { kind: 'history' as const, title: '旧节', text: '以前的记录。', sourceEventIds: [events[1]!.id] };
-    legacy.topics[0]!.sourceEventIds = events.map(({ id }) => id); legacy.topics[0]!.sourceVersions = versions(events);
-    legacy.topics[0]!.overview = [old]; legacy.topics[0]!.sections = [
-      { title: '旧节', sourceEventIds: [events[1]!.id] }, { title: '历史', sourceEventIds: [events[0]!.id] },
+  it('version 2 recovers only affected current failures once and keeps unrelated attempt budgets', async () => {
+    const { events, legacy, clock } = await fixture(8, 0);
+    legacy.recoveryVersion = 1;
+    const template = legacy.jobs.at(-1)!;
+    const reasons = [
+      new TopicProjectionError('validation-failed', 'overview.text exceeds the character limit').diagnostics,
+      new TopicProjectionError('validation-failed', 'Topic retry must replace invalid overview without removing entries.').diagnostics,
+      new TopicProjectionError('provider-failed', 'provider or route error').diagnostics,
+      new TopicProjectionError('validation-failed', 'every supplied batch Event must be assigned to a topic').diagnostics,
+      new TopicProjectionError('timeout', 'structured model task timed out').diagnostics,
     ];
-    legacy.jobs.at(-1)!.overviewRepairRequirements = [{ kind: 'history', sourceEventIds: [events[1]!.id], minimumEntries: 1 }];
-    const directory = new MemoryTopicDirectory(); directory.restore(legacy);
-    directory.initializeBootstrap(events, new Date(clock).toISOString());
-    const claim = directory.claim(events, new Date(clock).toISOString())!;
-    const output = { topics: [{ ...result(claim).topics[0]!, topicId: legacy.topics[0]!.id, overview: [structuredClone(old)],
-      sections: [{ title: '历史', sourceEventIds: [events[1]!.id] }],
-    }] };
-    const before = directory.snapshot();
-    expect(() => directory.complete(claim.jobId, output, events, new Date(clock).toISOString())).toThrow('must replace invalid overview');
-    expect(directory.snapshot()).toEqual(before);
+    legacy.jobs = events.map((event, i) => ({ ...structuredClone(template), id: 'old-' + i,
+      sourceEventIds: [event.id], sourceVersions: versions([event]), dependencyVersions: {},
+      diagnostics: reasons[i] ?? reasons[0], lastError: (reasons[i] ?? reasons[0])!.category,
+      ...(i === 5 ? { overviewRepairRequirements: [{ sourceEventIds: [], minimumEntries: 99 }] } : {}),
+      ...(i === 6 ? { dependencyVersions: { [event.id]: 'stale' } } : {}) }));
+    legacy.projectedVersions = versions([events[7]!]);
+    const directory = new MemoryTopicDirectory(); directory.restore(legacy); directory.initializeBootstrap(events, new Date(clock).toISOString());
+    const pending = directory.jobs().filter(job => job.status === 'pending');
+    expect(pending.map(job => job.sourceEventIds)).toEqual([0, 1, 2, 5].map(i => [events[i]!.id]));
+    expect(directory.jobs().filter(job => ['old-3', 'old-4'].includes(job.id))).toEqual(legacy.jobs.filter(job => ['old-3', 'old-4'].includes(job.id)));
+    const restart = new MemoryTopicDirectory(); restart.restore(directory.snapshot()); restart.initializeBootstrap(events, new Date(clock).toISOString());
+    expect(restart.jobs()).toEqual(directory.jobs());
   });
 
-  it('preserves repair obligations when max-tokens splits a later attempt', async () => {
+  it('does not carry discarded draft obligations into bounded max-token split children', async () => {
     const { events, clock } = await fixture(2, 0);
     const directory = new MemoryTopicDirectory(); directory.initializeBootstrap(events, new Date(clock).toISOString());
     let claim = directory.claim(events, new Date(clock).toISOString())!;
-    try { directory.complete(claim.jobId, result(claim, '字'.repeat(601)), events, new Date(clock).toISOString()); }
+    try { directory.complete(claim.jobId, result(claim, '字'.repeat(1001)), events, new Date(clock).toISOString()); }
     catch (error) { directory.fail(claim.jobId, error, new Date(clock).toISOString()); }
     claim = directory.claim(events, new Date(clock + 120000).toISOString())!;
     directory.fail(claim.jobId, new TopicProjectionError('max-tokens', 'output token limit reached', { finishReason: 'max-tokens' }), new Date(clock + 120000).toISOString());
-    const children = directory.jobs().filter(({ status }) => status === 'pending');
-    expect(children).toHaveLength(2);
-    for (const child of children) expect(child.overviewRepairRequirements).toEqual([{ kind: 'history', sourceEventIds: child.sourceEventIds, minimumEntries: 1 }]);
+    expect(directory.jobs().filter(job => job.status === 'pending')).toHaveLength(2);
     for (let i = 0; i < 2; i++) {
       const child = directory.claim(events, new Date(clock + 240000).toISOString())!;
+      expect(child.overviewRepairRequirements).toBeUndefined();
       const empty = result(child); empty.topics[0]!.overview = [];
-      expect(() => directory.complete(child.jobId, empty, events, new Date(clock + 240000).toISOString())).toThrow('must replace invalid overview');
-      directory.complete(child.jobId, result(child), events, new Date(clock + 240000).toISOString());
+      directory.complete(child.jobId, empty, events, new Date(clock + 240000).toISOString());
     }
     expect(Object.keys(directory.snapshot().projectedVersions)).toHaveLength(2);
   });
@@ -300,7 +297,7 @@ describe('Issue #119 writer-open recovery', () => {
     const queued = directory.jobs().filter(({ status }) => status === 'pending');
     expect(queued).toHaveLength(2);
     expect(queued.map(({ sourceEventIds }) => sourceEventIds)).toEqual([[events[2]!.id], [events[0]!.id]]);
-    expect(queued[0]!.overviewRepairRequirements).toEqual([{ kind: 'history', sourceEventIds: [events[2]!.id], minimumEntries: 1 }]);
+    expect(queued[0]!.overviewRepairRequirements).toBeUndefined();
     expect(queued[1]!.sectionBackfillTopicId).toBe('completed-topic');
     directory.initializeBootstrap(events, new Date(clock + 1).toISOString());
     expect(directory.jobs().filter(({ status }) => status === 'pending')).toEqual(queued);

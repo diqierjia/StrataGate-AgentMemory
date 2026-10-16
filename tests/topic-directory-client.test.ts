@@ -52,7 +52,7 @@ function clientRenderer(runEffects = false, fetchOverride?: any) {
   }
   const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8').replace(
     "    exports.name = 'stratagate-dsh'",
-    "    exports.__topicTest = { TopicDirectory, TopicSection, TopicRetryButton, TopicBootstrapNotice, LongTermPage, MemoryPage, directoryScrollAction, topicSections, chapterOrdinal, useTopicEventPages }; exports.name = 'stratagate-dsh'",
+    "    exports.__topicTest = { DreamingPanel, TopicDirectory, TopicSection, TopicRetryButton, TopicBootstrapNotice, LongTermPage, MemoryPage, directoryScrollAction, topicSections, chapterOrdinal, useTopicEventPages }; exports.name = 'stratagate-dsh'",
   ).replace('      let content = null', '      exports.__topicTest.dashboardLoader = loadDashboard; let content = null')
   let backendDirectory = fixture()
   const fetchMock = vi.fn(fetchOverride || (async (url: string) => {
@@ -150,6 +150,62 @@ function clientRenderer(runEffects = false, fetchOverride?: any) {
 function find(tree: Rendered, predicate: (node: Rendered) => boolean): Rendered[] {
   return (predicate(tree) ? [tree] : []).concat(tree.children.flatMap((child) => find(child, predicate)))
 }
+
+describe('Dreaming directory controls', () => {
+  it('opens the real host session returned by the server, with the exact run identity', async () => {
+    const client = clientRenderer(false, async () => ({ ok: true, status: 200, json: async () => ({ sessionId: 'stratagate-dreaming:real' }) }))
+    const onOpenDreamingSession = vi.fn()
+    const tree = client.render(client.DreamingPanel, { namespace: 'test', active: true, available: true, onOpenDreamingSession,
+      initialRun: { id: 'real', sessionId: 'stratagate-dreaming:real', status: 'running', completed: 0, total: 2 } })
+    await buttons(tree, '打开 Dreaming 会话 ↗')[0]!.props.onClick()
+    expect(client.fetch.mock.calls[0]![0]).toContain('action=open-session')
+    expect(client.fetch.mock.calls[0]![0]).toContain('id=real')
+    expect(onOpenDreamingSession).toHaveBeenCalledWith('stratagate-dreaming:real')
+  })
+  it('starts an actual request and replaces the button with progress and controls', async () => {
+    const run = { id: 'dream-1', status: 'running', activity: '正在查阅来源', completed: 1, total: 4, changedBatches: 0, calls: 2, estimatedTokens: 500, updatedAt: '2026-10-14T00:00:00Z' }
+    const client = clientRenderer(false, async () => ({ ok: true, status: 200, json: async () => ({ run }) }))
+    const props = { namespace: 'test', active: true, available: true }
+    let tree = client.render(client.DreamingPanel, props)
+    await buttons(tree, '🌙 Dreaming')[0]!.props.onClick()
+    await client.flush()
+    tree = client.render(client.DreamingPanel, props)
+    expect(tree.text).toContain('正在做梦…')
+    expect(buttons(tree, '暂停')).toHaveLength(1)
+    expect(buttons(tree, '终止')).toHaveLength(1)
+    expect(find(tree, node => node.type === 'progress')[0]!.props).toMatchObject({ max: 4, value: 1 })
+    expect(client.fetch.mock.calls[0]![0]).toContain('action=start')
+    expect(client.fetch.mock.calls[0]![0]).not.toContain('tokenLimit')
+    expect(client.fetch.mock.calls[0]![1]).toMatchObject({ method: 'POST' })
+  })
+
+  it('retains progress on pause and sends the exact run ID for resume', async () => {
+    const initialRun = { id: 'dream-paused', status: 'paused', completed: 2, total: 5, changedBatches: 1, calls: 4, estimatedTokens: 17769, tokenLimit: 1000 }
+    const client = clientRenderer(false, async () => ({ ok: true, status: 200, json: async () => ({ run: { ...initialRun, status: 'running' } }) }))
+    const props = { namespace: 'test', initialRun, active: true, available: true }
+    const tree = client.render(client.DreamingPanel, props)
+    expect(tree.text).toContain('40%')
+    expect(tree.text).not.toMatch(/消耗边界|token 上限|估算消耗|17769/)
+    expect(find(tree, node => node.type === 'input')).toHaveLength(0)
+    expect(find(tree, node => node.props.className === 'sg-dreaming resting')).toHaveLength(1)
+    await buttons(tree, '继续')[0]!.props.onClick()
+    expect(client.fetch.mock.calls[0]![0]).toContain('id=dream-paused')
+    expect(client.fetch.mock.calls[0]![0]).toContain('action=resume')
+    expect(client.fetch.mock.calls[0]![0]).not.toContain('tokenLimit')
+  })
+
+  it('keeps an error visible when a control request fails and never claims success', async () => {
+    const client = clientRenderer(false, async () => ({ ok: false, status: 409, json: async () => ({ error: '任务已变化' }) }))
+    const props = { namespace: 'test', active: true, available: true }
+    let tree = client.render(client.DreamingPanel, props)
+    await buttons(tree, '🌙 Dreaming')[0]!.props.onClick()
+    await client.flush()
+    tree = client.render(client.DreamingPanel, props)
+    expect(find(tree, node => node.props.role === 'alert')[0]!.text).toContain('任务已变化')
+    expect(buttons(tree, '🌙 Dreaming')).toHaveLength(1)
+    expect(buttons(tree, '暂停')).toHaveLength(0)
+  })
+})
 function buttons(tree: Rendered, text?: string) {
   return find(tree, (node) => node.visible && node.type === 'button' && (!text || node.text === text))
 }
@@ -180,36 +236,29 @@ function pageReply(url: string, items: any[], total: number, nextOffset: number 
 }
 
 describe('Topic Directory client interactions', () => {
-  it('marks truncated context as partial and opens the complete chapter navigation without reading Events', async () => {
+  it('opens all actually injected context in a floating window without expanding chapters or reading Events', async () => {
     const client = clientRenderer(true)
     const directory = fixture()
     directory.context = '[StrataGate 记忆目录]\n仅供导航，不是事实证据。\n共 2 项；分类：work（工作与结果 2）。目录已裁剪；完整目录用 memory_list_topics(category, offset) 分页。\n- topic-a：记忆架构'
     const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn() }
     let tree = client.render(client.TopicDirectory, props)
-    expect(find(tree, (node) => node.type === 'summary').map((node) => node.text)).toContain('查看目录摘要（部分内容）')
-    expect(tree.text).toContain('…… 此处仅显示部分章节与小节。')
-    expect(find(tree, (node) => node.type === 'pre')[0]!.text).toBe(directory.context)
+    expect(find(tree, (node) => node.type === 'pre')).toHaveLength(0)
+    expect(tree.text).not.toContain('…… 此处仅显示部分章节与小节。')
     const chapterButtons = () => find(tree, (node) => node.props.className === 'sg-topic-chapter-toggle')
     for (const button of chapterButtons()) button.props.onClick()
     tree = client.render(client.TopicDirectory, props)
     expect(chapterButtons().every((button) => button.props['aria-expanded'] === false)).toBe(true)
-    const focus = vi.fn(); const scrollIntoView = vi.fn(); const querySelector = vi.fn(() => ({ focus }))
-    find(tree, (node) => Boolean(node.props.ref))[0]!.props.ref.current = { scrollIntoView, querySelector }
-    buttons(tree, '查看完整目录')[0]!.props.onClick()
+    buttons(tree, 'AI 会看到的目录↗')[0]!.props.onClick()
     client.render(client.TopicDirectory, props); await client.flush(); tree = client.render(client.TopicDirectory, props)
     expect(chapterButtons()).toHaveLength(directory.topics.length)
-    expect(chapterButtons().every((button) => button.props['aria-expanded'] === true)).toBe(true)
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' })
-    expect(querySelector).toHaveBeenCalledWith('.sg-topic-chapter-toggle')
-    expect(focus).toHaveBeenCalledWith({ preventScroll: true })
-    expect(find(tree, (node) => node.props.className === 'sg-topic-section-toggle').length).toBeGreaterThan(0)
-    expect(find(tree, (node) => node.props.className === 'sg-topic-section-toggle').every((node) => node.props['aria-expanded'] === false)).toBe(true)
+    expect(chapterButtons().every((button) => button.props['aria-expanded'] === false)).toBe(true)
+    expect(find(tree, (node) => node.props.role === 'dialog')).toHaveLength(1)
+    expect(find(tree, (node) => node.type === 'pre')[0]!.text).toBe(directory.context)
+    expect(tree.text).toContain('以下目录内容默认提供给 AI')
     expect(client.fetch).not.toHaveBeenCalled()
-    chapterButtons()[0]!.props.onClick(); tree = client.render(client.TopicDirectory, props)
-    expect(chapterButtons()[0]!.props['aria-expanded']).toBe(false)
-    buttons(tree, '查看完整目录')[0]!.props.onClick()
-    client.render(client.TopicDirectory, props); await client.flush(); tree = client.render(client.TopicDirectory, props)
-    expect(chapterButtons()[0]!.props['aria-expanded']).toBe(true)
+    buttons(tree, '×')[0]!.props.onClick()
+    tree = client.render(client.TopicDirectory, props)
+    expect(find(tree, (node) => node.props.role === 'dialog')).toHaveLength(0)
     expect(client.fetch).not.toHaveBeenCalled()
   })
 
@@ -219,12 +268,13 @@ describe('Topic Directory client interactions', () => {
     directory.context = '[StrataGate 记忆目录]\n仅供导航，不是事实证据。\n- topic-a：目录已裁剪 的处理记录'
     const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn() }
     let tree = client.render(client.TopicDirectory, props)
-    expect(find(tree, (node) => node.type === 'summary').map((node) => node.text)).toContain('查看目录内容')
+    expect(buttons(tree, 'AI 会看到的目录↗')).toHaveLength(1)
     expect(tree.text).not.toContain('部分章节与小节')
     expect(buttons(tree, '查看完整目录')).toHaveLength(0)
     directory.context = ''
     tree = client.render(client.TopicDirectory, props)
     expect(find(tree, (node) => node.props.className === 'sg-topic-context')).toHaveLength(0)
+    expect(buttons(tree, 'AI 会看到的目录↗')[0]!.props.disabled).toBe(true)
     expect(buttons(tree, '查看完整目录')).toHaveLength(0)
   })
 
@@ -598,6 +648,8 @@ describe('Topic Directory client interactions', () => {
     await client.flush()
     tree = client.render(client.TopicDirectory, props)
     expect(buttons(tree).filter((node) => node.props['data-topic-event-id'])).toHaveLength(8)
+    buttons(tree, 'AI 会看到的目录↗')[0]!.props.onClick()
+    tree = client.render(client.TopicDirectory, props)
     expect(find(tree, (node) => node.type === 'pre')).toHaveLength(1)
     props.directory = fixture()
     client.render(client.TopicDirectory, props)
@@ -668,6 +720,8 @@ describe('Topic Directory client interactions', () => {
     expect(buttons(tree, '重新读取目录')).toHaveLength(0)
     expect(buttons(tree, '重新读取事件')).toHaveLength(0)
     expect(buttons(tree).filter((node) => node.props['data-topic-event-id'])).toHaveLength(8)
+    buttons(tree, 'AI 会看到的目录↗')[0]!.props.onClick()
+    tree = client.render(client.TopicDirectory, props)
     expect(find(tree, (node) => node.type === 'pre')).toHaveLength(1)
     expect(request).toBe(2)
   })
@@ -745,6 +799,50 @@ describe('Topic Directory client interactions', () => {
     buttons(tree, '主题目录')[0]!.props.onClick()
     tree = client.render(client.LongTermPage, props)
     expect(buttons(tree, '1.1发展脉络›')[0]!.props['aria-expanded']).toBe(true)
+  })
+
+  describe('filtered graph relation counts', () => {
+    const node = (id: string, type = 'person', status = 'active') => ({ id, name: id, type, status, tags: [], sourceEventIds: [] })
+    const edge = (fromNodeId: string, toNodeId: string, status = 'active') => ({ id: fromNodeId + '-' + toNodeId + '-' + status, fromNodeId, toNodeId, status })
+    const graphView = (nodes: any[], edges: any[], query = '') => {
+      const client = clientRenderer()
+      const props = { events: [], eventPage: { total: 0, offset: 0, limit: 40 }, graph: { nodes, edges, clusters: [] }, project: '当前工作区', query, setQuery: vi.fn(), openEvent: vi.fn(), namespace: 'dsh:project:test', topicDirectory: fixture() }
+      buttons(client.render(client.LongTermPage, props), '知识图谱')[0]!.props.onClick()
+      const render = () => client.render(client.LongTermPage, props)
+      const count = () => find(render(), (item) => item.props.className === 'sg-toolbar-count')[0]!.text
+      return { render, count }
+    }
+
+    it('uses the searched node set for relation totals, including empty results', () => {
+      const nodes = Array.from({ length: 200 }, (_, index) => node('人物' + index))
+      const edges = nodes.slice(1).map((item, index) => edge(nodes[index]!.id, item.id))
+      expect(graphView(nodes, edges, '人物0').count()).toBe('1 个节点 · 0 条关系')
+      expect(graphView(nodes, edges, '没有匹配的节点').count()).toBe('0 个节点 · 0 条关系')
+    })
+
+    it('excludes relations crossing the selected node type and restores them when cleared', () => {
+      const graph = graphView([node('人物甲'), node('人物乙'), node('工具', 'tool')], [edge('人物甲', '人物乙'), edge('人物甲', '工具'), edge('工具', '人物乙')])
+      expect(graph.count()).toBe('3 个节点 · 3 条关系')
+      buttons(graph.render(), '筛选 ▾')[0]!.props.onClick()
+      find(graph.render(), (item) => item.props['aria-label'] === '节点类型')[0]!.props.onChange({ target: { value: 'person' } })
+      expect(graph.count()).toBe('2 个节点 · 1 条关系')
+      find(graph.render(), (item) => item.props['aria-label'] === '节点类型')[0]!.props.onChange({ target: { value: '' } })
+      expect(graph.count()).toBe('3 个节点 · 3 条关系')
+    })
+
+    it('excludes archived endpoints, dangling endpoints and inactive relations', () => {
+      const graph = graphView([node('人物甲'), node('人物乙'), node('已归档', 'person', 'archived')], [edge('人物甲', '人物乙'), edge('人物甲', '已归档'), edge('已归档', '人物乙'), edge('人物甲', '不存在'), edge('人物甲', '人物乙', 'archived')])
+      expect(graph.count()).toBe('2 个节点 · 1 条关系')
+    })
+
+    it('keeps filtered totals before and after increasing the display limit', () => {
+      const nodes = Array.from({ length: 200 }, (_, index) => node('人物' + index))
+      const edges = nodes.slice(1).map((item, index) => edge(nodes[index]!.id, item.id))
+      const graph = graphView(nodes, edges)
+      expect(graph.count()).toMatch(/^100 \/ 200 个节点 · \d+ \/ 199 条关系$/)
+      buttons(graph.render(), '再显示 100 个')[0]!.props.onClick()
+      expect(graph.count()).toBe('200 个节点 · 199 条关系')
+    })
   })
 
   it('renders chapters and sections; opening eight-event section reads only that page and shows .0 through .8', async () => {

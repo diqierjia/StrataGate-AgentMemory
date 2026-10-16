@@ -2,16 +2,17 @@ import { createHash, randomUUID } from 'node:crypto';
 import { bm25Rank, weightedSearchTokens } from './search.js';
 import type { EventCard } from './types.js';
 import { TopicProjectionError, safeTopicDiagnostics, validateTopicOverviewText, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
-import { TopicOverviewRepairGuard, uniqueTopicOverviewEntries, carryTopicOverviewRepairs, topicOverviewRepairsFromError, topicOverviewRepairsForHistoricalFailure, partitionTopicOverviewRepairs, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
+import { uniqueTopicOverviewEntries, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
+import { updateDreaming, type DreamingCommand, type DreamingRun } from './dreaming.js';
 
 export const MEMORY_TOPIC_PROJECTOR_VERSION = 3;
 export const TOPIC_BATCH_LIMIT = 12;
 export const TOPIC_CANDIDATE_LIMIT = 12;
 export const TOPIC_MAX_ATTEMPTS = 3;
 // One writer-open recovery cycle for Issue #119, independent of prose rebuilds.
-export const TOPIC_RECOVERY_VERSION = 1;
+export const TOPIC_RECOVERY_VERSION = 2;
 export const TOPIC_LEASE_MS = 5 * 60_000;
-export type MemoryTopicOverviewKind = 'history' | 'decision' | 'change' | 'open-question' | 'scope';
+export type MemoryTopicOverviewKind = 'history' | 'decision' | 'change' | 'open-question' | 'scope' | 'experience';
 
 export interface MemoryTopicOverview {
   kind: MemoryTopicOverviewKind;
@@ -22,12 +23,15 @@ export interface MemoryTopicOverview {
 }
 
 export interface MemoryTopicSection {
+  /** Optional stable navigation identity assigned on a Dreaming edit. */
+  id?: string;
   title: string;
   /** Directory membership, independent of overview evidence. */
   sourceEventIds: string[];
 }
 
 export interface MemoryTopic {
+  sectionAliases?: Record<string, string>;
   id: string;
   title: string;
   description: string;
@@ -105,7 +109,7 @@ export interface TopicProjectionJob {
   superseded?: boolean;
   sectionBackfillTopicId?: string;
   diagnostics?: TopicProjectionDiagnostics | undefined;
-  /** Retry integrity ledger, separate from content-free diagnostics. */
+  /** Legacy unsaved-draft metadata; ignored by current projection/commit rules. */
   overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   /** Bounded binary split ancestry; manual retry starts a fresh cycle. */
   splitDepth?: number;
@@ -125,6 +129,7 @@ export interface TopicBootstrapState {
 }
 
 export interface MemoryTopicState {
+  dreaming?: DreamingRun;
   topics: StoredMemoryTopic[];
   jobs: TopicProjectionJob[];
   projectedVersions: Record<string, string>;
@@ -167,7 +172,7 @@ const unique = (ids: readonly string[]): string[] => [...new Set(ids)];
 const bounded = (value: string, size: number): string => [...value].slice(0, size).join('');
 
 const SECTION_TITLES: Record<MemoryTopicOverviewKind, string> = {
-  history: '发展脉络', decision: '关键设计决策', change: '重要变化', 'open-question': '尚未解决的问题', scope: '主题范围',
+  history: '发展脉络', decision: '关键设计决策', change: '重要变化', 'open-question': '尚未解决的问题', scope: '主题范围', experience: '经验',
 };
 /** One display-label rule for model routing and the book view. */
 export function memoryTopicSectionTitle(part: MemoryTopicOverview): string {
@@ -241,6 +246,7 @@ function topicView(topic: StoredMemoryTopic, events: ReadonlyMap<string, EventCa
     sourceEventIds: ids,
     overview,
     sections: valid ? memoryTopicMembershipSections(topic) : [],
+    ...(valid && topic.sectionAliases ? { sectionAliases: structuredClone(topic.sectionAliases) } : {}),
     createdAt: topic.createdAt,
     updatedAt: topic.updatedAt,
     coverage: { totalEvents: ids.length, summarizedEvents: summarized.size, omittedEvents: ids.length - summarized.size },
@@ -263,6 +269,10 @@ function compactEvent(event: EventCard): EventCard {
 /** A rebuildable directory: all writes are invoked inside the owner's transaction. */
 export class MemoryTopicDirectory {
   private state: MemoryTopicState = { topics: [], jobs: [], projectedVersions: {} };
+
+  dreaming(command: DreamingCommand, events: readonly EventCard[], now: string): DreamingRun {
+    return updateDreaming(this.state, events, command, now);
+  }
 
   restore(state?: MemoryTopicState): void {
     this.state = state ? structuredClone(state) : { topics: [], jobs: [], projectedVersions: {} };
@@ -304,6 +314,13 @@ export class MemoryTopicDirectory {
   jobs(): TopicProjectionJob[] {
     // Internal model inputs are never an admin/read surface for memory content.
     return structuredClone(this.state.jobs.map((job) => ({ ...job, context: null })));
+  }
+
+  renewLease(id: string, attempts: number, claimedAt: string, until: string | null): boolean {
+    const job = this.state.jobs.find((job) => job.id === id);
+    if (!job || job.status !== 'running' || job.attempts !== attempts || job.updatedAt !== claimedAt) return false;
+    job.leaseUntil = until;
+    return true;
   }
 
   bootstrap(): TopicBootstrapState | null {
@@ -350,6 +367,17 @@ export class MemoryTopicDirectory {
     for (const previous of [...this.state.jobs]) {
       if (previous.superseded || previous.status !== 'failed' || previous.attempts < TOPIC_MAX_ATTEMPTS
         || previous.nextRetryAt !== null || !jobInputsCurrent(previous, versions)) continue;
+      // Recover only the changed overview/budget paths and the original
+      // pre-diagnostics Issue #119 signature, preserving unrelated budgets.
+      const diagnostic = safeTopicDiagnostics(previous.diagnostics);
+      const affected = !!previous.overviewRepairRequirements?.length
+        || diagnostic?.category === 'provider-failed'
+        || ((diagnostic?.category === 'validation-failed' || diagnostic?.category === 'schema-invalid')
+          && (diagnostic.reason.startsWith('overview.text ')
+            || diagnostic.reason === 'Topic retry must replace invalid overview without removing entries.'))
+        || previous.lastError === 'invalid-output'
+        || /^(?:validation-failed|schema-invalid): (?:overview\.text |Topic retry must replace invalid overview)/.test(previous.lastError ?? '');
+      if (!affected) continue;
       const work = memoryTopicUnfinishedJobEventIds(previous, this.state, versions);
       if (!work.length) continue;
       // Other queued/leased/retrying jobs own their work already. Overlapping
@@ -481,9 +509,7 @@ export class MemoryTopicDirectory {
     }
   }
 
-  private pendingWork(events: readonly EventCard[]): Array<{ event: EventCard; sectionBackfillTopicId?: string }> {
-    const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
-    const versions = sourceVersions(sources);
+  private pendingWork(events: readonly EventCard[], versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])))): Array<{ event: EventCard; sectionBackfillTopicId?: string }> {
     const dirtyIds = new Set(this.state.topics.filter((topic) => topic.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION
       || Object.entries(topic.dependencyVersions ?? topic.sourceVersions).some(([id, version]) => versions.get(id) !== version))
       .flatMap((topic) => topic.sourceEventIds));
@@ -521,14 +547,36 @@ export class MemoryTopicDirectory {
   hasPending(events: readonly EventCard[], now: number, mode: TopicProjectionMode = 'all'): boolean {
     const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
     const versions = sourceVersions(sources);
+    return this.hasPendingWithVersions(events, versions, now, mode);
+  }
+
+  private hasPendingWithVersions(events: readonly EventCard[], versions: ReadonlyMap<string, string>, now: number, mode: TopicProjectionMode): boolean {
     const running = this.state.jobs.find((job) => job.status === 'running');
     if (running) return Date.parse(running.leaseUntil ?? running.updatedAt) <= now
       || !jobInputsCurrent(running, versions);
-    return this.pendingWork(events).some(({ event, sectionBackfillTopicId }) => this.matchesMode([event.id], versions, mode, sectionBackfillTopicId)) || this.state.jobs.some((job) =>
+    return this.pendingWork(events, versions).some(({ event, sectionBackfillTopicId }) => this.matchesMode([event.id], versions, mode, sectionBackfillTopicId)) || this.state.jobs.some((job) =>
       !job.superseded && job.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION && job.attempts < TOPIC_MAX_ATTEMPTS
       && ((job.status === 'pending' && (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= now)) || (job.status === 'failed'
         && job.nextRetryAt !== null && Date.parse(job.nextRetryAt) <= now))
       && jobInputsCurrent(job, versions) && this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId));
+  }
+
+  /** Derived wake time, using exactly the claim eligibility rules, including work without a Job. */
+  nextWakeTimes(events: readonly EventCard[], now: number): { incremental: number | null; bootstrap: number | null } {
+    const versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])));
+    const times = new Set([now]);
+    for (const job of this.state.jobs) {
+      const time = Date.parse(job.status === 'running' ? job.leaseUntil ?? job.updatedAt : job.nextRetryAt ?? '');
+      if (Number.isFinite(time) && time > now) times.add(time);
+    }
+    const result: { incremental: number | null; bootstrap: number | null } = { incremental: null, bootstrap: null };
+    for (const time of [...times].sort((a, b) => a - b)) {
+      for (const mode of ['incremental', 'bootstrap'] as const) {
+        if (result[mode] === null && this.hasPendingWithVersions(events, versions, time, mode)) result[mode] = time === now ? 0 : time;
+      }
+      if (result.incremental !== null && result.bootstrap !== null) break;
+    }
+    return result;
   }
 
   claim(events: readonly EventCard[], now: string, mode: TopicProjectionMode = 'all'): TopicProjectionContext | null {
@@ -641,7 +689,7 @@ export class MemoryTopicDirectory {
       throw new Error('Section backfill chapter cannot fit the projection input budget.');
     }
     job.context = { jobId: job.id,
-      ...(job.overviewRepairRequirements?.length ? { overviewRepairRequirements: structuredClone(job.overviewRepairRequirements) } : {}), events: batch.map(compactEvent), existingTopics, truncatedEventIds,
+      events: batch.map(compactEvent), existingTopics, truncatedEventIds,
       ...(job.sectionBackfillTopicId ? { sectionBackfillTopicId: job.sectionBackfillTopicId } : {}) };
     const storedById = new Map(this.state.topics.map((topic) => [topic.id, topic]));
     job.candidateVersions = Object.fromEntries(existingTopics.map((topic) => [topic.id, digest(storedById.get(topic.id))]));
@@ -662,17 +710,6 @@ export class MemoryTopicDirectory {
   }
 
   complete(id: string, result: TopicProjectionResult, events: readonly EventCard[], now: string): { topicIds: string[] } {
-    const job = this.requireJob(id);
-    const repairs = new TopicOverviewRepairGuard(job.overviewRepairRequirements);
-    if (job.context) repairs.observe(result, job.context);
-    try { return this.completeValidated(id, result, events, now, repairs); }
-    catch (error) {
-      if (error instanceof TopicProjectionError) throw carryTopicOverviewRepairs(error, repairs.requirements);
-      throw error;
-    }
-  }
-
-  private completeValidated(id: string, result: TopicProjectionResult, events: readonly EventCard[], now: string, repairs: TopicOverviewRepairGuard): { topicIds: string[] } {
     const job = this.requireJob(id);
     if (job.status === 'completed') return { topicIds: [...job.topicIds] };
     if (job.status !== 'running' || !job.context) throw new Error(`Topic projection ${id} is not running`);
@@ -795,6 +832,7 @@ export class MemoryTopicDirectory {
       for (const part of inherited) if (memoryTopicOverviewMatchesSection(part, titles)
         && !overview.some((current) => digest(current) === digest(part))) overview.push(structuredClone(part));
       proposals.push({ id: topicId, title: job.sectionBackfillTopicId ? existing!.title : proposal.title.trim(),
+        ...(existing?.sectionAliases ? { sectionAliases: structuredClone(existing.sectionAliases) } : {}),
         description: job.sectionBackfillTopicId ? existing!.description : proposal.description.trim(),
         sourceEventIds: membership, overview, sections: finalSections,
         sourceVersions: Object.fromEntries(membership.map((eventId) => [eventId, versions.get(eventId)!])),
@@ -803,10 +841,6 @@ export class MemoryTopicDirectory {
         createdAt: existing?.createdAt ?? now, updatedAt: now });
     }
     if (job.sourceEventIds.some((eventId) => !covered.has(eventId))) throw new TopicProjectionError('validation-failed', 'every supplied batch Event must be assigned to a topic');
-    repairs.assert(result);
-    // Validate the exact post-filter/deduplication state before committing any
-    // Topic, Event projection ledger or Backfill progress.
-    repairs.assert({ topics: proposals });
     for (const topic of proposals) {
       const index = this.state.topics.findIndex((current) => current.id === topic.id);
       if (index < 0) this.state.topics.push(topic); else this.state.topics[index] = topic;
@@ -836,10 +870,7 @@ export class MemoryTopicDirectory {
     const job = this.state.jobs.find((candidate) => candidate.id === id);
     if (!job || job.status !== 'running') return;
     const diagnostic = error instanceof TopicProjectionError ? safeTopicDiagnostics(error.diagnostics) : undefined;
-    const repairs = new TopicOverviewRepairGuard(job.overviewRepairRequirements);
-    const observed = topicOverviewRepairsFromError(error);
-    repairs.merge(observed.length ? observed : topicOverviewRepairsForHistoricalFailure(diagnostic));
-    job.overviewRepairRequirements = repairs.requirements.length ? repairs.requirements : undefined;
+    job.overviewRepairRequirements = undefined;
     const message = error instanceof Error ? error.message : String(error);
     const category = diagnostic?.category ?? (/timeout|timed out/i.test(message) ? 'timeout'
       : /source.*changed|stale|not running/i.test(message) ? 'source-changed' : 'worker-failed');
@@ -862,7 +893,7 @@ export class MemoryTopicDirectory {
       for (const ids of [job.sourceEventIds.slice(0, middle), job.sourceEventIds.slice(middle)]) {
         this.state.jobs.push({ ...structuredClone(job), id: `tproj_${randomUUID()}`,
           sourceEventIds: ids, sourceVersions: Object.fromEntries(ids.map((id) => [id, job.sourceVersions[id]!])),
-          overviewRepairRequirements: partitionTopicOverviewRepairs(job.overviewRepairRequirements, job.sourceEventIds, ids),
+          overviewRepairRequirements: undefined,
           dependencyVersions: {}, candidateVersions: {}, status: 'pending', attempts: 0,
           diagnostics: undefined, splitDepth: (job.splitDepth ?? 0) + 1,
           topicIds: [], superseded: false, lastError: null, nextRetryAt: job.nextRetryAt,
@@ -881,7 +912,7 @@ export class MemoryTopicDirectory {
   private requeue(previous: TopicProjectionJob, ids: readonly string[], versions: ReadonlyMap<string, string>, now: string): TopicProjectionJob {
     const job: TopicProjectionJob = {
       ...structuredClone(previous), sourceEventIds: [...ids],
-      overviewRepairRequirements: partitionTopicOverviewRepairs(previous.overviewRepairRequirements ?? topicOverviewRepairsForHistoricalFailure(safeTopicDiagnostics(previous.diagnostics)), previous.sourceEventIds, ids),
+      overviewRepairRequirements: undefined,
       sourceVersions: Object.fromEntries(ids.map((id) => [id, previous.sourceVersions[id]!])),
       id: `tproj_${randomUUID()}`, status: 'pending', attempts: 0,
       superseded: false, context: null, dependencyVersions: {}, candidateVersions: {}, topicIds: [],

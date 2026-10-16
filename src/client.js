@@ -8,6 +8,12 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const cytoscape = globalThis.__StrataGateGraphLibraries?.cytoscape
+    // Keep the GitHub workflow dormant, including its AI tool entry and header
+    // links. Restore together with AGENT_FEEDBACK_ENABLED in feedback-policy.ts.
+    // The client build rejects mismatched gates before producing output.
+    const GITHUB_FEEDBACK_ENABLED = false
+    const FEEDBACK_EMAIL = 'jiahongcheng61@gmail.com'
+    const EMAIL_BODY_HINT = '请在下方粘贴 StrataGate 反馈报告，检查后发送。也可以手动附加已下载的诊断文件。\r\n\r\n'
     const STAR_REPOSITORY_URL = 'https://github.com/diqierjia/StrataGate-AgentMemory'
     const ISSUE_URL = STAR_REPOSITORY_URL + '/issues/new'
     const DISCUSSION_URL = STAR_REPOSITORY_URL + '/discussions/categories/q-a'
@@ -276,6 +282,7 @@ window.__ModuleLoader__.load({
     `
 
     const css = `
+      .sg-feedback-wizard .sg-primary-link{color:#fff}.sg-feedback-wizard .sg-support-field{display:grid;gap:6px;margin:14px 0}.sg-feedback-step-back{margin-bottom:14px}
       .sg-memory {
         color-scheme:inherit;
         --sg-page:var(--dsw-alias-bg-layer-2,#fff);
@@ -332,7 +339,7 @@ window.__ModuleLoader__.load({
       .sg-muted{color:var(--sg-muted);font-size:12px}
       .sg-long-tabs{display:flex;gap:4px;width:max-content;margin:0 0 14px;padding:4px;border:1px solid var(--sg-border);border-radius:999px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-long-tabs button{padding:7px 19px;border:0;border-radius:999px;background:transparent;color:var(--sg-muted);cursor:pointer}.sg-long-tabs button.active{background:var(--sg-soft);color:var(--sg-accent)}
       .sg-migration{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px;margin:0 0 10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--sg-accent) 28%,var(--sg-border));border-radius:8px;background:color-mix(in srgb,var(--sg-accent) 7%,transparent);font-size:12px}.sg-migration small{color:var(--sg-muted)}
-      .sg-long-explorer{position:relative}.sg-long-explorer.fullscreen{position:fixed;inset:12px;z-index:2147482000;display:flex;flex-direction:column;max-width:none;padding:18px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.48)}.sg-long-explorer.fullscreen .sg-long-layout{flex:1;height:auto;min-height:0}.sg-long-explorer.fullscreen .sg-long-tabs{flex:0 0 auto}.sg-long-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:8px}.sg-long-toolbar .sg-search{flex:1;margin:0}.sg-toolbar-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:39px;padding:0 13px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);cursor:pointer;white-space:nowrap}.sg-toolbar-button:hover,.sg-toolbar-button[aria-expanded="true"]{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-toolbar-count{color:var(--sg-muted);font-size:11px;white-space:nowrap}.sg-long-layout{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(280px,.9fr);height:min(680px,calc(100vh - 320px));min-height:480px;border:1px solid var(--sg-border);border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--sg-page) 74%,transparent)}.sg-summary-layout{grid-template-columns:minmax(0,1fr)}
+      .sg-long-explorer{position:relative}.sg-long-explorer.fullscreen{position:fixed;inset:12px;z-index:2147482000;display:flex;flex-direction:column;max-width:none;padding:18px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.48)}.sg-long-explorer.fullscreen .sg-long-layout{flex:1;height:auto;min-height:0}.sg-long-explorer.fullscreen .sg-long-tabs{flex:0 0 auto}.sg-long-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}.sg-long-toolbar .sg-search{flex:1 1 14rem;min-width:min(100%,14rem);margin:0}.sg-long-toolbar .sg-toolbar-button{flex-shrink:0}.sg-toolbar-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:39px;padding:0 13px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);cursor:pointer;white-space:nowrap}.sg-toolbar-button:hover,.sg-toolbar-button[aria-expanded="true"]{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-toolbar-count{margin:0 0 8px;color:var(--sg-muted);font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.sg-long-layout{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(280px,.9fr);height:min(680px,calc(100vh - 320px));min-height:480px;border:1px solid var(--sg-border);border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--sg-page) 74%,transparent)}.sg-summary-layout{grid-template-columns:minmax(0,1fr)}
       .sg-filterbar{display:flex;gap:7px;margin:0 0 8px;padding:8px;border:1px solid var(--sg-border);border-radius:7px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent);flex-wrap:wrap}.sg-filterbar select{min-width:112px;padding:6px 25px 6px 8px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);color:var(--sg-text);font-size:11px}.sg-active-filter-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--sg-accent);color:white;font-size:10px}
       .sg-graph-canvas{position:relative;min-width:0;overflow:hidden;background-image:radial-gradient(circle at center,color-mix(in srgb,var(--sg-accent) 6%,transparent),transparent 62%)}.sg-cytoscape{position:absolute;inset:0 0 38px;min-height:0}.sg-graph-zoom{position:absolute;z-index:7;top:12px;right:12px;display:grid;grid-template-columns:30px minmax(86px,124px) 30px;align-items:center;gap:5px;padding:5px;border:1px solid color-mix(in srgb,var(--sg-accent) 20%,var(--sg-border));border-radius:7px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 6px 18px color-mix(in srgb,var(--sg-text) 10%,transparent);backdrop-filter:blur(8px)}.sg-graph-zoom button{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--sg-text);font-size:20px;line-height:1;cursor:pointer}.sg-graph-zoom button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-zoom button:disabled{cursor:default;opacity:.35}.sg-graph-zoom input{width:100%;min-width:0;height:18px;margin:0;accent-color:var(--sg-accent);cursor:pointer}.sg-graph-legend{position:absolute;z-index:5;left:14px;bottom:10px;display:flex;gap:14px;flex-wrap:wrap;color:var(--sg-muted);font-size:11px}.sg-graph-legend span{display:flex;align-items:center;gap:5px}.sg-graph-legend i{width:9px;height:9px;border-radius:50%}.sg-node-bubble{position:absolute;z-index:8;width:min(310px,42%);padding:12px;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 14px 34px rgba(0,0,0,.3);transform:translate(35px,-50%)}.sg-node-bubble.flip{transform:translate(calc(-100% - 35px),-50%)}.sg-node-bubble h3{margin:0;font-size:14px}.sg-node-bubble-head,.sg-node-bubble-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}.sg-node-bubble-state{margin:7px 0;color:var(--sg-muted);font-size:11px}.sg-node-bubble ul{margin:7px 0;padding-left:17px;font-size:11px;line-height:1.55}.sg-node-bubble-foot{padding-top:8px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11px}.sg-node-bubble button{border:0;background:transparent;color:var(--sg-accent);cursor:pointer;font-weight:680}.sg-node-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.sg-node-tag{padding:2px 7px;border-radius:999px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:11px}.sg-graph-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
       .sg-long-detail{min-width:0;padding:16px;overflow:auto;border-left:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-surface) 70%,transparent)}.sg-placeholder-detail{display:grid;place-items:center;color:var(--sg-muted);text-align:center}.sg-long-detail h2{margin:0;font-size:17px}.sg-long-detail section{padding:13px 0;border-top:1px solid var(--sg-border)}.sg-long-detail section:first-of-type{margin-top:13px}.sg-long-detail h3{margin:0 0 8px;font-size:13px}.sg-long-detail ul{margin:0;padding-left:18px;font-size:12px;line-height:1.65}.sg-detail-copy{margin:0;color:var(--sg-muted);font-size:12px;line-height:1.65;white-space:pre-wrap}.sg-node-head{display:flex;align-items:center;gap:10px}.sg-node-avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;color:white;font-size:20px}.sg-status-dot{color:var(--sg-good);font-size:12px}.sg-relation-row{display:grid;grid-template-columns:68px 1fr auto;gap:7px;padding:7px 0;border-bottom:1px solid color-mix(in srgb,var(--sg-border) 65%,transparent);font-size:12px}.sg-relation-row span,.sg-relation-row small{color:var(--sg-muted)}.sg-support-event{display:flex;align-items:center;justify-content:space-between;width:100%;margin:5px 0;padding:9px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;color:var(--sg-text);text-align:left;cursor:pointer}.sg-support-event:hover{border-color:var(--sg-accent)}
@@ -346,11 +353,13 @@ window.__ModuleLoader__.load({
       @keyframes sg-fullscreen-in{from{opacity:0;transform:scale(.99)}to{opacity:1;transform:scale(1)}}
       @keyframes sg-shimmer{to{transform:translateX(110%)}}
       @media (min-width:720px){.sg-brand-kicker{display:block}}
-      @media (max-width:900px){.sg-long-layout{grid-template-columns:1fr;height:auto;max-height:none}.sg-long-explorer.fullscreen{inset:4px;padding:10px}.sg-long-explorer.fullscreen .sg-long-layout{overflow:auto}.sg-graph-canvas{height:520px}.sg-long-detail{max-height:520px;border-top:1px solid var(--sg-border);border-left:0}.sg-timeline{max-height:520px}.sg-toolbar-count{display:none}.sg-node-bubble{width:min(300px,72%)}}
+      @media (max-width:900px){.sg-long-layout{grid-template-columns:1fr;height:auto;max-height:none}.sg-long-explorer.fullscreen{inset:4px;padding:10px}.sg-long-explorer.fullscreen .sg-long-layout{overflow:auto}.sg-graph-canvas{height:520px}.sg-long-detail{max-height:520px;border-top:1px solid var(--sg-border);border-left:0}.sg-timeline{max-height:520px}.sg-node-bubble{width:min(300px,72%)}}
       @media (max-width:620px){.sg-long-toolbar{flex-wrap:wrap}.sg-long-toolbar .sg-search{flex-basis:100%}.sg-toolbar-button{flex:1}.sg-timeline-card{grid-template-columns:78px minmax(0,1fr)}.sg-timeline-card>.sg-event-status{grid-column:2}.sg-node-bubble{left:50%!important;top:auto!important;bottom:45px;width:calc(100% - 24px);transform:translateX(-50%)!important}.sg-weight-metrics{grid-template-columns:1fr}.sg-weight-chart svg{min-height:132px}}
       @media (max-width:860px){.sg-layer-hover:after{display:none}.sg-layer-popover{position:relative;left:auto;top:auto;width:auto;max-height:280px;margin:5px 0 1px;display:none;transform:none}.sg-layer-hover:hover .sg-layer-popover,.sg-layer-item:focus-visible + .sg-layer-popover{display:block;transform:none}}
       @media (max-width:560px){.sg-memory{padding:12px 12px 26px}.sg-header-row{align-items:flex-start;gap:10px}.sg-header-row-secondary{flex-wrap:wrap}.sg-header-community{justify-content:flex-start;gap:7px}.sg-brand-name{font-size:14px}.sg-tabs{margin-left:-2px;margin-right:-2px}.sg-tab{padding-left:0;padding-right:0}.sg-alert,.sg-memory-alert{grid-template-columns:auto minmax(0,1fr)}.sg-alert>.sg-chevron,.sg-memory-alert>.sg-chevron{display:none}.sg-tech-row{grid-template-columns:1fr;gap:1px}.sg-counts{gap:16px}.sg-entry-title{font-size:14px}.sg-block-header{display:none}.sg-block-toggle{grid-template-columns:76px minmax(76px,1fr) 24px;gap:6px}.sg-block-turn{grid-column:1/3}.sg-block-distance{display:none}.sg-layer-heading{display:block}.sg-layer-heading span{display:block;margin-top:2px}}
       .sg-decay-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-conversation{display:flex;align-items:center;justify-content:flex-end;gap:5px;min-width:0;color:var(--sg-muted);font-size:11px}.sg-conversation select{min-width:0;max-width:230px;padding:3px 21px 3px 6px;border:1px solid var(--sg-border);border-radius:5px;background:var(--sg-surface);font-size:11px;text-overflow:ellipsis}.sg-distribution{scrollbar-width:none}.sg-distribution::-webkit-scrollbar{display:none}.sg-distribution-rail{display:block;width:100%;height:14px;margin:4px 0 0;accent-color:var(--sg-accent);cursor:pointer}.sg-distribution-rail:disabled{cursor:default;opacity:.38}.sg-layer-hover:after{display:none}.sg-layer-more-placeholder{width:30px}.sg-layer-popover{position:fixed!important;left:0;top:0;z-index:2147483000;width:min(390px,calc(100vw - 24px));max-height:min(70vh,520px);display:block!important;margin:0;overflow:auto;visibility:visible!important;opacity:1!important;transform:none!important;transition:opacity .1s ease;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));background:var(--sg-surface);color:var(--sg-text);box-shadow:0 18px 50px rgba(0,0,0,.38)}
+      .sg-feedback-wizard{width:100%;max-width:680px;margin:8px auto;padding:22px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-page)}.sg-feedback-heading h2{margin:0;font-size:19px;line-height:1.4;letter-spacing:-.02em}.sg-feedback-heading p{margin:6px 0 0;color:var(--sg-muted);font-size:12px}.sg-feedback-steps{display:flex;list-style:none;gap:10px;margin:23px 0;padding:0;border-bottom:1px solid var(--sg-border)}.sg-feedback-steps li{display:flex;flex:1;align-items:center;gap:7px;padding:0 4px 12px;color:var(--sg-muted);font-size:12px;min-width:0}.sg-feedback-steps li.active{color:var(--sg-accent);border-bottom:2px solid var(--sg-accent);font-weight:650}.sg-feedback-step-number{display:grid;place-items:center;flex:0 0 auto;width:23px;height:23px;border-radius:6px;background:var(--sg-soft);font-size:11px;font-variant-numeric:tabular-nums}.sg-feedback-steps li.active .sg-feedback-step-number{background:var(--sg-accent);color:#fff}.sg-feedback-stage h3{margin:0 0 7px;font-size:16px;line-height:1.5}.sg-feedback-stage .sg-support-description{min-height:142px}.sg-feedback-options{margin:20px 0 0;padding:0;border:0}.sg-feedback-options legend{padding:0;font-size:13px;font-weight:650}.sg-feedback-options>p,.sg-feedback-caption{margin:6px 0;color:var(--sg-muted);font-size:12px;line-height:1.65}.sg-feedback-checks{display:flex;gap:22px;flex-wrap:wrap}.sg-feedback-options p.sg-error-note{color:var(--sg-danger)}.sg-feedback-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:22px}.sg-feedback-ready{padding:12px 0 4px;text-align:center}.sg-feedback-ready h3{font-size:18px}.sg-feedback-ready>p{margin:11px 0;color:var(--sg-muted);font-size:12px;line-height:1.7}.sg-feedback-unsent{display:inline-flex;padding:2px 8px;border-radius:5px;background:var(--sg-soft);color:var(--sg-muted);font-size:11px}.sg-feedback-contact{margin-top:24px;padding-top:18px;border-top:1px solid var(--sg-border)}.sg-feedback-contact-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-feedback-contact-head h3{margin:0;font-size:13px}.sg-feedback-email{margin:8px 0;font-size:16px;overflow-wrap:anywhere;user-select:text}.sg-feedback-secondary{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.sg-feedback-privacy{margin-top:18px}.sg-feedback-wizard button:focus-visible{outline:2px solid var(--sg-accent);outline-offset:3px}.sg-feedback-wizard button:disabled{opacity:.5;cursor:not-allowed}.sg-feedback-wizard .sg-primary-link:active:not(:disabled){transform:translateY(1px)}@media(max-width:560px){.sg-feedback-wizard{padding:16px}.sg-feedback-steps{gap:5px}.sg-feedback-steps li{flex-direction:column;gap:6px;padding:0 2px 10px;text-align:center}.sg-feedback-actions{justify-content:flex-start}.sg-feedback-wizard .sg-support-description,.sg-feedback-wizard .sg-support-input{font-size:16px}}@media(pointer:coarse){.sg-feedback-wizard button,.sg-feedback-wizard .sg-check{min-height:44px}}
+      .sg-header-community{position:relative}.sg-contact-trigger{padding:4px 0;border:0;background:transparent;font-family:inherit;cursor:pointer}.sg-contact-panel{position:absolute;right:0;top:calc(100% + 9px);z-index:50;width:min(340px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;padding:14px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-page);box-shadow:0 12px 36px color-mix(in srgb,var(--sg-text) 18%,transparent);color:var(--sg-text);text-align:left}.sg-contact-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-contact-email{margin:9px 0;overflow-wrap:anywhere;user-select:text;font-size:14px}.sg-contact-note{margin:8px 0 0;color:var(--sg-muted);font-size:12px;line-height:1.6}@media(max-width:560px){.sg-contact-panel{position:fixed;left:12px;right:12px;top:auto;bottom:18px;width:auto}}
       .sg-support-card{padding:14px 0;border-bottom:1px solid var(--sg-border)}.sg-support-card h3{margin:0;font-size:14px}.sg-support-card p{margin:4px 0 10px;color:var(--sg-muted);font-size:12px}.sg-primary-link{display:inline-flex;padding:7px 11px;border:1px solid var(--sg-accent);border-radius:6px;background:var(--sg-accent);color:#fff;text-decoration:none;cursor:pointer}.sg-support-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:11px}.sg-support-preview-panel{margin-top:12px;padding:12px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-soft)}.sg-support-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.sg-support-preview{width:100%;min-height:260px;max-height:440px;margin-top:9px;padding:11px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);resize:vertical;outline:0;color:var(--sg-text);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre;overflow:auto}.sg-support-preview:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-support-status{margin-top:9px;color:var(--sg-good);font-size:12px}.sg-support-error{margin-top:9px;color:var(--sg-danger);font-size:12px}.sg-check{display:flex;align-items:flex-start;gap:8px;margin:9px 0;color:var(--sg-text);font-size:12px}.sg-check input{margin-top:3px}.sg-privacy-note{padding:10px 11px;margin:12px 0;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-size:12px}.sg-footer{margin-top:24px;padding-top:13px;border-top:1px solid var(--sg-border);text-align:center;color:var(--sg-muted);font-size:12px}.sg-footer button{padding:2px 4px;border:0;background:transparent;color:var(--sg-accent);cursor:pointer}.sg-virtual-note{margin-top:6px;color:var(--sg-muted);font-size:11px}
       .sg-support-compose{display:grid;gap:8px}.sg-support-compose-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.sg-support-field{display:grid;gap:5px;color:var(--sg-muted);font-size:11px}.sg-support-input,.sg-support-description{width:100%;padding:9px 10px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);font:inherit;outline:0}.sg-support-description{min-height:190px;resize:vertical;line-height:1.55}.sg-support-input:focus,.sg-support-description:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-support-ai{display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid var(--sg-accent);border-radius:6px;background:transparent;color:var(--sg-accent);font-weight:650;cursor:pointer}.sg-support-empty{padding:22px 14px;border:1px dashed var(--sg-border);border-radius:8px;background:var(--sg-soft);color:var(--sg-muted);text-align:center}.sg-support-metrics{margin:0;color:var(--sg-muted);font-size:11px}.sg-support-sync{color:var(--sg-muted);font-size:11px}
       .sg-support-ai-notice{position:sticky;top:8px;z-index:8;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px;margin:12px 0;padding:13px 14px;border:1px solid color-mix(in srgb,var(--sg-good) 45%,var(--sg-border));border-radius:8px;background:color-mix(in srgb,var(--sg-good-soft) 92%,var(--sg-surface));color:var(--sg-text);box-shadow:0 8px 24px rgba(0,0,0,.16);scroll-margin-top:8px}.sg-support-ai-notice-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--sg-good);color:#fff;font-weight:800}.sg-support-ai-notice strong{display:block;color:var(--sg-good);font-size:13px}.sg-support-ai-notice p{margin:4px 0 0;color:var(--sg-text);font-size:12px;line-height:1.5}.sg-support-ai-notice .sg-quiet-button{margin-top:9px}.sg-support-ai-notice-close{display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--sg-muted);font-size:20px;line-height:1;cursor:pointer}.sg-support-ai-notice-close:hover{background:var(--sg-soft);color:var(--sg-text)}
@@ -1433,15 +1442,32 @@ window.__ModuleLoader__.load({
       return result
     }
 
-    function graphMigrationState(overview, status) {
+    function graphMigrationState(overview, status = taskStatus(overview)) {
       const migration = overview?.graphMigration || {}
-      if (status.graphProjection.processing > 0) return 'processing'
-      if (status.graphProjection.terminalFailed > 0) return 'failed'
+      if (status.graphProjection.processing > 0 || migration.processing > 0) return 'processing'
+      if (status.graphProjection.terminalFailed > 0 || migration.failed > 0) return 'failed'
+      if (migration.state === 'processing' || migration.state === 'failed') return migration.state
       const total = Number(migration.total ?? overview?.events)
-      if (Number.isFinite(total) && total === 0) return 'empty'
+      // First login may have no namespace or snapshot yet. Missing data does
+      // not establish unfinished work; actual jobs above still take priority.
+      if (!Number.isFinite(total)) return 'unknown'
+      if (total === 0) return 'empty'
       if (migration.state) return migration.state
       if (migration.complete) return 'complete'
       return 'incomplete'
+    }
+
+    function graphMigrationNotice(migration, state, failed = Number(migration.failed || 0)) {
+      const total = Number(migration.total)
+      const projected = Number(migration.projected)
+      const trustedProgress = migration.total != null && migration.projected != null && Number.isSafeInteger(total) && total > 0
+        && Number.isSafeInteger(projected) && projected >= 0 && projected <= total
+      const graphProgress = trustedProgress ? projected + '/' + total + ' Events' : ''
+      const suffix = graphProgress ? ' · ' + graphProgress : ''
+      if (state === 'processing') return failed > 0 ? '知识图谱更新中' + suffix + '，' + failed + ' 批失败' : '正在更新知识图谱' + suffix
+      if (state === 'failed') return failed > 0 ? '知识图谱有 ' + failed + ' 批更新失败' + (graphProgress ? ' · 已完成 ' + graphProgress : '') : '知识图谱更新失败' + suffix
+      if (state === 'incomplete') return '知识图谱更新未完成' + suffix
+      return ''
     }
 
     function MemoryStatusAlert({ overview, onOpen }) {
@@ -1462,16 +1488,14 @@ window.__ModuleLoader__.load({
         add('extraction-failed', status.eventExtraction.terminalFailed + ' 个长期记忆提取失败', '可查看详情并手动重试。', 'attention', 'extraction')
       }
       const graphState = graphMigrationState(overview, status)
-      const graphProgress = String(Number(migration.projected || 0)) + '/' + String(Number(migration.total || 0)) + ' Events'
+      const graphFailed = Math.max(Number(status.graphProjection.terminalFailed || 0), Number(migration.failed || 0))
+      const graphNotice = graphMigrationNotice(migration, graphState, graphFailed)
       if (graphState === 'processing') {
-        const failed = Number(status.graphProjection.terminalFailed || 0)
-        add('graph-processing', failed > 0
-          ? '知识图谱更新中 · ' + graphProgress + '，' + failed + ' 批失败'
-          : '正在更新知识图谱 · ' + graphProgress, '后台图谱投影仍在继续。', 'processing', 'graph')
+        add('graph-processing', graphNotice, '后台图谱投影仍在继续。', 'processing', 'graph')
       } else if (graphState === 'failed') {
-        add('graph-failed', '知识图谱有 ' + status.graphProjection.terminalFailed + ' 批更新失败 · 已完成 ' + graphProgress, '可查看详情并手动重试。', 'attention', 'graph')
+        add('graph-failed', graphNotice, '可查看详情并手动重试。', 'attention', 'graph')
       } else if (graphState === 'incomplete') {
-        add('graph-incomplete', '知识图谱更新未完成 · ' + graphProgress, '查看详情。', 'attention', 'graph')
+        add('graph-incomplete', graphNotice, '查看详情。', 'attention', 'graph')
       }
       if (!alerts.length) return null
       return h('div', { className: 'sg-memory-alerts', 'aria-live': 'polite' }, alerts.map((alert) => h('button', {
@@ -1486,8 +1510,8 @@ window.__ModuleLoader__.load({
       h('span', { className: 'sg-chevron', 'aria-hidden': 'true' }, '›'))))
     }
 
-    function SearchBox({ value, onChange }) {
-      return h('div', { className: 'sg-search' }, h('span', { className: 'sg-search-mark', 'aria-hidden': 'true' }, '⌕'), h('input', { value, onChange: (event) => onChange(event.target.value), placeholder: '搜索记忆、人物、项目、概念…', 'aria-label': '搜索长期记忆' }))
+    function SearchBox({ value, onChange, placeholder = '搜索记忆、人物、项目、概念…' }) {
+      return h('div', { className: 'sg-search' }, h('span', { className: 'sg-search-mark', 'aria-hidden': 'true' }, '⌕'), h('input', { value, onChange: (event) => onChange(event.target.value), placeholder, 'aria-label': '搜索长期记忆' }))
     }
 
     function useDebouncedValue(value, delay = 250) {
@@ -2292,7 +2316,116 @@ window.__ModuleLoader__.load({
           !(bootstrap.failures || []).length ? h('p', null, '部分历史记忆暂未形成主题，请从下方待整理事件或事件时间线查看。') : null)))
     }
 
-    function TopicDirectory({ directory, namespace, active = true, openEvent, onDirectoryChanged }) {
+    const DREAMING_STYLES = `.sg-dreaming{margin:0 0 20px;padding:14px 16px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-surface)}.sg-dreaming-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.sg-dreaming-animation{position:relative;width:48px;height:48px;flex:0 0 48px;color:var(--sg-accent)}.sg-dreaming-moon{display:block;font-size:43px;line-height:48px;animation:sg-dream-breathe 4s ease-in-out infinite}.sg-dreaming-star{position:absolute;right:0;top:1px;font-size:12px;animation:sg-dream-twinkle 3s ease-in-out infinite}.sg-dreaming-sleep{position:absolute;right:4px;bottom:1px;font-size:13px;animation:sg-dream-float 3s ease-in-out infinite}.sg-dreaming.resting .sg-dreaming-animation span{animation-play-state:paused}.sg-dreaming-copy{display:grid;gap:5px;flex:1;min-width:150px}.sg-dreaming-copy strong{font-size:14px;color:var(--sg-text)}.sg-dreaming-copy>span,.sg-dreaming p{font-size:12px;color:var(--sg-muted);line-height:1.6}.sg-dreaming-actions{display:flex;gap:8px;flex-wrap:wrap}.sg-dreaming button{padding:7px 12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-page);color:var(--sg-text);cursor:pointer}.sg-dreaming button:hover{border-color:var(--sg-accent)}.sg-dreaming button:disabled{opacity:.5;cursor:default}.sg-dreaming .sg-dreaming-stop{color:var(--sg-danger)}.sg-dreaming-progress{display:flex;align-items:center;gap:12px;margin-top:12px;color:var(--sg-muted);font-size:11px}.sg-dreaming-progress progress{width:100%;height:7px;accent-color:var(--sg-accent);flex:1;min-width:0}@keyframes sg-dream-breathe{50%{opacity:.6;transform:translateY(-2px)}}@keyframes sg-dream-twinkle{50%{opacity:.25;transform:scale(.7)}}@keyframes sg-dream-float{50%{opacity:.4;transform:translate(2px,-5px)}}@media(prefers-reduced-motion:reduce){.sg-dreaming-animation span{animation:none!important}}`
+
+    const DIRECTORY_PREVIEW_STYLES = `.sg-topic-directory-intro{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:14px}.sg-context-trigger{display:inline-flex;align-items:center;gap:7px;padding:5px 0;border:0;background:transparent;color:var(--sg-muted);font-size:12px;cursor:pointer}.sg-context-trigger:hover,.sg-context-trigger[aria-expanded=true]{color:var(--sg-accent)}.sg-dreaming-start{padding:6px 12px;border:0;border-radius:7px;background:var(--sg-soft);color:var(--sg-accent);font-size:12px;cursor:pointer}.sg-dreaming-start:disabled{opacity:.5;cursor:default}.sg-dreaming{flex:1 0 100%;margin:0;border:0;background:var(--sg-soft);padding:12px 14px}.sg-dreaming-animation{width:36px;height:40px;flex-basis:36px}.sg-dreaming-moon{font-size:34px;line-height:40px}.sg-dreaming-copy strong{font-size:13px}.sg-dreaming-copy>span{font-size:12px;color:var(--sg-muted)}.sg-dreaming-progress{margin-top:9px}.sg-dreaming-session{margin:5px 0 0 50px;padding:2px 0!important;border:0!important;background:transparent!important;color:var(--sg-accent)!important;font-size:12px!important}.sg-context-overlay{position:fixed;inset:0;z-index:2147483020;background:transparent}.sg-context-window{position:fixed;display:flex;flex-direction:column;width:min(520px,calc(100vw - 24px));padding:16px;border:1px solid var(--sg-border);border-radius:11px;background:var(--sg-page);color:var(--sg-text);box-shadow:0 12px 42px rgba(0,0,0,.25);overflow:auto}.sg-context-window-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-context-window-head h3{font-size:14px;margin:0;font-weight:600}.sg-context-close{display:grid;place-items:center;width:29px;height:29px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer}.sg-context-subtitle{font-size:12px;color:var(--sg-muted);margin:3px 0 13px}.sg-context-injection{margin:0;padding:13px;background:var(--sg-soft);border-radius:7px;font:12px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--sg-text)}@media(max-width:600px){.sg-context-overlay{background:rgba(0,0,0,.32)}.sg-context-window{left:12px!important;right:12px!important;top:auto!important;bottom:12px;width:auto;border-radius:13px;max-height:80vh!important}.sg-dreaming-actions{margin-left:50px}.sg-dreaming-copy{min-width:140px}}`
+
+    function DirectoryContextPreview({ context, active }) {
+      const [open, setOpen] = React.useState(false)
+      const [position, setPosition] = React.useState({ left: 12, top: 12, maxHeight: '70vh' })
+      const trigger = React.useRef(null)
+      const closeButton = React.useRef(null)
+      const close = () => { setOpen(false); trigger.current?.focus?.() }
+      React.useEffect(() => {
+        if (!active || !context) setOpen(false)
+      }, [active, context])
+      React.useEffect(() => {
+        if (!open || typeof window === 'undefined') return
+        const place = () => {
+          const rect = trigger.current?.getBoundingClientRect?.()
+          const width = window.innerWidth || 800, height = window.innerHeight || 700
+          const top = Math.max(12, Math.min((rect?.bottom || 80) + 8, height - 220))
+          setPosition({ left: Math.max(12, Math.min(rect?.left || 12, width - Math.min(520, width - 24) - 12)), top, maxHeight: Math.max(180, height - top - 20) })
+        }
+        place(); closeButton.current?.focus?.()
+        window.addEventListener('resize', place)
+        const key = event => { if (event.key === 'Escape') close(); if (event.key === 'Tab') { event.preventDefault(); closeButton.current?.focus?.() } }
+        window.addEventListener('keydown', key)
+        return () => { window.removeEventListener('resize', place); window.removeEventListener('keydown', key) }
+      }, [open])
+      return h(React.Fragment, null,
+        h('button', { type: 'button', ref: trigger, className: 'sg-context-trigger', 'aria-haspopup': 'dialog', 'aria-expanded': open, disabled: !context, onClick: () => setOpen(value => !value) }, 'AI 会看到的目录', h('span', { 'aria-hidden': 'true' }, '↗')),
+        open ? h('div', { className: 'sg-context-overlay', onClick: close },
+          h('section', { className: 'sg-context-window', style: position, role: 'dialog', 'aria-modal': true, 'aria-label': 'AI 会看到的目录', onClick: event => event.stopPropagation() },
+            h('div', { className: 'sg-context-window-head' }, h('h3', null, 'AI 会看到的目录'), h('button', { type: 'button', ref: closeButton, className: 'sg-context-close', 'aria-label': '关闭目录预览', onClick: close }, '×')),
+            h('p', { className: 'sg-context-subtitle' }, '以下目录内容默认提供给 AI'), h('pre', { className: 'sg-context-injection' }, context))) : null)
+    }
+
+    function DreamingPanel({ namespace, initialRun, active, available, onDirectoryChanged, onOpenDreamingSession }) {
+      const [run, setRun] = React.useState(initialRun || null)
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState('')
+      const [collapsed, setCollapsed] = React.useState(!initialRun)
+      const request = React.useRef(null)
+      const previousStatus = React.useRef(initialRun?.status)
+      React.useEffect(() => {
+        if (initialRun && (!run || initialRun.updatedAt > run.updatedAt)) { setRun(initialRun); setCollapsed(false) }
+      }, [initialRun])
+      const accept = React.useCallback(value => {
+        const next = value?.run || null
+        if (next && previousStatus.current !== next.status && ['completed', 'paused', 'terminated'].includes(next.status)) void onDirectoryChanged?.()
+        previousStatus.current = next?.status
+        if (next) setCollapsed(false)
+        setRun(next); setError('')
+      }, [onDirectoryChanged])
+      React.useEffect(() => {
+        if (!active || !run || !['running', 'pausing'].includes(run.status)) return
+        const controller = new AbortController()
+        let timer
+        const poll = () => api('dreaming', { namespace }, { signal: controller.signal }).then(accept).catch(() => {
+          if (!controller.signal.aborted) setError('状态读取失败，可重新读取。')
+        }).finally(() => { if (!controller.signal.aborted) timer = window.setTimeout(poll, 2000) })
+        timer = window.setTimeout(poll, 1500)
+        return () => { controller.abort(); window.clearTimeout(timer) }
+      }, [active, namespace, run?.id, run?.status, accept])
+      React.useEffect(() => () => request.current?.abort(), [])
+      const control = async action => {
+        if (request.current) return
+        const controller = new AbortController()
+        request.current = controller; setBusy(true); setError('')
+        try {
+          const params = { namespace, action }
+          if (action !== 'start') params.id = run.id
+          accept(await api('dreaming', params, { method: 'POST', signal: controller.signal }))
+        } catch (reason) { if (!controller.signal.aborted) setError(reason?.message || '操作失败，请重试。') }
+        finally { if (request.current === controller) { request.current = null; setBusy(false) } }
+      }
+      const running = run?.status === 'running'
+      const pausing = run?.status === 'pausing'
+      const paused = run?.status === 'paused'
+      const outstanding = running || pausing || paused
+      const openSession = async () => {
+        if (busy) return
+        setBusy(true); setError('')
+        try {
+          const response = await api('dreaming', { namespace, action: 'open-session', id: run.id }, { method: 'POST' })
+          if (!response.sessionId || !onOpenDreamingSession) throw new Error('当前宿主无法打开 Dreaming 会话')
+          await onOpenDreamingSession(response.sessionId)
+        } catch (reason) { setError(reason?.message || '无法打开会话，请稍后重试。') }
+        finally { setBusy(false) }
+      }
+      if (!run || collapsed) return h(React.Fragment, null, h('style', null, DREAMING_STYLES + DIRECTORY_PREVIEW_STYLES),
+        h('button', { type: 'button', className: 'sg-dreaming-start', disabled: busy || !available, onClick: () => control('start') }, '🌙 Dreaming'),
+        error ? h('p', { role: 'alert' }, error) : null)
+      return h('aside', { className: 'sg-dreaming ' + (running ? 'running' : 'resting'), 'aria-label': 'Dreaming 目录整理', 'data-testid': 'stratagate-dreaming' },
+        h('style', null, DREAMING_STYLES + DIRECTORY_PREVIEW_STYLES),
+        h('div', { className: 'sg-dreaming-row' },
+          h('div', { className: 'sg-dreaming-animation', 'aria-hidden': 'true' }, h('span', { className: 'sg-dreaming-moon' }, '☾'), h('span', { className: 'sg-dreaming-star' }, '✦'), h('span', { className: 'sg-dreaming-sleep' }, 'z')),
+          h('div', { className: 'sg-dreaming-copy', role: 'status', 'aria-live': 'polite' }, h('strong', null, running ? '正在做梦…' : pausing ? '正在暂停…' : paused ? 'Dreaming 已暂停' : run?.status === 'completed' ? '本轮 Dreaming 已完成' : run?.status === 'terminated' ? '本轮 Dreaming 已终止' : 'Dreaming'),
+            h('span', null, run?.activity || '整理目录、总览与经验')),
+          h('div', { className: 'sg-dreaming-actions' },
+            !outstanding ? h('button', { type: 'button', disabled: busy, onClick: () => setCollapsed(true) }, '收起') : null,
+            running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
+            paused ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
+            outstanding ? h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: () => control('terminate') }, '终止') : null)),
+        run ? h('div', { className: 'sg-dreaming-progress' }, h('progress', { max: Math.max(1, run.total), value: run.completed, 'aria-label': 'Dreaming 整理进度（批次）' }), h('span', null, Math.round(100 * run.completed / Math.max(1, run.total)) + '% · ' + run.completed + '/' + run.total + ' 批次')) : null,
+        h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
+        run?.reason ? h('p', null, run.reason) : null,
+        run && ['completed', 'terminated'].includes(run.status) ? h('p', null, '已完成的修改已保留。') : null,
+        error ? h('p', { role: 'alert' }, error, h('button', { type: 'button', disabled: busy, onClick: () => api('dreaming', { namespace }).then(accept).catch(() => setError('状态读取失败，请稍后重试。')) }, '重新读取')) : null)
+    }
+
+    function TopicDirectory({ directory, namespace, active = true, openEvent, onDirectoryChanged, onOpenDreamingSession }) {
       const [pendingOpen, setPendingOpen] = React.useState(false)
       const [invalidatedRevision, setInvalidatedRevision] = React.useState(null)
       const [expandRequest, setExpandRequest] = React.useState(0)
@@ -2306,18 +2439,10 @@ window.__ModuleLoader__.load({
       const invalidate = React.useCallback(() => { setInvalidatedRevision(revision); return onDirectoryChanged?.() }, [revision, onDirectoryChanged])
       const topics = directory?.topics || []
       const pendingTotal = Number(directory?.pending?.total || 0)
-      const contextSummary = directory?.context?.split('\n')[2] || ''
-      const contextTruncated = contextSummary.startsWith('共 ') && contextSummary.includes('。目录已裁剪；完整目录用 memory_list_topics(')
-      const showCompleteDirectory = () => {
-        setExpandRequest((request) => request + 1)
-        chaptersRef.current?.scrollIntoView({ block: 'start' })
-        chaptersRef.current?.querySelector('.sg-topic-chapter-toggle')?.focus({ preventScroll: true })
-      }
       return h('section', { className: 'sg-topic-directory', 'data-testid': 'stratagate-topic-directory', 'aria-label': '主题目录' },
-        h('header', { className: 'sg-topic-directory-intro' }, h('h2', null, '默认注入上下文'), h('p', null, '轻量目录摘要默认进入上下文；完整章节与小节可在下方查看，具体事实仍来自事件和知识图谱。'),
-          directory?.context && !blocked ? h('details', { className: 'sg-topic-context' }, h('summary', null, contextTruncated ? '查看目录摘要（部分内容）' : '查看目录内容'), h('pre', null, directory.context),
-            contextTruncated ? h('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 8px', marginTop: '8px' } },
-              h('span', null, '…… 此处仅显示部分章节与小节。'), topics.length ? h('button', { type: 'button', className: 'sg-topic-status-details', onClick: showCompleteDirectory }, '查看完整目录') : null) : null) : null),
+        h('header', { className: 'sg-topic-directory-intro' },
+          h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }),
+          h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: topics.length > 0 && !blocked, onDirectoryChanged, onOpenDreamingSession })),
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { bootstrap: directory?.bootstrap, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
@@ -2326,7 +2451,7 @@ window.__ModuleLoader__.load({
             h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null))
     }
 
-    function LongTermPage({ events, eventPage, graph, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, active = true }) {
+    function LongTermPage({ events, eventPage, graph, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, onOpenDreamingSession, active = true }) {
       const [mode, setMode] = React.useState('topics')
       const [selectedNodeId, setSelectedNodeId] = React.useState('')
       const [selectedEventId, setSelectedEventId] = React.useState('')
@@ -2375,9 +2500,15 @@ window.__ModuleLoader__.load({
         return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', onKeyDown) }
       }, [fullScreen, active])
       const visibleNodes = nodes.filter((node) => node.status !== 'archived').filter((node) => !nodeType || node.type === nodeType).filter((node) => !nodeTag || (node.tags || []).includes(nodeTag)).filter((node) => !normalized || JSON.stringify(node).toLocaleLowerCase().includes(normalized))
+      const visibleGraphIds = new Set(visibleNodes.map((node) => node.id))
       const displayedGraphIds = new Set([...visibleNodes].sort((left, right) => (nodeImportance.get(right.id)?.score || 0) - (nodeImportance.get(left.id)?.score || 0)).slice(0, graphNodeLimit).map((node) => node.id))
-      const activeEdges = edges.filter((edge) => edge.status === 'active')
+      const activeEdges = edges.filter((edge) => edge.status === 'active' && visibleGraphIds.has(edge.fromNodeId) && visibleGraphIds.has(edge.toNodeId))
       const displayedEdgeCount = activeEdges.filter((edge) => displayedGraphIds.has(edge.fromNodeId) && displayedGraphIds.has(edge.toNodeId)).length
+      const displayedNodeCount = Math.min(graphNodeLimit, visibleNodes.length)
+      const countText = (shown, total, unit) => (shown === total ? String(total) : shown + ' / ' + total) + ' ' + unit
+      const resultCount = mode === 'graph'
+        ? countText(displayedNodeCount, visibleNodes.length, '个节点') + ' · ' + countText(displayedEdgeCount, activeEdges.length, '条关系')
+        : countText(timelineEvents.length, pagedEvents.page.total, '条事件')
       const selectEvent = (id) => { setSelectedEventId(id); setMode('timeline') }
       const selectNode = (id) => { setSelectedNodeId(id); setMode('graph') }
       const openExplorer = () => {
@@ -2387,17 +2518,8 @@ window.__ModuleLoader__.load({
         setFullScreen(true)
       }
       const migration = graph.migration || { projected: pagedEvents.page.total, total: pagedEvents.page.total, state: 'complete', complete: true }
-      const migrationState = migration.state || (migration.complete ? 'complete' : migration.processing > 0 ? 'processing' : migration.failed > 0 ? 'failed' : 'incomplete')
-      const migrationProgress = String(Number(migration.projected || 0)) + '/' + String(Number(migration.total || 0)) + ' Events'
-      const migrationNotice = migrationState === 'processing'
-        ? Number(migration.failed || 0) > 0
-          ? '知识图谱更新中 · ' + migrationProgress + '，' + String(Number(migration.failed || 0)) + ' 批失败'
-          : '正在更新知识图谱 · ' + migrationProgress
-        : migrationState === 'failed'
-          ? '知识图谱有 ' + String(Number(migration.failed || 0)) + ' 批更新失败 · 已完成 ' + migrationProgress
-          : migrationState === 'incomplete'
-            ? '知识图谱更新未完成 · ' + migrationProgress
-            : ''
+      const migrationState = graphMigrationState({ graphMigration: migration, events: pagedEvents.page.total })
+      const migrationNotice = graphMigrationNotice(migration, migrationState)
       const activeFilterCount = mode === 'graph' ? Number(Boolean(nodeType)) + Number(Boolean(nodeTag)) : Object.values(eventFilters).filter(Boolean).length
       const filterControls = mode === 'graph'
         ? h('div', { className: 'sg-filterbar' }, h('select', { value: nodeType, onChange: (event) => setNodeType(event.target.value), 'aria-label': '节点类型' }, h('option', { value: '' }, '全部节点类型'), Object.entries(NODE_META).map(([value, meta]) => h('option', { key: value, value }, meta[0]))), h('select', { value: nodeTag, onChange: (event) => setNodeTag(event.target.value), 'aria-label': '语义标签' }, h('option', { value: '' }, '全部语义标签'), nodeTags.map((tag) => h('option', { key: tag, value: tag }, tag))))
@@ -2408,15 +2530,15 @@ window.__ModuleLoader__.load({
           h('select', { value: eventFilters.status, onChange: (event) => setEventFilters({ ...eventFilters, status: event.target.value }), 'aria-label': '事件状态' }, h('option', { value: '' }, '全部状态'), Object.entries(EVENT_STATUS_TEXT).map(([value, label]) => h('option', { key: value, value }, label))))
       return h('section', { className: 'sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
         h('nav', { className: 'sg-long-tabs', 'aria-label': '长期记忆视角' }, [['topics', '主题目录'], ['graph', '知识图谱'], ['timeline', '事件时间线']].map(([id, label]) => h('button', { key: id, type: 'button', className: mode === id ? 'active' : '', 'aria-current': mode === id ? 'page' : undefined, onClick: () => { setMode(id); if (id === 'topics') { setFullScreen(false); setFiltersOpen(false) } } }, label))),
-        h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged })),
+        h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged, onOpenDreamingSession })),
         mode === 'topics' ? null : h(React.Fragment, null,
-        migrationState !== 'complete' ? h('div', { className: 'sg-migration ' + (migrationState === 'processing' ? 'processing' : 'attention'), role: 'status' }, h('span', { className: 'sg-processing-icon', 'aria-hidden': 'true' }, migrationState === 'processing' ? '↻' : '⚠'), h('span', null, migrationNotice), h('small', null, migrationState === 'processing' ? '后台图谱投影仍在继续。' : migrationState === 'failed' ? '查看详情并手动重试。' : '查看详情。')) : null,
+        migrationNotice ? h('div', { className: 'sg-migration ' + (migrationState === 'processing' ? 'processing' : 'attention'), role: 'status' }, h('span', { className: 'sg-processing-icon', 'aria-hidden': 'true' }, migrationState === 'processing' ? '↻' : '⚠'), h('span', null, migrationNotice), h('small', null, migrationState === 'processing' ? '后台图谱投影仍在继续。' : migrationState === 'failed' ? '查看详情并手动重试。' : '查看详情。')) : null,
         h('div', { className: 'sg-long-toolbar' },
-          h(SearchBox, { value: query, onChange: setQuery }),
+          h(SearchBox, { value: query, onChange: setQuery, placeholder: mode === 'graph' ? '搜索人物、项目、概念…' : '搜索事件…' }),
           h('button', { type: 'button', className: 'sg-toolbar-button', 'aria-expanded': filtersOpen ? 'true' : 'false', onClick: () => setFiltersOpen(!filtersOpen) }, '筛选 ▾', activeFilterCount ? h('span', { className: 'sg-active-filter-count' }, activeFilterCount) : null),
-          h('span', { className: 'sg-toolbar-count' }, mode === 'graph' ? '显示 ' + Math.min(graphNodeLimit, visibleNodes.length) + ' / 共 ' + visibleNodes.length + ' 个节点 · 显示 ' + displayedEdgeCount + ' / 共 ' + activeEdges.length + ' 条关系' : '显示 ' + timelineEvents.length + ' / 共 ' + pagedEvents.page.total + ' 条事件 · ' + project),
           mode === 'graph' && graphNodeLimit < visibleNodes.length ? h('button', { type: 'button', className: 'sg-toolbar-button', onClick: () => setGraphNodeLimit((current) => Math.min(visibleNodes.length, current + 100)) }, '再显示 100 个') : null,
           h('button', { type: 'button', className: 'sg-toolbar-button', onClick: fullScreen ? () => { setFullScreen(false); setFiltersOpen(false) } : openExplorer }, fullScreen ? '退出全屏' : '⛶ 全屏查看' + (mode === 'graph' ? '图谱' : '时间线'))),
+        h('div', { className: 'sg-toolbar-count' }, resultCount),
         filtersOpen ? filterControls : null,
         mode === 'graph'
           ? h('div', { className: 'sg-long-layout ' + (fullScreen ? '' : 'sg-summary-layout') },
@@ -3270,6 +3392,92 @@ window.__ModuleLoader__.load({
       return ISSUE_URL + '?' + params.toString()
     }
 
+    function feedbackEmailUrl(title = '') {
+      // Legacy drafts can contain lone surrogates. Keep encoding total even
+      // before the server repairs them, and cap the user-controlled subject.
+      const value = String(title || '').replace(/[\uD800-\uDFFF]/gu, '\uFFFD')
+        .replace(/[\u0000-\u001F\u007F-\u009F]+/g, ' ').trim()
+        .slice(0, 240).replace(/[\uD800-\uDBFF]$/, '')
+      const subject = 'StrataGate 反馈' + (value ? '：' + value : '')
+      return 'mailto:' + FEEDBACK_EMAIL + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(EMAIL_BODY_HINT)
+    }
+
+    // Request the mail application synchronously within the click gesture.
+    // Report data stays on the clipboard; mailto contains only a paste hint.
+    async function copyReportAndComposeEmail(report, clipboard = navigator?.clipboard, compose = (url) => { window.location.href = url }, title = '') {
+      let copyPromise = null
+      let copyError = ''
+      if (!clipboard?.writeText) copyError = '当前浏览器不支持自动复制。'
+      else {
+        try { copyPromise = Promise.resolve(clipboard.writeText(report)) }
+        catch (reason) { copyError = '复制失败：' + String(reason?.message || reason) }
+      }
+      let composeRequested = false
+      try { compose(feedbackEmailUrl(title)); composeRequested = true } catch {}
+      if (copyError) return { copied: false, composeRequested, error: copyError }
+      try {
+        await copyPromise
+        return { copied: true, composeRequested, error: '' }
+      } catch (reason) {
+        return { copied: false, composeRequested, error: '复制失败：' + String(reason?.message || reason) }
+      }
+    }
+
+    function handleFeedbackEmailResult(result, callbacks = {}) {
+      if (result?.copied) {
+        callbacks.setStatus?.(result.composeRequested
+          ? '报告已复制。请在邮件撰写窗口中粘贴、检查并发送；若未打开，请复制下方邮箱自行发送。'
+          : '报告已复制。请点击下方邮件链接，或复制邮箱自行发送。')
+      } else {
+        callbacks.setPreviewOpen?.(true)
+        const message = (result?.error || '复制报告失败。') + ' 报告仍保留在预览中，可手动复制或下载后发送至 ' + FEEDBACK_EMAIL + '。'
+        callbacks.setError?.((current) => current ? current + ' ' + message : message)
+      }
+      return result
+    }
+
+    function HeaderCommunityLinks() {
+      const [contactOpen, setContactOpen] = React.useState(false)
+      const [contactStatus, setContactStatus] = React.useState('')
+      const contactRef = React.useRef(null)
+      React.useEffect(() => {
+        if (!contactOpen || typeof document === 'undefined') return undefined
+        const outside = (event) => { if (!contactRef.current?.contains(event.target)) setContactOpen(false) }
+        const escape = (event) => {
+          if (event.key !== 'Escape') return
+          setContactOpen(false)
+          contactRef.current?.querySelector('.sg-contact-trigger')?.focus()
+        }
+        document.addEventListener('pointerdown', outside)
+        document.addEventListener('keydown', escape)
+        return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape) }
+      }, [contactOpen])
+      const copyContact = async () => {
+        try {
+          if (!globalThis.navigator?.clipboard?.writeText) throw new Error('clipboard unavailable')
+          await globalThis.navigator.clipboard.writeText(FEEDBACK_EMAIL)
+          setContactStatus('邮箱已复制，请在常用邮箱中粘贴收件地址。')
+        } catch { setContactStatus('无法自动复制，请选中上方邮箱手动复制。') }
+      }
+      const composeContact = () => {
+        setContactStatus('已尝试打开邮件应用。若没有打开，请复制邮箱，在常用邮箱中撰写邮件。')
+        try { window.location.href = feedbackEmailUrl('联系作者') }
+        catch { setContactStatus('未能打开邮件应用，请复制邮箱，在常用邮箱中撰写邮件。') }
+      }
+      return h('div', { className: 'sg-header-community', ref: contactRef }, GITHUB_FEEDBACK_ENABLED
+        ? h(React.Fragment, null,
+          h('a', { className: 'sg-header-star', href: STAR_REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, '给 StrataGate 点个 🌟'),
+          h('a', { className: 'sg-header-contribute', href: STAR_REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, '参与开发 · Issue / PR →'))
+        : h(React.Fragment, null,
+          h('button', { type: 'button', className: 'sg-header-contribute sg-contact-trigger', 'aria-expanded': contactOpen, 'aria-controls': 'sg-contact-author-panel', onClick: () => { setContactStatus(''); setContactOpen((open) => !open) } }, '联系作者 →'),
+          contactOpen ? h('section', { id: 'sg-contact-author-panel', className: 'sg-contact-panel', 'aria-label': '联系作者' },
+            h('div', { className: 'sg-contact-head' }, h('strong', null, '联系作者'), h('button', { type: 'button', className: 'sg-icon-button', 'aria-label': '关闭联系方式', onClick: () => { setContactOpen(false); contactRef.current?.querySelector('.sg-contact-trigger')?.focus() } }, '×')),
+            h('p', { className: 'sg-contact-email' }, FEEDBACK_EMAIL),
+            h('p', { className: 'sg-contact-note' }, '可复制邮箱，在常用邮箱中撰写邮件。打开邮件应用需要设备支持；若没有反应，仍可手动发送。'),
+            h('div', { className: 'sg-support-actions' }, h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyContact }, '复制邮箱'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: composeContact }, '打开邮件应用')),
+            contactStatus ? h('p', { className: 'sg-contact-note', role: 'status' }, contactStatus) : null) : null))
+    }
+
     function buildSupportReport({ problemContent = '', overview = {}, selected = {}, data = {}, recentError = '', includeLogs = false, includeMemory = false, willingToContribute = false } = {}) {
       const problem = redactText(String(problemContent || '').trim())
       if (!problem) return ''
@@ -3384,13 +3592,21 @@ window.__ModuleLoader__.load({
       const bodyTouchedRef = React.useRef(false)
       const [aiPromptCopied, setAiPromptCopied] = React.useState(false)
       const [previewOpen, setPreviewOpen] = React.useState(false)
+      const [feedbackStep, setFeedbackStep] = React.useState(0)
+      const [reviewedReport, setReviewedReport] = React.useState(null)
+      const feedbackHeadingRef = React.useRef(null)
+      const previousFeedbackStepRef = React.useRef(0)
       const aiNoticeRef = React.useRef(null)
+      React.useEffect(() => {
+        if (previousFeedbackStepRef.current !== feedbackStep) feedbackHeadingRef.current?.focus({ preventScroll: true })
+        previousFeedbackStepRef.current = feedbackStep
+      }, [feedbackStep])
       React.useEffect(() => {
         let active = true
         titleTouchedRef.current = false
         bodyTouchedRef.current = false
         setDraftLoading(true)
-        void api('feedback', { namespace }).then((result) => {
+        void Promise.resolve().then(() => api('feedback', { namespace })).then((result) => {
           if (!active || !result?.draft) return
           const restored = restoreFeedbackDraftValues(result.draft, { title: titleTouchedRef.current, body: bodyTouchedRef.current })
           if (!titleTouchedRef.current) setTitle(restored.title)
@@ -3412,15 +3628,17 @@ window.__ModuleLoader__.load({
         const frame = window.requestAnimationFrame(reveal)
         return () => window.cancelAnimationFrame?.(frame)
       }, [aiPromptCopied])
-      const saveDraft = () => {
-        if (!namespace) return Promise.resolve()
-        return api('feedback', {}, {
+      const saveDraft = async () => {
+        if (!namespace) return
+        // Async converts even a synchronous fetch/serialization failure into
+        // a rejection, so callers can isolate it from copying and composing.
+        await api('feedback', {}, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ namespace, title, bodyMarkdown: problemContent }),
-        }).then(() => undefined)
+        })
       }
-      const reportSnapshot = Object.freeze({ text: buildSupportReport({ problemContent, overview, selected, data, recentError, includeLogs, includeMemory, willingToContribute }) })
+      const reportSnapshot = Object.freeze({ text: buildSupportReport({ problemContent, overview, selected, data, recentError, includeLogs, includeMemory, willingToContribute }), title })
       const reportBytes = reportSnapshot.text ? new Blob([reportSnapshot.text]).size : 0
       const hasProblem = Boolean(problemContent.trim())
       const persistDraft = () => {
@@ -3440,6 +3658,30 @@ window.__ModuleLoader__.load({
             return current ? current + ' ' + message : message
           }))
       }
+      const copyAndEmail = () => {
+        setStatus(''); setError('')
+        void saveDraft().catch((reason) => setError((current) => {
+          const message = '保存反馈草稿失败：' + String(reason?.message || reason)
+          return current ? current + ' ' + message : message
+        }))
+        void copyReportAndComposeEmail(reportSnapshot.text, navigator?.clipboard, undefined, title)
+          .then((result) => handleFeedbackEmailResult(result, { setStatus, setError, setPreviewOpen }))
+          .catch((reason) => setError((current) => {
+            const message = '准备邮件反馈失败：' + String(reason?.message || reason)
+            return current ? current + ' ' + message : message
+          }))
+      }
+      const copyEmail = async () => {
+        setStatus(''); if (GITHUB_FEEDBACK_ENABLED) setError('')
+        if (!navigator?.clipboard?.writeText) {
+          setError('当前浏览器不支持自动复制，请手动复制邮箱：' + FEEDBACK_EMAIL)
+          return
+        }
+        try {
+          await navigator.clipboard.writeText(FEEDBACK_EMAIL)
+          setStatus('邮箱已复制：' + FEEDBACK_EMAIL)
+        } catch { setError('复制邮箱失败，请手动复制：' + FEEDBACK_EMAIL) }
+      }
       const copyAiPrompt = () => {
         setStatus(''); setError('')
         if (!navigator?.clipboard?.writeText) {
@@ -3453,16 +3695,85 @@ window.__ModuleLoader__.load({
       const download = () => {
         setStatus(''); setError('')
         try {
-          downloadSupportReport(reportSnapshot.text)
+          downloadSupportReport(GITHUB_FEEDBACK_ENABLED ? reportSnapshot.text : reviewedReport?.text || '')
           setStatus('诊断文件已下载。文件内容与当前预览完全一致。')
         } catch (reason) {
           setError('下载失败：' + String(reason?.message || reason) + '。报告仍保留在预览中，可手动复制。')
         }
       }
+      if (!GITHUB_FEEDBACK_ENABLED) {
+        const review = () => {
+          if (!hasProblem || draftLoading) return
+          setStatus(''); setError(''); setPreviewOpen(false)
+          setReviewedReport(reportSnapshot)
+          setFeedbackStep(1)
+          // Saving is independent of navigation, copying, and mail activation.
+          void saveDraft().catch((reason) => setError('保存反馈草稿失败：' + String(reason?.message || reason)))
+        }
+        const edit = () => { setFeedbackStep(0); setReviewedReport(null); setStatus(''); setError('') }
+        const previousStep = () => {
+          if (feedbackStep === 1) { edit(); return }
+          setFeedbackStep(1); setStatus(''); setError('')
+        }
+        const copyReport = async () => {
+          if (!reviewedReport?.text) return
+          setStatus('')
+          try {
+            if (!globalThis.navigator?.clipboard?.writeText) throw new Error('当前环境不支持自动复制')
+            await globalThis.navigator.clipboard.writeText(reviewedReport.text)
+            setStatus('报告已复制。请在邮箱中粘贴、检查并发送。')
+          } catch {
+            setPreviewOpen(true)
+            setError((current) => (current ? current + ' ' : '') + '无法自动复制。报告仍保留在下方预览中，可选中手动复制，或下载诊断文件。')
+          }
+        }
+        const compose = () => {
+          setStatus('已尝试打开邮件应用。若没有打开，请复制邮箱，在常用邮箱中撰写邮件。')
+          try { window.location.href = feedbackEmailUrl(reviewedReport?.title || '') }
+          catch { setError('未能打开邮件应用，请复制邮箱，在常用邮箱中撰写邮件。') }
+        }
+        const preview = () => h('section', { className: 'sg-support-preview-panel', 'aria-label': '将复制的反馈报告' },
+          h('div', { className: 'sg-support-preview-head' }, h('strong', null, '将复制的内容'),
+            h('span', { className: 'sg-support-metrics' }, (reviewedReport?.text.length || 0) + ' 个字符 · ' + new Blob([reviewedReport?.text || '']).size + ' 字节')),
+          includeMemory ? h('p', { className: 'sg-error-note' }, '已包含你主动勾选的记忆内容，可能有私人对话。请逐项检查后再发送。') : null,
+          h('textarea', { id: 'sg-support-preview', className: 'sg-support-preview', readOnly: true, value: reviewedReport?.text || '', spellCheck: false, 'aria-label': '本地反馈报告预览' }))
+        return h(React.Fragment, null,
+          h(BackBar, { label: '更多', onBack }),
+          h('section', { className: 'sg-feedback-wizard', 'aria-label': '邮件反馈' },
+            h('div', { className: 'sg-feedback-heading' }, h('h2', null, '反馈与联系'), h('p', null, '描述问题、检查报告，再到自己的邮箱中发送。')),
+            h('ol', { className: 'sg-feedback-steps', 'aria-label': '反馈步骤' }, ['描述问题', '检查报告', '邮件发送'].map((label, index) => h('li', { key: label, className: index === feedbackStep ? 'active' : index < feedbackStep ? 'done' : '', 'aria-current': index === feedbackStep ? 'step' : undefined }, h('span', { className: 'sg-feedback-step-number', 'aria-hidden': 'true' }, index < feedbackStep ? '✓' : index + 1), label))),
+            feedbackStep > 0 ? h('div', { className: 'sg-feedback-step-back' }, h('button', { type: 'button', className: 'sg-toolbar-button', 'aria-label': '上一步：' + (feedbackStep === 1 ? '描述问题' : '检查报告'), onClick: previousStep }, '← 上一步')) : null,
+            feedbackStep === 0 ? h('section', { className: 'sg-feedback-stage', 'aria-label': '描述问题' },
+              h('h3', { ref: feedbackHeadingRef, tabIndex: -1 }, '发生了什么？'),
+              h('label', { className: 'sg-support-field' }, h('span', null, '问题描述'), h('textarea', { className: 'sg-support-description', rows: 5, value: problemContent, onChange: (event) => { bodyTouchedRef.current = true; setProblemContent(event.target.value) }, onBlur: persistDraft, placeholder: '发生了什么？怎样复现？你希望得到什么结果？也可以提出建议或使用疑问。', 'aria-label': '问题内容' })),
+              h('label', { className: 'sg-support-field' }, h('span', null, '邮件主题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => { titleTouchedRef.current = true; setTitle(event.target.value) }, onBlur: persistDraft, placeholder: '简短概括问题' })),
+              h('fieldset', { className: 'sg-feedback-options' }, h('legend', null, '附加信息'), h('p', null, '基础诊断包含版本和运行状态；日志、记忆内容默认不加入。'),
+                h('div', { className: 'sg-feedback-checks' },
+                  h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeLogs, onChange: (event) => setIncludeLogs(event.target.checked), 'aria-label': '加入日志' }), h('span', null, '加入日志')),
+                  h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeMemory, onChange: (event) => setIncludeMemory(event.target.checked), 'aria-label': '加入记忆内容' }), h('span', null, '加入记忆内容'))),
+                includeMemory ? h('p', { className: 'sg-error-note', role: 'note' }, '记忆内容可能包含私人对话，自动脱敏不能保证识别所有敏感信息。请在下一步检查报告。') : null),
+              draftLoading ? h('p', { className: 'sg-support-sync', role: 'status' }, '正在读取本地反馈草稿…') : null,
+              !hasProblem ? h('p', { className: 'sg-support-empty' }, '填写问题描述后，可以检查报告。') : null,
+              h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-primary-link', disabled: !hasProblem || draftLoading, onClick: review }, '下一步：检查报告'))) : null,
+            feedbackStep === 1 ? h('section', { className: 'sg-feedback-stage', 'aria-label': '检查报告' },
+              h('h3', { ref: feedbackHeadingRef, tabIndex: -1 }, '检查将发送的内容'), h('p', { className: 'sg-feedback-caption' }, '确认问题描述和附加内容；不想发送的内容，可返回修改。'), preview(),
+              h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-primary-link', disabled: !reviewedReport?.text, onClick: () => { if (reviewedReport?.text) { setFeedbackStep(2); setStatus('') } } }, '下一步：邮件发送'))) : null,
+            feedbackStep === 2 ? h('section', { className: 'sg-feedback-stage', 'aria-label': '邮件发送' },
+              h('div', { className: 'sg-feedback-ready' }, h('h3', { ref: feedbackHeadingRef, tabIndex: -1 }, '报告准备好了'), h('span', { className: 'sg-feedback-unsent' }, '尚未发送'), h('p', null, '请复制报告，在自己的邮箱中粘贴、检查并发送。StrataGate 不会自动发送邮件。')),
+              h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-primary-link', disabled: !reviewedReport?.text, onClick: copyReport }, '复制报告')),
+              h('section', { className: 'sg-feedback-contact', 'aria-label': '作者邮箱' }, h('div', { className: 'sg-feedback-contact-head' }, h('h3', null, '发送给作者'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyEmail }, '复制邮箱')), h('p', { className: 'sg-feedback-email' }, FEEDBACK_EMAIL),
+                h('p', { className: 'sg-feedback-caption' }, '若邮件应用没有打开，可复制邮箱，在常用邮箱中手动撰写。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: compose }, '尝试打开邮件应用')),
+              h('div', { className: 'sg-feedback-secondary' }, h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setPreviewOpen((open) => !open), 'aria-expanded': previewOpen }, previewOpen ? '收起报告' : '查看报告'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: download }, '下载诊断文件')),
+              previewOpen ? preview() : null,
+              h('p', { className: 'sg-feedback-caption sg-feedback-privacy' }, '邮件链接只预填主题和粘贴提示，不包含报告正文、日志或记忆内容。')) : null,
+            status ? h('p', { className: 'sg-support-status', role: 'status', 'aria-live': 'polite' }, status) : null,
+            error ? h('p', { className: 'sg-support-error', role: 'alert' }, error) : null))
+      }
+      // Preserve the previous GitHub feedback view and handlers for restoration.
       return h(React.Fragment, null,
         h(BackBar, { label: '更多', onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, '反馈与支持'), h('p', null, '报告只在本地生成。只有你主动粘贴或上传后，内容才会进入 GitHub。')),
-        aiPromptCopied ? h('div', { ref: aiNoticeRef, className: 'sg-support-ai-notice', role: 'status', 'aria-live': 'polite' },
+        h('div', { className: 'sg-intro' }, h('h2', null, '反馈与支持'), h('p', null, GITHUB_FEEDBACK_ENABLED ? '报告只在本地生成。只有你主动粘贴或上传后，内容才会进入 GitHub。' : '报告只在本地生成。请通过邮件反馈问题，检查内容后自行发送。')),
+        GITHUB_FEEDBACK_ENABLED && aiPromptCopied ? h('div', { ref: aiNoticeRef, className: 'sg-support-ai-notice', role: 'status', 'aria-live': 'polite' },
           h('span', { className: 'sg-support-ai-notice-mark', 'aria-hidden': 'true' }, '✓'),
           h('div', null,
             h('strong', null, 'AI 提示词已复制'),
@@ -3470,25 +3781,29 @@ window.__ModuleLoader__.load({
             h('p', null, 'Agent 会根据刚才的会话整理问题，并自动创建反馈草稿。'),
             h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyAiPrompt }, '再次复制提示词')),
           h('button', { type: 'button', className: 'sg-support-ai-notice-close', onClick: () => setAiPromptCopied(false), 'aria-label': '关闭 AI 提示词提示' }, '×')) : null,
-        h('div', { className: 'sg-privacy-note' }, 'GitHub 链接不包含报告正文、诊断日志或记忆数据。StrataGate 永远不会自动提交 Issue。'),
+        h('div', { className: 'sg-privacy-note' }, GITHUB_FEEDBACK_ENABLED ? 'GitHub 链接不包含报告正文、诊断日志或记忆数据。StrataGate 永远不会自动提交 Issue。' : '邮件链接只预填主题和粘贴提示，不包含报告正文、诊断日志或记忆数据。StrataGate 不会自动发送邮件。'),
+        GITHUB_FEEDBACK_ENABLED ? null : h('section', { className: 'sg-support-card' }, h('h3', null, '反馈邮箱'),
+          h('p', null, h('a', { className: 'sg-link', href: feedbackEmailUrl(title) }, FEEDBACK_EMAIL)),
+          h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyEmail }, '复制邮箱'),
+          h('p', null, '若点击链接后没有打开邮件应用，可复制邮箱，在常用邮箱中撰写邮件；诊断文件可手动添加为附件。')),
         h('section', { className: 'sg-support-card sg-support-compose' },
-          h('div', { className: 'sg-support-compose-head' }, h('div', null, h('h3', null, '描述问题'), h('p', null, '自由描述即可，不需要填写多组必填表单。')), h('button', { type: 'button', className: 'sg-support-ai', onClick: copyAiPrompt }, 'AI 帮我填')),
-          h('label', { className: 'sg-support-field' }, h('span', null, 'Issue 标题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => { titleTouchedRef.current = true; setTitle(event.target.value) }, onBlur: persistDraft, placeholder: '简短概括问题' })),
-          h('label', { className: 'sg-support-field' }, h('span', null, '问题内容'), h('textarea', { className: 'sg-support-description', value: problemContent, onChange: (event) => { bodyTouchedRef.current = true; setProblemContent(event.target.value) }, onBlur: persistDraft, placeholder: '描述刚才发生了什么；也可以点击“AI 帮我填”。', 'aria-label': '问题内容' })),
-          h('details', null, h('summary', null, '查看可手动复制的 AI 提示词'), h('pre', { className: 'sg-raw-json sg-code' }, FEEDBACK_AI_PROMPT)),
+          h('div', { className: 'sg-support-compose-head' }, h('div', null, h('h3', null, '描述问题'), h('p', null, '自由描述即可，不需要填写多组必填表单。')), GITHUB_FEEDBACK_ENABLED ? h('button', { type: 'button', className: 'sg-support-ai', onClick: copyAiPrompt }, 'AI 帮我填') : null),
+          h('label', { className: 'sg-support-field' }, h('span', null, GITHUB_FEEDBACK_ENABLED ? 'Issue 标题（可选）' : '邮件主题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => { titleTouchedRef.current = true; setTitle(event.target.value) }, onBlur: persistDraft, placeholder: '简短概括问题' })),
+          h('label', { className: 'sg-support-field' }, h('span', null, '问题内容'), h('textarea', { className: 'sg-support-description', value: problemContent, onChange: (event) => { bodyTouchedRef.current = true; setProblemContent(event.target.value) }, onBlur: persistDraft, placeholder: GITHUB_FEEDBACK_ENABLED ? '描述刚才发生了什么；也可以点击“AI 帮我填”。' : '描述发生了什么、复现步骤，以及预期和实际结果。', 'aria-label': '问题内容' })),
+          GITHUB_FEEDBACK_ENABLED ? h('details', null, h('summary', null, '查看可手动复制的 AI 提示词'), h('pre', { className: 'sg-raw-json sg-code' }, FEEDBACK_AI_PROMPT)) : null,
           draftLoading ? h('div', { className: 'sg-support-sync' }, '正在读取本地反馈草稿…') : null),
         h('section', { className: 'sg-support-card' }, h('h3', null, '附加信息'), h('p', null, '基础诊断默认包含；日志和记忆数据只有在你主动勾选后才会加入。'),
           h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: true, disabled: true }), h('span', null, '默认基础诊断')),
           h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeLogs, onChange: (event) => setIncludeLogs(event.target.checked) }), h('span', null, '附加诊断日志')),
           h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeMemory, onChange: (event) => setIncludeMemory(event.target.checked) }), h('span', null, '附加记忆数据（可能包含对话内容）')),
           includeMemory ? h('div', { className: 'sg-error-note' }, '警告：内容可能包含私人对话；自动脱敏不能保证识别所有敏感信息；提交前必须人工检查。') : null,
-          h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: willingToContribute, onChange: (event) => setWillingToContribute(event.target.checked) }), h('span', null, '我愿意尝试修复并提交 PR')),
-          hasProblem ? null : h('div', { className: 'sg-support-empty' }, '请先描述问题，或使用 AI 帮你填写。'),
+          GITHUB_FEEDBACK_ENABLED ? h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: willingToContribute, onChange: (event) => setWillingToContribute(event.target.checked) }), h('span', null, '我愿意尝试修复并提交 PR')) : null,
+          hasProblem ? null : h('div', { className: 'sg-support-empty' }, GITHUB_FEEDBACK_ENABLED ? '请先描述问题，或使用 AI 帮你填写。' : '请先描述问题，再复制报告并通过邮件发送。'),
           h('div', { className: 'sg-support-actions' },
-            h('button', { type: 'button', className: 'sg-primary-link', disabled: !hasProblem, onClick: copyAndOpen }, '复制报告并打开 GitHub Issue'),
+            h('button', { type: 'button', className: 'sg-primary-link', disabled: !hasProblem, onClick: GITHUB_FEEDBACK_ENABLED ? copyAndOpen : copyAndEmail }, GITHUB_FEEDBACK_ENABLED ? '复制报告并打开 GitHub Issue' : '复制报告并撰写邮件'),
             h('button', { type: 'button', className: 'sg-quiet-button', disabled: !hasProblem, onClick: () => setPreviewOpen((open) => !open), 'aria-expanded': previewOpen }, previewOpen ? '收起将复制的内容' : '查看将复制的内容'),
             h('button', { type: 'button', className: 'sg-quiet-button', disabled: !hasProblem, onClick: download }, '下载诊断文件'),
-            h('a', { className: 'sg-link', href: issueUrl(title), target: '_blank', rel: 'noopener noreferrer' }, '仅打开 GitHub Issue')),
+            GITHUB_FEEDBACK_ENABLED ? h('a', { className: 'sg-link', href: issueUrl(title), target: '_blank', rel: 'noopener noreferrer' }, '仅打开 GitHub Issue') : h('a', { className: 'sg-link', href: feedbackEmailUrl(title) }, '仅撰写邮件')),
           hasProblem && previewOpen ? h('div', { className: 'sg-support-preview-panel', role: 'region', 'aria-label': '将复制的反馈报告' },
             h('div', { className: 'sg-support-preview-head' },
               h('strong', null, '将复制的内容'),
@@ -3497,8 +3812,10 @@ window.__ModuleLoader__.load({
             h('textarea', { id: 'sg-support-preview', className: 'sg-support-preview', readOnly: true, value: reportSnapshot.text, spellCheck: false, 'aria-label': '本地反馈报告预览' })) : null,
           status ? h('div', { className: 'sg-support-status', role: 'status' }, status) : null,
           error ? h('div', { className: 'sg-support-error', role: 'alert' }, error) : null),
-        h('section', { className: 'sg-support-card' }, h('h3', null, '功能建议'), h('p', null, 'GitHub 入口不会预填正文，请在页面中主动填写并提交。'), h('a', { className: 'sg-link', href: ISSUE_URL, target: '_blank', rel: 'noopener noreferrer' }, '创建 Feature Request →')),
-        h('section', { className: 'sg-support-card' }, h('h3', null, '使用疑问'), h('p', null, '在 GitHub Discussion 的 Q&A 区交流使用方法。'), h('a', { className: 'sg-link', href: DISCUSSION_URL, target: '_blank', rel: 'noopener noreferrer' }, '前往 Discussion / Q&A →')))
+        GITHUB_FEEDBACK_ENABLED ? h('section', { className: 'sg-support-card' }, h('h3', null, '功能建议'), h('p', null, 'GitHub 入口不会预填正文，请在页面中主动填写并提交。'), h('a', { className: 'sg-link', href: ISSUE_URL, target: '_blank', rel: 'noopener noreferrer' }, '创建 Feature Request →'))
+          : h('section', { className: 'sg-support-card' }, h('h3', null, '功能建议'), h('p', null, '欢迎通过邮件提出功能建议。'), h('a', { className: 'sg-link', href: feedbackEmailUrl('功能建议') }, '发送功能建议 →')),
+        GITHUB_FEEDBACK_ENABLED ? h('section', { className: 'sg-support-card' }, h('h3', null, '使用疑问'), h('p', null, '在 GitHub Discussion 的 Q&A 区交流使用方法。'), h('a', { className: 'sg-link', href: DISCUSSION_URL, target: '_blank', rel: 'noopener noreferrer' }, '前往 Discussion / Q&A →'))
+          : h('section', { className: 'sg-support-card' }, h('h3', null, '使用疑问'), h('p', null, '欢迎通过邮件咨询使用方法。'), h('a', { className: 'sg-link', href: feedbackEmailUrl('使用疑问') }, '邮件咨询 →')))
     }
 
     function StructurePage({ events, eventPage, graph, openEvent, namespace, onBack }) {
@@ -3745,7 +4062,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus }) {
+    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, onOpenDreamingSession }) {
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -4010,7 +4327,7 @@ window.__ModuleLoader__.load({
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'display') content = h(DisplayPage, { onBack: moreBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus })
       else if (view.name === 'settings') content = h(SettingsPage, { selected, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
-      else if (view.name === 'support') content = h(SupportPage, { namespace, overview, selected, data, recentError, onBack: moreBack })
+      else if (view.name === 'support') content = h(SupportPage, { key: namespace, namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
 
@@ -4018,20 +4335,18 @@ window.__ModuleLoader__.load({
         h('style', null, css),
         h('header', { className: 'sg-header' },
           h('div', { className: 'sg-header-row sg-header-row-primary' },
-            h('a', { className: 'sg-brand', href: STAR_REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' },
+            h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
               h('img', { className: 'sg-logo', src: MASCOT_DATA_URL, alt: 'StrataGate 吉祥物' }),
               h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null))),
             h('span', { className: 'sg-usage-count', 'aria-label': 'StrataGate 已在当前工作区中帮助使用记忆 ' + Number(selected?.memoryUseCount || 0) + ' 次。' }, h('strong', { className: 'sg-usage-number' }, Number(selected?.memoryUseCount || 0)), h('span', null, '次记忆采用'))),
           h('div', { className: 'sg-header-row sg-header-row-secondary' },
             h('div', { className: 'sg-project' }, h('span', { className: 'sg-project-label' }, '当前工作区：'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
-            h('span', { className: 'sg-header-community' },
-              h('a', { className: 'sg-header-star', href: STAR_REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, '给 StrataGate 点个 🌟'),
-              h('a', { className: 'sg-header-contribute', href: STAR_REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, '参与开发 · Issue / PR →')))),
+            h(HeaderCommunityLinks))),
         h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
         view.name === 'status' ? null : h(MemoryStatusAlert, { overview: error ? null : selected, onOpen: (stage) => setView({ name: 'status', stage }) }),
         h('section', { key: section, className: 'sg-view', 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
-          h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, active: view.name === 'root' })),
+          h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, active: view.name === 'root' })),
           view.name === 'root' ? null : content) : content),
         h('footer', { className: 'sg-footer' }, '发现问题？ ', h('button', { type: 'button', onClick: () => { setSection('more'); setView({ name: 'support' }); setSource(null) } }, '提交反馈')))
     }
@@ -4063,7 +4378,12 @@ window.__ModuleLoader__.load({
           setShortTermStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showShortTermStatus', visible) : null,
           setRetrievalStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showRetrievalStatus', visible) : null,
         }),
-      }, (props) => h(MemoryPage, props)))
+      }, (props) => h(MemoryPage, { ...props, onOpenDreamingSession: sessionId => {
+        const navigation = ctx.get('uiWorkspace')
+        if (typeof navigation?.openSession !== 'function') throw new Error('当前 DSH 未提供会话导航，请升级宿主后重试')
+        navigation.openSession(sessionId)
+        props.close?.()
+      } })))
       try {
         const uiConversation = ctx.get('uiConversation')
         if (uiConversation) {

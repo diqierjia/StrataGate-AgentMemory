@@ -4,6 +4,11 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { StrataGateRuntime } from './runtime.js'
 import type {} from '@deepseek-ai/dsh-tools'
+import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
+
+// Archived during the email transition. Keep the tool implementation for recovery;
+// enabling it also requires restoring the feedback policy and the UI AI entry.
+export { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 
 const jsonOutput = {
   schema: { type: 'json' as const },
@@ -46,7 +51,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
     },
   }))
 
-  ctx.tools.register(defineTool({
+  if (AGENT_FEEDBACK_ENABLED) ctx.tools.register(defineTool({
     name: 'feedback_prepare',
     description: 'This tool is provided by the StrataGate plugin. Create or revise a local StrataGate feedback draft when the user directly requests it, or after a proactive suggestion permitted by the StrataGate feedback policy and the user explicitly agrees. A direct user request is already authorization. Use only facts known from the current conversation; leave unknown fields empty and never invent versions, logs, Block counts, or diagnostics. Never submit anything to GitHub. After success, briefly say the draft is local and not submitted, then render feedbackUrl as a Markdown link labeled "打开反馈草稿". Then ask exactly once: "要不要顺便让我尝试修复这个问题，并提交一个 PR？" If the user does not respond or declines, do not ask again. Do not use a popup or other additional UI. Do not print draft fields or an Issue-content table, and do not direct the user through Settings manually.',
     parameters: {

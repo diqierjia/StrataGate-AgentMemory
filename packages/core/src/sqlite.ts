@@ -1,17 +1,22 @@
 import { DatabaseSync } from 'node:sqlite';
-import type { MemoryTopicState } from './topics.js';
+import { resolve } from 'node:path';
+import { BACKGROUND_WORK_INDEX_VERSION, backgroundWorkTimes, type BackgroundWorkTimes } from './background-work.js';
+import { TOPIC_LEASE_MS, type MemoryTopicState } from './topics.js';
 import {
   STRATAGATE_STORAGE_SCHEMA_VERSION,
+  DERIVATION_LEASE_MS,
   StorageConflictError,
   assertValidSnapshot,
   cloneSnapshot,
   normalizeSnapshot,
   type ElementProjectionJob,
+  type DerivationLeaseGuard,
   type ExtractionJob,
   type BlockSummaryJob,
   type GraphProjectionJob,
   type IngestionReceipt,
   type LoadedStrataGateState,
+  type LoadedDerivationLeases,
   type RawMessageIndexDelta,
   type SuccessfulModelResponse,
   type StorageAdapter,
@@ -39,7 +44,7 @@ import type {
 } from './types.js';
 import { nowUtc8 } from './time.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
-import { emptyProfile, isProfileField, PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, profileMaintenanceDue, validateProfile,
+import { emptyProfile, isProfileField, PROFILE_FIELDS, PROFILE_MAINTAINABLE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, profileMaintenanceDue, validateProfile,
   type PersistentProfile, type ProfileChange, type ProfileChangeSource, type ProfileField } from './profile.js';
 import { searchTokens } from './search.js';
 
@@ -134,6 +139,7 @@ interface ExtractionJobRow {
   last_error: string | null;
   next_retry_at: string | null;
   updated_at: string;
+  lease_until?: string | null;
 }
 
 interface ExternalMemoryImportJobRow {
@@ -148,6 +154,7 @@ interface BlockSummaryJobRow {
   last_error: string | null;
   next_retry_at: string | null;
   updated_at: string;
+  lease_until?: string | null;
 }
 
 interface SuccessfulModelResponseRow {
@@ -656,6 +663,8 @@ function encodedRawSearchTokens(content: string): string {
 }
 
 export class SqliteStorage implements StorageAdapter {
+  private static readonly workListeners = new Map<string, Set<() => void>>();
+  private readonly filename: string;
   readonly readonly: boolean;
   private readonly database: DatabaseSync;
   private rawSearchFtsAvailable = false;
@@ -664,6 +673,8 @@ export class SqliteStorage implements StorageAdapter {
   constructor(options: SqliteStorageOptions) {
     if (!options.filename.trim()) throw new TypeError('SQLite filename must not be empty');
     this.readonly = options.readonly ?? false;
+    this.filename = options.filename === ':memory:' ? ':memory:' : resolve(options.filename);
+    if (process.platform === 'win32') this.filename = this.filename.toLowerCase();
     this.database = new DatabaseSync(options.filename, {
       readOnly: this.readonly,
       timeout: Math.max(0, Math.floor(options.timeoutMs ?? 5_000)),
@@ -673,6 +684,7 @@ export class SqliteStorage implements StorageAdapter {
       if (!this.readonly) {
         this.database.exec('PRAGMA journal_mode = WAL');
         this.migrate();
+        this.initializeBackgroundWorkIndex();
       } else {
         this.assertSchemaVersion();
       }
@@ -747,7 +759,7 @@ export class SqliteStorage implements StorageAdapter {
     }));
 
     const summaryJobs = (this.database.prepare(`
-      SELECT block_id, status, attempts, last_error, next_retry_at, updated_at
+      SELECT *
       FROM block_summary_jobs WHERE namespace = ? ORDER BY block_id
     `).all(key) as unknown as BlockSummaryJobRow[]).map<BlockSummaryJob>((row) => ({
       blockId: row.block_id,
@@ -756,6 +768,7 @@ export class SqliteStorage implements StorageAdapter {
       lastError: row.last_error,
       nextRetryAt: row.next_retry_at,
       updatedAt: row.updated_at,
+      ...(row.lease_until == null ? {} : { leaseUntil: row.lease_until }),
     }));
 
     const sourceRows = this.database.prepare(`
@@ -877,7 +890,7 @@ export class SqliteStorage implements StorageAdapter {
     });
 
     const extractionJobs = (this.database.prepare(`
-      SELECT block_id, status, attempts, last_error, next_retry_at, updated_at
+      SELECT *
       FROM extraction_jobs WHERE namespace = ? ORDER BY block_id
     `).all(key) as unknown as ExtractionJobRow[]).map<ExtractionJob>((row) => ({
       blockId: row.block_id,
@@ -886,6 +899,7 @@ export class SqliteStorage implements StorageAdapter {
       lastError: row.last_error,
       nextRetryAt: row.next_retry_at,
       updatedAt: row.updated_at,
+      ...(row.lease_until == null ? {} : { leaseUntil: row.lease_until }),
     }));
 
     const elementProjectionJobs = (this.database.prepare(`
@@ -984,6 +998,7 @@ export class SqliteStorage implements StorageAdapter {
     snapshot: StrataGateSnapshot,
     expectedRevision: number,
     rawMessageIndexDelta?: RawMessageIndexDelta,
+    leaseGuards?: readonly DerivationLeaseGuard[],
   ): Promise<number> {
     this.assertOpen();
     assertValidSnapshot(snapshot);
@@ -991,7 +1006,12 @@ export class SqliteStorage implements StorageAdapter {
       throw new TypeError('expectedRevision must be a non-negative integer');
     }
     const key = nonEmptyNamespace(namespace);
-    return this.immediateTransaction(() => this.persistSnapshot(key, snapshot, expectedRevision, rawMessageIndexDelta));
+    const revision = this.immediateTransaction(() => this.persistSnapshot(key, snapshot, expectedRevision, rawMessageIndexDelta, leaseGuards));
+    for (const listener of SqliteStorage.workListeners.get(this.filename) ?? []) {
+      // Notification follows COMMIT and can never roll back or reject a durable save.
+      try { listener(); } catch { /* observers do not own storage */ }
+    }
+    return revision;
   }
 
   async close(): Promise<void> {
@@ -1109,10 +1129,11 @@ export class SqliteStorage implements StorageAdapter {
       && now < Date.parse(failed.next_retry_at)) return false;
     const state = this.getProfileMaintenanceState();
     if (!profileMaintenanceDue(profile, state?.lastSucceededAt ?? this.getProfileMaintenanceStartedAt(), now)) return false;
-    // A high-capacity profile that could not be compressed is retried after 24h,
-    // or immediately after a new edit, rather than on every worker tick.
-    return !state || now - Date.parse(state.lastSucceededAt) >= 24 * 60 * 60 * 1000
-      || state.inputJson !== JSON.stringify(profile);
+    // input_json stores the last successful result. Only edits to maintainable
+    // fields make that content eligible again, even after multiple intervals.
+    if (!state) return true;
+    const maintained = JSON.parse(state.inputJson) as PersistentProfile;
+    return PROFILE_MAINTAINABLE_FIELDS.some((field) => maintained[field] !== profile[field]);
   }
 
   private writeProfileField(field: ProfileField, oldValue: string, newValue: string, source: ProfileChangeSource, sourceMessageId: string | null, now = new Date().toISOString()): void {
@@ -1135,6 +1156,7 @@ export class SqliteStorage implements StorageAdapter {
     const match = tokens.map(encodeRawSearchToken).filter(Boolean).map((token) => `"${token}"`).join(' OR ');
     if (!match) return [];
     try {
+      if (!this.readonly) this.immediateTransaction(() => this.ensureRawSearchIndex(key));
       const rows = this.database.prepare(`
         SELECT f.message_id
         FROM raw_message_fts AS f
@@ -1161,6 +1183,7 @@ export class SqliteStorage implements StorageAdapter {
     snapshot: StrataGateSnapshot,
     expectedRevision: number,
     rawMessageIndexDelta?: RawMessageIndexDelta,
+    leaseGuards?: readonly DerivationLeaseGuard[],
   ): number {
     const current = this.database.prepare('SELECT revision FROM memory_spaces WHERE namespace = ?')
       .get(namespace) as { revision: number } | undefined;
@@ -1170,6 +1193,9 @@ export class SqliteStorage implements StorageAdapter {
     }
 
     const nextRevision = expectedRevision + 1;
+    // Lease heartbeats deliberately do not change the business revision. Merge
+    // them into unchanged running attempts; fence stale recovery/completion.
+    this.mergeDerivationLeases(namespace, snapshot, expectedRevision, leaseGuards);
     const updatedAt = nowUtc8();
     if (current) {
       this.database.prepare(`
@@ -1266,6 +1292,13 @@ export class SqliteStorage implements StorageAdapter {
         content = excluded.content,
         created_at = excluded.created_at,
         tool_calls_json = excluded.tool_calls_json
+      WHERE messages.block_id IS NOT excluded.block_id
+        OR messages.thread_id IS NOT excluded.thread_id
+        OR messages.position IS NOT excluded.position
+        OR messages.role IS NOT excluded.role
+        OR messages.content IS NOT excluded.content
+        OR messages.created_at IS NOT excluded.created_at
+        OR messages.tool_calls_json IS NOT excluded.tool_calls_json
     `);
     const insertMessages = (messages: readonly RawMessage[], blockId: string | null): void => {
       for (const [position, message] of messages.entries()) {
@@ -1513,32 +1546,34 @@ export class SqliteStorage implements StorageAdapter {
 
     const insertJob = this.database.prepare(`
       INSERT INTO extraction_jobs (
-        namespace, block_id, status, attempts, last_error, next_retry_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        namespace, block_id, status, attempts, last_error, next_retry_at, updated_at, lease_until
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (namespace, block_id) DO UPDATE SET
         status = excluded.status,
         attempts = excluded.attempts,
         last_error = excluded.last_error,
         next_retry_at = excluded.next_retry_at,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        lease_until = excluded.lease_until
     `);
     for (const job of snapshot.extractionJobs) {
-      insertJob.run(namespace, job.blockId, job.status, job.attempts, job.lastError, job.nextRetryAt, job.updatedAt);
+      insertJob.run(namespace, job.blockId, job.status, job.attempts, job.lastError, job.nextRetryAt, job.updatedAt, job.leaseUntil ?? null);
     }
 
     const insertSummaryJob = this.database.prepare(`
       INSERT INTO block_summary_jobs (
-        namespace, block_id, status, attempts, last_error, next_retry_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        namespace, block_id, status, attempts, last_error, next_retry_at, updated_at, lease_until
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (namespace, block_id) DO UPDATE SET
         status = excluded.status,
         attempts = excluded.attempts,
         last_error = excluded.last_error,
         next_retry_at = excluded.next_retry_at,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        lease_until = excluded.lease_until
     `);
     for (const job of snapshot.summaryJobs) {
-      insertSummaryJob.run(namespace, job.blockId, job.status, job.attempts, job.lastError, job.nextRetryAt, job.updatedAt);
+      insertSummaryJob.run(namespace, job.blockId, job.status, job.attempts, job.lastError, job.nextRetryAt, job.updatedAt, job.leaseUntil ?? null);
     }
 
     const insertElementProjectionJob = this.database.prepare(`
@@ -1634,7 +1669,335 @@ export class SqliteStorage implements StorageAdapter {
       insertSuccessfulModelResponse.run(namespace, response.id, response.kind, response.response, response.createdAt);
     }
 
+    if (!current && this.rawSearchFtsAvailable) this.database.prepare(
+      'INSERT INTO raw_message_fts_state (namespace, backfill_complete) VALUES (?, 1) ON CONFLICT (namespace) DO NOTHING',
+    ).run(namespace);
+    const tails = new Map<string | undefined, number>();
+    for (const message of snapshot.openTail) if (message.role === 'user') tails.set(message.threadId, (tails.get(message.threadId) ?? 0) + 1);
+    this.writeBackgroundWorkTimes(namespace, backgroundWorkTimes({
+      ...snapshot, sealableTail: [...tails.values()].some((count) => count >= snapshot.blockTurnSize),
+    }));
     return nextRevision;
+  }
+
+  /** Process-local hint only; the SQLite index is always the discovery authority. */
+  static onBackgroundWorkChanged(filename: string, listener: () => void): () => void {
+    const path = filename === ':memory:' ? filename : resolve(filename);
+    const key = process.platform === 'win32' ? path.toLowerCase() : path;
+    const listeners = this.workListeners.get(key) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.workListeners.set(key, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) this.workListeners.delete(key);
+    };
+  }
+
+  private mergeDerivationLeases(namespace: string, snapshot: StrataGateSnapshot, revision: number, guards: readonly DerivationLeaseGuard[] = []): void {
+    const expected = new Map(guards.map((guard) => [`${guard.kind}\u0000${guard.id}`, guard]));
+    const merge = (incoming: { status: string; attempts: number; updatedAt: string; leaseUntil?: string | null },
+      durable: { status: string; attempts: number; updatedAt: string; leaseUntil?: string | null } | undefined, key: string) => {
+      if (durable?.status !== 'running') return;
+      const guard = expected.get(key);
+      if (incoming.attempts !== durable.attempts || (incoming.status === 'running' && incoming.updatedAt !== durable.updatedAt)
+        || (incoming.status !== 'running' && ((guard && guard.attempts !== durable.attempts)
+          || (guard ? guard.leaseUntil : incoming.leaseUntil ?? null) !== (durable.leaseUntil ?? null)))) {
+        const error = new StorageConflictError(namespace, revision, revision);
+        error.message = `Storage lease conflict for ${namespace}: ${key.replace('\u0000', ':')} no longer owns the current lease`;
+        throw error;
+      }
+      const deadline = Date.parse(durable.leaseUntil ?? '');
+      if (incoming.status === 'running' && Number.isFinite(deadline)
+        && (!Number.isFinite(Date.parse(incoming.leaseUntil ?? '')) || deadline > Date.parse(incoming.leaseUntil!))) incoming.leaseUntil = durable.leaseUntil ?? null;
+    };
+    for (const [table, jobs] of [['block_summary_jobs', snapshot.summaryJobs], ['extraction_jobs', snapshot.extractionJobs]] as const) {
+      const rows = this.database.prepare(`SELECT * FROM ${table} WHERE namespace = ? AND status = 'running'`).all(namespace) as unknown as BlockSummaryJobRow[];
+      const byId = new Map(rows.map((row) => [row.block_id, row]));
+      for (const job of jobs) {
+        const row = byId.get(job.blockId);
+        merge(job, row ? { status: row.status, attempts: row.attempts, updatedAt: row.updated_at, leaseUntil: row.lease_until ?? null } : undefined,
+          `${table === 'block_summary_jobs' ? 'summary' : 'extraction'}\u0000${job.blockId}`);
+      }
+    }
+    const row = this.database.prepare('SELECT jobs_json FROM graph_state WHERE namespace = ?').get(namespace) as { jobs_json: string } | undefined;
+    const byId = new Map((row ? parseJson<GraphProjectionJob[]>(row.jobs_json, 'graph_state.jobs_json') : []).map((job) => [job.id, job]));
+    for (const job of snapshot.graphProjectionJobs) merge(job, byId.get(job.id), `graph\u0000${job.id}`);
+    if (snapshot.memoryTopicState?.jobs.length) {
+      const row = this.database.prepare("SELECT json_extract(state_json, '$.jobs') AS jobs_json FROM memory_topic_state WHERE namespace = ?").get(namespace) as { jobs_json: string | null } | undefined;
+      const byId = new Map((row?.jobs_json ? parseJson<MemoryTopicState['jobs']>(row.jobs_json, 'memory_topic_state.jobs') : []).map((job) => [job.id, job]));
+      for (const job of snapshot.memoryTopicState.jobs) merge(job, byId.get(job.id), `topic\u0000${job.id}`);
+    }
+  }
+
+  async loadDerivationLeases(namespace: string): Promise<LoadedDerivationLeases | null> {
+    this.assertOpen();
+    const key = nonEmptyNamespace(namespace);
+    // A read transaction keeps the revision and claims from different writers
+    // in one snapshot. Heartbeats themselves never change business revision.
+    this.database.exec('BEGIN');
+    try {
+      const space = this.database.prepare('SELECT revision FROM memory_spaces WHERE namespace = ?').get(key) as { revision: number } | undefined;
+      const jobs: LoadedDerivationLeases['jobs'] = [];
+      if (space) {
+        for (const [kind, table] of [['summary', 'block_summary_jobs'], ['extraction', 'extraction_jobs']] as const) {
+          // SELECT * also accepts old read-only databases without lease_until.
+          const rows = this.database.prepare(`SELECT * FROM ${table} WHERE namespace = ? AND status = 'running'`).all(key) as unknown as BlockSummaryJobRow[];
+          for (const row of rows) jobs.push({ kind, id: row.block_id, attempts: row.attempts, updatedAt: row.updated_at, leaseUntil: row.lease_until ?? null });
+        }
+        for (const [kind, table, expression] of [['graph', 'graph_state', 'state.jobs_json'],
+          ['topic', 'memory_topic_state', "state.state_json, '$.jobs'"]] as const) {
+          if (!this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
+          const rows = this.database.prepare(`SELECT json_extract(j.value, '$.id') AS id,
+            json_extract(j.value, '$.attempts') AS attempts, json_extract(j.value, '$.updatedAt') AS updatedAt,
+            json_extract(j.value, '$.leaseUntil') AS leaseUntil
+            FROM ${table} AS state, json_each(${expression}) AS j
+            WHERE state.namespace = ? AND json_extract(j.value, '$.status') = 'running'`).all(key) as unknown as Array<Omit<LoadedDerivationLeases['jobs'][number], 'kind'>>;
+          for (const row of rows) jobs.push({ ...row, kind });
+        }
+      }
+      this.database.exec('COMMIT');
+      return space ? { revision: space.revision, jobs } : null;
+    } catch (error) {
+      try { this.database.exec('ROLLBACK'); } catch { /* preserve the read error */ }
+      throw error;
+    }
+  }
+
+  async renewDerivationLease(namespace: string, kind: 'summary' | 'extraction' | 'graph' | 'topic', id: string,
+    attempts: number, claimedAt: string, now: number): Promise<string | null> {
+    this.assertOpen();
+    if (this.readonly) throw new Error('Cannot renew a read-only derivation');
+    return this.immediateTransaction(() => {
+      const until = new Date(now + (kind === 'topic' ? TOPIC_LEASE_MS : DERIVATION_LEASE_MS)).toISOString();
+      if (kind === 'graph' || kind === 'topic') {
+        const sql = kind === 'graph' ? 'SELECT jobs_json FROM graph_state WHERE namespace = ?'
+          : "SELECT json_extract(state_json, '$.jobs') AS jobs_json FROM memory_topic_state WHERE namespace = ?";
+        const row = this.database.prepare(sql).get(namespace) as { jobs_json: string | null } | undefined;
+        const jobs = row?.jobs_json ? parseJson<Array<GraphProjectionJob | MemoryTopicState['jobs'][number]>>(row.jobs_json, `${kind}.jobs`) : [];
+        const job = jobs.find((job) => job.id === id);
+        if (!job || job.status !== 'running' || job.attempts !== attempts || job.updatedAt !== claimedAt || !(Date.parse(job.leaseUntil ?? '') > now)) return null;
+        job.leaseUntil = until;
+        const update = kind === 'graph' ? 'UPDATE graph_state SET jobs_json = ? WHERE namespace = ?'
+          : "UPDATE memory_topic_state SET state_json = json_set(state_json, '$.jobs', json(?)) WHERE namespace = ?";
+        this.database.prepare(update).run(JSON.stringify(jobs), namespace);
+      } else {
+        const table = kind === 'summary' ? 'block_summary_jobs' : 'extraction_jobs';
+        const row = this.database.prepare(`SELECT * FROM ${table} WHERE namespace = ? AND block_id = ?`).get(namespace, id) as BlockSummaryJobRow | undefined;
+        if (!row || row.status !== 'running' || row.attempts !== attempts || row.updated_at !== claimedAt || !(Date.parse(row.lease_until ?? '') > now)) return null;
+        this.database.prepare(`UPDATE ${table} SET lease_until = ? WHERE namespace = ? AND block_id = ?`).run(until, namespace, id);
+      }
+      return until;
+    });
+  }
+
+  private initializeBackgroundWorkIndex(): void {
+    this.immediateTransaction(() => {
+      const exists = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'background_work_schedule'").get();
+      for (const table of ['block_summary_jobs', 'extraction_jobs']) {
+        const columns = this.database.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+        if (!columns.some(({ name }) => name === 'lease_until')) this.database.exec(`ALTER TABLE ${table} ADD COLUMN lease_until TEXT`);
+      }
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS background_work_schedule (
+          namespace TEXT NOT NULL REFERENCES memory_spaces(namespace) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('core', 'incremental', 'bootstrap')),
+          due_at REAL NOT NULL,
+          PRIMARY KEY (namespace, kind)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS background_work_due ON background_work_schedule(kind, due_at, namespace);
+        CREATE TABLE IF NOT EXISTS background_work_index_meta (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          format_version TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS background_work_dirty (
+          namespace TEXT PRIMARY KEY REFERENCES memory_spaces(namespace) ON DELETE CASCADE,
+          generation TEXT NOT NULL DEFAULT (hex(randomblob(16)))
+        ) STRICT;
+      `);
+      const dirtyColumns = this.database.prepare("PRAGMA table_info('background_work_dirty')").all() as Array<{ name: string }>;
+      if (!dirtyColumns.some(({ name }) => name === 'rebuild_after')) {
+        this.database.exec('ALTER TABLE background_work_dirty ADD COLUMN rebuild_after REAL NOT NULL DEFAULT 0');
+        // Replace the previous triggers once; subsequent opens only check schema metadata.
+        for (const { name } of this.database.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name GLOB 'background_dirty_*'").all() as Array<{ name: string }>) {
+          this.database.exec(`DROP TRIGGER "${name.replaceAll('"', '""')}"`);
+        }
+      }
+      this.database.exec('CREATE INDEX IF NOT EXISTS background_dirty_due ON background_work_dirty(rebuild_after, namespace)');
+      const indexedVersion = this.database.prepare('SELECT format_version FROM background_work_index_meta WHERE singleton = 1')
+        .get() as { format_version: string } | undefined;
+      // Cheap, restart-safe upgrade: queue keys, never deserialize history here.
+      // Existing idle schedules may predate a new versioned recovery cycle.
+      if (!exists || indexedVersion?.format_version !== BACKGROUND_WORK_INDEX_VERSION) {
+        this.database.exec('DELETE FROM background_work_schedule; UPDATE background_work_dirty SET rebuild_after = 0, generation = hex(randomblob(16)); INSERT OR IGNORE INTO background_work_dirty(namespace) SELECT namespace FROM memory_spaces');
+        this.database.prepare('INSERT OR REPLACE INTO background_work_index_meta(singleton, format_version) VALUES (1, ?)')
+          .run(BACKGROUND_WORK_INDEX_VERSION);
+      }
+      for (const table of ['memory_spaces', 'blocks', 'block_summary_jobs', 'extraction_jobs', 'graph_state',
+        'memory_topic_state', 'events', 'agent_events', 'event_sources', 'agent_event_sources', 'event_metadata']) {
+        for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+          if (table === 'memory_spaces' && operation === 'DELETE') continue;
+          const row = operation === 'DELETE' ? 'old' : 'new';
+          if (operation === 'UPDATE') this.database.exec(`DROP TRIGGER IF EXISTS background_dirty_${table}_UPDATE`);
+          const trigger = `background_dirty_${table}_${operation}${operation === 'UPDATE' ? '_v2' : ''}`;
+          const rows = operation === 'UPDATE' ? ['old', 'new'] : [row];
+          this.database.exec(`CREATE TRIGGER IF NOT EXISTS ${trigger}
+            AFTER ${operation} ON ${table} BEGIN
+            ${rows.map((row) => `
+              UPDATE background_work_dirty SET generation = hex(randomblob(16)), rebuild_after = 0 WHERE namespace = ${row}.namespace${row === 'old' && operation === 'UPDATE' ? ' AND old.namespace IS NOT new.namespace' : ''};
+              INSERT OR IGNORE INTO background_work_dirty(namespace)
+              SELECT ${row}.namespace WHERE EXISTS (SELECT 1 FROM memory_spaces WHERE namespace = ${row}.namespace)
+                AND NOT EXISTS (SELECT 1 FROM background_work_dirty WHERE namespace = ${row}.namespace)
+                ${row === 'old' && operation === 'UPDATE' ? 'AND old.namespace IS NOT new.namespace' : ''};`).join('\n')}
+            END`);
+        }
+      }
+      // Old clients and direct SQL can seal an open tail without creating a Job yet.
+      for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+        const row = operation === 'DELETE' ? 'old' : 'new';
+        if (operation === 'UPDATE') this.database.exec('DROP TRIGGER IF EXISTS background_dirty_tail_UPDATE');
+        const trigger = `background_dirty_tail_${operation}${operation === 'UPDATE' ? '_v2' : ''}`;
+        const rows = operation === 'UPDATE' ? ['old', 'new'] : [row];
+        this.database.exec(`CREATE TRIGGER IF NOT EXISTS ${trigger}
+          AFTER ${operation} ON messages WHEN ${rows.map((row) => `${row}.block_id IS NULL`).join(' OR ')} BEGIN
+          ${rows.map((row) => `
+            UPDATE background_work_dirty SET generation = hex(randomblob(16)), rebuild_after = 0 WHERE namespace = ${row}.namespace AND ${row}.block_id IS NULL;
+            INSERT OR IGNORE INTO background_work_dirty(namespace)
+            SELECT ${row}.namespace WHERE EXISTS (SELECT 1 FROM memory_spaces WHERE namespace = ${row}.namespace)
+              AND NOT EXISTS (SELECT 1 FROM background_work_dirty WHERE namespace = ${row}.namespace) AND ${row}.block_id IS NULL;`).join('\n')}
+          END`);
+      }
+    });
+  }
+
+  private writeBackgroundWorkTimes(namespace: string, times: BackgroundWorkTimes): void {
+    this.database.prepare('DELETE FROM background_work_schedule WHERE namespace = ?').run(namespace);
+    const insert = this.database.prepare('INSERT INTO background_work_schedule(namespace, kind, due_at) VALUES (?, ?, ?)');
+    for (const [kind, time] of Object.entries(times)) if (time !== null && Number.isFinite(time)) insert.run(namespace, kind, time);
+    this.database.prepare('DELETE FROM background_work_dirty WHERE namespace = ?').run(namespace);
+  }
+
+  /** Bounded, resumable rebuild of derived keys; no messages, graph nodes or memory snapshots are loaded. */
+  async rebuildBackgroundWorkIndex(limit = 8, onError?: (error: unknown, namespace: string) => void): Promise<boolean> {
+    this.assertOpen();
+    if (this.readonly) throw new Error('Cannot rebuild a read-only scheduling index');
+    const keys = this.database.prepare('SELECT namespace, generation FROM background_work_dirty WHERE rebuild_after <= ? ORDER BY rebuild_after, namespace LIMIT ?')
+      .all(Date.now(), Math.max(1, Math.min(64, Math.floor(limit)))) as Array<{ namespace: string; generation: string }>;
+    for (const { namespace, generation } of keys) {
+      try {
+        if (!this.database.prepare('SELECT 1 FROM background_work_dirty WHERE namespace = ?').get(namespace)) continue;
+        const blocks = this.database.prepare('SELECT id, processing_status, should_extract FROM blocks WHERE namespace = ?')
+          .all(namespace) as Array<{ id: string; processing_status: string; should_extract: number | null }>;
+        const mapJobs = (table: string) => (this.database.prepare(`SELECT * FROM ${table} WHERE namespace = ?`)
+          .all(namespace) as unknown as BlockSummaryJobRow[]).map((row) => ({ blockId: row.block_id, status: row.status,
+            attempts: row.attempts, lastError: row.last_error, nextRetryAt: row.next_retry_at,
+            updatedAt: row.updated_at, ...(row.lease_until == null ? {} : { leaseUntil: row.lease_until }) }));
+        const graph = this.database.prepare('SELECT jobs_json FROM graph_state WHERE namespace = ?').get(namespace) as { jobs_json: string } | undefined;
+        const topics = this.database.prepare('SELECT state_json FROM memory_topic_state WHERE namespace = ?').get(namespace) as { state_json: string } | undefined;
+        const space = this.database.prepare('SELECT block_turn_size FROM memory_spaces WHERE namespace = ?').get(namespace) as { block_turn_size: number };
+        if (!space) continue;
+        const tail = this.database.prepare(`SELECT 1 FROM messages WHERE namespace = ? AND block_id IS NULL AND role = 'user'
+          GROUP BY thread_id HAVING COUNT(*) >= ? LIMIT 1`).get(namespace, space.block_turn_size);
+        // Yield between Event batches without holding a writer transaction. A changed
+        // generation below discards mixed reads and leaves durable work discoverable.
+        const events = await this.loadSchedulingEvents(namespace, 'events');
+        const agentEvents = await this.loadSchedulingEvents(namespace, 'agent_events');
+        if (this.closed) return false;
+        const times = backgroundWorkTimes({
+          blocks: blocks.map((block) => ({ id: block.id, processingStatus: block.processing_status,
+            ...(block.should_extract === null ? {} : { shouldExtract: Boolean(block.should_extract) }) })),
+          summaryJobs: mapJobs('block_summary_jobs'),
+          extractionJobs: mapJobs('extraction_jobs') as ExtractionJob[],
+          graphProjectionJobs: graph ? parseJson<GraphProjectionJob[]>(graph.jobs_json, 'graph_state.jobs_json') : [],
+          events,
+          agentEvents,
+          ...(topics ? { memoryTopicState: parseJson<MemoryTopicState>(topics.state_json, 'memory_topic_state.state_json') } : {}),
+          sealableTail: Boolean(tail),
+        });
+        this.immediateTransaction(() => {
+          const current = this.database.prepare('SELECT generation FROM background_work_dirty WHERE namespace = ?')
+            .get(namespace) as { generation: string } | undefined;
+          if (current?.generation === generation) this.writeBackgroundWorkTimes(namespace, times);
+        });
+      } catch (error) {
+        // Derived-index repair failures get a durable cooldown, not a business Job
+        // retry. A newer write resets it; the generation guard preserves that wake.
+        this.database.prepare('UPDATE background_work_dirty SET rebuild_after = ? WHERE namespace = ? AND generation = ?')
+          .run(Date.now() + 60_000, namespace, generation);
+        if (!onError) throw error;
+        onError(error, namespace);
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (this.closed) return false;
+    }
+    return Boolean(this.database.prepare('SELECT 1 FROM background_work_dirty WHERE rebuild_after <= ? LIMIT 1').get(Date.now()));
+  }
+
+  private async loadSchedulingEvents(namespace: string, table: 'events' | 'agent_events'): Promise<EventCard[]> {
+    const sourceTable = table === 'events' ? 'event_sources' : 'agent_event_sources';
+    const events: EventCard[] = [];
+    let cursor: string | null = null;
+    while (!this.closed) {
+      const rows = this.database.prepare(`SELECT * FROM ${table} WHERE namespace = ? ${cursor === null ? '' : 'AND id > ?'}
+        AND status IN ('active', 'superseded') ORDER BY id LIMIT 128`)
+        .all(...(cursor === null ? [namespace] : [namespace, cursor])) as unknown as EventRow[];
+      if (!rows.length) break;
+      const placeholders = rows.map(() => '?').join(',');
+      const ids = rows.map((row) => row.id);
+      const sources = new Map<string, string[]>();
+      for (const row of this.database.prepare(`SELECT event_id, message_id FROM ${sourceTable}
+        WHERE namespace = ? AND event_id IN (${placeholders}) ORDER BY event_id, position`)
+        .all(namespace, ...ids) as unknown as EventSourceRow[]) {
+        const values = sources.get(row.event_id) ?? [];
+        values.push(row.message_id); sources.set(row.event_id, values);
+      }
+      const batch = mapEventRows(rows, sources, table);
+      const byId = new Map(batch.map((event) => [event.id, event]));
+      for (const row of this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version FROM event_metadata
+        WHERE namespace = ? AND event_id IN (${placeholders})`)
+        .all(namespace, ...ids) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null }>) {
+        const event = byId.get(row.event_id);
+        if (event) Object.assign(event, normalizeEventMetadata({
+          ...(row.catalog_hints_json === null ? {} : { catalogHints: parseJson<unknown>(row.catalog_hints_json, 'event_metadata.catalog_hints_json') }),
+          extractorVersion: row.extractor_version,
+        }));
+      }
+      events.push(...batch); cursor = rows.at(-1)!.id;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    return events;
+  }
+
+  dueBackgroundNamespaces(now = Date.now(), includeTopics = true, bootstrapNotBefore = now): string[] {
+    this.assertOpen();
+    const rows = this.database.prepare(`
+      SELECT namespace FROM (
+      SELECT namespace FROM background_work_schedule WHERE kind = 'core' AND due_at <= ?
+      UNION SELECT namespace FROM background_work_schedule WHERE kind = 'incremental' AND due_at <= ?
+      UNION SELECT namespace FROM background_work_schedule WHERE kind = 'bootstrap' AND due_at <= ?
+      ) AS due WHERE NOT EXISTS (SELECT 1 FROM background_work_dirty WHERE namespace = due.namespace)
+    `).all(now, includeTopics ? now : -1, includeTopics && bootstrapNotBefore <= now ? now : -1) as Array<{ namespace: string }>;
+    return rows.map(({ namespace }) => namespace);
+  }
+
+  nextBackgroundWorkAt(includeTopics = true, bootstrapNotBefore = Date.now()): number | null {
+    const row = this.database.prepare(`SELECT MIN(time) AS time FROM (
+      SELECT MIN(due_at) AS time FROM background_work_schedule AS s WHERE kind = 'core' AND NOT EXISTS (SELECT 1 FROM background_work_dirty WHERE namespace = s.namespace)
+      UNION ALL SELECT MIN(due_at) FROM background_work_schedule AS s WHERE kind = 'incremental' AND ? AND NOT EXISTS (SELECT 1 FROM background_work_dirty WHERE namespace = s.namespace)
+      UNION ALL SELECT MAX(MIN(due_at), ?) FROM background_work_schedule AS s WHERE kind = 'bootstrap' AND ? AND NOT EXISTS (SELECT 1 FROM background_work_dirty WHERE namespace = s.namespace)
+    )`).get(Number(includeTopics), bootstrapNotBefore, Number(includeTopics)) as { time: number | null };
+    return row.time;
+  }
+
+  /** Explicit repair: persisted Jobs/Topic state are untouched. Discovery resumes in bounded batches. */
+  rebuildBackgroundWorkSchedule(): void {
+    this.immediateTransaction(() => {
+      this.database.exec('DELETE FROM background_work_schedule; UPDATE background_work_dirty SET rebuild_after = 0, generation = hex(randomblob(16)); INSERT OR IGNORE INTO background_work_dirty(namespace) SELECT namespace FROM memory_spaces');
+    });
+  }
+
+  namespaceRevision(namespace: string): number | null {
+    const row = this.database.prepare('SELECT revision FROM memory_spaces WHERE namespace = ?').get(namespace) as { revision: number } | undefined;
+    return row?.revision ?? null;
   }
 
   private migrate(): void {
@@ -1724,10 +2087,12 @@ export class SqliteStorage implements StorageAdapter {
         this.database.exec(`PRAGMA user_version = ${STRATAGATE_STORAGE_SCHEMA_VERSION}`);
       });
     } else if (version === STRATAGATE_STORAGE_SCHEMA_VERSION) {
-      this.database.exec(SCHEMA);
-      this.database.exec(THREAD_INDEXES);
-      this.rebuildLegacyElementSourceForeignKeys();
-      this.enableRawSearchFts();
+      this.immediateTransaction(() => {
+        this.database.exec(SCHEMA);
+        this.database.exec(THREAD_INDEXES);
+        this.rebuildLegacyElementSourceForeignKeys();
+        this.enableRawSearchFts();
+      });
     }
     this.immediateTransaction(() => {
       this.database.exec('DROP INDEX IF EXISTS persistent_profile_single_consent');
@@ -1837,43 +2202,75 @@ export class SqliteStorage implements StorageAdapter {
 
   private enableRawSearchFts(): void {
     try {
+      const hadFts = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'raw_message_fts'").get();
+      const hadDirtyTracking = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'raw_message_fts_dirty'").get();
       this.database.exec(RAW_MESSAGE_FTS_SCHEMA);
       this.rawSearchFtsAvailable = true;
-      const namespaces = this.database.prepare('SELECT namespace FROM memory_spaces').all() as Array<{ namespace: string }>;
-      for (const { namespace } of namespaces) {
-        const state = this.database.prepare(
-          'SELECT backfill_complete FROM raw_message_fts_state WHERE namespace = ?',
-        ).get(namespace) as { backfill_complete?: number } | undefined;
-        const messageCount = this.database.prepare(
-          'SELECT COUNT(*) AS count FROM messages WHERE namespace = ? AND block_id IS NOT NULL',
-        ).get(namespace) as { count: number };
-        const indexedCount = this.database.prepare(
-          'SELECT COUNT(*) AS count FROM raw_message_fts_meta WHERE namespace = ?',
-        ).get(namespace) as { count: number };
-        if (state?.backfill_complete === 1 && messageCount.count === indexedCount.count) continue;
-        const messages = state?.backfill_complete === 1
-          ? this.database.prepare(`
-            SELECT m.id, m.content
-            FROM messages AS m
-            LEFT JOIN raw_message_fts_meta AS i
-              ON i.namespace = m.namespace AND i.message_id = m.id
-            WHERE m.namespace = ? AND m.block_id IS NOT NULL AND i.message_id IS NULL
-          `).all(namespace) as Array<{ id: string; content: string }>
-          : this.database.prepare(
-            'SELECT id, content FROM messages WHERE namespace = ? AND block_id IS NOT NULL',
-          ).all(namespace) as Array<{ id: string; content: string }>;
-        this.syncRawSearchIndex(namespace, { upsert: messages, deleteIds: [] });
-        this.database.prepare(`
-          INSERT INTO raw_message_fts_state (namespace, backfill_complete)
-          VALUES (?, 1)
-          ON CONFLICT (namespace) DO UPDATE SET backfill_complete = 1
-        `).run(namespace);
+      this.database.exec(`CREATE TABLE IF NOT EXISTS raw_message_fts_dirty (
+        namespace TEXT NOT NULL REFERENCES memory_spaces(namespace) ON DELETE CASCADE,
+        message_id TEXT NOT NULL, PRIMARY KEY (namespace, message_id)
+      ) STRICT`);
+      // One cheap upgrade marker invalidation. Pre-upgrade writers could have
+      // added rows without our dirty triggers; repair remains lazy per search.
+      if (!hadFts || !hadDirtyTracking) this.database.exec('UPDATE raw_message_fts_state SET backfill_complete = 0');
+      this.database.exec('DROP TRIGGER IF EXISTS raw_fts_dirty_UPDATE');
+      for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+        const row = operation === 'DELETE' ? 'old' : 'new';
+        const trigger = operation === 'UPDATE' ? 'raw_fts_dirty_UPDATE_v2' : `raw_fts_dirty_${operation}`;
+        const changed = operation === 'UPDATE' ? 'WHEN old.content IS NOT new.content OR old.block_id IS NOT new.block_id OR old.namespace IS NOT new.namespace OR old.id IS NOT new.id' : '';
+        const rows = operation === 'UPDATE' ? ['old', 'new'] : [row];
+        this.database.exec(`CREATE TRIGGER IF NOT EXISTS ${trigger}
+          AFTER ${operation} ON messages ${changed} BEGIN
+          ${rows.map((row) => `
+            INSERT OR IGNORE INTO raw_message_fts_dirty(namespace, message_id)
+            SELECT ${row}.namespace, ${row}.id WHERE NOT EXISTS (
+              SELECT 1 FROM raw_message_fts_dirty WHERE namespace = ${row}.namespace AND message_id = ${row}.id)
+              AND EXISTS (SELECT 1 FROM memory_spaces WHERE namespace = ${row}.namespace);`).join('\n')}
+          END`);
       }
     } catch {
       // FTS5 is optional across the supported SQLite runtimes. The caller
       // will continue with exhaustive BM25 when it is unavailable.
       this.rawSearchFtsAvailable = false;
     }
+  }
+
+  /** Lazy legacy backfill or bounded changed-row repair, only for a namespace being searched. */
+  private ensureRawSearchIndex(namespace: string): void {
+    const state = this.database.prepare('SELECT backfill_complete FROM raw_message_fts_state WHERE namespace = ?')
+      .get(namespace) as { backfill_complete: number } | undefined;
+    if (state?.backfill_complete !== 1) {
+      this.database.prepare('DELETE FROM raw_message_fts WHERE namespace = ?').run(namespace);
+      this.database.prepare('DELETE FROM raw_message_fts_meta WHERE namespace = ?').run(namespace);
+      const messages = this.database.prepare('SELECT id, content FROM messages WHERE namespace = ? AND block_id IS NOT NULL')
+        .all(namespace) as Array<{ id: string; content: string }>;
+      this.syncRawSearchIndex(namespace, { upsert: messages, deleteIds: [] });
+      this.database.prepare(`INSERT INTO raw_message_fts_state(namespace, backfill_complete) VALUES (?, 1)
+        ON CONFLICT(namespace) DO UPDATE SET backfill_complete = 1`).run(namespace);
+      this.database.prepare('DELETE FROM raw_message_fts_dirty WHERE namespace = ?').run(namespace);
+      return;
+    }
+    const dirty = this.database.prepare(`SELECT d.message_id, m.content, m.block_id
+      FROM raw_message_fts_dirty AS d LEFT JOIN messages AS m ON m.namespace = d.namespace AND m.id = d.message_id
+      WHERE d.namespace = ?`).all(namespace) as Array<{ message_id: string; content: string | null; block_id: string | null }>;
+    if (dirty.length) this.syncRawSearchIndex(namespace, {
+      upsert: dirty.filter((row) => row.block_id !== null && row.content !== null).map((row) => ({ id: row.message_id, content: row.content! })),
+      deleteIds: dirty.filter((row) => row.block_id === null || row.content === null).map((row) => row.message_id),
+    });
+  }
+
+  /** Explicit namespace repair, with no global integrity scans on ordinary opens. */
+  rebuildRawSearchIndex(namespace: string): void {
+    this.assertOpen();
+    if (this.readonly) throw new Error('Cannot repair a read-only raw search index');
+    if (!this.rawSearchFtsAvailable) return;
+    const key = nonEmptyNamespace(namespace);
+    this.immediateTransaction(() => {
+      this.database.prepare('DELETE FROM raw_message_fts WHERE namespace = ?').run(key);
+      this.database.prepare('DELETE FROM raw_message_fts_meta WHERE namespace = ?').run(key);
+      this.database.prepare('DELETE FROM raw_message_fts_state WHERE namespace = ?').run(key);
+      this.ensureRawSearchIndex(key);
+    });
   }
 
   private syncRawSearchIndex(namespace: string, delta: RawMessageIndexDelta): void {
@@ -1883,11 +2280,14 @@ export class SqliteStorage implements StorageAdapter {
       FROM raw_message_fts_meta WHERE namespace = ? AND message_id = ?
     `);
     const deleteFts = this.database.prepare('DELETE FROM raw_message_fts WHERE rowid = ?');
+    const clearDirty = this.database.prepare('DELETE FROM raw_message_fts_dirty WHERE namespace = ? AND message_id = ?');
     const deleteMeta = this.database.prepare('DELETE FROM raw_message_fts_meta WHERE namespace = ? AND message_id = ?');
     for (const messageId of delta.deleteIds) {
       const row = findMeta.get(namespace, messageId) as RawSearchIndexRow | undefined;
-      if (!row) continue;
-      deleteFts.run(row.fts_rowid);
+      clearDirty.run(namespace, messageId);
+      // Cascading source deletion can already have removed the meta row.
+      if (row) deleteFts.run(row.fts_rowid);
+      else this.database.prepare('DELETE FROM raw_message_fts WHERE namespace = ? AND message_id = ?').run(namespace, messageId);
       deleteMeta.run(namespace, messageId);
     }
     const insertFts = this.database.prepare(
@@ -1900,6 +2300,7 @@ export class SqliteStorage implements StorageAdapter {
     `);
     for (const message of delta.upsert) {
       const messageId = message.id;
+      clearDirty.run(namespace, messageId);
       const tokens = encodedRawSearchTokens(message.content);
       const previous = findMeta.get(namespace, messageId) as RawSearchIndexRow | undefined;
       if (previous?.tokens === tokens) continue;
@@ -1912,11 +2313,6 @@ export class SqliteStorage implements StorageAdapter {
       const row = this.database.prepare('SELECT last_insert_rowid() AS rowid').get() as { rowid: number };
       insertMeta.run(namespace, messageId, tokens, row.rowid);
     }
-    this.database.prepare(`
-      INSERT INTO raw_message_fts_state (namespace, backfill_complete)
-      VALUES (?, 1)
-      ON CONFLICT (namespace) DO UPDATE SET backfill_complete = 1
-    `).run(namespace);
   }
 
   private assertSchemaVersion(): void {

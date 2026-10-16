@@ -25,11 +25,14 @@ import {
   STRATAGATE_STORAGE_SCHEMA_VERSION,
   KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
   DERIVATION_MAX_ATTEMPTS,
+  DERIVATION_LEASE_MS,
+  graphProjectionNeedsRecovery,
   StorageConflictError,
   cloneSnapshot,
   isSyntheticSourceThreadId,
   normalizeSnapshot,
   type ElementProjectionJob,
+  type DerivationLeaseGuard,
   type ExtractionJob,
   type BlockSummaryJob,
   type GraphProjectionJob,
@@ -91,7 +94,7 @@ import type {
 } from './types.js';
 import { criticalityFloor, memoryWeightAt } from './weights.js';
 import { toUtc8Iso } from './time.js';
-import { MEMORY_TOPIC_PROJECTOR_VERSION, MemoryTopicDirectory, type MemoryTopic, type TopicBootstrapState, type TopicProjectionContext, type TopicProjectionJob, type TopicProjectionMode, type TopicProjectionResult } from './topics.js';
+import { MEMORY_TOPIC_PROJECTOR_VERSION, TOPIC_LEASE_MS, MemoryTopicDirectory, type MemoryTopic, type TopicBootstrapState, type TopicProjectionContext, type TopicProjectionJob, type TopicProjectionMode, type TopicProjectionResult } from './topics.js';
 
 export interface StrataGateOptions {
   blockTurnSize?: number;
@@ -445,36 +448,8 @@ export class StrataGate {
     if (options.storage.readonly) return memory;
     await memory.initializeTopicBootstrap();
     if (loaded && loadedSnapshot) {
-      const interruptedSummaries = [...memory.summaryJobs.values()].filter((job) => job.status === 'running');
-      if (interruptedSummaries.length > 0) {
-        await memory.commitMutation(() => {
-          const now = toUtc8Iso(memory.now());
-          for (const job of interruptedSummaries) {
-            memory.summaryJobs.set(job.blockId, {
-              ...job,
-              status: 'failed',
-              lastError: 'Block summarization was interrupted before completion.',
-              nextRetryAt: now,
-              updatedAt: now,
-            });
-          }
-        });
-      }
-      const interrupted = [...memory.extractionJobs.values()].filter((job) => job.status === 'running');
-      if (interrupted.length > 0) {
-        await memory.commitMutation(() => {
-          const now = toUtc8Iso(memory.now());
-          for (const job of interrupted) {
-            memory.extractionJobs.set(job.blockId, {
-              ...job,
-              status: 'failed',
-              lastError: 'Extraction was interrupted before completion.',
-              nextRetryAt: now,
-              updatedAt: now,
-            });
-          }
-        });
-      }
+      await memory.recoverExpiredDerivations();
+      /* Legacy element projection has no concurrent DSH worker. */
       const interruptedProjections = [...memory.elementProjectionJobs.values()]
         .filter((job) => job.status === 'running');
       if (interruptedProjections.length > 0) {
@@ -482,36 +457,71 @@ export class StrataGate {
           const now = toUtc8Iso(memory.now());
           for (const job of interruptedProjections) {
             memory.elementProjectionJobs.set(job.id, {
-              ...job,
-              status: 'failed',
-              lastError: 'Element projection was interrupted before completion.',
-              updatedAt: now,
+              ...job, status: 'failed', lastError: 'Element projection was interrupted before completion.', updatedAt: now,
             });
           }
         });
       }
-      const interruptedGraphProjections = [...memory.graphProjectionJobs.values()]
-        .filter((job) => job.status === 'running');
-      if (interruptedGraphProjections.length > 0) {
-        await memory.commitMutation(() => {
-          const now = toUtc8Iso(memory.now());
-          for (const job of interruptedGraphProjections) {
-            memory.graphProjectionJobs.set(job.id, {
-              ...job,
-              status: 'failed',
-              lastError: 'Graph projection was interrupted before completion.',
-              nextRetryAt: memory.retryAt(job.attempts),
-              updatedAt: now,
-            });
-          }
-        });
-      }
-      if (memory.graphProjector) await memory.commitMutation(() => {
+      const covered = new Set(memory.listGraphProjectionJobs()
+        .filter((job) => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION).flatMap((job) => job.sourceEventIds));
+      if (memory.graphProjector && (memory.listGraphProjectionJobs().some((job) => graphProjectionNeedsRecovery(job, memory.listAllEvents()))
+        || memory.listAllEvents().some((event) => event.status !== 'forgotten' && event.status !== 'archived' && !covered.has(event.id)))) await memory.commitMutation(() => {
         memory.recoverGraphNameProvenanceFailures();
         memory.queueMissingGraphProjections();
       });
     }
     return memory;
+  }
+
+  private async recoverExpiredDerivations(): Promise<void> {
+    await this.refreshExpiredDerivationLeases();
+    const expired = (job: { status: string; leaseUntil?: string | null }): boolean => job.status === 'running'
+      && (!job.leaseUntil || Date.parse(job.leaseUntil) <= this.now().getTime());
+    const interruptedSummaries = [...this.summaryJobs.values()].filter(expired);
+    if (interruptedSummaries.length > 0) {
+      await this.commitMutation(() => {
+        const now = toUtc8Iso(this.now());
+        for (const job of interruptedSummaries) {
+          this.summaryJobs.set(job.blockId, {
+            ...job,
+            status: 'failed',
+            lastError: 'Block summarization was interrupted before completion.',
+            nextRetryAt: now,
+            updatedAt: now,
+          });
+        }
+      });
+    }
+    const interrupted = [...this.extractionJobs.values()].filter(expired);
+    if (interrupted.length > 0) {
+      await this.commitMutation(() => {
+        const now = toUtc8Iso(this.now());
+        for (const job of interrupted) {
+          this.extractionJobs.set(job.blockId, {
+            ...job,
+            status: 'failed',
+            lastError: 'Extraction was interrupted before completion.',
+            nextRetryAt: now,
+            updatedAt: now,
+          });
+        }
+      });
+    }
+    const interruptedGraphProjections = [...this.graphProjectionJobs.values()].filter(expired);
+    if (interruptedGraphProjections.length > 0) {
+      await this.commitMutation(() => {
+        const now = toUtc8Iso(this.now());
+        for (const job of interruptedGraphProjections) {
+          this.graphProjectionJobs.set(job.id, {
+            ...job,
+            status: 'failed',
+            lastError: 'Graph projection was interrupted before completion.',
+            nextRetryAt: this.retryAt(job.attempts),
+            updatedAt: now,
+          });
+        }
+      });
+    }
   }
 
   private async initializeTopicBootstrap(): Promise<void> {
@@ -537,7 +547,14 @@ export class StrataGate {
     return this.revision;
   }
 
-  /** Replace an out-of-date in-memory view with the latest durable namespace snapshot. */
+  private async refreshExpiredDerivationLeases(): Promise<void> {
+    if (!this.storage?.loadDerivationLeases) return;
+    const now = this.now().getTime();
+    if ([...this.summaryJobs.values(), ...this.extractionJobs.values(), ...this.graphProjectionJobs.values(), ...this.topicDirectory.jobs()]
+      .some((job) => job.status === 'running' && (!job.leaseUntil || Date.parse(job.leaseUntil) <= now))) await this.reloadFromStorage();
+  }
+
+  /** Refresh heartbeats even at the same revision; replace history only when needed. */
   async reloadFromStorage(): Promise<boolean> {
     if (!this.storage || !this.namespace) return false;
     const previous = this.mutationQueue;
@@ -547,8 +564,38 @@ export class StrataGate {
     });
     await previous;
     try {
+      let forceSameRevision = false;
+      if (this.storage.loadDerivationLeases) {
+        const durable = await this.storage.loadDerivationLeases(this.namespace);
+        if (!durable) return false;
+        if (durable.revision === this.revision) {
+          const running = [];
+          for (const kind of ['summary', 'extraction', 'graph', 'topic'] as const) {
+            const jobs = kind === 'summary' ? [...this.summaryJobs.values()] : kind === 'extraction' ? [...this.extractionJobs.values()]
+              : kind === 'graph' ? [...this.graphProjectionJobs.values()] : this.topicDirectory.jobs();
+            for (const job of jobs) if (job.status === 'running') running.push({ kind, id: 'blockId' in job ? job.blockId : job.id, job });
+          }
+          const byId = new Map(durable.jobs.map((job) => [`${job.kind}\u0000${job.id}`, job]));
+          if (running.length === durable.jobs.length && running.every(({ kind, id, job }) => {
+            const persisted = byId.get(`${kind}\u0000${id}`);
+            return persisted?.attempts === job.attempts && persisted.updatedAt === job.updatedAt;
+          })) {
+            let changed = false;
+            for (const { kind, id, job } of running) {
+              const until = byId.get(`${kind}\u0000${id}`)!.leaseUntil;
+              changed ||= (job.leaseUntil ?? null) !== until;
+              if (kind === 'topic') this.topicDirectory.renewLease(id, job.attempts, job.updatedAt, until);
+              else job.leaseUntil = until;
+            }
+            return changed;
+          }
+          // A claim changed identity/status outside the revision protocol:
+          // adopt its authoritative snapshot rather than guess business state.
+          forceSameRevision = true;
+        }
+      }
       const loaded = await this.storage.load(this.namespace);
-      if (!loaded || loaded.revision === this.revision) return false;
+      if (!loaded || (loaded.revision === this.revision && !forceSameRevision)) return false;
       this.restoreSnapshot(loaded.snapshot);
       this.revision = loaded.revision;
       return true;
@@ -714,7 +761,7 @@ export class StrataGate {
       const batch = await this.claimGraphProjection(jobId);
       if (!batch) throw new Error(`Graph projection ${jobId} could not be claimed`);
       try {
-        return await this.completeGraphProjection(jobId, await this.graphProjector(batch));
+        return await this.completeGraphProjection(jobId, await this.withDerivationLease('graph', jobId, () => this.graphProjector!(batch)));
       } catch (error) {
         await this.failGraphProjection(jobId, error);
         throw error;
@@ -740,6 +787,10 @@ export class StrataGate {
     return this.listMemoryTopics().find((topic) => topic.id === id) ?? null;
   }
 
+  async dreaming(command: import('./dreaming.js').DreamingCommand): Promise<import('./dreaming.js').DreamingRun> {
+    return this.commitMutation(() => this.topicDirectory.dreaming(command, this.listAllEvents(), toUtc8Iso(this.now())));
+  }
+
   listTopicProjectionJobs(): readonly TopicProjectionJob[] {
     return this.topicDirectory.jobs();
   }
@@ -753,11 +804,18 @@ export class StrataGate {
   }
 
   async claimNextTopicProjection(mode: TopicProjectionMode = 'all'): Promise<TopicProjectionContext | null> {
+    await this.refreshExpiredDerivationLeases();
+    if (!this.hasPendingTopicWork(mode)) return null;
     return this.commitMutation(() => this.topicDirectory.claim(this.listAllEvents(), toUtc8Iso(this.now()), mode));
   }
 
   async completeTopicProjection(jobId: string, result: TopicProjectionResult): Promise<{ topicIds: string[] }> {
     return this.commitMutation(() => this.topicDirectory.complete(jobId, result, this.listAllEvents(), toUtc8Iso(this.now())));
+  }
+
+  /** Keep the existing Topic attempt leased for the duration of its model work. */
+  async runTopicProjectionModel(jobId: string, operation: () => Promise<TopicProjectionResult>): Promise<TopicProjectionResult> {
+    return this.withDerivationLease('topic', jobId, operation);
   }
 
   async failTopicProjection(jobId: string, error: unknown): Promise<void> {
@@ -771,18 +829,7 @@ export class StrataGate {
 
   /** Reload durable changes from another worker without creating a write or receipt. */
   async refreshFromStorage(): Promise<void> {
-    if (!this.storage || !this.namespace) return;
-    const previous = this.mutationQueue;
-    let release!: () => void;
-    this.mutationQueue = new Promise<void>((resolve) => { release = resolve; });
-    await previous;
-    try {
-      const loaded = await this.storage.load(this.namespace);
-      if (loaded && loaded.revision !== this.revision) {
-        this.restoreSnapshot(loaded.snapshot);
-        this.revision = loaded.revision;
-      }
-    } finally { release(); }
+    await this.reloadFromStorage();
   }
 
   listUsageReceipts(): readonly UsageReceipt[] {
@@ -908,6 +955,7 @@ export class StrataGate {
     if (options.deferDerivation === true) {
       return { sealedBlocks, readyBlocks, extractedEvents, projectedElements };
     }
+    await this.recoverExpiredDerivations();
     for (const block of this.blocks) {
       if (options.threadId !== undefined && block.threadId !== options.threadId) continue;
       if (block.processingStatus === 'ready') continue;
@@ -1581,14 +1629,16 @@ export class StrataGate {
   }
 
   private async claimGraphProjection(jobId?: string): Promise<GraphProjectionContext | null> {
+    const eligible = (candidate: GraphProjectionJob) => (jobId === undefined || candidate.id === jobId)
+      && candidate.attempts < DERIVATION_MAX_ATTEMPTS
+      && (candidate.status === 'pending' || (candidate.status === 'failed' && candidate.nextRetryAt !== null
+        && Date.parse(candidate.nextRetryAt) <= this.now().getTime()));
+    // A competing worker observing a live lease must not change the revision
+    // just to return "no claim", which would invalidate the owner's result.
+    if (![...this.graphProjectionJobs.values()].some(eligible)) return null;
     return this.commitMutation(() => {
-      const now = this.now().getTime();
       const job = [...this.graphProjectionJobs.values()]
-        .filter((candidate) => (jobId === undefined || candidate.id === jobId)
-          && candidate.attempts < DERIVATION_MAX_ATTEMPTS
-          && (candidate.status === 'pending'
-            || (candidate.status === 'failed' && candidate.nextRetryAt !== null
-              && Date.parse(candidate.nextRetryAt) <= now)))
+        .filter(eligible)
         .sort((left, right) => Number(left.status !== 'pending') - Number(right.status !== 'pending')
           || right.priority - left.priority || left.createdAt.localeCompare(right.createdAt))[0];
       if (!job) return null;
@@ -1599,6 +1649,7 @@ export class StrataGate {
       if (events.length === 0) throw new Error(`Graph projection ${job.id} has no available source events`);
       job.nameProvenanceRecoveryVersion = 1;
       job.status = 'running';
+      job.leaseUntil = new Date(this.now().getTime() + DERIVATION_LEASE_MS).toISOString();
       job.attempts += 1;
       job.lastError = null;
       job.updatedAt = toUtc8Iso(this.now());
@@ -1742,9 +1793,11 @@ export class StrataGate {
     const tokens = searchTokens(query);
     if (tokens.length === 0) return [];
     const boundedLimit = Math.max(1, Math.floor(limit));
+    const offset = Math.max(0, Math.floor(options.offset ?? 0));
+    const allowedMessages = options.messageIds ? new Set(options.messageIds) : undefined;
     let candidateIds: string[] | null | undefined;
     try {
-      candidateIds = this.storage?.searchRawMessageIds?.(
+      candidateIds = allowedMessages ? [...allowedMessages] : this.storage?.searchRawMessageIds?.(
         this.namespace ?? '',
         tokens,
         Math.min(5_000, Math.max(100, boundedLimit * 20)),
@@ -1777,7 +1830,7 @@ export class StrataGate {
       || right.item.block.sequence - left.item.block.sequence
       || right.item.index - left.item.index
       || left.item.id.localeCompare(right.item.id));
-    return ranked.slice(0, boundedLimit).map(({ item }) => ({
+    return ranked.slice(offset, offset + boundedLimit).map(({ item }) => ({
       blockId: item.block.id,
       turnRange: [item.block.startTurn, item.block.endTurn],
       message: item.message,
@@ -2629,17 +2682,8 @@ export class StrataGate {
   private recoverGraphNameProvenanceFailures(): void {
     // Match only the old structured schema failure, never a raw-response mention
     // of that text or a mixed/unrelated validation error. No full graph rebuild.
-    const signature = /^StrataGate model did not produce a valid stratagate_project_knowledge_graph call after 2 attempts: StrataGate stratagate_project_knowledge_graph arguments were invalid: "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string(?:; "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string)*$/;
     for (const job of this.graphProjectionJobs.values()) {
-      if (job.projectorVersion !== KNOWLEDGE_GRAPH_PROJECTOR_VERSION
-        || job.nameProvenanceRecoveryVersion !== undefined || job.status !== 'failed'
-        || (job.attempts < DERIVATION_MAX_ATTEMPTS && job.nextRetryAt !== null)
-        || !signature.test((job.lastError ?? '').split('\n')[0]!.trim())
-        || job.sourceEventIds.length === 0
-        || !job.sourceEventIds.every((id) => {
-          const event = this.findEvent(id);
-          return event && (event.status === 'active' || event.status === 'superseded');
-        })) continue;
+      if (!graphProjectionNeedsRecovery(job, this.listAllEvents())) continue;
       // Persist with the normal mutation transaction before any worker can claim
       // it. Reopening after another terminal failure cannot reset attempts again.
       job.nameProvenanceRecoveryVersion = 1;
@@ -2723,6 +2767,11 @@ export class StrataGate {
     const sealedTurns = this.threadBlocks(threadId)
       .reduce((total, block) => total + block.l5Raw.filter((message) => message.role === 'user').length, 0);
     return sealedTurns + this.threadOpenTail(threadId).filter((message) => message.role === 'user').length;
+  }
+
+  /** Whether resumePendingWork can seal raw input even before a Job exists. */
+  hasSealableTail(): boolean {
+    return this.nextSealableThread() !== null;
   }
 
   private nextSealableThread(): { threadId: string | undefined } | null {
@@ -2825,13 +2874,14 @@ export class StrataGate {
           attempts: current.attempts + 1,
           lastError: null,
           nextRetryAt: null,
+          leaseUntil: new Date(this.now().getTime() + DERIVATION_LEASE_MS).toISOString(),
           updatedAt: toUtc8Iso(this.now()),
         });
         return true;
       });
       if (!claimed) return [];
       try {
-        const generated = await this.summarizer(block.l5Raw);
+        const generated = await this.withDerivationLease('summary', block.id, () => this.summarizer!(block.l5Raw));
         if (!generated.l0Title.trim() || !generated.l1Summary.trim()
           || !Array.isArray(generated.l0Tags) || !Array.isArray(generated.l2Keypoints)
           || typeof generated.shouldExtract !== 'boolean') {
@@ -2942,6 +2992,7 @@ export class StrataGate {
         attempts: (existing?.attempts ?? 0) + 1,
         lastError: null,
         nextRetryAt: null,
+        leaseUntil: new Date(this.now().getTime() + DERIVATION_LEASE_MS).toISOString(),
         updatedAt: toUtc8Iso(this.now()),
       });
     });
@@ -2971,7 +3022,7 @@ export class StrataGate {
       // Capture permissions before calling any integration/custom extractor.
       // Its mutable context must not broaden the historical relationship scope.
       allowedTimelineEventIds = new Set(timelineEvents.keys());
-      result = await this.extractor({
+      result = await this.withDerivationLease('extraction', target.id, () => this.extractor!({
         previous: threadBlocks.slice(0, targetIndex).reverse().find((block) => block.l2Keypoints !== undefined) ?? null,
         target,
         next,
@@ -2980,7 +3031,7 @@ export class StrataGate {
           scope: event.scope, criticality: event.criticality, status: event.status, supersededBy: event.supersededBy,
           temporal: normalizeEventTemporal(structuredClone(event.temporal)),
         })),
-      });
+      }));
     } catch (error) {
       await this.commitMutation(() => {
         const job = this.extractionJobs.get(target.id);
@@ -3063,11 +3114,45 @@ export class StrataGate {
     const batch = await this.claimNextGraphProjection();
     if (!batch) return null;
     try {
-      return await this.completeGraphProjection(batch.jobId, await this.graphProjector(batch));
+      return await this.completeGraphProjection(batch.jobId, await this.withDerivationLease('graph', batch.jobId, () => this.graphProjector!(batch)));
     } catch (error) {
       await this.failGraphProjection(batch.jobId, error);
       return null;
     }
+  }
+
+  private async withDerivationLease<T>(kind: 'summary' | 'extraction' | 'graph' | 'topic', id: string, operation: () => Promise<T>): Promise<T> {
+    const storage = this.storage; const namespace = this.namespace;
+    if (!storage?.renewDerivationLease || !namespace) return operation();
+    const getJob = () => kind === 'summary' ? this.summaryJobs.get(id)
+      : kind === 'extraction' ? this.extractionJobs.get(id) : kind === 'graph' ? this.graphProjectionJobs.get(id) : this.topicDirectory.jobs().find((job) => job.id === id);
+    const claimed = getJob();
+    if (!claimed || claimed.status !== 'running') throw new Error(`Derivation ${id} has no running claim`);
+    const attempts = claimed.attempts; const claimedAt = claimed.updatedAt;
+    let pending: Promise<void> | undefined; let failure: unknown;
+    const timer = setInterval(() => {
+      if (pending) return;
+      pending = storage.renewDerivationLease!(namespace, kind, id, attempts, claimedAt, this.now().getTime())
+        .then((until) => {
+          const current = getJob();
+          if (!until || !current || current.status !== 'running' || current.attempts !== attempts || current.updatedAt !== claimedAt) {
+            failure = new StorageConflictError(namespace, this.revision, this.revision);
+            return;
+          }
+          if (kind === 'topic') this.topicDirectory.renewLease(id, attempts, claimedAt, until);
+          else current.leaseUntil = until;
+          failure = undefined;
+        }).catch((error: unknown) => { failure = error; }).finally(() => { pending = undefined; });
+    }, (kind === 'topic' ? TOPIC_LEASE_MS : DERIVATION_LEASE_MS) / 3);
+    timer.unref?.();
+    try {
+      const result = await operation();
+      // Stop renewals before completion changes the attempt's status.
+      clearInterval(timer);
+      await pending;
+      if (failure) throw failure;
+      return result;
+    } finally { clearInterval(timer); await pending; }
   }
 
   private async commitMutation<T>(mutation: () => T | Promise<T>): Promise<T> {
@@ -3095,7 +3180,7 @@ export class StrataGate {
     try {
       const result = await mutation();
       this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
-      await this.persist();
+      await this.persist(before);
       return result;
     } catch (error) {
       this.restoreSnapshot(before);
@@ -3110,13 +3195,35 @@ export class StrataGate {
     }
   }
 
-  private async persist(): Promise<void> {
+  private async persist(before?: StrataGateSnapshot): Promise<void> {
     if (!this.storage || !this.namespace) return;
     const delta = {
       upsert: [...this.pendingRawUpserts.values()],
       deleteIds: [...this.pendingRawDeletes],
     };
-    this.revision = await this.storage.save(this.namespace, this.exportSnapshot(), this.revision, delta);
+    const snapshot = this.exportSnapshot();
+    const guards: DerivationLeaseGuard[] = [];
+    if (before) {
+      for (const kind of ['summary', 'extraction', 'graph', 'topic'] as const) {
+        const jobs = kind === 'summary' ? before.summaryJobs : kind === 'extraction' ? before.extractionJobs
+          : kind === 'graph' ? before.graphProjectionJobs : before.memoryTopicState?.jobs ?? [];
+        for (const job of jobs) if (job.status === 'running') guards.push({ kind, id: 'blockId' in job ? job.blockId : job.id,
+          attempts: job.attempts, leaseUntil: job.leaseUntil ?? null });
+      }
+    }
+    this.revision = await this.storage.save(this.namespace, snapshot, this.revision, delta, guards);
+    // SQLite may merge a concurrent heartbeat from the owner of a live attempt.
+    for (const [jobs, live] of [[snapshot.summaryJobs, this.summaryJobs], [snapshot.extractionJobs, this.extractionJobs]] as const) {
+      for (const job of jobs) {
+        const current = live.get(job.blockId);
+        if (current?.status === 'running' && current.attempts === job.attempts && current.updatedAt === job.updatedAt) current.leaseUntil = job.leaseUntil ?? null;
+      }
+    }
+    for (const job of snapshot.graphProjectionJobs) {
+      const current = this.graphProjectionJobs.get(job.id);
+      if (current?.status === 'running' && current.attempts === job.attempts && current.updatedAt === job.updatedAt) current.leaseUntil = job.leaseUntil ?? null;
+    }
+    for (const job of snapshot.memoryTopicState?.jobs ?? []) if (job.leaseUntil) this.topicDirectory.renewLease(job.id, job.attempts, job.updatedAt, job.leaseUntil);
     this.pendingRawUpserts.clear();
     this.pendingRawDeletes.clear();
   }

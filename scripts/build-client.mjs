@@ -1,8 +1,10 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
+import { checkFeedbackPolicy } from './check-feedback-policy.mjs'
 
 const root = new URL('../', import.meta.url)
+checkFeedbackPolicy(fileURLToPath(root))
 mkdirSync(new URL('dist/', root), { recursive: true })
 const clientSource = readFileSync(new URL('src/client.js', root), 'utf8')
 const mascot = readFileSync(new URL('docs/assets/stratagate-avatar.png', root)).toString('base64')

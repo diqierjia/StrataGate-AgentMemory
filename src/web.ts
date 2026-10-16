@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { dreamingStatus } from './dreaming.js'
 import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import {
@@ -576,6 +577,7 @@ function topicDirectoryProjection(snapshot: StrataGateSnapshot, agentMemoryWeigh
     failures,
     data: {
       navigationOnly: true as const,
+      dreaming: dreamingStatus(snapshot.memoryTopicState?.dreaming),
       revision,
       context: renderMemoryDirectory(topics, visibleEvents),
       topics: chapters.map((topic) => ({
@@ -669,7 +671,8 @@ async function topicEvents(runtime: StrataGateRuntime, url: URL): Promise<unknow
       const covered = new Set(memoryTopicSections(topic).flatMap((section) => section.sourceEventIds))
       ids = topic.sourceEventIds.filter((id) => !covered.has(id))
     } else {
-      const section = memoryTopicSections(topic).find((candidate) => candidate.key === sectionKey)
+      const resolvedKey = topic.sectionAliases?.[sectionKey] ?? sectionKey
+      const section = memoryTopicSections(topic).find((candidate) => candidate.key === resolvedKey)
       if (!section) throw new AdminHttpError(404, 'Unknown or unavailable memory topic section')
       ids = section.sourceEventIds
     }
@@ -681,6 +684,30 @@ async function topicEvents(runtime: StrataGateRuntime, url: URL): Promise<unknow
     namespace, revision: data.revision, topicId, sectionKey, total: sources.length, offset, limit,
     nextOffset: offset + page.length < sources.length ? offset + page.length : null,
     items: page.map(({ id, title, status, createdAt }) => ({ id, title, status, createdAt })),
+  }
+}
+
+/** Read-only graph work view. Retained jobs without a live source are history. */
+function liveGraphProjection(snapshot: StrataGateSnapshot) {
+  const eventIds = new Set([...snapshot.events, ...snapshot.agentEvents]
+    .filter(({ status }) => status !== 'forgotten' && status !== 'archived')
+    .map(({ id }) => id))
+  const jobs = snapshot.graphProjectionJobs.filter(({ sourceEventIds }) => sourceEventIds.some((id) => eventIds.has(id)))
+  const status = summarizeDerivationJobs(jobs, (job) => job.status === 'completed')
+  const projected = new Set(jobs
+    .filter(({ status, projectorVersion }) => status === 'completed' && projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
+    .flatMap(({ sourceEventIds }) => sourceEventIds.filter((id) => eventIds.has(id)))).size
+  const total = eventIds.size
+  const complete = projected === total && status.processing === 0 && status.terminalFailed === 0 && status.blocked === 0
+  const state = status.processing > 0 ? 'processing' : status.terminalFailed > 0 ? 'failed' : complete ? 'complete' : 'incomplete'
+  return {
+    jobs, status,
+    migration: {
+      projected, total,
+      pending: jobs.filter(({ status }) => status === 'pending').length,
+      running: jobs.filter(({ status }) => status === 'running').length,
+      failed: status.terminalFailed, retryable: status.retryable, processing: status.processing, state, complete,
+    },
   }
 }
 
@@ -791,7 +818,8 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
     const topicStatus = summarizeDerivationJobs(topicJobs, (job) => job.status === 'completed')
     const summaryStatus = summarizeDerivationJobs(snapshot.summaryJobs, (job) => job.status === 'succeeded')
     const extractionStatus = summarizeDerivationJobs(snapshot.extractionJobs, (job) => job.status === 'succeeded' || job.status === 'skipped')
-    const graphStatus = summarizeDerivationJobs(snapshot.graphProjectionJobs, (job) => job.status === 'completed')
+    const graphWork = liveGraphProjection(snapshot)
+    const graphStatus = graphWork.status
     const failedJobs = summaryStatus.terminalFailed + extractionStatus.terminalFailed + graphStatus.terminalFailed + topicStatus.terminalFailed
     const processingJobs = summaryStatus.processing + extractionStatus.processing + graphStatus.processing + topicStatus.processing
     const failedJobDetails = [
@@ -802,7 +830,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       ...snapshot.extractionJobs
         .filter(({ status }) => status === 'failed')
         .map((job) => describeBlockJob('event-extraction', job)),
-      ...snapshot.graphProjectionJobs
+      ...graphWork.jobs
         .filter(({ status }) => status === 'failed')
         .map(describeGraphJob),
     ]
@@ -816,7 +844,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         .filter((job) => derivationJobState(job, job.status === 'succeeded' || job.status === 'skipped') === 'processing'
           || derivationJobState(job, job.status === 'succeeded' || job.status === 'skipped') === 'retryable')
         .map((job) => describeBlockJob('event-extraction', job)),
-      ...snapshot.graphProjectionJobs
+      ...graphWork.jobs
         .filter(graphProjectionIsProcessing)
         .map(describeGraphJob),
     ]
@@ -848,31 +876,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         graphProjection: graphStatus,
         topicProjection: topicStatus,
       },
-      graphMigration: (() => {
-        const projected = new Set(snapshot.graphProjectionJobs
-          .filter(({ status, projectorVersion }) => status === 'completed' && projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
-          .flatMap(({ sourceEventIds }) => sourceEventIds)).size
-        const total = snapshot.events.filter(({ status }) => status !== 'forgotten' && status !== 'archived').length
-        const complete = projected >= total
-        const state = complete
-          ? 'complete'
-          : graphStatus.processing > 0
-            ? 'processing'
-            : graphStatus.terminalFailed > 0
-              ? 'failed'
-              : 'incomplete'
-        return {
-          projected,
-          total,
-          pending: snapshot.graphProjectionJobs.filter(({ status }) => status === 'pending').length,
-          running: snapshot.graphProjectionJobs.filter(({ status }) => status === 'running').length,
-          failed: graphStatus.terminalFailed,
-          retryable: graphStatus.retryable,
-          processing: graphStatus.processing,
-          state,
-          complete,
-        }
-      })(),
+      graphMigration: graphWork.migration,
       usageReceipts: snapshot.usageReceipts.length,
       memoryUseCount: snapshot.usageReceipts.filter((receipt) =>
         receipt.eventIds.length > 0 || receipt.elementIds.length > 0).length,
@@ -1284,31 +1288,7 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       })),
       edges: snapshot.graphEdges,
       clusters: clusterKnowledgeGraph(snapshot.graphNodes, snapshot.graphEdges),
-      migration: (() => {
-        const projected = new Set(snapshot.graphProjectionJobs
-          .filter(({ status, projectorVersion }) => status === 'completed' && projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
-          .flatMap(({ sourceEventIds }) => sourceEventIds)).size
-        const graphStatus = summarizeDerivationJobs(snapshot.graphProjectionJobs, (job) => job.status === 'completed')
-        const total = snapshot.events.filter(({ status }) => status !== 'forgotten' && status !== 'archived').length
-        const complete = projected >= total
-        return {
-          projected,
-          total,
-          pending: snapshot.graphProjectionJobs.filter(({ status }) => status === 'pending').length,
-          running: snapshot.graphProjectionJobs.filter(({ status }) => status === 'running').length,
-          failed: graphStatus.terminalFailed,
-          retryable: graphStatus.retryable,
-          processing: graphStatus.processing,
-          state: complete
-            ? 'complete'
-            : graphStatus.processing > 0
-              ? 'processing'
-              : graphStatus.terminalFailed > 0
-                ? 'failed'
-                : 'incomplete',
-          complete,
-        }
-      })(),
+      migration: liveGraphProjection(snapshot).migration,
     }
   }
   else if (kind === 'elements') values = snapshot.elements.map(elementSummary)
@@ -1765,6 +1745,21 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
     } else if (path === '/api/stratagate/topics/retry') {
       if (req.method !== 'POST') throw new AdminHttpError(405, 'Topic retry requires POST')
       sendJson(res, 200, await retryTopicProjection(runtime, url))
+    } else if (path === '/api/stratagate/dreaming') {
+      const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      if (req.method === 'GET') sendJson(res, 200, await runtime.adminDreamingStatus(namespace))
+      else if (req.method === 'POST') {
+        const action = url.searchParams.get('action') ?? ''
+        const id = url.searchParams.get('id') || undefined
+        if (action === 'open-session') {
+          if (!id) throw new AdminHttpError(400, 'id is required')
+          sendJson(res, 200, await runtime.adminDreamingSession(namespace, id))
+          return
+        }
+        if (!['start', 'pause', 'resume', 'terminate'].includes(action) || (action !== 'start' && !id)) throw new AdminHttpError(400, 'Invalid Dreaming control')
+        sendJson(res, 200, await runtime.adminDreamingControl(namespace, action, id))
+      } else throw new AdminHttpError(405, 'Dreaming requires GET or POST')
     } else if (path === '/api/stratagate/import') {
       if (req.method === 'GET') {
         const operation = url.searchParams.get('operation')

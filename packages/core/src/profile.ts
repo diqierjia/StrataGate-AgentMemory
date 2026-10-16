@@ -17,6 +17,8 @@ export const PROFILE_FIELDS = {
 export type ProfileField = keyof typeof PROFILE_FIELDS;
 export type PersistentProfile = Record<ProfileField, string>;
 export const PROFILE_PROTECTED_SHORT_FIELDS = ['userPreferredName', 'assistantPreferredName', 'preferredLanguage', 'reasoningLanguage', 'defaultLocation', 'homeCity', 'currentCity'] as const satisfies readonly ProfileField[];
+export const PROFILE_MAINTAINABLE_FIELDS = (Object.keys(PROFILE_FIELDS) as ProfileField[])
+  .filter((field) => !(PROFILE_PROTECTED_SHORT_FIELDS as readonly ProfileField[]).includes(field));
 export type ProfileChangeSource = 'settings' | 'user_explicit' | 'agent_tool' | 'maintenance';
 export interface ProfileChange {
   field: ProfileField;
@@ -57,10 +59,11 @@ export function validateProfile(profile: PersistentProfile): void {
 export function profileMaintenanceDue(profile: PersistentProfile, timeBasisAt: string | null, now = Date.now()): boolean {
   const lengths = (Object.keys(PROFILE_FIELDS) as ProfileField[]).map((field) => ({ field, length: profileLength(profile[field]) }));
   const total = lengths.reduce((sum, item) => sum + item.length, 0);
-  if (total === 0) return false;
+  const maintainableLengths = lengths.filter(({ field }) => PROFILE_MAINTAINABLE_FIELDS.includes(field));
+  if (!maintainableLengths.some(({ length }) => length > 0)) return false;
   return (timeBasisAt !== null && now - Date.parse(timeBasisAt) >= PROFILE_MAINTENANCE_INTERVAL_MS)
     || total >= PROFILE_MAINTENANCE_TOTAL_THRESHOLD
-    || lengths.some(({ field, length }) => length >= PROFILE_FIELDS[field].maxLength * 0.8);
+    || maintainableLengths.some(({ field, length }) => length >= PROFILE_FIELDS[field].maxLength * 0.8);
 }
 
 export function renderPersistentProfile(profile: PersistentProfile): string | null {

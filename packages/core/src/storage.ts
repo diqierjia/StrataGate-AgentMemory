@@ -6,6 +6,7 @@ import type { MemoryTopicState } from './topics.js';
 export const STRATAGATE_STORAGE_SCHEMA_VERSION = 12;
 export const KNOWLEDGE_GRAPH_PROJECTOR_VERSION = 1;
 export const DERIVATION_MAX_ATTEMPTS = 3;
+export const DERIVATION_LEASE_MS = 5 * 60_000;
 
 /**
  * Thread-id prefixes of synthetic provenance blocks whose turns are not real
@@ -27,6 +28,7 @@ export interface ExtractionJob {
   lastError: string | null;
   nextRetryAt: string | null;
   updatedAt: string;
+  leaseUntil?: string | null;
 }
 
 export type BlockSummaryJobStatus = 'pending' | 'running' | 'succeeded' | 'failed';
@@ -38,9 +40,10 @@ export interface BlockSummaryJob {
   lastError: string | null;
   nextRetryAt: string | null;
   updatedAt: string;
+  leaseUntil?: string | null;
 }
 
-export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance';
+export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance' | 'dreamingStep';
 
 export interface SuccessfulModelResponse {
   id: string;
@@ -81,6 +84,19 @@ export interface GraphProjectionJob {
   nameProvenanceRecoveryVersion?: 1;
   createdAt: string;
   updatedAt: string;
+  leaseUntil?: string | null;
+}
+
+/** The one-time legacy recovery rule shared by writer-open and its derived index. */
+export function graphProjectionNeedsRecovery(job: GraphProjectionJob, events: readonly EventCard[]): boolean {
+  const signature = /^StrataGate model did not produce a valid stratagate_project_knowledge_graph call after 2 attempts: StrataGate stratagate_project_knowledge_graph arguments were invalid: "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string(?:; "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string)*$/;
+  return job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION
+    && job.nameProvenanceRecoveryVersion === undefined && job.status === 'failed'
+    && !(job.attempts < DERIVATION_MAX_ATTEMPTS && job.nextRetryAt !== null)
+    && signature.test((job.lastError ?? '').split('\n')[0]!.trim())
+    && job.sourceEventIds.length > 0
+    && job.sourceEventIds.every((id) => events.some((event) => event.id === id
+      && (event.status === 'active' || event.status === 'superseded')));
 }
 
 export interface UsageReceipt {
@@ -153,16 +169,37 @@ export interface RawMessageIndexDelta {
   deleteIds: string[];
 }
 
+export interface DerivationLeaseGuard {
+  kind: 'summary' | 'extraction' | 'graph' | 'topic';
+  id: string;
+  attempts: number;
+  leaseUntil: string | null;
+}
+
+export interface LoadedDerivationLeases {
+  revision: number;
+  jobs: Array<DerivationLeaseGuard & { updatedAt: string }>;
+}
+
 export interface StorageAdapter {
   /** Read-only adapters never initialize or recover writer-owned state. */
   readonly readonly?: boolean;
   load(namespace: string): Promise<LoadedStrataGateState | null>;
+  /** Read running claim metadata at one durable revision, without memory history. */
+  loadDerivationLeases?(namespace: string): Promise<LoadedDerivationLeases | null>;
   save(
     namespace: string,
     snapshot: StrataGateSnapshot,
     expectedRevision: number,
     rawMessageIndexDelta?: RawMessageIndexDelta,
+    /** The pre-mutation claims fence transitions against concurrent heartbeats. */
+    leaseGuards?: readonly DerivationLeaseGuard[],
   ): Promise<number>;
+  /** Renew only the still-owned running attempt, without loading memory history. */
+  renewDerivationLease?(
+    namespace: string, kind: 'summary' | 'extraction' | 'graph' | 'topic', id: string,
+    attempts: number, claimedAt: string, now: number,
+  ): Promise<string | null>;
   /**
    * Return a bounded set of raw-message ids for lexical candidate recall.
    * Implementations may return null when an index is unavailable; callers

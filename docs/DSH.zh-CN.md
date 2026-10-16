@@ -18,6 +18,18 @@
 
 ## 它是怎么设计的
 
+### 目录 Dreaming（开发版）
+
+在长期记忆的目录页点击 **🌙 Dreaming**，由独立 Agent 分批整理已有章节、小节、Event 归属、总览与有来源的经验。运行时显示做梦动画和真实批次进度，可暂停、继续或终止。关闭设置页不取消任务；宿主重启后从目录页继续已保存的断点，已提交修改保留。
+
+**打开 Dreaming 会话 ↗** 进入真实 DeepSeek Harness 会话，可查看工具调用和结果，也可补充整理方向。第一版只写目录；Event 事实、原始消息、图谱和 Profile 不参与改写。检索复用 Core，但不创建聊天证据批次、不强化记忆，也不改变 Block 的展开与衰减状态。
+
+没有固定的整轮模型调用次数或累计 token 上限，无需配置消耗额度。记忆增长时自动拆批，并压缩模型使用的历史上下文；用户可查看的完整会话记录保留。完成一批后自动进入下一批；偶发空响应或普通说明会提示继续，连续三次没有工具行动才暂停。重复无效调用、请求失败或来源变化会暂停，保留进度。目录页只展示整理状态、进度和暂停原因；内部保留估算消耗用于排查问题，不代表供应商账单。旧任务继续时清除历史累计 token 上限，保留进度与会话。来源或目录被其他任务修改时应终止并重新开始，避免覆盖新内容。
+
+**AI 会看到的目录 ↗** 打开临时窗口，展示当前空间实际默认注入的全部目录文本；窗口不再额外截断。默认注入仍遵守原有目录摘要预算，具体事实需要检索来源。
+
+Dreaming 需要宿主提供专属 Agent、工具隔离与会话恢复接口；已在 DSH `0.2.0-rc.2` 的真实 Agent Loop 与 JSONL 会话持久化中使用隔离数据验证。缺少这些能力的旧宿主会明确提示升级，普通记忆功能继续使用。真实在线模型的整理质量仍需实际验收。
+
 StrataGate 不把“记忆”当作一段不断改写的摘要，而是把**原始证据、派生记忆、检索判断和使用反馈**分开处理：
 
 ```mermaid
@@ -174,13 +186,13 @@ config:
   # model: deepseek-chat
 ```
 
-Topic Projection 使用独立的 32,768 token 输出上限；若宿主公布了模型 context window，会扣除估算输入和 1,024 token 余量后进一步降低上限。其他记忆任务继续使用原有预算策略。宿主的 `defaultMaxTokens` 是默认值，不代表模型硬上限；未公布的 provider 限制仍可能导致调用失败。
+Topic Projection 使用独立的 32,768 token 输出上限；若实际模型路由公布了 context window，会扣除估算输入和 1,024 token 余量后进一步降低上限。上下文无法容纳输入时报告 `provider-failed`，不归类成内容校验错误。宿主的 `defaultMaxTokens` 是普通默认值，不限制 Topic 请求，即使它设为 512 或 1,024 也不压低主题投影预算。当前 resolved-model 元数据没有公布经过验证的模型输出硬上限，未知 provider 限制仍可能导致调用失败。其他记忆任务继续使用原有预算策略。
 
 Topic 技术详情及 `/api/stratagate/overview` 的任务详情会区分 `max-tokens`、`schema-invalid`、`validation-failed`、`timeout`、`provider-failed`、`worker-failed` 和 `source-changed`。诊断仅记录安全校验规则、数量、估算 token、请求预算、finish reason、reasoning off 请求/回退状态和尝试次数，不记录原始聊天、Event/Topic 正文、完整模型响应或 reasoning。`requested-unverified` 表示发送了 off 请求，不能证明 provider 实际关闭了 reasoning；若仍观察到 reasoning，会明确标记。
 
-模型已经生成不合格 overview 时，后续请求必须提供合法替代，不能删除错误段落或清空 overview 后显示成功。任务单独持久化 `overviewRepairRequirements`：仅保存合法来源编号、类型及最低替代数量，不保存段落正文；结构化重试、任务重试、重启和拆批均继承对应约束。已知旧 overview 字段失败没有段落身份时，至少要求一个合法替代；首次正常空 overview 仍合法。已成功完成的失败记录保留原失败历史并退出当前故障统计；目录、Dashboard 和任务详情都只展示仍有效且存在未完成工作的失败，人工重试只处理剩余 Event。
+Topic Projection 优先将全部本批 Event 完整分配到章节和小节。新增概要按需生成，通常 0～2 段，建议每段 300～600 个 Unicode 码点，硬上限为 1,000；不通过截断文字满足校验。尚未保存的不合格草稿可在任意重试中舍弃，包括返回 `overview: []`；有效的已保存概要在所属小节仍存在时由存储层继承。旧 `overviewRepairRequirements` 仅兼容读取并用于识别定向恢复对象，不作为权威内容，也不发送给模型。完整 Event 覆盖、合法来源、版本、租约及最终提交校验仍然必须通过。已成功完成的失败记录保留原失败历史并退出当前故障统计；目录、Dashboard 和任务详情都只展示仍有效且存在未完成工作的失败，人工重试只处理剩余 Event。
 
-只有明确的 `finish=max-tokens` 才会二分失败批次，最多四层，单条批次最多尝试三次；每个历史子批次仍受共用 Bootstrap 额度约束，不裁剪 Event 证据。其他错误维持原有有限重试与退避。自动尝试耗尽后，可通过目录“重新整理这 N 条”（`POST /api/stratagate/topics/retry`，携带 namespace、jobId 和 expectedRevision），或 `POST /api/stratagate/jobs/retry?namespace=...&kind=topic-projection&jobId=...` 重新排队。两条路径均开启新 jobId 周期，检查来源版本并拒绝旧结果，状态在重启后保留。包含 #119 修复的版本在首次 writer 初始化时，使用独立的持久化 Recovery Version 为当前有效、仍有未完成工作的 Topic 终态失败任务自动开启一次新的最多三次任务尝试，仍消耗已有历史额度。已成功、来源过期及失效的历史记录不重跑；恢复标记与新任务一起提交，重启、刷新和重复初始化不再次清零。本轮再次失败后保留部分完成进度、错误详情和人工重试入口。只有当前应完成工作全部通过校验才返回 `completed`，仅剩终态失败时返回 `failed`。
+只有明确的 `finish=max-tokens` 才会二分失败批次，最多四层，单条批次最多尝试三次；每个历史子批次仍受共用 Bootstrap 额度约束，不裁剪 Event 证据。其他错误维持原有有限重试与退避。自动尝试耗尽后，可通过目录“重新整理这 N 条”（`POST /api/stratagate/topics/retry`，携带 namespace、jobId 和 expectedRevision），或 `POST /api/stratagate/jobs/retry?namespace=...&kind=topic-projection&jobId=...` 重新排队。两条路径均开启新 jobId 周期，检查来源版本并拒绝旧结果，状态在重启后保留。Recovery Version 2 复用现有持久化 writer 初始化机制，仅为命中概要校验、旧草稿要求、Provider 失败或原始 `invalid-output` 签名，且当前有效、仍有未完成工作的 Topic 终态失败任务自动开启一次新的最多三次任务尝试，仍消耗已有历史额度。无关 worker、超时及内容校验失败保留原尝试额度。已成功、来源过期及失效的历史记录不重跑；恢复标记与新任务一起提交，重启、刷新和重复初始化不再次清零。本轮再次失败后保留部分完成进度、错误详情和人工重试入口。只有当前应完成工作全部通过校验才返回 `completed`，仅剩终态失败时返回 `failed`。
 
 配置文件中的 `blockTurnSize` 和 `blockDecayLambda` 是初始后备值；一旦在“高级设置”中修改，持久化的界面值优先生效。λ 默认值为 `0.3`；数字越小，记忆遗忘越慢、消耗 token 越多，不建议大于 `0.4`。
 

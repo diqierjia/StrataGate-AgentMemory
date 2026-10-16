@@ -15,6 +15,7 @@ import { StrataGate } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import { describe, expect, it, vi, type MockInstance } from 'vitest'
 import * as plugin from '../src/index.js'
+import { AGENT_FEEDBACK_ENABLED } from '../src/tools.js'
 
 describe('DSH plugin composition', () => {
   it('loads persistent Memory once on cold prompts and refreshes external changes before automatic retrieval', async () => {
@@ -302,9 +303,10 @@ describe('DSH plugin composition', () => {
 
       const tools = ctx.tools.schemas()
       const names = tools.map(({ name }) => name)
+      expect(AGENT_FEEDBACK_ENABLED).toBe(false)
       expect(names).toEqual([
         'memory_profile_update',
-        'feedback_prepare',
+        ...(AGENT_FEEDBACK_ENABLED ? ['feedback_prepare'] : []),
         'memory_list_topics',
         'memory_expand_topic',
         'memory_search_events',
@@ -391,7 +393,7 @@ Memory writing:
       for (const level of ['L0', 'L1', 'L2', 'L3', 'L4', 'L5']) {
         expect(memoryProtocol.match(new RegExp(`^- ${level}:`, 'gmu'))).toHaveLength(1)
       }
-      expect(prompt.sections).toContainEqual(expect.objectContaining({
+      if (AGENT_FEEDBACK_ENABLED) expect(prompt.sections).toContainEqual(expect.objectContaining({
         name: 'tool:stratagate-feedback',
         text: expect.stringMatching(/clear error signal[\s\S]*at most one proactive feedback suggestion[\s\S]*namespace plus its substantive characteristics[\s\S]*feedback_prepare itself/),
       }))
@@ -481,7 +483,8 @@ Memory writing:
         .rejects.toThrow(/Unknown Profile update argument/)
       expect(profileUpdate!.parameters).toMatchObject({ required: ['field', 'value'], properties: { field: { type: 'string' }, value: { type: 'string' } } })
       expect(profileUpdate!.parameters).toMatchObject({ properties: { field: { enum: expect.arrayContaining(['reasoningLanguage']) } } })
-      expect(feedbackPrepare).toBeDefined()
+      if (AGENT_FEEDBACK_ENABLED) expect(feedbackPrepare).toBeDefined()
+      else expect(feedbackPrepare).toBeUndefined()
       expect(recordUse).toBeDefined()
       expect(remember).toBeDefined()
       expect(remember!.description).toContain("保存的信息会按相关性被检索或提供给后续对话")
@@ -506,27 +509,35 @@ Memory writing:
         name: 'stratagate:auto-memory',
         text: expect.stringContaining('[Activated long-term memory]'),
       }))
-      expect(feedbackPrepare!.description).toMatch(/directly requests it[\s\S]*explicitly agrees/)
-      expect(feedbackPrepare!.description).toMatch(/current conversation[\s\S]*Never submit anything to GitHub/)
-      expect(feedbackPrepare!.description).toMatch(/draft is local and not submitted[\s\S]*feedbackUrl[\s\S]*打开反馈草稿/)
-      expect(feedbackPrepare!.description).toContain('要不要顺便让我尝试修复这个问题，并提交一个 PR？')
-      expect(feedbackPrepare!.description).toMatch(/ask exactly once[\s\S]*does not respond or declines, do not ask again/)
-      const feedback = await feedbackPrepare!.execute({
-        title: 'Local draft',
-        description: 'A real failure from this conversation.',
-        reproduction: ['Run the failing StrataGate action.'],
-      }, {
-        agent,
-        callId: 'feedback-call',
-      } as never) as unknown as Record<string, unknown>
-      expect(feedback).toMatchObject({
-        prepared: true,
-        draftCreated: true,
-        submitted: false,
-        feedbackUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:10259\/\?settings=stratagate-memory&stratagateView=feedback/),
-      })
-      expect(feedback).not.toHaveProperty('draft')
-      expect(feedback.feedbackUrl).not.toContain('github.com')
+      // Preserve the archived tool contract for restoration.
+      if (AGENT_FEEDBACK_ENABLED) {
+        expect(feedbackPrepare!.description).toMatch(/directly requests it[\s\S]*explicitly agrees/)
+        expect(feedbackPrepare!.description).toMatch(/current conversation[\s\S]*Never submit anything to GitHub/)
+        expect(feedbackPrepare!.description).toMatch(/draft is local and not submitted[\s\S]*feedbackUrl[\s\S]*打开反馈草稿/)
+        expect(feedbackPrepare!.description).toContain('要不要顺便让我尝试修复这个问题，并提交一个 PR？')
+        expect(feedbackPrepare!.description).toMatch(/ask exactly once[\s\S]*does not respond or declines, do not ask again/)
+        const feedback = await feedbackPrepare!.execute({
+          title: 'Local draft',
+          description: 'A real failure from this conversation.',
+          reproduction: ['Run the failing StrataGate action.'],
+        }, {
+          agent,
+          callId: 'feedback-call',
+        } as never) as unknown as Record<string, unknown>
+        expect(feedback).toMatchObject({
+          prepared: true,
+          draftCreated: true,
+          submitted: false,
+          feedbackUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:10259\/\?settings=stratagate-memory&stratagateView=feedback/),
+        })
+        expect(feedback).not.toHaveProperty('draft')
+        expect(feedback.feedbackUrl).not.toContain('github.com')
+      } else {
+        ctx.emit('tools/result', { name: 'memory_search_events', agent } as never, { isError: true, error: new Error('local failure') } as never)
+        const errorPrompt = await ctx.systemPrompt.assemble({ agent })
+        expect(errorPrompt.sections.some(({ name }) => name === 'tool:stratagate-feedback')).toBe(false)
+        expect(errorPrompt.contexts.some(({ name }) => name === 'stratagate:feedback-suggestion')).toBe(false)
+      }
       await search!.execute({ query: 'nothing stored' }, {
         agent,
         callId: 'search-call',

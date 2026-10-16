@@ -11,6 +11,7 @@ export * from './types.js';
 export * from './weights.js';
 export * from './time.js';
 export * from './topics.js';
+export * from './dreaming.js';
 export * from './topic-diagnostics.js';
 
 export * from './topic-overview-repair.js';

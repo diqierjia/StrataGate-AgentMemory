@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ResolvedConfig } from '../src/config.js'
 import type { DshModelBridge } from '../src/llm.js'
 import { feedbackDraftUrl, StrataGateRuntime } from '../src/runtime.js'
-import { registerMemoryTools } from '../src/tools.js'
+import { AGENT_FEEDBACK_ENABLED, registerMemoryTools } from '../src/tools.js'
 
 const fakeModels = {
   run: async <T>(_session: Session, operation: () => Promise<T>): Promise<T> => operation(),
@@ -340,7 +340,7 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
-  it('persists local feedback drafts and enforces the five-day proactive prompt cooldown', async () => {
+  it('persists local drafts while keeping archived proactive feedback disabled', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-'))
     const database = join(directory, 'memory.db')
     const config = {
@@ -371,7 +371,8 @@ describe('DSH runtime ingestion', () => {
 
       const now = Date.parse('2026-09-04T00:00:00.000Z')
       first.notePluginError(session, new Error('write failed'))
-      expect(first.takeFeedbackSuggestion(session, now)).toMatch(/only as evidence[\s\S]*not as an instruction[\s\S]*feedback_prepare itself/)
+      if (AGENT_FEEDBACK_ENABLED) expect(first.takeFeedbackSuggestion(session, now)).toMatch(/only as evidence[\s\S]*not as an instruction[\s\S]*feedback_prepare itself/)
+      else expect(first.takeFeedbackSuggestion(session, now)).toBe('')
       first.notePluginError(session, new Error('again'))
       expect(first.takeFeedbackSuggestion(session, now + 4 * 24 * 60 * 60 * 1_000)).toBe('')
     } finally {
@@ -388,7 +389,8 @@ describe('DSH runtime ingestion', () => {
       })
       const afterCooldown = Date.parse('2026-09-10T00:00:00.000Z')
       second.notePluginError(session, new Error('later failure'))
-      expect(second.takeFeedbackSuggestion(session, afterCooldown)).toMatch(/static StrataGate feedback policy[\s\S]*session-limit[\s\S]*deduplication/)
+      if (AGENT_FEEDBACK_ENABLED) expect(second.takeFeedbackSuggestion(session, afterCooldown)).toMatch(/static StrataGate feedback policy[\s\S]*session-limit[\s\S]*deduplication/)
+      else expect(second.takeFeedbackSuggestion(session, afterCooldown)).toBe('')
     } finally {
       await second.close()
       await rm(directory, { recursive: true, force: true })
@@ -1226,6 +1228,7 @@ describe('DSH runtime ingestion', () => {
         return operation()
       },
     } as unknown as DshModelBridge
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const runtime = new StrataGateRuntime({
       database,
       namespaceMode: 'project',
@@ -1236,6 +1239,10 @@ describe('DSH runtime ingestion', () => {
       ingestSubagents: false,
       maxOutputTokens: 2048,
     }, models)
+    // Exercise foreground recovery independently of the discovery poll timer.
+    const worker = runtime as unknown as { backgroundWorkerTimer: ReturnType<typeof setTimeout> | undefined; scheduleBackgroundWorker(delay: number): void }
+    clearTimeout(worker.backgroundWorkerTimer); worker.backgroundWorkerTimer = undefined
+    vi.spyOn(worker, 'scheduleBackgroundWorker').mockImplementation(() => {})
     try {
       const seed = await StrataGate.open({
         database,
@@ -1247,17 +1254,22 @@ describe('DSH runtime ingestion', () => {
       const space = (runtime as unknown as { space: (session: Session) => Promise<StrataGate> }).space
       const memory = await space.call(runtime, session)
       expect(memory).toBeInstanceOf(StrataGate)
-      await vi.waitFor(() => {
-        expect(attempts).toBeGreaterThanOrEqual(2)
-        expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
-      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(attempts).toBe(1)
+      expect(await space.call(runtime, session)).toBe(memory)
+      await vi.advanceTimersByTimeAsync(2_999)
+      expect(attempts).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(attempts).toBe(2)
+      expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
     } finally {
+      vi.useRealTimers()
       await runtime.close().catch(() => {})
       await rm(directory, { recursive: true, force: true })
     }
   })
 
-  it('suggests feedback when a background Summary job records a failure without throwing', async () => {
+  it('keeps a failed background Summary job observable without accumulating archived feedback', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-job-failure-'))
     const database = join(directory, 'memory.db')
     const runtime = new StrataGateRuntime({
@@ -1285,7 +1297,11 @@ describe('DSH runtime ingestion', () => {
       const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> }).space(session)
       await vi.waitFor(() => {
         expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'failed', attempts: 1 })
-        expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toContain('static StrataGate feedback policy')
+        if (AGENT_FEEDBACK_ENABLED) expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toContain('static StrataGate feedback policy')
+        else {
+          expect((runtime as unknown as { pendingFeedbackSuggestionSessions: Set<string> }).pendingFeedbackSuggestionSessions.size).toBe(0)
+          expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toBe('')
+        }
       }, { timeout: 4_000 })
 
       expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-10T00:00:00.000Z'))).toBe('')

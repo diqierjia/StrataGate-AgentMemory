@@ -1,3 +1,5 @@
+export const TOPIC_OVERVIEW_MAX_CHARACTERS = 1000;
+
 /** Content-free diagnostics. Never copy arbitrary error messages or model output. */
 export type TopicFailureCategory = 'max-tokens' | 'schema-invalid' | 'validation-failed'
   | 'timeout' | 'provider-failed' | 'worker-failed' | 'source-changed';
@@ -130,11 +132,11 @@ export class TopicProjectionError extends Error {
 export function validateTopicOverviewText(value: unknown, fieldPath: string,
   category: TopicFailureCategory = 'validation-failed'): asserts value is string {
   const count = typeof value === 'string' ? Array.from(value).length : undefined;
-  const metadata = { fieldPath, minCharacters: 1, maxCharacters: 600,
+  const metadata = { fieldPath, minCharacters: 1, maxCharacters: TOPIC_OVERVIEW_MAX_CHARACTERS,
     ...(count === undefined ? {} : { actualCharacters: count }) };
   const reason = typeof value !== 'string' ? 'overview.text must be a string'
     : value.length === 0 ? 'overview.text is empty'
     : !value.trim() ? 'overview.text contains only whitespace'
-    : count! > 600 ? 'overview.text exceeds the character limit' : null;
+    : count! > TOPIC_OVERVIEW_MAX_CHARACTERS ? 'overview.text exceeds the character limit' : null;
   if (reason) throw new TopicProjectionError(category, reason, metadata);
 }

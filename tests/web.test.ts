@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { StrataGateSnapshot } from '@diqier/stratagate'
+import { StrataGate } from '@diqier/stratagate'
 import type { StrataGateRuntime } from '../src/runtime.js'
 import { handleAdminRequest, type WebResponse } from '../src/web.js'
 
@@ -171,6 +172,102 @@ async function request(url: string, method = 'GET', targetRuntime = runtime, bod
 }
 
 describe('StrataGate admin routes', () => {
+  it.each(['running', 'failed'] as const)('counts Agent Events in current graph progress (%s)', async (status) => {
+    const agentEvents = ['agent-1', 'agent-2'].map((id) => ({ ...snapshot.events[0]!, id }))
+    const graphSnapshot = {
+      ...snapshot, events: [], agentEvents, graphNodes: [], summaryJobs: [], extractionJobs: [],
+      graphProjectionJobs: [
+        { ...snapshot.graphProjectionJobs[0]!, sourceEventIds: ['agent-1'] },
+        { ...snapshot.graphProjectionJobs[0]!, id: 'agent-job-2', sourceEventIds: ['agent-2'], status, attempts: 3, nextRetryAt: null },
+      ],
+    }
+    const agentRuntime = {
+      adminNamespaces: async () => ['dsh:project:agent'], adminSnapshot: async () => graphSnapshot,
+      adminWorkspaceName: () => 'Agent only', adminAgentMemoryRetrievalWeight: () => 0,
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/overview', 'GET', agentRuntime)
+    const graph = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Aagent&kind=graph', 'GET', agentRuntime)
+    const expected = { projected: 1, total: 2, state: status === 'running' ? 'processing' : 'failed', complete: false }
+    expect(result.body.namespaces[0].graphMigration).toMatchObject(expected)
+    expect(graph.body.migration).toEqual(result.body.namespaces[0].graphMigration)
+  })
+
+  it.each((['forgotten', 'archived'] as const).flatMap(status => (['failed', 'running', 'pending'] as const).map(jobStatus => ({ status, jobStatus }))))('excludes retained $jobStatus jobs whose ordinary and Agent sources are all $status', async ({ status, jobStatus }) => {
+    const historicalSnapshot = {
+      ...snapshot, events: [{ ...snapshot.events[0]!, status }],
+      agentEvents: [{ ...snapshot.events[0]!, id: 'agent-history', status }],
+      summaryJobs: [], extractionJobs: [],
+      graphProjectionJobs: [{ ...snapshot.graphProjectionJobs[0]!, sourceEventIds: ['evt_1', 'agent-history'],
+        status: jobStatus, attempts: jobStatus === 'failed' ? 3 : 1, lastError: 'old failure', nextRetryAt: null }],
+    }
+    const historyRuntime = { adminNamespaces: async () => ['dsh:project:history'], adminSnapshot: async () => historicalSnapshot,
+      adminWorkspaceName: () => 'History', adminSnapshotEntries: async () => [{ namespace: 'dsh:project:history', revision: 1, snapshot: historicalSnapshot }],
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/dashboard', 'GET', historyRuntime)
+    expect(result.status).toBe(200)
+    expect(result.body.processing).toBe(false)
+    const row = result.body.overview.namespaces[0]
+    expect(row).toMatchObject({ failedJobs: 0, processingJobs: 0, failedJobDetails: [], processingJobDetails: [],
+      taskStatus: { graphProjection: { terminalFailed: 0 } }, graphMigration: { total: 0, projected: 0, failed: 0, complete: true, state: 'complete' } })
+    expect(result.body.data.graph.migration).toEqual(row.graphMigration)
+    expect(historicalSnapshot.graphProjectionJobs[0]!.status).toBe(jobStatus)
+  })
+
+  it('hides a real retained terminal failure after forgetEvent and shows it again after restoreEvent without mutating the job', async () => {
+    let now = new Date('2026-10-13T00:00:00.000Z')
+    const memory = StrataGate.inMemory({ blockTurnSize: 1, now: () => now,
+      summarizer: async () => ({ l0Title: 'fixture', l0Tags: [], l1Summary: 'fixture', l2Keypoints: [], shouldExtract: false }),
+      graphProjector: async () => ({ reason: 'unused', nodes: [], edges: [] }),
+    })
+    try {
+      await memory.appendTurn({ user: 'Synthetic graph source', assistant: 'saved' })
+      const block = memory.listBlocks()[0]!
+      const event = await memory.addEvent({ title: 'Synthetic event', summary: 'fixture', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] })
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const claim = await memory.claimNextGraphProjection()
+        expect(claim).not.toBeNull()
+        await memory.failGraphProjection(claim!.jobId, new Error('Synthetic permanent failure'))
+        now = new Date(now.getTime() + 60_000)
+      }
+      const retainedJob = structuredClone(memory.listGraphProjectionJobs()[0]!)
+      expect(retainedJob).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null })
+      const liveRuntime = { adminNamespaces: async () => ['dsh:project:real-forget'], adminSnapshot: async () => memory.exportSnapshot(), adminWorkspaceName: () => 'Fixture' } as unknown as StrataGateRuntime
+      const active = await request('/api/stratagate/overview', 'GET', liveRuntime)
+      expect(active.body.namespaces[0]).toMatchObject({ failedJobs: 1, graphMigration: { failed: 1, state: 'failed' } })
+      await memory.forgetEvent(event.id)
+      const frozenBeforeRead = memory.exportSnapshot()
+      const forgotten = await request('/api/stratagate/overview', 'GET', liveRuntime)
+      const graph = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Areal-forget&kind=graph', 'GET', liveRuntime)
+      expect(forgotten.body.namespaces[0]).toMatchObject({ failedJobs: 0, failedJobDetails: [], graphMigration: { failed: 0, total: 0, complete: true } })
+      expect(graph.body.migration).toEqual(forgotten.body.namespaces[0].graphMigration)
+      expect(memory.exportSnapshot()).toEqual(frozenBeforeRead)
+      await memory.restoreEvent(event.id)
+      const restored = await request('/api/stratagate/overview', 'GET', liveRuntime)
+      expect(restored.body.namespaces[0]).toMatchObject({ failedJobs: 1, graphMigration: { total: 1, failed: 1, state: 'failed' } })
+      expect(memory.listGraphProjectionJobs()[0]).toEqual(retainedJob)
+    } finally { await memory.close() }
+  })
+
+  it('intersects projected IDs with live sources and keeps mixed-source failures current', async () => {
+    const mixedSnapshot = {
+      ...snapshot, events: [{ ...snapshot.events[0]!, id: 'old', status: 'forgotten' as const }, { ...snapshot.events[0]!, id: 'live' }],
+      summaryJobs: [], extractionJobs: [],
+      graphProjectionJobs: [{ ...snapshot.graphProjectionJobs[0]!, sourceEventIds: ['old', 'missing'] },
+        { ...snapshot.graphProjectionJobs[0]!, id: 'mixed', sourceEventIds: ['old', 'live'], status: 'failed' as const, attempts: 3, nextRetryAt: null }],
+    }
+    const mixedRuntime = { adminNamespaces: async () => ['dsh:project:mixed'], adminSnapshot: async () => mixedSnapshot, adminWorkspaceName: () => 'Mixed' } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/overview', 'GET', mixedRuntime)
+    expect(result.body.namespaces[0]).toMatchObject({ failedJobs: 1, graphMigration: { projected: 0, total: 1, failed: 1, state: 'failed' } })
+    const graph = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Amixed&kind=graph', 'GET', mixedRuntime)
+    expect(graph.body.migration).toEqual(result.body.namespaces[0].graphMigration)
+  })
+
+  it('returns an empty Dashboard before any workspace memory exists', async () => {
+    const emptyRuntime = { adminSnapshotEntries: async () => [], adminDataDirectory: () => 'fixture', adminWorkspaceName: () => '' } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/dashboard', 'GET', emptyRuntime)
+    expect(result).toMatchObject({ status: 200, body: { namespace: null, overview: { namespaces: [] }, data: null, processing: false } })
+  })
+
   it('exposes optional Event metadata while keeping legacy API cards unchanged', async () => {
     const copy = structuredClone(snapshot);
     copy.events[0]!.catalogHints = ['工作方式', '包管理'];
