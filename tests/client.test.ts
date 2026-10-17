@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
-import { describe, expect, it } from 'vitest'
+import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
+import { describe, expect, it, vi } from 'vitest'
 
 function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string, unknown> = {}, legacyGitHub?: boolean) {
   let source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
@@ -8,7 +9,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, ProfilePage, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { LongTermPage,')
+  ).replace('exports.__test = {', 'exports.__test = { MemoryPage, LongTermPage,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -60,6 +61,85 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
+  it('preserves feedback navigation from workspace A to B with one dashboard request', async () => {
+    // Run the production MemoryPage and dependency-aware hook effects across
+    // renders. Requests stay pending during the namespace transition.
+    const hooks: any[] = []
+    const effects: Array<() => void> = []
+    const requests: Array<{ namespace: string; signal: AbortSignal; resolve: (value: unknown) => void }> = []
+    const same = (a: any[] | undefined, b: any[]) => a && a.length === b.length && a.every((value, i) => Object.is(value, b[i]))
+    let cursor = 0
+    let dirty = true
+    const react = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState(initial: any) {
+        const index = cursor++
+        if (!(index in hooks)) hooks[index] = typeof initial === 'function' ? initial() : initial
+        return [hooks[index], (value: any) => {
+          const next = typeof value === 'function' ? value(hooks[index]) : value
+          if (!Object.is(hooks[index], next)) { hooks[index] = next; dirty = true }
+        }]
+      },
+      useRef(initial: unknown) { const index = cursor++; return hooks[index] ??= { current: initial } },
+      useCallback(callback: unknown, deps: any[]) {
+        const index = cursor++
+        if (!same(hooks[index]?.deps, deps)) hooks[index] = { deps, callback }
+        return hooks[index].callback
+      },
+      useEffect(effect: () => (() => void) | undefined, deps: any[]) {
+        const index = cursor++
+        if (same(hooks[index]?.deps, deps)) return
+        const previous = hooks[index]
+        hooks[index] = { deps }
+        effects.push(() => { previous?.cleanup?.(); hooks[index].cleanup = effect() })
+      },
+    }
+    const { MemoryPage, SupportPage } = loadSupportHelpers([], {
+      react, AbortController,
+      document: { hidden: true, addEventListener() {}, removeEventListener() {} },
+      window: { location: { search: '' } },
+      fetch: (url: string, options: any) => new Promise(resolve => requests.push({
+        namespace: new URL(url, 'http://localhost').searchParams.get('namespace') || 'A', signal: options.signal,
+        resolve: data => resolve({ ok: true, status: 200, headers: { get: () => null }, json: async () => data }),
+      })),
+    })
+    let navigationState: unknown
+    let tree: any
+    const workspaces: unknown[] = []
+    const sessionState = { byId: {} }
+    const pump = () => {
+      let attempts = 0
+      while (dirty) {
+        expect(++attempts).toBeLessThan(20)
+        dirty = false; cursor = 0
+        tree = MemoryPage({ navigationState, useWorkspaces: (select: any) => select({ items: workspaces }), useSessions: (select: any) => select(sessionState) })
+        effects.splice(0).forEach(effect => effect())
+      }
+      return tree
+    }
+    const settle = async () => { for (let i = 0; i < 12; i++) { await Promise.resolve(); pump() } }
+    const dashboard = (namespace: string) => ({ namespace, overview: { namespaces: [{ namespace: 'A' }, { namespace: 'B' }] },
+      data: { conversations: [], events: [], blocks: [], graph: { nodes: [], edges: [] }, audit: [] } })
+    const supports = () => {
+      const found: any[] = []
+      const visit = (value: any) => { if (!Array.isArray(value)) return; if (value[0] === SupportPage) found.push(value[1]); value.forEach(visit) }
+      visit(tree); return found
+    }
+    pump(); requests[0]!.resolve(dashboard('A')); await settle()
+    navigationState = { view: 'feedback', namespace: 'B' }; dirty = true; pump()
+    expect(requests.filter(request => request.namespace === 'B')).toHaveLength(1)
+    expect(requests.at(-1)?.signal.aborted).toBe(false)
+    requests.at(-1)!.resolve(dashboard('B')); await settle()
+    expect(supports()).toMatchObject([{ namespace: 'B' }])
+    navigationState = { view: 'feedback', namespace: 'B' }; dirty = true; pump()
+    expect(requests.filter(request => request.namespace === 'B')).toHaveLength(2)
+    requests.at(-1)!.resolve(dashboard('B')); await settle()
+    expect(supports()).toMatchObject([{ namespace: 'B' }])
+    deepElementProps(tree).find(props => props['aria-label'] === '当前工作区').onChange({ target: { value: 'A' } })
+    pump(); requests.at(-1)!.resolve(dashboard('A')); await settle()
+    expect(supports()).toEqual([])
+  })
+
   it('registers its settings section through the DSH module loader', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     let definition: any
@@ -194,20 +274,77 @@ describe('StrataGate Web client contract', () => {
     }
     const dispose = installFeedbackLinkNavigation(ctx, documentRef, location)
     let prevented = false
-    listener({ target, button: 0, preventDefault: () => { prevented = true } })
+    let stopped = false
+    listener({ target, button: 0, preventDefault: () => { prevented = true }, stopPropagation: () => { stopped = true } })
     expect(prevented).toBe(true)
+    expect(stopped).toBe(true)
     expect(openSectionCalls).toEqual([[
       'stratagate-memory',
       { view: 'feedback', namespace: 'dsh:project:test' },
     ]])
     expect(location.assigned).toBe('')
-    listener({ target, preventDefault: () => { prevented = true } })
+    listener({ target, preventDefault: () => { prevented = true }, stopPropagation: () => {} })
     expect(openSectionCalls).toHaveLength(2)
     expect(feedbackLinkTarget({ parentElement: target }, location)).toMatchObject({ anchor, url: { href } })
     expect(navigateToFeedback({ get: () => undefined }, new URL(href), location)).toBe('http')
     expect(location.assigned).toBe(href)
     dispose()
     expect(removed).toBe(true)
+  })
+
+  it('opens Feedback through the real DSH shared settings shell when settingsNavigation is absent', () => {
+    const { navigateToFeedback } = loadSupportHelpers()
+    const calls: string[] = []
+    const shared = { actions: { openSection: (id: string) => calls.push(id) } }
+    const registry = new SlotCore()
+    registry.register({ name: 'root', children: { 'sidebar.settings': { kind: 'single', scope: 'root' } } } as any, () => null)
+    registry.register({ name: 'sidebar.settings', store: { create: () => shared } } as any, () => null)
+    const ctx = { get: (name: string) => name === 'slots' ? registry : undefined }
+    const route = new URL('http://127.0.0.1:19387/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest')
+    expect(navigateToFeedback(ctx, route, { assign: () => { throw new Error('must stay in current app') } })).toBe('host')
+    expect(calls).toEqual(['stratagate-memory'])
+  })
+
+  it('recognizes the Desktop-owned HTTP feedback endpoint across the dsh-app origin', () => {
+    const { feedbackLinkTarget } = loadSupportHelpers()
+    const desktop = { href: 'dsh-app://app/', origin: 'dsh-app://app' }
+    const href = 'http://127.0.0.1:19387/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest'
+    const target = (url: string) => ({ closest: () => ({ getAttribute: () => url }) })
+    expect(feedbackLinkTarget(target(href), desktop, 'http://127.0.0.1:19387')).not.toBeNull()
+    expect(feedbackLinkTarget(target(href), desktop)).toBeNull()
+    expect(feedbackLinkTarget(target(href), desktop, 'http://127.0.0.1:19388')).toBeNull()
+    expect(feedbackLinkTarget(target(href.replace('127.0.0.1:19387', 'example.com')), desktop, 'http://example.com')).toBeNull()
+    expect(feedbackLinkTarget(target(href.replace('/?', '/other?')), desktop, 'http://127.0.0.1:19387')).toBeNull()
+    expect(feedbackLinkTarget(target(href.replace('127.0.0.1', 'user@127.0.0.1')), desktop, 'http://127.0.0.1:19387')).toBeNull()
+  })
+
+  it.each(['owned', 'different-server', 'boot-error', 'disposed'])('handles an early Desktop feedback click with %s boot', async (mode) => {
+    let release: (value: unknown) => void = () => {}
+    let reject: (reason: unknown) => void = () => {}
+    const ready = vi.fn(() => new Promise((resolve, fail) => { release = resolve; reject = fail }))
+    const { installFeedbackLinkNavigation } = loadSupportHelpers([], { window: { dshDesktopBoot: { ready } } })
+    let listener: (event: any) => void = () => {}
+    const documentRef = { addEventListener: (_name: string, value: any) => { listener = value }, removeEventListener: vi.fn() }
+    const openSection = vi.fn()
+    const ctx = { get: (name: string) => name === 'settingsNavigation' ? { openSection } : undefined }
+    const location = { href: 'dsh-app://app/', origin: 'dsh-app://app', assign: vi.fn() }
+    const href = 'http://127.0.0.1:19387/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest'
+    const anchor = { getAttribute: () => href, click: vi.fn() }
+    const target = { closest: () => anchor }
+    const dispose = installFeedbackLinkNavigation(ctx, documentRef, location)
+    const event = { target, button: 0, preventDefault: vi.fn(), stopPropagation: vi.fn() }
+    listener(event)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.stopPropagation).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce())
+    if (mode === 'disposed') dispose()
+    if (mode === 'boot-error') reject(new Error('boot unavailable'))
+    else release({ streamBaseUrl: mode === 'different-server' ? 'http://127.0.0.1:19388' : 'http://127.0.0.1:19387' })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(openSection).toHaveBeenCalledTimes(mode === 'owned' ? 1 : 0)
+    expect(anchor.click).toHaveBeenCalledTimes(['different-server', 'boot-error'].includes(mode) ? 1 : 0)
+    expect(location.assign).not.toHaveBeenCalled()
+    if (mode !== 'disposed') dispose()
   })
 
   it('accepts Feedback route state from the Settings host without reading localized DOM controls', () => {
@@ -1605,7 +1742,7 @@ describe('StrataGate Web client contract', () => {
     const props = elementProps(tree)
     expect(props.find((value) => value['aria-label'] === '本地反馈报告预览')).toBeUndefined()
     expect(props.some((value) => value.disabled === true && value.children === undefined)).toBe(true)
-    expect(JSON.stringify(tree)).toContain('填写问题描述后，可以检查报告。')
+    expect(JSON.stringify(tree)).toContain('有了问题描述后，即可检查报告。')
     expect(FEEDBACK_AI_PROMPT).toContain('feedback_prepare')
     expect(FEEDBACK_AI_PROMPT).toContain('不要猜测')
     expect(feedbackDraftMarkdown({
@@ -1675,6 +1812,28 @@ describe('StrataGate Web client contract', () => {
     expect(memory).toContain('## 贡献意愿')
     expect(memory).toContain('我愿意尝试修复并提交 PR')
     expect(memory).not.toContain('must-not-leak')
+  })
+
+  it.each(['frontend', 'job'])('keeps %s error text out of default reports and redacts opted-in logs', (origin) => {
+    const { buildSupportReport } = loadSupportHelpers()
+    const error = 'private-error-body owner@example.net C:\\Users\\private\\memory.db /home/private/memory.db https://private.example.net/x?q=secret sk-private123456789 token=private-token'
+    const input = {
+      problemContent: '记忆处理异常',
+      recentError: origin === 'frontend' ? error : '',
+      selected: { failedJobDetails: origin === 'job' ? [{ kind: 'summary', lastError: error, lastErrorFull: error }] : [] },
+      diagnostics: { records: [{ id: 'diag_test', stage: 'summarizer', category: 'storage', at: '2026-10-16T00:00:00Z', detail: error }] },
+    }
+    const report = buildSupportReport(input)
+    expect(report).not.toContain('private-error-body')
+    expect(report).toContain('summarizer')
+    expect(report).toContain('2026-10-16T00:00:00Z')
+    expect(report).toContain('storage')
+    const logs = buildSupportReport({ ...input, includeLogs: true })
+    expect(logs).toContain('private-error-body')
+    for (const privateValue of ['owner@example.net', 'C:\\Users\\private\\memory.db', '/home/private/memory.db', 'https://private.example.net', 'sk-private123456789', 'private-token']) {
+      expect(report).not.toContain(privateValue)
+      expect(logs).not.toContain(privateValue)
+    }
   })
 
   it('redacts nested sensitive values without breaking the attached JSON or recent errors', () => {
@@ -1801,16 +1960,14 @@ describe('StrataGate Web client contract', () => {
     await button!.onClick()
     expect(calls).toEqual(['copy'])
     const mailButton = buttonProps(tree, '尝试打开邮件应用')
-    expect(mailButton).toBeDefined()
-    mailButton!.onClick()
-    expect(calls).toEqual(['copy', 'compose'])
+    expect(mailButton).toBeUndefined()
+    expect(calls).toEqual(['copy'])
   })
 
-  it('shows the report only on demand and reuses the exact preview for copy and download', async () => {
+  it('shows the complete reviewed report and reuses the exact preview for copy and download', async () => {
     const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false, 2, { text: 'reviewed report', title: '' }])
     const closedTree = closedHelpers.SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
-    expect(elementProps(closedTree).find((props) => props['aria-label'] === '本地反馈报告预览')).toBeUndefined()
-    expect(elementProps(closedTree).find((props) => props.children === undefined && props['aria-expanded'] === false)).toBeDefined()
+    expect(elementProps(closedTree).find((props) => props['aria-label'] === '本地反馈报告预览')?.value).toBe('reviewed report')
 
     const report = '## 问题描述\n\nLocal failure\n\n## 诊断日志\nlocal-only-error'
     const { copyReportAndComposeEmail, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true, 2, { text: report, title: '' }])
@@ -1832,7 +1989,7 @@ describe('StrataGate Web client contract', () => {
 
     const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
     const preview = elementProps(tree).find((props) => props['aria-label'] === '本地反馈报告预览')?.value
-    expect(JSON.stringify(tree)).toContain('将复制的内容')
+    expect(JSON.stringify(tree)).toContain('完整报告')
     expect(preview).toContain('## 诊断日志')
     expect(preview).toContain('local-only-error')
     expect(objectUrlCalls).toBe(0)

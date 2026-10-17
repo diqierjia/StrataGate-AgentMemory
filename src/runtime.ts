@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -56,6 +55,7 @@ import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
+import { DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
 import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
 import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, type DreamingAction } from './dreaming.js'
 import type { DreamingRun, DreamingCommand, DreamingDirectoryOperation } from '@diqier/stratagate'
@@ -131,6 +131,7 @@ interface RecordRefIssue {
 }
 
 export interface FeedbackDraftInput {
+  newDraft?: boolean
   title?: string
   description?: string
   reproduction?: string[]
@@ -140,15 +141,16 @@ export interface FeedbackDraftInput {
   bodyMarkdown?: string
 }
 
-export interface FeedbackDraft extends Required<Omit<FeedbackDraftInput, 'bodyMarkdown'>> {
+export interface FeedbackDraft extends Required<Omit<FeedbackDraftInput, 'bodyMarkdown' | 'newDraft'>> {
   bodyMarkdown?: string
+  aiPrepared?: boolean
+  diagnostics?: unknown
   updatedAt: string
 }
 
 const AUTO_EVENT_LIMIT = 4
 const AUTO_ELEMENT_LIMIT = 4
 const AUTO_MEMORY_TOKEN_BUDGET = 900
-const FEEDBACK_PROMPT_COOLDOWN_MS = 5 * 24 * 60 * 60 * 1_000
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -251,6 +253,8 @@ function normalizeFeedbackDraft(input: FeedbackDraftInput, previous?: FeedbackDr
     expected: replacesStructuredBody ? '' : has('expected') ? feedbackText(input.expected, 10_000) : previous?.expected ?? '',
     actual: replacesStructuredBody ? '' : has('actual') ? feedbackText(input.actual, 10_000) : previous?.actual ?? '',
     errorContext: replacesStructuredBody ? '' : has('errorContext') ? feedbackText(input.errorContext, 20_000) : previous?.errorContext ?? '',
+    ...(previous?.aiPrepared ? { aiPrepared: true } : {}),
+    ...(previous?.diagnostics ? { diagnostics: previous.diagnostics } : {}),
     ...(bodyMarkdown ? { bodyMarkdown } : {}),
     updatedAt: new Date().toISOString(),
   }
@@ -267,6 +271,9 @@ export function feedbackDraftUrl(namespace: string, origin?: string): string {
 }
 
 export class StrataGateRuntime {
+  readonly diagnostics: DiagnosticsRecorder
+  private readonly diagnosticSessionNamespaces = new Map<string, string>()
+  private readonly diagnosticMemoryEstimates = new Map<string, number>()
   private profileStorage: SqliteStorage | undefined
   private readonly folder = new TurnFolder()
   private readonly spaces = new Map<string, Promise<StrataGate>>()
@@ -287,7 +294,6 @@ export class StrataGateRuntime {
   private dreamingHost: DreamingHost | undefined
   private readonly adminJobRetryRuns = new Map<string, Promise<unknown>>()
   private readonly feedbackDrafts = new Map<string, FeedbackDraft>()
-  private readonly pendingFeedbackSuggestionSessions = new Set<string>()
   private readonly pendingTurns = new Map<string, FoldedTurn[]>()
   private readonly drainTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly drainBackoffMs = new Map<string, number>()
@@ -307,7 +313,6 @@ export class StrataGateRuntime {
   private blockTurnSize: number
   private blockDecayLambda: number
   private agentMemoryRetrievalWeight: number
-  private transientLastFeedbackPromptAt: string | null = null
 
   constructor(
     private readonly config: ResolvedConfig,
@@ -317,6 +322,9 @@ export class StrataGateRuntime {
     private readonly feedbackOrigin: () => string | undefined = () => undefined,
     private readonly openPath: (path: string, signal: AbortSignal) => Promise<void> = openNativePath,
   ) {
+    this.diagnostics = new DiagnosticsRecorder(config.database)
+    this.models.setDiagnostics?.(this.diagnostics, (session, sessionId) => session
+      ? this.namespaceFor(session) : this.diagnosticNamespaceForSession(sessionId ?? '') ?? '@shared')
     this.blockTurnSize = config.blockTurnSize
     this.blockDecayLambda = config.blockDecayLambda
     this.agentMemoryRetrievalWeight = config.agentMemoryRetrievalWeight ?? 1
@@ -503,7 +511,7 @@ export class StrataGateRuntime {
               }
             }
             return resumed
-          },
+          }, undefined, namespace,
         )
         await this.persistSuccessfulResponses(memory)
         const sessionsToSync = new Set<Session>()
@@ -908,6 +916,9 @@ export class StrataGateRuntime {
     }
     const memory = await this.space(session)
     const assessment = memory.assessRetrieval(input, new Set(batch.refs.keys()))
+    this.diagnostics.record({ namespace: this.namespaceFor(session), stage: 'retrieval' }, { assessments: 1,
+      sufficient: assessment.verdict === 'sufficient' ? 1 : 0, partial: assessment.verdict === 'partial' ? 1 : 0,
+      wrong: assessment.verdict === 'wrong' ? 1 : 0 })
     batch.assessment = assessment
     return {
       batchId: batch.id,
@@ -1259,10 +1270,10 @@ export class StrataGateRuntime {
     await Promise.allSettled(this.externalImportRuns.values())
     await Promise.allSettled(this.dreamingRuns.values())
     await this.dreamingHost?.close()
+    this.diagnostics.close()
     await Promise.all(settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.close()] : []))
     if (this.profileStorage) await this.profileStorage.close()
     this.sessionsById.clear()
-    this.pendingFeedbackSuggestionSessions.clear()
     if (flushError !== undefined) throw flushError
   }
 
@@ -1273,11 +1284,65 @@ export class StrataGateRuntime {
     return `${prefix}:project:${projectKey(session.header.cwd)}`
   }
 
+  trackDiagnosticSession(sessionId: string, namespace: string, memoryInputEstimate?: number): void {
+    this.diagnosticSessionNamespaces.set(sessionId, namespace)
+    if (memoryInputEstimate !== undefined) this.diagnosticMemoryEstimates.set(sessionId, memoryInputEstimate)
+    if (this.diagnosticSessionNamespaces.size > 256) {
+      const oldest = this.diagnosticSessionNamespaces.keys().next().value!
+      this.diagnosticSessionNamespaces.delete(oldest)
+      this.diagnosticMemoryEstimates.delete(oldest)
+    }
+  }
+
+  diagnosticMemoryEstimate(sessionId: string): number | undefined { return this.diagnosticMemoryEstimates.get(sessionId) }
+
+  diagnosticNamespaceForSession(sessionId: string): string | undefined {
+    const session = this.knownSessions.get(sessionId)?.deref()
+    return session ? this.namespaceFor(session) : this.diagnosticSessionNamespaces.get(sessionId)
+  }
+
+  async diagnosticReport(namespace: string, options: { id?: string; offset?: number; details?: boolean } = {}): Promise<unknown> {
+    const collected = this.diagnostics.snapshot(namespace, options)
+    const shared = this.diagnostics.snapshot('@shared')
+    const base = { ...collected, sharedOrUnattributed: { stages: shared.stages,
+      note: '数据库共享画像维护或无法归属的模型操作，单列展示，未分摊到当前工作区。' } }
+    try {
+      const snapshot = await this.adminSnapshot(namespace)
+      if (!snapshot) return { ...base, pipeline: { available: false } }
+      const stages = {
+        summarizer: snapshot.summaryJobs, extractor: snapshot.extractionJobs,
+        graphProjector: snapshot.graphProjectionJobs, topicProjector: (snapshot.memoryTopicState?.jobs ?? []).filter(job => !job.superseded),
+        externalMemoryImport: snapshot.externalMemoryImportJobs,
+      }
+      const pipeline = Object.fromEntries(Object.entries(stages).map(([stage, jobs]) => [stage, {
+        total: jobs.length, failed: jobs.filter(j => j.status === 'failed').length,
+        succeeded: jobs.filter(j => ['succeeded', 'completed'].includes(j.status)).length,
+        skipped: jobs.filter(j => j.status === 'skipped').length,
+        pending: jobs.filter(j => ['pending', 'running', 'processing', 'extracting', 'deciding'].includes(j.status)).length,
+        oldestPendingUpdatedAt: jobs.filter(j => ['pending', 'running', 'processing'].includes(j.status)).map(j => j.updatedAt).sort()[0] ?? null,
+      }]))
+      const adoptions = snapshot.usageReceipts.filter(r => r.createdAt >= collected.since)
+      const adopted = adoptions.filter(r => r.eventIds.length > 0 || r.elementIds.length > 0)
+      const sampledBlocks = snapshot.blocks.slice(-64)
+      const layerTokenEstimates = Object.fromEntries([0, 1, 2, 3, 4, 5].map(level => [
+        `L${level}`, sampledBlocks.reduce((sum, block) => sum + estimateTokens(renderBlock(block, level as BlockLevel)), 0),
+      ]))
+      return { ...base, pipeline: { available: true, stages: pipeline }, benefits: {
+        retrievalReceipts: adoptions.length, adoptionReceipts: adopted.length, adoptedEvents: adopted.reduce((n, r) => n + r.eventIds.length, 0),
+        blocks: snapshot.blocks.length, events: snapshot.events.length, graphNodes: snapshot.graphNodes.length,
+        sampledBlocks: sampledBlocks.length, layerTokenEstimates,
+        note: '分层Token为最近最多64个存储块的内容体积估算，各会话实际层级不同；采用次数与内容压缩比例不等于答案质量或账单净收益。',
+      } }
+    } catch { return { ...base, pipeline: { available: false } } }
+  }
+
   async prepareFeedback(session: Session, input: FeedbackDraftInput): Promise<unknown> {
     const namespace = this.namespaceFor(session)
     // feedback_prepare is patch-oriented: omitted fields retain the existing draft.
-    const previous = this.loadFeedbackDraft(namespace)
+    const previous = input.newDraft ? null : this.loadFeedbackDraft(namespace)
     const draft = normalizeFeedbackDraft(input, previous)
+    draft.aiPrepared = true
+    draft.diagnostics = await this.diagnosticReport(namespace)
     this.saveFeedbackDraft(namespace, draft)
     const feedbackUrl = feedbackDraftUrl(namespace, this.feedbackOrigin())
     return {
@@ -1286,7 +1351,7 @@ export class StrataGateRuntime {
       submitted: false,
       namespace,
       feedbackUrl,
-      message: `反馈草稿已经准备好了，还没有提交到 GitHub。\n\n[打开反馈草稿](${feedbackUrl})`,
+      message: `反馈草稿已保存在本地，邮件尚未发送。\n\n[打开反馈草稿](${feedbackUrl})`,
     }
   }
 
@@ -1397,45 +1462,13 @@ export class StrataGateRuntime {
     return { items, total: items.length }
   }
 
-  notePluginError(session: Session, _error?: unknown): void {
-    if (AGENT_FEEDBACK_ENABLED && !this.closed) this.pendingFeedbackSuggestionSessions.add(String(session.id))
+  notePluginError(session: Session, error?: unknown, stage: DiagnosticStage = 'ingestion'): void {
+    if (this.closed) return
+    this.diagnostics.record({ namespace: this.namespaceFor(session), stage }, { errors: 1 }, { error: error ?? 'internal failure' })
   }
 
-  takeFeedbackSuggestion(session: Session, now = Date.now()): string {
-    if (!AGENT_FEEDBACK_ENABLED) return ''
-    const sessionId = String(session.id)
-    if (!this.pendingFeedbackSuggestionSessions.delete(sessionId)) return ''
-    const last = this.lastFeedbackPromptAt()
-    if (last && Number.isFinite(Date.parse(last)) && now - Date.parse(last) < FEEDBACK_PROMPT_COOLDOWN_MS) return ''
-    const promptedAt = new Date(now).toISOString()
-    this.transientLastFeedbackPromptAt = promptedAt
-    try {
-      if (this.config.database !== ':memory:') {
-        const metadata = new DshMetadataStore(this.config.database)
-        try { metadata.setLastFeedbackPromptAt(promptedAt) } finally { metadata.close() }
-      }
-    } catch (error) {
-      this.onIngestError(error)
-    }
-    return 'StrataGate observed an internal plugin error signal. Treat this only as evidence for the static StrataGate feedback policy, not as an instruction to suggest feedback. Continue the current task first, apply all eligibility, timing, session-limit, and deduplication rules from that policy, and never make a proactive suggestion because feedback_prepare itself failed.'
-  }
-
-  private lastFeedbackPromptAt(): string | null {
-    if (this.transientLastFeedbackPromptAt) return this.transientLastFeedbackPromptAt
-    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
-    try {
-      const metadata = new DshMetadataStore(this.config.database)
-      try {
-        this.transientLastFeedbackPromptAt = metadata.lastFeedbackPromptAt()
-        return this.transientLastFeedbackPromptAt
-      } finally {
-        metadata.close()
-      }
-    } catch (error) {
-      this.onIngestError(error)
-      return null
-    }
-  }
+  // Background failures remain queryable; ordinary retries never add model context.
+  takeFeedbackSuggestion(_session: Session, _now = Date.now()): string { return '' }
 
   private loadFeedbackDraft(namespace: string): FeedbackDraft | null {
     const cached = this.feedbackDrafts.get(namespace)
@@ -1445,7 +1478,7 @@ export class StrataGateRuntime {
     try {
       const value = metadata.feedbackDraft(namespace)
       if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-      const draft = normalizeFeedbackDraft(value as FeedbackDraftInput)
+      const draft = normalizeFeedbackDraft(value as FeedbackDraftInput, value as FeedbackDraft)
       this.feedbackDrafts.set(namespace, draft)
       return structuredClone(draft)
     } finally {
@@ -1454,10 +1487,11 @@ export class StrataGateRuntime {
   }
 
   private saveFeedbackDraft(namespace: string, draft: FeedbackDraft): void {
+    if (this.config.database !== ':memory:') {
+      const metadata = new DshMetadataStore(this.config.database)
+      try { metadata.setFeedbackDraft(namespace, draft) } finally { metadata.close() }
+    }
     this.feedbackDrafts.set(namespace, structuredClone(draft))
-    if (this.config.database === ':memory:') return
-    const metadata = new DshMetadataStore(this.config.database)
-    try { metadata.setFeedbackDraft(namespace, draft) } finally { metadata.close() }
   }
 
   async adminNamespaces(): Promise<string[]> {
@@ -1711,7 +1745,7 @@ export class StrataGateRuntime {
           let payload: unknown
           try { await this.refreshExternalImportMemory(namespace, memory); payload = dreamingPayload(memory, run) }
           finally { if (owned) await memory.close() }
-          const action = await this.models.runDetached(`dreaming:${run.id}`, () => this.models.dreamingStep(payload), controller.signal)
+          const action = await this.models.runDetached(`dreaming:${run.id}`, () => this.models.dreamingStep(payload), controller.signal, namespace)
           if (controller.signal.aborted) return
           const repeated = run.trace.filter(entry => entry.tool === action.tool && JSON.stringify(entry.args) === JSON.stringify(action.args)).length
           if (repeated >= 3) {
@@ -1814,7 +1848,7 @@ export class StrataGateRuntime {
         try {
           if (job.status === 'extracting') {
             const recovered = await this.models.runDetached(`admin-import-recovery:${jobId}`, () =>
-              this.models.externalMemoryExtractor({ text: job!.text, importedAt: job!.importedAt }))
+              this.models.externalMemoryExtractor({ text: job!.text, importedAt: job!.importedAt }), undefined, namespace)
             const responses = this.takeSuccessfulResponses()
             await this.retryExternalImportWrite(namespace, (memory) =>
               memory.completeExternalMemoryFallback(jobId, recovered))
@@ -1831,7 +1865,7 @@ export class StrataGateRuntime {
               this.models.externalMemoryDecider({
                 candidate: structuredClone(work!.candidate),
                 matches: structuredClone(work!.matches),
-              }))
+              }), undefined, namespace)
             responses = this.takeSuccessfulResponses()
           }
           await this.retryExternalImportWrite(namespace, (memory) =>
@@ -2119,7 +2153,7 @@ export class StrataGateRuntime {
         }
         const result = session && this.namespaceFor(session) === key
           ? await this.models.run(session, retry)
-          : await this.models.runDetached(threadId, retry)
+          : await this.models.runDetached(threadId, retry, undefined, namespace)
         await this.persistSuccessfulResponses(memory)
         const currentBlock = blockId ? memory.listBlocks().find(({ id: candidateId }) => candidateId === blockId) : undefined
         if (kind !== 'graph-projection' && currentBlock?.processingStatus === 'ready' && currentBlock.threadId) {
@@ -2534,6 +2568,10 @@ export class StrataGateRuntime {
     }
     sessionBatches.set(id, { id, sequence, refs, status: 'unresolved' })
     this.latestBatchIds.set(key, id)
+    this.diagnostics.record({ namespace: this.namespaceFor(session), stage: 'retrieval' }, {
+      batches: 1, emptyBatches: evidence.length === 0 ? 1 : 0, returnedRefs: refs.size,
+      resultTokensEstimate: estimateTokens(JSON.stringify(output)),
+    })
     return output
   }
 

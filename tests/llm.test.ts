@@ -4,6 +4,7 @@ import type { EventCard, ExtractionContext, GraphProjectionContext, MemoryBlock,
 import { describe, expect, it, vi } from 'vitest'
 import { ModelJsonResponseError, parseJsonResponse } from '../src/json-response.js'
 import { DshModelBridge } from '../src/llm.js'
+import { DiagnosticsRecorder } from '../src/diagnostics.js'
 import { emptyProfile, estimateTokens, StrataGate, TopicProjectionError, TOPIC_OVERVIEW_MAX_CHARACTERS } from '@diqier/stratagate'
 
 describe('DeepSeek Harness model JSON parsing', () => {
@@ -198,7 +199,7 @@ describe('Graph canonical-name provenance compatibility (#113)', () => {
   })
 })
 
-function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?: string; reasoning?: string; error?: string; finish?: 'stop' | 'max-tokens' | 'tool-calls'; toolArguments?: string; stall?: boolean; providerFinish?: 'error' | 'aborted' }>,
+function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?: string; reasoning?: string; error?: string; finish?: 'stop' | 'max-tokens' | 'tool-calls'; toolArguments?: string; stall?: boolean; providerFinish?: 'error' | 'aborted'; usage?: { inputTokens: number; outputTokens: number; totalTokens: number } }>,
   setup: { resolveModelInfo?: () => Promise<any>; timeoutMs?: number } = {}): {
   bridge: DshModelBridge
   session: Session
@@ -223,6 +224,7 @@ function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?
       } else if (response?.text) {
         yield { type: 'text-delta' as const, index: 0, text: response.text }
       }
+      if (response?.usage) yield { type: 'usage' as const, usage: response.usage }
       yield { type: 'finish' as const, reason: response?.providerFinish ? { kind: response.providerFinish, failure: { code: 'PROVIDER_ERROR', message: 'PRIVATE SOURCE RESPONSE' } } : { kind: response?.finish ?? 'stop' } }
     })()
   }
@@ -1819,5 +1821,37 @@ describe('reasoningEffort off compatibility', () => {
     adapterUpdated()
     await bridge.run(session, () => bridge.summarizer([]))
     expect(resolved).toHaveBeenCalledTimes(3)
+  })
+})
+
+
+describe('structured memory operation accounting', () => {
+  const summary = { l0Title: 'summary', l0Tags: [], l1Summary: 'summary', l2Keypoints: [], shouldExtract: false }
+  it('charges invalid attempts and separates transport success from validation and eventual recovery', async () => {
+    const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+    const { bridge, session } = modelBridge([{ text: 'invalid json', usage }, { tool: summary, usage }])
+    const recorder = new DiagnosticsRecorder(':memory:')
+    bridge.setDiagnostics(recorder, () => 'test:one')
+    try {
+      await bridge.run(session, () => bridge.summarizer([]))
+      expect(recorder.snapshot('test:one').stages.summarizer).toMatchObject({
+        modelCalls: 2, modelFailed: 0, validationFailures: 1, totalTokens: 30,
+        operations: 1, operationsSucceeded: 1, operationsFailed: 0, operationsRecovered: 1, retries: 1,
+      })
+    } finally { recorder.close() }
+  })
+
+  it('persists detached namespace attribution and leaves absent usage unknown', async () => {
+    const { bridge } = modelBridge([{ error: 'network unavailable' }])
+    const recorder = new DiagnosticsRecorder(':memory:')
+    bridge.setDiagnostics(recorder, () => '@shared')
+    try {
+      await expect(bridge.runDetached('worker', () => bridge.summarizer([]), undefined, 'test:two')).rejects.toThrow('network unavailable')
+      expect(recorder.snapshot('test:two').stages.summarizer).toMatchObject({
+        operations: 1, operationsFailed: 1, modelCalls: 1, modelFailed: 1, missingUsageCalls: 1,
+      })
+      expect(recorder.snapshot('test:two').totals.totalTokens).toBeUndefined()
+      expect(recorder.snapshot('@shared').totals).toEqual({})
+    } finally { recorder.close() }
   })
 })

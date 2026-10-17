@@ -13,9 +13,10 @@ import {
 } from './config.js'
 import { DshModelBridge } from './llm.js'
 import { dropLegacyAgentMemoriesTable } from './metadata.js'
-import { StrataGateRuntime } from './runtime.js'
+import { StrataGateRuntime, estimateTokens } from './runtime.js'
 import { DshDreamingSessions } from './dreaming-session.js'
 import { registerMemoryTools } from './tools.js'
+import { observeModelStream } from './diagnostics.js'
 import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 import { registerAdminRoutes } from './web.js'
 import { assertCompatibleDshRuntime } from './dsh-compatibility.js'
@@ -73,15 +74,8 @@ Memory writing:
 - Use memory_remember for durable project facts, past decisions, corrections, experiences, and context-specific preferences. Record one self-contained, grounded fact per call, with necessary project, time, and scope. Never record speculation, secrets, credentials, or transient task state.`
 
 const FEEDBACK_PROTOCOL = `[StrataGate feedback policy]
-The feedback_prepare tool creates a local draft for the user to review; it never submits the draft.
-
-- Consider proactively suggesting a feedback draft only when the current conversation contains a clear error signal: a tool call threw or returned an error; a result is clearly contrary to expectations and the user expresses confusion or dissatisfaction; or the same problem remains after the user retries it. Normal use, casual conversation, general complaints, and suspected problems without clear error evidence are not eligible.
-- An eligible error does not require a suggestion. Suggest only when the problem remains unresolved, recurs, or materially interferes with the user's task. Do not suggest for a minor failure that recovered automatically without affecting the task.
-- Always troubleshoot, solve the current problem, or offer a workaround first. If it cannot be solved, explain the blocker first. Only at the end of that turn may you add one unobtrusive sentence in the user's language, such as: "如果你愿意，我可以把这次异常整理成反馈草稿，供你检查后自行提交。" Do not use a popup, heading, interactive-question tool, or interruption for the suggestion.
-- Across the entire current conversation, make at most one proactive feedback suggestion in total, across all namespaces and problems. The suggestion consumes this allowance as soon as it is sent, whether the user accepts, declines, or does not reply. Use the conversation history to remember this; do not expose internal tracking or claim a cross-conversation, daily, or persistent limit.
-- A user's direct request to create or revise feedback is not a proactive suggestion, does not consume that allowance, and is not restricted by it. Necessary clarification for that request is also allowed. If the user says they are not interested, stop immediately and do not ask again.
-- Deduplicate a problem by namespace plus its substantive characteristics; changed wording or another retry does not make it a new problem. Never proactively suggest feedback for a problem that was already proactively suggested or already has a draft. A draft created at the user's request still makes that problem ineligible for a later proactive suggestion.
-- After a proactive suggestion, call feedback_prepare only if the user explicitly agrees. A direct request to create feedback is already authorization, so do not ask again. A failure of feedback_prepare itself must never trigger another proactive feedback suggestion.`
+针对 StrataGate 插件的故障、使用疑问和改进建议，用户要求时用 feedback_prepare 生成本地邮件反馈草稿。需要运行证据时用 stratagate_diagnostics，草稿会自动附带本地诊断摘要供用户检查。
+仅在当前会话已有明确的 StrataGate 错误证据，且问题持续影响当前任务时，先处理问题，再于回复末尾轻声建议整理反馈。整个会话最多主动建议一次；用户明确同意后调用。用户直接要求可直接执行；拒绝或未回应就结束建议。按记忆空间与实质问题去重。普通后台重试保持安静；反馈工具自身失败继续原任务。`
 
 function renderError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -174,27 +168,38 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
       autoMemory = { name: 'stratagate:auto-memory', text }
     } catch (error) {
       ctx.logger.warn(`stratagate-memory auto-context failed: ${renderError(error)}`)
-      if (AGENT_FEEDBACK_ENABLED) runtime.notePluginError(session, error)
+      runtime.notePluginError(session, error, 'autoContext')
     }
     try {
       const directory = await runtime.buildMemoryDirectory(session)
       if (directory) contexts.push({ name: 'stratagate:memory-directory', text: directory })
     } catch (error) {
       ctx.logger.warn(`stratagate-memory directory failed: ${renderError(error)}`)
-      if (AGENT_FEEDBACK_ENABLED) runtime.notePluginError(session, error)
+      runtime.notePluginError(session, error, 'directory')
     }
     if (autoMemory) contexts.push(autoMemory)
-    const feedbackSuggestion = AGENT_FEEDBACK_ENABLED ? runtime.takeFeedbackSuggestion(session) : ''
-    if (feedbackSuggestion) contexts.push({ name: 'stratagate:feedback-suggestion', text: feedbackSuggestion })
+    const toolSchemas = ctx.tools.schemas(context.agent).filter(({ name }) => name.startsWith('memory_') || name === 'feedback_prepare' || name === 'stratagate_diagnostics')
+    runtime.trackDiagnosticSession(String(session.id), runtime.namespaceFor(session), estimateTokens(JSON.stringify({
+      sections: assembled.sections.filter(({ name }) => name.startsWith('tool:stratagate-')),
+      contexts: contexts.filter(({ name }) => name.startsWith('stratagate:')), tools: toolSchemas,
+    })))
     return { ...assembled, contexts }
   })
   installRetrievalFinalization(ctx, runtime)
   registerMemoryTools(ctx, runtime)
+  ctx.on('llm/stream', async function* (options, next) {
+    if (models.currentDiagnosticScope()) { yield* next(); return }
+    const namespace = runtime.diagnosticNamespaceForSession(String(options.sessionId ?? ''))
+    if (!namespace || options.purpose) { yield* next(); return }
+    const stage = String(options.sessionId).startsWith('stratagate-dreaming:') ? 'dreamingStep' : 'chat'
+    const memoryInputEstimate = runtime.diagnosticMemoryEstimate(String(options.sessionId))
+    yield* observeModelStream(runtime.diagnostics, { namespace, stage, ...(memoryInputEstimate !== undefined ? { memoryInputEstimate } : {}) }, options, next)
+  })
   ctx.on('tools/result', (exec, result) => {
-    if (!AGENT_FEEDBACK_ENABLED || !result.isError || !exec.agent) return
-    if (exec.name === 'feedback_prepare' || exec.name.startsWith('memory_')) {
-      runtime.notePluginError(exec.agent.session, result.error.message)
-    }
+    if (!exec.agent || !(exec.name === 'feedback_prepare' || exec.name === 'stratagate_diagnostics' || exec.name.startsWith('memory_'))) return
+    const namespace = runtime.namespaceFor(exec.agent.session)
+    runtime.diagnostics.record({ namespace, stage: 'tools' }, { toolCalls: 1, toolFailures: result.isError ? 1 : 0 },
+      result.isError ? { error: result.error.message } : {})
   })
   const disposeAdminRoutes = registerAdminRoutes(ctx, runtime)
   ctx.on('session/event', (session, event) => runtime.acceptEvent(session, event))

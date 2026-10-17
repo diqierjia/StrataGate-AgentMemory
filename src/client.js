@@ -8,18 +8,37 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
     const cytoscape = globalThis.__StrataGateGraphLibraries?.cytoscape
-    // Keep the GitHub workflow dormant, including its AI tool entry and header
-    // links. Restore together with AGENT_FEEDBACK_ENABLED in feedback-policy.ts.
-    // The client build rejects mismatched gates before producing output.
+    // Local AI feedback drafts stay available while GitHub navigation is dormant.
+    // The client build checks Agent/client parity independently of the GitHub gate.
+    const AGENT_FEEDBACK_ENABLED = true
     const GITHUB_FEEDBACK_ENABLED = false
     const FEEDBACK_EMAIL = 'jiahongcheng61@gmail.com'
     const EMAIL_BODY_HINT = '请在下方粘贴 StrataGate 反馈报告，检查后发送。也可以手动附加已下载的诊断文件。\r\n\r\n'
     const STAR_REPOSITORY_URL = 'https://github.com/diqierjia/StrataGate-AgentMemory'
     const ISSUE_URL = STAR_REPOSITORY_URL + '/issues/new'
     const DISCUSSION_URL = STAR_REPOSITORY_URL + '/discussions/categories/q-a'
-    const FEEDBACK_AI_PROMPT = '请根据刚才这个会话中 StrataGate 出现的问题整理一份问题反馈。只使用当前会话中真实发生的信息，不要猜测；不知道的信息留空。然后调用 StrataGate 的 feedback_prepare 工具创建本地反馈草稿，不要自行提交 GitHub Issue。'
+    const FEEDBACK_AI_PROMPT = '请根据当前会话中 StrataGate 插件的故障、使用疑问或改进建议整理反馈。只用已知事实，不要猜测，未知留空，去除凭据。调用 feedback_prepare 保存本地草稿；新问题传 new_draft=true。诊断由程序自动补充。给我“打开反馈草稿”的链接，我会检查后手动发邮件。'
     const FEEDBACK_SETTINGS_ID = 'stratagate-memory'
     const FEEDBACK_VIEW_ID = 'feedback'
+    let pendingFeedbackNavigation = null
+    const feedbackNavigationListeners = new Set()
+
+    function setFeedbackNavigation(state) {
+      pendingFeedbackNavigation = state
+      for (const listener of feedbackNavigationListeners) listener(state)
+      if (feedbackNavigationListeners.size) pendingFeedbackNavigation = null
+    }
+
+    function FeedbackSettingsPage(props) {
+      const [navigationState, setNavigationState] = React.useState(() => pendingFeedbackNavigation)
+      React.useEffect(() => {
+        feedbackNavigationListeners.add(setNavigationState)
+        if (pendingFeedbackNavigation) setNavigationState(pendingFeedbackNavigation)
+        pendingFeedbackNavigation = null
+        return () => feedbackNavigationListeners.delete(setNavigationState)
+      }, [])
+      return h(MemoryPage, { ...props, navigationState: navigationState || props.navigationState })
+    }
     const ISSUE_BODY_HINT = '> 请在下方粘贴 StrataGate 反馈报告（Ctrl+V / ⌘V），检查后提交。若无法粘贴，请返回 StrataGate 手动复制报告。\n\n'
     const MASCOT_DATA_URL = '__STRATAGATE_MASCOT_DATA_URL__'
     const STRATAGATE_CLIENT_VERSION = '__STRATAGATE_CLIENT_VERSION__'
@@ -86,7 +105,22 @@ window.__ModuleLoader__.load({
       return next
     }
 
-    function feedbackLinkTarget(target, locationRef = window.location) {
+    function isDesktopFeedbackSurface(locationRef) {
+      try {
+        const url = new URL(String(locationRef?.href || ''))
+        return url.protocol === 'dsh-app:' && url.hostname === 'app'
+      } catch { return false }
+    }
+
+    function desktopFeedbackOrigin(value) {
+      try {
+        const url = new URL(String(value || ''))
+        return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+          && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash ? url.origin : ''
+      } catch { return '' }
+    }
+
+    function feedbackAnchorTarget(target, locationRef) {
       const anchor = target?.closest?.('a[href]') || target?.parentElement?.closest?.('a[href]')
       if (!anchor) return null
       let url
@@ -95,8 +129,15 @@ window.__ModuleLoader__.load({
       } catch {
         return null
       }
-      if (!readFeedbackDeepLink(url) || url.origin !== String(locationRef?.origin || '')) return null
+      if (!readFeedbackDeepLink(url) || url.pathname !== '/' || url.username || url.password) return null
       return { anchor, url }
+    }
+
+    function feedbackLinkTarget(target, locationRef = window.location, desktopHostOrigin = '') {
+      const match = feedbackAnchorTarget(target, locationRef)
+      if (!match) return null
+      return match.url.origin === String(locationRef?.origin || '')
+        || isDesktopFeedbackSurface(locationRef) && desktopFeedbackOrigin(desktopHostOrigin) === match.url.origin ? match : null
     }
 
     function navigateToFeedback(ctx, targetUrl, locationRef = window.location, allowHttpFallback = true) {
@@ -105,6 +146,15 @@ window.__ModuleLoader__.load({
       const navigation = ctx?.get?.('settingsNavigation')
       if (typeof navigation?.openSection === 'function') {
         navigation.openSection(FEEDBACK_SETTINGS_ID, { view: FEEDBACK_VIEW_ID, namespace: feedback.namespace })
+        return 'host'
+      }
+      // DSH 0.2.0 owns a single shared shell instance in this slot's store.
+      // Its openSection takes only the section id; route state is plugin-owned.
+      const shell = ctx?.get?.('slots')?.entries?.('sidebar.settings')
+        ?.find(entry => typeof entry.store?.create === 'function')?.store.create()
+      if (typeof shell?.actions?.openSection === 'function') {
+        setFeedbackNavigation({ view: FEEDBACK_VIEW_ID, namespace: feedback.namespace })
+        shell.actions.openSection(FEEDBACK_SETTINGS_ID)
         return 'host'
       }
       if (allowHttpFallback) locationRef.assign(targetUrl.href)
@@ -139,15 +189,46 @@ window.__ModuleLoader__.load({
     }
 
     function installFeedbackLinkNavigation(ctx, documentRef = document, locationRef = window.location) {
+      const desktop = isDesktopFeedbackSurface(locationRef)
+      let active = true
+      let desktopHostOrigin = ''
+      let bootPending = desktop && typeof window.dshDesktopBoot?.ready === 'function'
+      let replayingAnchor = null
+      // The native app document and its authenticated HTTP backend have
+      // different origins. Read the owned endpoint once from the preload bridge.
+      const bootReady = bootPending ? Promise.resolve().then(() => window.dshDesktopBoot.ready())
+        .then(boot => { if (active) desktopHostOrigin = desktopFeedbackOrigin(boot?.streamBaseUrl) })
+        .catch(() => {})
+        .finally(() => { bootPending = false }) : Promise.resolve()
+      const takeClick = (event) => {
+        event.preventDefault()
+        // Markdown explicitly opens the sidebar browser even if defaultPrevented.
+        event.stopPropagation()
+      }
       const onClick = (event) => {
         if (event.defaultPrevented || (typeof event.button === 'number' && event.button !== 0) || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-        const match = feedbackLinkTarget(event.target, locationRef)
-        if (!match) return
-        event.preventDefault()
-        navigateToFeedback(ctx, match.url, locationRef)
+        const candidate = feedbackAnchorTarget(event.target, locationRef)
+        if (!candidate || candidate.anchor === replayingAnchor) return
+        const match = feedbackLinkTarget(event.target, locationRef, desktopHostOrigin)
+        if (match) {
+          takeClick(event)
+          navigateToFeedback(ctx, match.url, locationRef, !desktop)
+        } else if (bootPending && desktopFeedbackOrigin(candidate.url.origin)) {
+          // Preserve an immediate first click while the local IPC reply arrives.
+          takeClick(event)
+          void bootReady.then(() => {
+            if (!active) return
+            if (candidate.url.origin === desktopHostOrigin) navigateToFeedback(ctx, candidate.url, locationRef, false)
+            else {
+              // A different server's link retains the host's normal link action.
+              replayingAnchor = candidate.anchor
+              try { candidate.anchor.click() } finally { replayingAnchor = null }
+            }
+          })
+        }
       }
       documentRef.addEventListener('click', onClick, true)
-      return () => documentRef.removeEventListener('click', onClick, true)
+      return () => { active = false; documentRef.removeEventListener('click', onClick, true) }
     }
 
     function exactInteractiveControl(labels, documentRef) {
@@ -282,7 +363,7 @@ window.__ModuleLoader__.load({
     `
 
     const css = `
-      .sg-feedback-wizard .sg-primary-link{color:#fff}.sg-feedback-wizard .sg-support-field{display:grid;gap:6px;margin:14px 0}.sg-feedback-step-back{margin-bottom:14px}
+      .sg-feedback-wizard .sg-primary-link{color:#fff}.sg-feedback-wizard .sg-support-field{display:grid;gap:6px;margin:14px 0}.sg-feedback-wizard .sg-support-preview{white-space:pre-wrap;overflow-wrap:anywhere}.sg-feedback-step-back{margin-bottom:14px}
       .sg-memory {
         color-scheme:inherit;
         --sg-page:var(--dsw-alias-bg-layer-2,#fff);
@@ -3175,12 +3256,18 @@ window.__ModuleLoader__.load({
 
     function redactText(value) {
       return String(value ?? '')
-        .replace(/\b(?:sk|gh[opasu]|github_pat)_[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+        .split(/\nRaw response(?: preview| \(full\))/i)[0]
+        .replace(/\b(?:sk[-_]|gh[opasu]_|github_pat_)[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
         .replace(/(["']?\b(?:api[_-]?key|token|password|passwd|access[_-]?token|refresh[_-]?token|secret|authorization)["']?\s*[:=]\s*)(["'])([\s\S]*?)\2/gi, '$1$2[REDACTED]$2')
         .replace(/(\bauthorization\s*[:=]\s*)(Bearer|Basic|Token)\s+[^\s,;}]+/gi, '$1$2 [REDACTED]')
         .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}={0,2}\b/gi, 'Bearer [REDACTED]')
         .replace(/\b(?:Basic|Token)\s+[^\s,;}]+/gi, (match) => match.replace(/\s+[^\s,;}]+$/, ' [REDACTED]'))
         .replace(/(["']?\b(?:api[_-]?key|token|password|passwd|access[_-]?token|refresh[_-]?token|secret|authorization)["']?\s*[:=]\s*)([^\s,;}]+)/gi, '$1[REDACTED]')
+        .replace(/https?:\/\/[^\s<>"']+/gi, '[url]')
+        .replace(/[A-Z]:[\\/][^\s"'<>]+/gi, '[path]')
+        .replace(/\\\\[^\s"'<>\\]+\\[^\s"'<>]+/g, '[path]')
+        .replace(/(^|[\s"'(=:])\/(?:[^\s"'<>/]+\/)+[^\s"'<>]*/g, '$1[path]')
+        .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, '[email]')
     }
 
     function redactedJson(value) {
@@ -3193,11 +3280,6 @@ window.__ModuleLoader__.load({
         return current
       }
       return JSON.stringify(visit(value), null, 2) ?? 'null'
-    }
-
-    function safeErrorSummary(value) {
-      const text = redactText(String(value ?? '').trim())
-      return text.length > 2_000 ? text.slice(0, 2_000) + '…' : text
     }
 
     function restoreFeedbackDraftValues(draft, touched = {}) {
@@ -3478,10 +3560,15 @@ window.__ModuleLoader__.load({
             contactStatus ? h('p', { className: 'sg-contact-note', role: 'status' }, contactStatus) : null) : null))
     }
 
-    function buildSupportReport({ problemContent = '', overview = {}, selected = {}, data = {}, recentError = '', includeLogs = false, includeMemory = false, willingToContribute = false } = {}) {
+    function buildSupportReport({ problemContent = '', overview = {}, selected = {}, data = {}, recentError = '', includeLogs = false, includeMemory = false, willingToContribute = false, diagnostics = null } = {}) {
       const problem = redactText(String(problemContent || '').trim())
       if (!problem) return ''
-      const latestJobError = selected?.failedJobDetails?.[0]?.lastError || ''
+      // Error text stays behind the explicit log option, including legacy
+      // diagnostic snapshots that may already contain a detail field.
+      const reportDiagnostics = diagnostics && !includeLogs ? {
+        ...diagnostics,
+        records: Array.isArray(diagnostics.records) ? diagnostics.records.filter(record => record && typeof record === 'object').map(({ detail: _detail, ...record }) => record) : [],
+      } : diagnostics
       const lines = [
         '# StrataGate 问题报告',
         '',
@@ -3492,12 +3579,22 @@ window.__ModuleLoader__.load({
         '- StrataGate 版本：' + (overview.pluginVersion || 'unknown'),
         '- Harness 版本：' + (overview.harnessVersion || 'unknown'),
         '- blockTurnSize：' + (selected?.blockTurnSize ?? 'unknown'),
-        '- 已封存块：' + (selected?.blocks ?? 0),
-        '- Event / Graph Node 数量：' + (selected?.events ?? 0) + ' / ' + (selected?.graphNodes ?? 0),
-        '- 最近错误：' + (safeErrorSummary(recentError || latestJobError) || '无'),
+        '- 已封存块：' + (selected?.blocks ?? 'unknown'),
+        '- Event / Graph Node 数量：' + (selected?.events ?? 'unknown') + ' / ' + (selected?.graphNodes ?? 'unknown'),
+        '- 异常摘要：见下方结构化统计与诊断。',
         '',
         '> 此报告在浏览器本地生成。默认诊断不包含原始聊天、L5、Event 或 Graph 内容。正则脱敏仅是纵深防御，提交前仍需人工检查。',
       ]
+      lines.push('', '## 近期运行摘要', '', '> 运行数据在本地采集；时间范围、缺失数据与统计口径见下方。')
+      if (diagnostics) {
+        const totals = diagnostics.totals || {}
+        const shown = (key) => typeof totals[key] === 'number' ? totals[key] : '未取得'
+        lines.push('', '- 统计范围：' + (diagnostics.since || '未取得') + ' 至 ' + (diagnostics.through || '未取得') + '（UTC）',
+          '- 模型请求次数：' + shown('modelCalls') + '；其中缺少用量记录：' + shown('missingUsageCalls'),
+          '- 已报告 Token 合计：' + shown('totalTokens') + '；完整总量记录的请求数：' + shown('totalTokenCalls'),
+          '- 记忆操作成功 / 失败：' + shown('operationsSucceeded') + ' / ' + shown('operationsFailed'))
+      }
+      lines.push('', '### 结构化统计与诊断', '', '```json', redactedJson(reportDiagnostics || { coverage: { available: false, note: '运行统计尚未取得。' } }), '```')
       if (willingToContribute) lines.push('', '## 贡献意愿', '', '- [x] 我愿意尝试修复并提交 PR。')
       if (includeLogs) {
         const failedJobs = Array.isArray(selected?.failedJobDetails) ? selected.failedJobDetails.map((job) => ({
@@ -3597,6 +3694,7 @@ window.__ModuleLoader__.load({
       const feedbackHeadingRef = React.useRef(null)
       const previousFeedbackStepRef = React.useRef(0)
       const aiNoticeRef = React.useRef(null)
+      const diagnosticsRef = React.useRef(null)
       React.useEffect(() => {
         if (previousFeedbackStepRef.current !== feedbackStep) feedbackHeadingRef.current?.focus({ preventScroll: true })
         previousFeedbackStepRef.current = feedbackStep
@@ -3607,10 +3705,16 @@ window.__ModuleLoader__.load({
         bodyTouchedRef.current = false
         setDraftLoading(true)
         void Promise.resolve().then(() => api('feedback', { namespace })).then((result) => {
-          if (!active || !result?.draft) return
+          if (!active) return
+          diagnosticsRef.current = result?.diagnostics || null
+          if (!result?.draft) return
           const restored = restoreFeedbackDraftValues(result.draft, { title: titleTouchedRef.current, body: bodyTouchedRef.current })
           if (!titleTouchedRef.current) setTitle(restored.title)
           if (!bodyTouchedRef.current) setProblemContent(restored.problemContent)
+          if (result.draft.aiPrepared && restored.problemContent && !titleTouchedRef.current && !bodyTouchedRef.current) {
+            setReviewedReport(Object.freeze({ title: restored.title, text: buildSupportReport({ problemContent: restored.problemContent, overview, selected, data, recentError, diagnostics: diagnosticsRef.current }) }))
+            setFeedbackStep(1)
+          }
         }).catch((reason) => {
           if (active) setError('读取反馈草稿失败：' + String(reason?.message || reason))
         }).finally(() => {
@@ -3638,7 +3742,7 @@ window.__ModuleLoader__.load({
           body: JSON.stringify({ namespace, title, bodyMarkdown: problemContent }),
         })
       }
-      const reportSnapshot = Object.freeze({ text: buildSupportReport({ problemContent, overview, selected, data, recentError, includeLogs, includeMemory, willingToContribute }), title })
+      const reportSnapshot = Object.freeze({ text: buildSupportReport({ problemContent, overview, selected, data, recentError, includeLogs, includeMemory, willingToContribute, diagnostics: diagnosticsRef.current }), title })
       const reportBytes = reportSnapshot.text ? new Blob([reportSnapshot.text]).size : 0
       const hasProblem = Boolean(problemContent.trim())
       const persistDraft = () => {
@@ -3704,68 +3808,57 @@ window.__ModuleLoader__.load({
       if (!GITHUB_FEEDBACK_ENABLED) {
         const review = () => {
           if (!hasProblem || draftLoading) return
-          setStatus(''); setError(''); setPreviewOpen(false)
+          setStatus(''); setError('')
           setReviewedReport(reportSnapshot)
           setFeedbackStep(1)
-          // Saving is independent of navigation, copying, and mail activation.
           void saveDraft().catch((reason) => setError('保存反馈草稿失败：' + String(reason?.message || reason)))
         }
         const edit = () => { setFeedbackStep(0); setReviewedReport(null); setStatus(''); setError('') }
-        const previousStep = () => {
-          if (feedbackStep === 1) { edit(); return }
-          setFeedbackStep(1); setStatus(''); setError('')
-        }
         const copyReport = async () => {
           if (!reviewedReport?.text) return
           setStatus('')
           try {
             if (!globalThis.navigator?.clipboard?.writeText) throw new Error('当前环境不支持自动复制')
             await globalThis.navigator.clipboard.writeText(reviewedReport.text)
-            setStatus('报告已复制。请在邮箱中粘贴、检查并发送。')
+            setStatus('报告已复制。请在自己的邮箱中粘贴、检查并发送。')
           } catch {
-            setPreviewOpen(true)
-            setError((current) => (current ? current + ' ' : '') + '无法自动复制。报告仍保留在下方预览中，可选中手动复制，或下载诊断文件。')
+            setError('无法自动复制。下方保留完整报告，可选中手动复制，或下载报告。')
           }
         }
-        const compose = () => {
-          setStatus('已尝试打开邮件应用。若没有打开，请复制邮箱，在常用邮箱中撰写邮件。')
-          try { window.location.href = feedbackEmailUrl(reviewedReport?.title || '') }
-          catch { setError('未能打开邮件应用，请复制邮箱，在常用邮箱中撰写邮件。') }
-        }
-        const preview = () => h('section', { className: 'sg-support-preview-panel', 'aria-label': '将复制的反馈报告' },
-          h('div', { className: 'sg-support-preview-head' }, h('strong', null, '将复制的内容'),
-            h('span', { className: 'sg-support-metrics' }, (reviewedReport?.text.length || 0) + ' 个字符 · ' + new Blob([reviewedReport?.text || '']).size + ' 字节')),
-          includeMemory ? h('p', { className: 'sg-error-note' }, '已包含你主动勾选的记忆内容，可能有私人对话。请逐项检查后再发送。') : null,
-          h('textarea', { id: 'sg-support-preview', className: 'sg-support-preview', readOnly: true, value: reviewedReport?.text || '', spellCheck: false, 'aria-label': '本地反馈报告预览' }))
         return h(React.Fragment, null,
           h(BackBar, { label: '更多', onBack }),
-          h('section', { className: 'sg-feedback-wizard', 'aria-label': '邮件反馈' },
-            h('div', { className: 'sg-feedback-heading' }, h('h2', null, '反馈与联系'), h('p', null, '描述问题、检查报告，再到自己的邮箱中发送。')),
-            h('ol', { className: 'sg-feedback-steps', 'aria-label': '反馈步骤' }, ['描述问题', '检查报告', '邮件发送'].map((label, index) => h('li', { key: label, className: index === feedbackStep ? 'active' : index < feedbackStep ? 'done' : '', 'aria-current': index === feedbackStep ? 'step' : undefined }, h('span', { className: 'sg-feedback-step-number', 'aria-hidden': 'true' }, index < feedbackStep ? '✓' : index + 1), label))),
-            feedbackStep > 0 ? h('div', { className: 'sg-feedback-step-back' }, h('button', { type: 'button', className: 'sg-toolbar-button', 'aria-label': '上一步：' + (feedbackStep === 1 ? '描述问题' : '检查报告'), onClick: previousStep }, '← 上一步')) : null,
-            feedbackStep === 0 ? h('section', { className: 'sg-feedback-stage', 'aria-label': '描述问题' },
-              h('h3', { ref: feedbackHeadingRef, tabIndex: -1 }, '发生了什么？'),
-              h('label', { className: 'sg-support-field' }, h('span', null, '问题描述'), h('textarea', { className: 'sg-support-description', rows: 5, value: problemContent, onChange: (event) => { bodyTouchedRef.current = true; setProblemContent(event.target.value) }, onBlur: persistDraft, placeholder: '发生了什么？怎样复现？你希望得到什么结果？也可以提出建议或使用疑问。', 'aria-label': '问题内容' })),
-              h('label', { className: 'sg-support-field' }, h('span', null, '邮件主题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => { titleTouchedRef.current = true; setTitle(event.target.value) }, onBlur: persistDraft, placeholder: '简短概括问题' })),
-              h('fieldset', { className: 'sg-feedback-options' }, h('legend', null, '附加信息'), h('p', null, '基础诊断包含版本和运行状态；日志、记忆内容默认不加入。'),
+          h('section', { className: 'sg-feedback-wizard', 'aria-label': 'StrataGate 插件反馈' },
+            h('div', { className: 'sg-feedback-heading' }, h('h2', { ref: feedbackHeadingRef, tabIndex: -1 }, '反馈 StrataGate'),
+              h('p', null, feedbackStep === 0 ? '让 AI 根据刚才的会话整理，你也可以补充一两句。运行摘要会自动加入报告。' : '检查下面的完整报告，再复制到自己的邮箱发送。')),
+            draftLoading ? h('p', { className: 'sg-support-sync', role: 'status' }, '正在读取本地反馈草稿…') : null,
+            feedbackStep === 0 ? h('section', { className: 'sg-feedback-stage', 'aria-label': '编辑反馈' },
+              AGENT_FEEDBACK_ENABLED ? h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyAiPrompt }, '让 AI 整理反馈')) : null,
+              AGENT_FEEDBACK_ENABLED ? h('details', null, h('summary', null, '查看 AI 提示词'), h('pre', { className: 'sg-raw-json sg-code' }, FEEDBACK_AI_PROMPT)) : null,
+              aiPromptCopied ? h('p', { ref: aiNoticeRef, role: 'status' }, '提示词已复制。回到刚才的会话，粘贴并发送，AI 会生成本地草稿。') : null,
+              h('label', { className: 'sg-support-field' }, h('span', null, '问题内容'), h('textarea', { className: 'sg-support-description', rows: 7, value: problemContent, onChange: (event) => { bodyTouchedRef.current = true; setProblemContent(event.target.value) }, onBlur: persistDraft, placeholder: '可以让 AI 整理后再补充，也可以直接描述问题、建议或疑问。', 'aria-label': '问题内容' })),
+              h('label', { className: 'sg-support-field' }, h('span', null, '邮件主题（可选）'), h('input', { className: 'sg-support-input', value: title, onChange: (event) => { titleTouchedRef.current = true; setTitle(event.target.value) }, onBlur: persistDraft })),
+              h('fieldset', { className: 'sg-feedback-options' }, h('legend', null, '附加信息'), h('p', null, '默认包含基础诊断、近期运行统计和异常分类；以下内容由你选择加入。'),
                 h('div', { className: 'sg-feedback-checks' },
-                  h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeLogs, onChange: (event) => setIncludeLogs(event.target.checked), 'aria-label': '加入日志' }), h('span', null, '加入日志')),
+                  h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeLogs, onChange: (event) => setIncludeLogs(event.target.checked), 'aria-label': '加入日志' }), h('span', null, '加入详细错误日志')),
                   h('label', { className: 'sg-check' }, h('input', { type: 'checkbox', checked: includeMemory, onChange: (event) => setIncludeMemory(event.target.checked), 'aria-label': '加入记忆内容' }), h('span', null, '加入记忆内容'))),
-                includeMemory ? h('p', { className: 'sg-error-note', role: 'note' }, '记忆内容可能包含私人对话，自动脱敏不能保证识别所有敏感信息。请在下一步检查报告。') : null),
-              draftLoading ? h('p', { className: 'sg-support-sync', role: 'status' }, '正在读取本地反馈草稿…') : null,
-              !hasProblem ? h('p', { className: 'sg-support-empty' }, '填写问题描述后，可以检查报告。') : null,
-              h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-primary-link', disabled: !hasProblem || draftLoading, onClick: review }, '下一步：检查报告'))) : null,
-            feedbackStep === 1 ? h('section', { className: 'sg-feedback-stage', 'aria-label': '检查报告' },
-              h('h3', { ref: feedbackHeadingRef, tabIndex: -1 }, '检查将发送的内容'), h('p', { className: 'sg-feedback-caption' }, '确认问题描述和附加内容；不想发送的内容，可返回修改。'), preview(),
-              h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-primary-link', disabled: !reviewedReport?.text, onClick: () => { if (reviewedReport?.text) { setFeedbackStep(2); setStatus('') } } }, '下一步：邮件发送'))) : null,
-            feedbackStep === 2 ? h('section', { className: 'sg-feedback-stage', 'aria-label': '邮件发送' },
-              h('div', { className: 'sg-feedback-ready' }, h('h3', { ref: feedbackHeadingRef, tabIndex: -1 }, '报告准备好了'), h('span', { className: 'sg-feedback-unsent' }, '尚未发送'), h('p', null, '请复制报告，在自己的邮箱中粘贴、检查并发送。StrataGate 不会自动发送邮件。')),
-              h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-primary-link', disabled: !reviewedReport?.text, onClick: copyReport }, '复制报告')),
-              h('section', { className: 'sg-feedback-contact', 'aria-label': '作者邮箱' }, h('div', { className: 'sg-feedback-contact-head' }, h('h3', null, '发送给作者'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyEmail }, '复制邮箱')), h('p', { className: 'sg-feedback-email' }, FEEDBACK_EMAIL),
-                h('p', { className: 'sg-feedback-caption' }, '若邮件应用没有打开，可复制邮箱，在常用邮箱中手动撰写。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: compose }, '尝试打开邮件应用')),
-              h('div', { className: 'sg-feedback-secondary' }, h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setPreviewOpen((open) => !open), 'aria-expanded': previewOpen }, previewOpen ? '收起报告' : '查看报告'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: download }, '下载诊断文件')),
-              previewOpen ? preview() : null,
-              h('p', { className: 'sg-feedback-caption sg-feedback-privacy' }, '邮件链接只预填主题和粘贴提示，不包含报告正文、日志或记忆内容。')) : null,
+                includeMemory ? h('p', { className: 'sg-error-note' }, '记忆内容可能包含私人对话，请逐项检查后发送。') : null),
+              !hasProblem ? h('p', { className: 'sg-support-empty' }, '有了问题描述后，即可检查报告。') : null,
+              h('div', { className: 'sg-feedback-actions' }, h('button', { type: 'button', className: 'sg-primary-link', disabled: !hasProblem || draftLoading, onClick: review }, '检查报告'))) : null,
+            feedbackStep > 0 && reviewedReport ? h('section', { className: 'sg-feedback-stage', 'aria-label': '检查并发送反馈' },
+              h('div', { className: 'sg-feedback-ready' }, h('span', { className: 'sg-feedback-unsent' }, '尚未发送'),
+                h('p', null, '报告包含问题描述和本地运行摘要。请检查凭据与私人内容；可返回修改。')),
+              h('label', { className: 'sg-support-field' }, h('span', null, '完整报告 · ' + new Blob([reviewedReport.text]).size + ' 字节'),
+                h('textarea', { className: 'sg-support-preview', readOnly: true, value: reviewedReport.text, spellCheck: false, 'aria-label': '本地反馈报告预览' })),
+              h('div', { className: 'sg-feedback-actions' },
+                h('button', { type: 'button', className: 'sg-primary-link', onClick: copyReport }, '复制报告'),
+                h('button', { type: 'button', className: 'sg-quiet-button', onClick: edit }, '修改或补充'),
+                h('button', { type: 'button', className: 'sg-quiet-button', onClick: download }, '下载报告')),
+              h('section', { className: 'sg-feedback-contact', 'aria-label': '邮件发送信息' },
+                h('p', { className: 'sg-feedback-email' }, FEEDBACK_EMAIL),
+                h('button', { type: 'button', className: 'sg-quiet-button', onClick: copyEmail }, '复制邮箱'),
+                h('p', null, '邮件主题：StrataGate 反馈' + (reviewedReport.title ? '：' + reviewedReport.title : '')),
+                h('p', { className: 'sg-feedback-caption' }, '在自己的邮箱填写收件地址，粘贴报告后发送。')),
+              h('p', { className: 'sg-feedback-caption' }, '资料保存在本地；作者在收到你发送的邮件后才能查看。')) : null,
             status ? h('p', { className: 'sg-support-status', role: 'status', 'aria-live': 'polite' }, status) : null,
             error ? h('p', { className: 'sg-support-error', role: 'alert' }, error) : null))
       }
@@ -4088,11 +4181,16 @@ window.__ModuleLoader__.load({
       const feedbackDeepLinkRef = React.useRef(readFeedbackNavigationState(navigationState) || readFeedbackDeepLink())
       const graphNodeNavigationRef = React.useRef(readGraphNodeNavigationState(navigationState) || readGraphNodeDeepLink())
       const feedbackNavigationStateRef = React.useRef(navigationState)
+      const namespaceNavigationRef = React.useRef(null)
       const directoryScrollRef = React.useRef(null)
       const reportError = (reason) => {
         const message = String(reason?.message || reason)
         setError(message)
         setRecentError(message)
+        if (namespace) {
+          const category = /timeout|timed out|超时/i.test(message) ? 'timeout' : /fetch|network|网络/i.test(message) ? 'network' : 'request-failed'
+          void api('diagnostics', { namespace, category }, { method: 'POST' }).catch(() => {})
+        }
       }
 
       React.useEffect(() => {
@@ -4178,21 +4276,26 @@ window.__ModuleLoader__.load({
           setView({ name: 'root' })
           setSource(null)
           setGraphFocusNodeId(graphLink.nodeId)
+          namespaceNavigationRef.current = namespace !== graphLink.namespace ? { namespace: graphLink.namespace } : null
           setNamespace(graphLink.namespace)
-          void loadDashboard(graphLink.namespace, { force: true })
+          if (namespace === graphLink.namespace) void loadDashboard(graphLink.namespace, { force: true })
           return
         }
         if (!feedback) return
         setSection('more')
         setView({ name: 'support' })
         setSource(null)
+        namespaceNavigationRef.current = namespace !== feedback.namespace ? { namespace: feedback.namespace } : null
         setNamespace(feedback.namespace)
-        void loadDashboard(feedback.namespace, { force: true })
+        if (namespace === feedback.namespace) void loadDashboard(feedback.namespace, { force: true })
       }, [navigationState, loadDashboard])
       React.useEffect(() => {
-        if (!namespace || loadedNamespaceRef.current === namespace) return
+        if (!namespace) return
+        const navigated = namespaceNavigationRef.current?.namespace === namespace
+        namespaceNavigationRef.current = null
+        if (loadedNamespaceRef.current === namespace) return
         directoryScrollRef.current = null
-        setConversationId(''); setView({ name: 'root' }); setSource(null); setData({ events: [], graph: { nodes: [], edges: [], migration: null }, blocks: [], openBlock: null, conversations: [], activeThreadId: null, audit: [], pagination: { events: { total: 0, offset: 0, limit: 40 }, blocks: { total: 0, offset: 0, limit: 40 }, audit: { total: 0, offset: 0, limit: 100 } } }); void loadDashboard(namespace, { force: true })
+        setConversationId(''); if (!navigated) setView({ name: 'root' }); setSource(null); setRecentError(''); setData({ events: [], graph: { nodes: [], edges: [], migration: null }, blocks: [], openBlock: null, conversations: [], activeThreadId: null, audit: [], pagination: { events: { total: 0, offset: 0, limit: 40 }, blocks: { total: 0, offset: 0, limit: 40 }, audit: { total: 0, offset: 0, limit: 100 } } }); void loadDashboard(namespace, { force: true })
       }, [namespace, loadDashboard])
       React.useEffect(() => {
         if (!namespace) return undefined
@@ -4313,7 +4416,7 @@ window.__ModuleLoader__.load({
       const moreBack = () => setView({ name: 'root' })
 
       let content = null
-      if (section === 'long' && loadedNamespaceRef.current !== namespace) content = h(Loading)
+      if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
       else if (view.name === 'settings' && !selected) content = h(SettingsPage, { selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
@@ -4378,7 +4481,7 @@ window.__ModuleLoader__.load({
           setShortTermStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showShortTermStatus', visible) : null,
           setRetrievalStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showRetrievalStatus', visible) : null,
         }),
-      }, (props) => h(MemoryPage, { ...props, onOpenDreamingSession: sessionId => {
+      }, (props) => h(FeedbackSettingsPage, { ...props, onOpenDreamingSession: sessionId => {
         const navigation = ctx.get('uiWorkspace')
         if (typeof navigation?.openSession !== 'function') throw new Error('当前 DSH 未提供会话导航，请升级宿主后重试')
         navigation.openSession(sessionId)

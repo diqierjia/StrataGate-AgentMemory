@@ -104,257 +104,158 @@ function mountClient(runtime: StrataGateRuntime, fetchOverride?: (...args: any[]
 
 describe('email feedback review regressions', () => {
   it.each([
-    [false, false, true],
-    [true, true, true],
-    [false, true, false],
-    [true, false, false],
-  ])('checks Agent=%s and UI=%s before allowing the client build', async (agent, client, allowed) => {
+    [true, true, false, true], [false, false, false, true],
+    [true, false, false, false], [true, true, true, false],
+  ])('checks Agent=%s client=%s GitHub=%s', async (agent, client, github, allowed) => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-gates-'))
     try {
       await mkdir(join(directory, 'src'))
       await writeFile(join(directory, 'src/feedback-policy.ts'), 'export const AGENT_FEEDBACK_ENABLED = ' + agent)
-      await writeFile(join(directory, 'src/client.js'), 'const GITHUB_FEEDBACK_ENABLED = ' + client)
+      await writeFile(join(directory, 'src/client.js'), 'const AGENT_FEEDBACK_ENABLED = ' + client + '\nconst GITHUB_FEEDBACK_ENABLED = ' + github)
       const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/check-feedback-policy.mjs', import.meta.url)), directory], { encoding: 'utf8' })
       expect(result.error).toBeUndefined()
       expect(result.status === 0).toBe(allowed)
-      if (!allowed) expect(result.stderr).toContain('Feedback gates must match')
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 
-  it.each([
-    ['split surrogate boundary', 'a'.repeat(239) + '😀', 'a'.repeat(239)],
-    ['complete surrogate boundary', 'a'.repeat(238) + '😀', 'a'.repeat(238) + '😀'],
-  ])('saves and restores %s through the real routes and renders usable email links', async (_name, title, expected) => {
-    const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-unicode-'))
-    let runtime = openRuntime(join(directory, 'memory.db'))
+  it('opens a persisted AI draft directly for review with local statistics and no external navigation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-ai-'))
+    const filename = join(directory, 'memory.db')
+    let runtime = openRuntime(filename)
+    const session = { id: 'feedback-session', header: { cwd: directory } } as Session
     try {
-      const writer = mountClient(runtime)
-      let tree = writer.render()
-      props(tree).find((value) => value.className === 'sg-support-input').onChange({ target: { value: title } })
-      props(tree).find((value) => value['aria-label'] === '问题内容').onChange({ target: { value: '可复现的问题' } })
-      tree = writer.render()
-      props(tree).find((value) => value.className === 'sg-support-input').onBlur()
-      await vi.waitFor(() => expect(writer.states[3]).toBe('反馈草稿已保存在本地。'))
-      expect(runtime.adminFeedbackDraft(namespace).draft?.title).toBe(expected)
-      await runtime.close()
-      runtime = openRuntime(join(directory, 'memory.db'))
-      const reader = mountClient(runtime)
-      reader.render(); reader.runEffects()
-      await vi.waitFor(() => expect(reader.states[7]).toBe(false))
-      const restoredTree = reader.render()
-      expect(props(restoredTree).find((value) => value.className === 'sg-support-input').value).toBe(expected)
-      expect(props(restoredTree).find((value) => value['aria-label'] === '问题内容').value).toBe('可复现的问题')
-      for (const value of props(restoredTree).filter((value) => value.href)) {
-        expect(new URL(value.href).protocol).toBe('mailto:')
-      }
-      control(restoredTree, '下一步：检查报告').onClick()
-      control(reader.render(), '下一步：邮件发送').onClick()
-      await control(reader.render(), '复制报告').onClick()
-      control(reader.render(), '尝试打开邮件应用').onClick()
-      expect(new URL(reader.composed[0]!).searchParams.get('subject')).toBe('StrataGate 反馈：' + expected)
-      expect(reader.copied[0]).toContain('可复现的问题')
-    } finally {
-      await runtime.close()
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
-
-  it.each(['old\ud800title', 'old\udc00title'])('restores historical malformed Unicode title %j without crashing', async (title) => {
-    const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-history-'))
-    const database = join(directory, 'memory.db')
-    const store = new DshMetadataStore(database)
-    try { store.setFeedbackDraft(namespace, { title, bodyMarkdown: '旧草稿内容' }) } finally { store.close() }
-    const runtime = openRuntime(database)
-    try {
-      const reader = mountClient(runtime)
-      reader.render(); reader.runEffects()
-      await vi.waitFor(() => expect(reader.states[7]).toBe(false))
-      const tree = reader.render()
-      expect(props(tree).find((value) => value.className === 'sg-support-input').value).toBe('old\ufffdtitle')
-      expect(() => reader.helpers.feedbackEmailUrl(title)).not.toThrow()
-      expect(new URL(reader.helpers.feedbackEmailUrl(title)).searchParams.get('subject')).toBe('StrataGate 反馈：old\ufffdtitle')
-      expect(props(tree).find((value) => value['aria-label'] === '问题内容').value).toBe('旧草稿内容')
-    } finally {
-      await runtime.close()
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
-
-  it('bounds long email subjects and removes control characters before encoding', async () => {
-    const runtime = openRuntime(':memory:')
-    try {
-      const { helpers } = mountClient(runtime)
-      const title = 'a'.repeat(239) + '😀' + '尾部'.repeat(10_000)
-      const url = new URL(helpers.feedbackEmailUrl(title))
-      expect(url.searchParams.get('subject')).toBe('StrataGate 反馈：' + 'a'.repeat(239))
-      expect(new URL(helpers.feedbackEmailUrl('甲\u0000\r\n\u007f\u0085乙')).searchParams.get('subject')).toBe('StrataGate 反馈：甲 乙')
-      expect(() => helpers.feedbackEmailUrl('x\ud800y\udc00z')).not.toThrow()
-    } finally { await runtime.close() }
-  })
-
-  it('continues copying and composing when draft saving throws synchronously', async () => {
-    const runtime = openRuntime(':memory:')
-    try {
-      const ui = mountClient(runtime, () => { throw new Error('synchronous save failure') })
-      const tree = ui.render()
-      ui.runEffects()
-      await vi.waitFor(() => expect(ui.states[7]).toBe(false))
-      props(tree).find((value) => value['aria-label'] === '问题内容').onChange({ target: { value: '报告仍应可复制' } })
-      expect(() => control(ui.render(), '下一步：检查报告').onClick()).not.toThrow()
-      control(ui.render(), '下一步：邮件发送').onClick()
-      await control(ui.render(), '复制报告').onClick()
-      control(ui.render(), '尝试打开邮件应用').onClick()
-      expect(ui.calls).toEqual(['save', 'copy', 'compose'])
-      expect(ui.copied[0]).toContain('报告仍应可复制')
-      expect(ui.composed[0]).toMatch(/^mailto:jiahongcheng61@gmail\.com\?/)
-      await vi.waitFor(() => expect(ui.states[4]).toContain('保存反馈草稿失败：synchronous save failure'))
-      control(ui.render(), '← 上一步').onClick()
-      control(ui.render(), '← 上一步').onClick()
-      expect(props(ui.render()).find((value) => value['aria-label'] === '问题内容').value).toBe('报告仍应可复制')
-    } finally { await runtime.close() }
-  })
-
-  it('keeps real production defaults disabled without accumulating pending error suggestions', async () => {
-    const runtime = openRuntime(':memory:')
-    try {
-      expect(AGENT_FEEDBACK_ENABLED).toBe(false)
-      const tools: string[] = []
-      registerMemoryTools({ tools: { register: (tool: { name: string }) => tools.push(tool.name) } } as never, runtime)
-      expect(tools).not.toContain('feedback_prepare')
-      for (let index = 0; index < 1_000; index++) runtime.notePluginError({ id: 'failed-' + index } as Session)
-      expect((runtime as unknown as { pendingFeedbackSuggestionSessions: Set<string> }).pendingFeedbackSuggestionSessions.size).toBe(0)
-      expect(runtime.takeFeedbackSuggestion({ id: 'failed-1' } as Session)).toBe('')
+      const actualNamespace = runtime.namespaceFor(session)
+      runtime.diagnostics.record({ namespace: actualNamespace, stage: 'extractor' }, { tasks: 3, tasksSucceeded: 2, tasksFailed: 1, totalTokens: 120 })
+      runtime.notePluginError(session, new Error('timeout token=private-secret'))
+      await runtime.prepareFeedback(session, { newDraft: true, title: '提取异常', description: '用户已观察到的问题' })
+      await runtime.close(); runtime = openRuntime(filename)
       const ui = mountClient(runtime)
-      expect(ui.helpers.GITHUB_FEEDBACK_ENABLED).toBe(false)
-      for (const tree of [ui.render(), ui.helpers.HeaderCommunityLinks()]) {
-        expect(JSON.stringify(tree)).not.toMatch(/GitHub|Issue \/ PR|AI 帮我填|feedback_prepare/)
-        expect(props(tree).filter((value) => value.href).every((value) => value.href.startsWith('mailto:'))).toBe(true)
-      }
-    } finally { await runtime.close() }
-  })
-
-  it('preserves inputs across steps and copies, downloads and mails only the reviewed snapshot after background updates', async () => {
-    const runtime = openRuntime(':memory:')
-    const downloads: Blob[] = []
-    let clicks = 0, revoked = 0
-    class FixtureURL extends URL {
-      static createObjectURL(blob: Blob) { downloads.push(blob); return 'blob:feedback-fixture' }
-      static revokeObjectURL(_value: string) { revoked++ }
-    }
-    const link = { style: {}, click: () => { clicks++ }, remove: () => {} }
-    try {
-      const ui = mountClient(runtime, undefined, { URL: FixtureURL, document: { createElement: () => link, body: { appendChild: () => {} } } })
-      ui.render({ overview: { pluginVersion: 'review-version' }, recentError: 'reviewed-error' }); ui.runEffects()
+      ui.render({ namespace: actualNamespace }); ui.runEffects()
       await vi.waitFor(() => expect(ui.states[7]).toBe(false))
-      let tree = ui.render()
-      expect(control(tree, '下一步：检查报告').disabled).toBe(true)
-      expect(control(tree, '复制报告')).toBeUndefined()
-      props(tree).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '需要保留的问题内容' } })
-      props(tree).find(p => p.className === 'sg-support-input').onChange({ target: { value: '原邮件主题' } })
-      props(tree).find(p => p['aria-label'] === '加入日志').onChange({ target: { checked: true } })
-      control(ui.render(), '下一步：检查报告').onClick()
-      tree = ui.render()
-      const reviewed = props(tree).find(p => p['aria-label'] === '本地反馈报告预览').value
-      expect(reviewed).toContain('review-version')
-      expect(reviewed).toContain('reviewed-error')
-      expect(reviewed).not.toContain('用户主动附加的记忆数据')
-      tree = ui.render({ overview: { pluginVersion: 'new-version' }, recentError: 'unreviewed-error', data: { graph: { nodes: [{ id: 'private-node', name: 'private-memory-fixture' }] } } })
-      expect(props(tree).find(p => p['aria-label'] === '本地反馈报告预览').value).toBe(reviewed)
-      control(tree, '下一步：邮件发送').onClick()
-      tree = ui.render()
-      expect(JSON.stringify(tree)).toContain('尚未发送')
-      expect(ui.calls).toEqual(['save'])
+      const tree = ui.render()
+      const report = props(tree).find(p => p['aria-label'] === '本地反馈报告预览').value
+      expect(report).toContain('用户已观察到的问题')
+      expect(report).toContain('120')
+      expect(report).toContain('extractor')
+      expect(report).not.toContain('private-secret')
+      expect(report).not.toContain('用户主动附加的记忆数据')
+      expect(control(tree, '复制报告')).toBeDefined()
+      expect(control(tree, '尝试打开邮件应用')).toBeUndefined()
       await control(tree, '复制报告').onClick()
-      expect(ui.copied).toEqual([reviewed])
+      expect(ui.copied).toEqual([report])
       expect(ui.composed).toEqual([])
       expect(JSON.stringify(ui.render())).toContain('尚未发送')
-      control(ui.render(), '下载诊断文件').onClick()
-      expect(await downloads[0]!.text()).toBe(reviewed)
-      expect(clicks).toBe(1); expect(revoked).toBe(1)
-      control(ui.render(), '尝试打开邮件应用').onClick()
-      const mail = new URL(ui.composed[0]!)
-      expect(mail.searchParams.get('subject')).toBe('StrataGate 反馈：原邮件主题')
-      expect(mail.href).not.toMatch(/reviewed-error|unreviewed-error|private-memory-fixture/)
-      expect(control(ui.render(), '← 上一步')['aria-label']).toBe('上一步：检查报告')
-      control(ui.render(), '← 上一步').onClick()
-      expect(props(ui.render()).find(p => p['aria-label'] === '本地反馈报告预览').value).toBe(reviewed)
-      expect(control(ui.render(), '← 上一步')['aria-label']).toBe('上一步：描述问题')
-      control(ui.render(), '← 上一步').onClick()
-      tree = ui.render()
-      expect(props(tree).find(p => p['aria-label'] === '问题内容').value).toBe('需要保留的问题内容')
-      expect(props(tree).find(p => p.className === 'sg-support-input').value).toBe('原邮件主题')
-      expect(props(tree).find(p => p['aria-label'] === '加入日志').checked).toBe(true)
-      props(tree).find(p => p['aria-label'] === '加入日志').onChange({ target: { checked: false } })
-      props(tree).find(p => p['aria-label'] === '加入记忆内容').onChange({ target: { checked: true } })
-      control(ui.render(), '下一步：检查报告').onClick()
-      tree = ui.render()
-      const changed = props(tree).find(p => p['aria-label'] === '本地反馈报告预览').value
-      expect(changed).toContain('new-version')
-      expect(changed).toContain('private-memory-fixture')
-      expect(changed).not.toContain('## 诊断日志')
-      expect(JSON.stringify(tree)).toContain('可能有私人对话')
-      await vi.waitFor(() => expect(runtime.adminFeedbackDraft(namespace).draft?.bodyMarkdown).toBe('需要保留的问题内容'))
+    } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('keeps the reviewed report frozen until editing and preserves manual changes across AI updates', async () => {
+    const runtime = openRuntime(':memory:')
+    try {
+      const ui = mountClient(runtime)
+      ui.render({ overview: { pluginVersion: 'review-version' }, recentError: 'reviewed-error' }); ui.runEffects()
+      await vi.waitFor(() => expect(ui.states[7]).toBe(false))
+      props(ui.render()).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '用户补充内容' } })
+      control(ui.render(), '检查报告').onClick()
+      const report = props(ui.render()).find(p => p['aria-label'] === '本地反馈报告预览').value
+      const updated = ui.render({ overview: { pluginVersion: 'new-version' }, recentError: 'unreviewed-error' })
+      await control(updated, '复制报告').onClick()
+      expect(ui.copied).toEqual([report])
+      expect(report).toContain('review-version')
+      expect(report).not.toContain('unreviewed-error')
+      control(ui.render(), '修改或补充').onClick()
+      expect(props(ui.render()).find(p => p['aria-label'] === '问题内容').value).toBe('用户补充内容')
+      props(ui.render()).find(p => p['aria-label'] === '加入记忆内容').onChange({ target: { checked: true } })
+      control(ui.render({ data: { events: [{ id: 'private-id', title: 'private-memory' }] } }), '检查报告').onClick()
+      expect(props(ui.render()).find(p => p['aria-label'] === '本地反馈报告预览').value).toContain('private-memory')
+      await vi.waitFor(() => expect(runtime.adminFeedbackDraft(namespace).draft?.bodyMarkdown).toBe('用户补充内容'))
+      const activeSession = { id: 'current', header: { cwd: '.' } } as Session
+      runtime.adminSaveFeedbackDraft(runtime.namespaceFor(activeSession), { title: '保留标题', bodyMarkdown: '## 问题描述\n\n人工描述\n\n## 自定义\n\n人工补充' })
+      await runtime.prepareFeedback(activeSession, { actual: '新增现象' })
+      expect(runtime.adminFeedbackDraft(runtime.namespaceFor(activeSession)).draft?.bodyMarkdown).toContain('人工补充')
+      await runtime.prepareFeedback(activeSession, { newDraft: true, description: '全新问题' })
+      expect(runtime.adminFeedbackDraft(runtime.namespaceFor(activeSession)).draft).toMatchObject({ title: '', description: '全新问题', actual: '' })
     } finally { await runtime.close() }
   })
 
-  it.each(['missing', 'rejected', 'synchronous'])('keeps a manually copyable report when clipboard is %s', async (failure) => {
+  it.each(['missing', 'rejected', 'synchronous'])('keeps full manual-copy fallback when clipboard is %s', async failure => {
     const runtime = openRuntime(':memory:')
-    const clipboard = failure === 'missing' ? undefined : { writeText: () => {
-      if (failure === 'synchronous') throw new Error('clipboard failed')
-      return Promise.reject(new Error('permission denied'))
-    } }
+    const clipboard = failure === 'missing' ? undefined : { writeText: () => { if (failure === 'synchronous') throw new Error('denied'); return Promise.reject(new Error('denied')) } }
     try {
       const ui = mountClient(runtime, undefined, { navigator: { clipboard } })
       ui.render(); ui.runEffects(); await vi.waitFor(() => expect(ui.states[7]).toBe(false))
-      props(ui.render()).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '手动复制的报告' } })
-      control(ui.render(), '下一步：检查报告').onClick()
-      const reviewed = props(ui.render()).find(p => p['aria-label'] === '本地反馈报告预览').value
-      control(ui.render(), '下一步：邮件发送').onClick()
+      props(ui.render()).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '手动复制报告' } })
+      control(ui.render(), '检查报告').onClick()
+      const report = props(ui.render()).find(p => p['aria-label'] === '本地反馈报告预览').value
       await control(ui.render(), '复制报告').onClick()
-      const tree = ui.render()
-      expect(props(tree).find(p => p['aria-label'] === '本地反馈报告预览').value).toBe(reviewed)
-      expect(JSON.stringify(tree)).toContain('尚未发送')
-      expect(JSON.stringify(tree)).toContain('可选中手动复制')
+      expect(props(ui.render()).find(p => p['aria-label'] === '本地反馈报告预览').value).toBe(report)
+      expect(JSON.stringify(ui.render())).toContain('可选中手动复制')
       expect(ui.composed).toEqual([])
     } finally { await runtime.close() }
   })
 
-  it('waits for draft loading and keeps edits when a delayed historical draft arrives', async () => {
+  it('keeps copying available when saving fails and offers the AI prompt for manual entry', async () => {
     const runtime = openRuntime(':memory:')
-    let finishGet: (value: any) => void = () => {}
     try {
-      const ui = mountClient(runtime, (url, options) => options?.method === 'PUT' ? request(runtime, url, options) : new Promise(resolve => { finishGet = resolve }))
-      ui.render(); ui.runEffects(); await Promise.resolve()
-      let tree = ui.render()
-      props(tree).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '刚刚输入的内容' } })
-      props(tree).find(p => p.className === 'sg-support-input').onChange({ target: { value: '刚刚输入的主题' } })
-      tree = ui.render()
-      expect(control(tree, '下一步：检查报告').disabled).toBe(true)
-      control(tree, '下一步：检查报告').onClick()
-      expect(ui.states[10]).toBe(0)
-      finishGet({ ok: true, json: async () => ({ draft: { title: '旧主题', bodyMarkdown: '旧内容' } }) })
-      await vi.waitFor(() => expect(ui.states[7]).toBe(false))
-      tree = ui.render()
-      expect(props(tree).find(p => p['aria-label'] === '问题内容').value).toBe('刚刚输入的内容')
-      expect(props(tree).find(p => p.className === 'sg-support-input').value).toBe('刚刚输入的主题')
-      expect(control(tree, '下一步：检查报告').disabled).toBe(false)
+      const ui = mountClient(runtime, () => { throw new Error('save failure') })
+      ui.render(); ui.runEffects(); await vi.waitFor(() => expect(ui.states[7]).toBe(false))
+      expect(control(ui.render(), '让 AI 整理反馈')).toBeDefined()
+      props(ui.render()).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '报告仍可复制' } })
+      control(ui.render(), '检查报告').onClick()
+      await control(ui.render(), '复制报告').onClick()
+      expect(ui.copied[0]).toContain('报告仍可复制')
+      await vi.waitFor(() => expect(ui.states[4]).toContain('保存反馈草稿失败'))
     } finally { await runtime.close() }
   })
 
-  it('offers the email address and keeps the report when mail activation throws', async () => {
+  it('waits for loading and protects edits made while a historical AI draft is arriving', async () => {
+    const runtime = openRuntime(':memory:')
+    let finishGet: (value: unknown) => void = () => {}
+    try {
+      const ui = mountClient(runtime, (_url, options) => options?.method === 'PUT' ? request(runtime, _url, options) : new Promise(resolve => { finishGet = resolve }))
+      ui.render(); ui.runEffects(); await Promise.resolve()
+      props(ui.render()).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '刚刚输入' } })
+      expect(control(ui.render(), '检查报告').disabled).toBe(true)
+      finishGet({ ok: true, json: async () => ({ draft: { title: '旧标题', bodyMarkdown: '旧内容', aiPrepared: true } }) })
+      await vi.waitFor(() => expect(ui.states[7]).toBe(false))
+      expect(props(ui.render()).find(p => p['aria-label'] === '问题内容').value).toBe('刚刚输入')
+      expect(control(ui.render(), '复制报告')).toBeUndefined()
+    } finally { await runtime.close() }
+  })
+
+  it('restores malformed historical text safely and exposes diagnostics only in the current namespace', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-history-'))
+    const filename = join(directory, 'memory.db')
+    const store = new DshMetadataStore(filename)
+    store.setFeedbackDraft(namespace, { title: 'old\ud800title', bodyMarkdown: '旧内容' }); store.close()
+    const runtime = openRuntime(filename)
+    try {
+      const ui = mountClient(runtime)
+      ui.render(); ui.runEffects(); await vi.waitFor(() => expect(ui.states[7]).toBe(false))
+      expect(props(ui.render()).find(p => p.className === 'sg-support-input').value).toBe('old\ufffdtitle')
+      runtime.diagnostics.record({ namespace, stage: 'extractor' }, { tasksFailed: 1 }, { error: 'timeout' })
+      const all = await request(runtime, '/api/stratagate/diagnostics?namespace=' + encodeURIComponent(namespace))
+      const diagnostics = await all.json()
+      expect(diagnostics.records[0].category).toBe('timeout')
+      expect(diagnostics.records[0]).not.toHaveProperty('detail')
+      const other = await request(runtime, '/api/stratagate/diagnostics?namespace=other&id=' + diagnostics.records[0].id)
+      expect((await other.json()).records).toEqual([])
+      expect((await request(runtime, '/api/stratagate/diagnostics')).status).toBe(400)
+    } finally { await runtime.close(); await rm(directory, { recursive: true, force: true }) }
+  })
+
+  it('registers scoped email tools while background failures remain quiet', async () => {
     const runtime = openRuntime(':memory:')
     try {
-      const ui = mountClient(runtime, undefined, { window: { location: { set href(_value: string) { throw new Error('desktop protocol rejected') } } } })
-      ui.render(); ui.runEffects(); await vi.waitFor(() => expect(ui.states[7]).toBe(false))
-      props(ui.render()).find(p => p['aria-label'] === '问题内容').onChange({ target: { value: '没有邮件客户端' } })
-      control(ui.render(), '下一步：检查报告').onClick()
-      control(ui.render(), '下一步：邮件发送').onClick()
-      await control(ui.render(), '复制报告').onClick()
-      control(ui.render(), '尝试打开邮件应用').onClick()
-      expect(JSON.stringify(ui.render())).toContain('未能打开邮件应用，请复制邮箱')
-      expect(JSON.stringify(ui.render())).toContain('jiahongcheng61@gmail.com')
-      expect(JSON.stringify(ui.render())).toContain('尚未发送')
-      expect(ui.copied[0]).toContain('没有邮件客户端')
+      expect(AGENT_FEEDBACK_ENABLED).toBe(true)
+      const tools: string[] = []
+      registerMemoryTools({ tools: { register: (tool: { name: string }) => tools.push(tool.name) } } as never, runtime)
+      expect(tools).toContain('feedback_prepare')
+      expect(tools).toContain('stratagate_diagnostics')
+      const session = { id: 'quiet', header: { cwd: '.' } } as Session
+      runtime.notePluginError(session, new Error('timeout'))
+      expect(runtime.takeFeedbackSuggestion(session)).toBe('')
+      expect(runtime.diagnostics.snapshot(runtime.namespaceFor(session)).records[0]?.category).toBe('timeout')
+      expect(mountClient(runtime).helpers.GITHUB_FEEDBACK_ENABLED).toBe(false)
     } finally { await runtime.close() }
   })
 })

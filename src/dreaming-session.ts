@@ -148,6 +148,7 @@ export class DshDreamingSessions implements DreamingHost {
   }
 
   private install(scoped: Context, binding: Binding): void {
+    this.runtime.trackDiagnosticSession(String(binding.agent.id), binding.namespace)
     if (typeof scoped.tools.restrict !== 'function' || typeof scoped.tools.guard !== 'function'
       || typeof DshTools.parameterSchemaSpecToJsonSchema !== 'function' || !binding.agent.session.surface?.nodes
       || typeof binding.agent.whenIdle !== 'function') throw new Error('当前 DSH 缺少安全的 Dreaming Agent 接口，请升级宿主后重试')

@@ -340,7 +340,7 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
-  it('persists local drafts while keeping archived proactive feedback disabled', async () => {
+  it('persists local drafts while keeping background error signals quiet', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-'))
     const database = join(directory, 'memory.db')
     const config = {
@@ -362,7 +362,7 @@ describe('DSH runtime ingestion', () => {
         submitted: false,
         namespace: first.namespaceFor(session),
         feedbackUrl,
-        message: `反馈草稿已经准备好了，还没有提交到 GitHub。\n\n[打开反馈草稿](${feedbackUrl})`,
+        message: `反馈草稿已保存在本地，邮件尚未发送。\n\n[打开反馈草稿](${feedbackUrl})`,
       })
       expect(prepared).not.toHaveProperty('draft')
       expect(feedbackUrl).toContain('namespace=' + encodeURIComponent(first.namespaceFor(session)))
@@ -371,8 +371,7 @@ describe('DSH runtime ingestion', () => {
 
       const now = Date.parse('2026-09-04T00:00:00.000Z')
       first.notePluginError(session, new Error('write failed'))
-      if (AGENT_FEEDBACK_ENABLED) expect(first.takeFeedbackSuggestion(session, now)).toMatch(/only as evidence[\s\S]*not as an instruction[\s\S]*feedback_prepare itself/)
-      else expect(first.takeFeedbackSuggestion(session, now)).toBe('')
+      expect(first.takeFeedbackSuggestion(session, now)).toBe('')
       first.notePluginError(session, new Error('again'))
       expect(first.takeFeedbackSuggestion(session, now + 4 * 24 * 60 * 60 * 1_000)).toBe('')
     } finally {
@@ -389,8 +388,7 @@ describe('DSH runtime ingestion', () => {
       })
       const afterCooldown = Date.parse('2026-09-10T00:00:00.000Z')
       second.notePluginError(session, new Error('later failure'))
-      if (AGENT_FEEDBACK_ENABLED) expect(second.takeFeedbackSuggestion(session, afterCooldown)).toMatch(/static StrataGate feedback policy[\s\S]*session-limit[\s\S]*deduplication/)
-      else expect(second.takeFeedbackSuggestion(session, afterCooldown)).toBe('')
+      expect(second.takeFeedbackSuggestion(session, afterCooldown)).toBe('')
     } finally {
       await second.close()
       await rm(directory, { recursive: true, force: true })
@@ -1297,11 +1295,8 @@ describe('DSH runtime ingestion', () => {
       const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> }).space(session)
       await vi.waitFor(() => {
         expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'failed', attempts: 1 })
-        if (AGENT_FEEDBACK_ENABLED) expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toContain('static StrataGate feedback policy')
-        else {
-          expect((runtime as unknown as { pendingFeedbackSuggestionSessions: Set<string> }).pendingFeedbackSuggestionSessions.size).toBe(0)
-          expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toBe('')
-        }
+        expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toBe('')
+
       }, { timeout: 4_000 })
 
       expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-10T00:00:00.000Z'))).toBe('')

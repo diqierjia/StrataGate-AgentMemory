@@ -980,7 +980,8 @@ async function feedback(runtime: StrataGateRuntime, req: WebRequest, url: URL): 
   if (req.method === 'GET') {
     const namespace = url.searchParams.get('namespace')?.trim() ?? ''
     if (!namespace) throw new AdminHttpError(400, 'namespace is required')
-    return runtime.adminFeedbackDraft(namespace)
+    const result = runtime.adminFeedbackDraft(namespace)
+    return { ...result, diagnostics: result.draft?.diagnostics ?? await runtime.diagnosticReport?.(namespace) }
   }
   if (req.method !== 'PUT') throw new AdminHttpError(405, 'StrataGate feedback requires GET or PUT')
   let suppliedBody = req.body
@@ -1723,6 +1724,19 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
     const path = url.pathname.replace(/\/$/, '')
     if (path === '/api/stratagate/feedback') {
       sendJson(res, 200, await feedback(runtime, req, url))
+    } else if (path === '/api/stratagate/diagnostics') {
+      const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      if (req.method === 'POST') {
+        const category = url.searchParams.get('category') ?? ''
+        if (!['timeout', 'network', 'request-failed'].includes(category)) throw new AdminHttpError(400, 'Unknown frontend diagnostic category')
+        runtime.diagnostics.record({ namespace, stage: 'frontend' }, { errors: 1 }, { error: category })
+        sendJson(res, 200, { recorded: true })
+        return
+      }
+      if (req.method !== 'GET') throw new AdminHttpError(405, 'StrataGate diagnostics require GET or POST')
+      const id = url.searchParams.get('id') ?? undefined
+      sendJson(res, 200, await runtime.diagnosticReport(namespace, { ...(id ? { id, details: true } : {}), offset: numeric(url.searchParams.get('offset'), 0, 0, 2000) }))
     } else if (path === '/api/stratagate/profile') {
       // This is the authenticated Settings editor. Redacting its editable values
       // would replace user data with placeholders on the next save.

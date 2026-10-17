@@ -37,6 +37,8 @@ import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, validateProfile, type P
 import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
 import { dshMessageSource } from './dsh-compatibility.js'
 import { ModelJsonResponseError, parseJsonResponse } from './json-response.js'
+import { randomUUID } from 'node:crypto'
+import { DiagnosticsRecorder, observeModelStream, type DiagnosticScope } from './diagnostics.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 
 const ELEMENT_TYPES = new Set<MemoryElementType>(['person', 'project', 'organization', 'tool', 'place'])
@@ -613,8 +615,18 @@ export const TOPIC_OUTPUT_TOKEN_BUDGET = 32_768
 export const GRAPH_OUTPUT_TOKEN_BUDGET = 32_768
 
 export class DshModelBridge {
+  private readonly diagnosticScopes = new AsyncLocalStorage<DiagnosticScope>()
+  private diagnostics?: DiagnosticsRecorder
+  private diagnosticNamespace: (session?: Session, sessionId?: string) => string = () => '@shared'
+
+  setDiagnostics(recorder: DiagnosticsRecorder, namespace: (session?: Session, sessionId?: string) => string): void {
+    this.diagnostics = recorder
+    this.diagnosticNamespace = namespace
+  }
+
+  currentDiagnosticScope(): DiagnosticScope | undefined { return this.diagnosticScopes.getStore() }
   private readonly contextWindows = new Map<string, number>()
-  private readonly sessions = new AsyncLocalStorage<{ session?: Session; sessionId: Session['id']; signal?: AbortSignal }>()
+  private readonly sessions = new AsyncLocalStorage<{ session?: Session; sessionId: Session['id']; signal?: AbortSignal; namespace?: string }>()
   private readonly successfulResponses: SuccessfulModelResponse[] = []
   private readonly offCapabilities = new Map<string, 'supported' | 'unsupported'>()
   private readonly warnedOffFallbackRoutes = new Set<string>()
@@ -659,8 +671,8 @@ export class DshModelBridge {
     return this.sessions.run({ session, sessionId: session.id }, operation)
   }
 
-  runDetached<T>(sessionId: string, operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    return this.sessions.run({ sessionId: sessionId as Session['id'], ...(signal ? { signal } : {}) }, operation)
+  runDetached<T>(sessionId: string, operation: () => Promise<T>, signal?: AbortSignal, namespace?: string): Promise<T> {
+    return this.sessions.run({ sessionId: sessionId as Session['id'], ...(signal ? { signal } : {}), ...(namespace ? { namespace } : {}) }, operation)
   }
 
   dreamingModelOptions(): { provider: string; model: string; maxTokens: number } {
@@ -940,6 +952,27 @@ Use project scope for repository decisions, user scope for stable preferences/id
   private async callStructured(kind: SuccessfulModelResponseKind, system: string, payload: unknown,
     validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>): Promise<unknown> {
     const execution = this.sessions.getStore()
+    const scope: DiagnosticScope = { namespace: execution?.namespace ?? this.diagnosticNamespace(execution?.session, String(execution?.sessionId ?? '')),
+      stage: kind, taskId: `task_${randomUUID()}`, calls: 0 }
+    const start = Date.now()
+    return this.diagnosticScopes.run(scope, async () => {
+      try {
+        const result = await this.callStructuredInner(kind, system, payload, validate, topicMetadata)
+        this.diagnostics?.record(scope, { operations: 1, operationsSucceeded: 1, operationsFailed: 0,
+          operationsRecovered: (scope.calls ?? 0) > 1 ? 1 : 0, firstAttemptSucceeded: (scope.calls ?? 0) === 1 ? 1 : 0,
+          retries: Math.max(0, (scope.calls ?? 0) - 1), operationMs: Date.now() - start })
+        return result
+      } catch (error) {
+        this.diagnostics?.record(scope, { operations: 1, operationsSucceeded: 0, operationsFailed: 1,
+          retries: Math.max(0, (scope.calls ?? 0) - 1), operationMs: Date.now() - start }, { error })
+        throw error
+      }
+    })
+  }
+
+  private async callStructuredInner(kind: SuccessfulModelResponseKind, system: string, payload: unknown,
+    validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>): Promise<unknown> {
+    const execution = this.sessions.getStore()
     if (!execution) throw new Error('StrataGate model callback ran without an execution context')
     // Structured memory jobs need a bounded machine-readable response. Prefer
     // exact-model reasoning=off when supported (or still unknown), with one
@@ -1180,6 +1213,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
         return parsed
       } catch (error) {
         if (!(error instanceof ModelJsonResponseError) && !(isTopic && error instanceof TopicProjectionError)) throw error
+        const scope = this.diagnosticScopes.getStore()
+        if (scope) this.diagnostics?.record(scope, { validationFailures: 1 }, { error })
         let retryError: ModelJsonResponseError | TopicProjectionError = error
         if (isTopic && error instanceof TopicProjectionError) {
           const safe = new TopicProjectionError(error.diagnostics.category, error.diagnostics.reason, { ...topicDiagnostics, ...error.diagnostics })
@@ -1285,7 +1320,11 @@ Use project scope for repository decisions, user scope for stable preferences/id
     try {
       await Promise.race([
         (async () => {
-          for await (const chunk of this.ctx.llm.stream(timedRequest)) assembler.push(chunk)
+          const scope = this.diagnosticScopes.getStore()
+          const stream = this.diagnostics && scope
+            ? observeModelStream(this.diagnostics, scope, timedRequest, () => this.ctx.llm.stream(timedRequest))
+            : this.ctx.llm.stream(timedRequest)
+          for await (const chunk of stream) assembler.push(chunk)
         })(),
         timeout,
         aborted,

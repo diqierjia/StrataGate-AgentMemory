@@ -6,8 +6,7 @@ import type { StrataGateRuntime } from './runtime.js'
 import type {} from '@deepseek-ai/dsh-tools'
 import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 
-// Archived during the email transition. Keep the tool implementation for recovery;
-// enabling it also requires restoring the feedback policy and the UI AI entry.
+// Email draft preparation is independent of archived GitHub navigation.
 export { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 
 const jsonOutput = {
@@ -53,23 +52,39 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   if (AGENT_FEEDBACK_ENABLED) ctx.tools.register(defineTool({
     name: 'feedback_prepare',
-    description: 'This tool is provided by the StrataGate plugin. Create or revise a local StrataGate feedback draft when the user directly requests it, or after a proactive suggestion permitted by the StrataGate feedback policy and the user explicitly agrees. A direct user request is already authorization. Use only facts known from the current conversation; leave unknown fields empty and never invent versions, logs, Block counts, or diagnostics. Never submit anything to GitHub. After success, briefly say the draft is local and not submitted, then render feedbackUrl as a Markdown link labeled "打开反馈草稿". Then ask exactly once: "要不要顺便让我尝试修复这个问题，并提交一个 PR？" If the user does not respond or declines, do not ask again. Do not use a popup or other additional UI. Do not print draft fields or an Issue-content table, and do not direct the user through Settings manually.',
+    description: 'This tool is provided by the StrataGate plugin. 整理 StrataGate 插件的故障、使用疑问和改进建议，生成本地邮件反馈草稿并自动附带运行摘要。用户直接要求可调用；主动建议须先获同意。依据当前会话事实填写，未知留空，去除凭据。省略字段保留原值，空字符串或空数组清空；新问题传 new_draft=true。成功后说明草稿在本地、邮件尚未发送，并将 feedbackUrl 显示为“打开反馈草稿”链接，供用户检查后手动发邮件。',
     parameters: {
-      title: { type: 'string' },
-      description: { type: 'string' },
-      reproduction: { type: 'array', items: { type: 'string' } },
-      expected: { type: 'string' },
-      actual: { type: 'string' },
-      error_context: { type: 'string' },
+      new_draft: { type: 'boolean', description: '新问题为 true；修改已有草稿时省略。' },
+      title: { type: 'string', description: '简短问题标题。' },
+      description: { type: 'string', description: '已知问题、建议或疑问。' },
+      reproduction: { type: 'array', items: { type: 'string' }, description: '实际发生过的复现步骤。' },
+      expected: { type: 'string', description: '已知预期结果。' },
+      actual: { type: 'string', description: '实际观察到的结果。' },
+      error_context: { type: 'string', description: '当前会话的相关错误；本地诊断由程序自动补充。' },
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.prepareFeedback(sessionOf(exec), {
+      ...(args.new_draft !== undefined ? { newDraft: args.new_draft } : {}),
       ...(args.title !== undefined ? { title: args.title } : {}),
       ...(args.description !== undefined ? { description: args.description } : {}),
       ...(args.reproduction !== undefined ? { reproduction: args.reproduction } : {}),
       ...(args.expected !== undefined ? { expected: args.expected } : {}),
       ...(args.actual !== undefined ? { actual: args.actual } : {}),
       ...(args.error_context !== undefined ? { errorContext: args.error_context } : {}),
+    }) as never,
+  }))
+
+  if (AGENT_FEEDBACK_ENABLED) ctx.tools.register(defineTool({
+    name: 'stratagate_diagnostics',
+    description: 'This tool is provided by the StrataGate plugin. 只读查询 StrataGate 插件当前记忆空间的运行诊断：近期失败、任务状态、耗时、Token 用量与采集覆盖度。默认给摘要；用返回的诊断 id 读取脱敏错误详情，offset 分页。用于排查或回应用户疑问；反馈草稿会自动附带摘要。',
+    parameters: {
+      id: { type: 'string', description: '摘要中返回的诊断 ID；提供时读取该条详情。' },
+      offset: { type: 'integer', description: '使用返回的 nextOffset 继续读取近期异常。' },
+    },
+    output: jsonOutput,
+    execute: async (args, exec) => runtime.diagnosticReport(runtime.namespaceFor(sessionOf(exec)), {
+      ...(args.id !== undefined ? { id: args.id, details: true } : {}),
+      ...(args.offset !== undefined ? { offset: args.offset } : {}),
     }) as never,
   }))
 

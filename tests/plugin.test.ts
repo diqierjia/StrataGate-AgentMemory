@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import LlmRuntime, { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { LlmAdapter, createAssistantMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -18,6 +18,36 @@ import * as plugin from '../src/index.js'
 import { AGENT_FEEDBACK_ENABLED } from '../src/tools.js'
 
 describe('DSH plugin composition', () => {
+  it('observes main-chat usage through the real LLM waterfall without adding error reminders', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-chat-usage-'))
+    const ctx = new Context()
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SystemPrompt, {})
+      await ctx.plugin(ToolRuntime, { mode: 'native' })
+      await ctx.plugin(AgentDefaultModelConfig, { provider: 'test', model: 'test' })
+      await ctx.plugin(plugin, { database: join(directory, 'memory.db') })
+      const session = { id: 'usage-session', header: { cwd: directory }, snapshotEvents: () => [], eventAt: () => undefined,
+        deriveMessages: () => [], requestHeader: () => ({ config: { provider: 'test', model: 'test' } }) } as unknown as Session
+      const agent = { session } as Agent
+      await ctx.systemPrompt.assemble({ agent })
+      ctx.llm.registerAdapter(['test'], new class extends LlmAdapter {
+        async *stream(): AsyncIterable<StreamChunk> {
+          yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 } }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        }
+      }())
+      for await (const _chunk of ctx.llm.stream({ provider: 'test', model: 'test', messages: [], sessionId: session.id })) { /* consume */ }
+      const tool = ctx.tools.get('stratagate_diagnostics')!
+      const result = await tool.execute({}, { agent, callId: 'usage-read' } as never) as any
+      expect(result.stages.chat).toMatchObject({ modelCalls: 1, totalTokens: 110, memoryInputEstimateCalls: 1 })
+      expect(result.stages.chat.memoryInputEstimate).toBeGreaterThan(0)
+      ctx.emit('tools/result', { name: 'memory_search_events', agent } as never, { isError: true, error: new Error('timeout') } as never)
+      const prompt = await ctx.systemPrompt.assemble({ agent })
+      expect(prompt.contexts.some(({ name }) => name === 'stratagate:feedback-suggestion')).toBe(false)
+    } finally { await ctx.fiber.dispose(); await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('loads persistent Memory once on cold prompts and refreshes external changes before automatic retrieval', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-cold-prompt-'))
     const database = join(directory, 'memory.db')
@@ -303,10 +333,10 @@ describe('DSH plugin composition', () => {
 
       const tools = ctx.tools.schemas()
       const names = tools.map(({ name }) => name)
-      expect(AGENT_FEEDBACK_ENABLED).toBe(false)
+      expect(AGENT_FEEDBACK_ENABLED).toBe(true)
       expect(names).toEqual([
         'memory_profile_update',
-        ...(AGENT_FEEDBACK_ENABLED ? ['feedback_prepare'] : []),
+        ...(AGENT_FEEDBACK_ENABLED ? ['feedback_prepare', 'stratagate_diagnostics'] : []),
         'memory_list_topics',
         'memory_expand_topic',
         'memory_search_events',
@@ -395,7 +425,7 @@ Memory writing:
       }
       if (AGENT_FEEDBACK_ENABLED) expect(prompt.sections).toContainEqual(expect.objectContaining({
         name: 'tool:stratagate-feedback',
-        text: expect.stringMatching(/clear error signal[\s\S]*at most one proactive feedback suggestion[\s\S]*namespace plus its substantive characteristics[\s\S]*feedback_prepare itself/),
+        text: expect.stringMatching(/StrataGate 插件[\s\S]*当前任务[\s\S]*最多主动建议一次[\s\S]*普通后台重试保持安静/),
       }))
 
       const conversationMessages: Array<{ id: string; role: 'user' | 'assistant'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'user' | 'model' } }> = []
@@ -509,13 +539,12 @@ Memory writing:
         name: 'stratagate:auto-memory',
         text: expect.stringContaining('[Activated long-term memory]'),
       }))
-      // Preserve the archived tool contract for restoration.
       if (AGENT_FEEDBACK_ENABLED) {
-        expect(feedbackPrepare!.description).toMatch(/directly requests it[\s\S]*explicitly agrees/)
-        expect(feedbackPrepare!.description).toMatch(/current conversation[\s\S]*Never submit anything to GitHub/)
-        expect(feedbackPrepare!.description).toMatch(/draft is local and not submitted[\s\S]*feedbackUrl[\s\S]*打开反馈草稿/)
-        expect(feedbackPrepare!.description).toContain('要不要顺便让我尝试修复这个问题，并提交一个 PR？')
-        expect(feedbackPrepare!.description).toMatch(/ask exactly once[\s\S]*does not respond or declines, do not ask again/)
+        expect(feedbackPrepare!.description).toContain('StrataGate 插件的故障、使用疑问和改进建议')
+        expect(feedbackPrepare!.description).toContain('主动建议须先获同意')
+        expect(feedbackPrepare!.description).toContain('打开反馈草稿')
+        expect(feedbackPrepare!.description).not.toMatch(/GitHub|PR/)
+        expect(feedbackPrepare!.description.length).toBeLessThan(400)
         const feedback = await feedbackPrepare!.execute({
           title: 'Local draft',
           description: 'A real failure from this conversation.',
