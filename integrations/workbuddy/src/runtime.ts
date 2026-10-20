@@ -460,6 +460,7 @@ export class WorkBuddyRuntime {
         blockTurnSize: this.config.blockTurnSize,
         ...(callbacks.summarizer ? { summarizer: callbacks.summarizer } : {}),
         ...(callbacks.extractor ? { extractor: callbacks.extractor } : {}),
+        ...(callbacks.eventDuplicateDecider ? { eventDuplicateDecider: callbacks.eventDuplicateDecider } : {}),
         ...(callbacks.elementProjector ? { elementProjector: callbacks.elementProjector } : {}),
       })
       try {

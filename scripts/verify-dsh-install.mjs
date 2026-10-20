@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
+import { satisfies } from 'semver'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
@@ -201,7 +202,7 @@ try {
     // The prerelease CLI uses caret ranges. Pin its complete internal tree to
     // the version StrataGate actually supports, so a later rc cannot silently
     // change the host under this compatibility check.
-    const hostManifest = JSON.parse(readFileSync(join(packageRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8'))
+    const hostManifest = JSON.parse(run(npm, ['view', `@deepseek-ai/dsh@${version}`, '--json'], root))
     const internalVersion = version === '0.1.5-rc.1' ? '0.1.5-rc.2' : version
     const localInternalNames = readdirSync(join(packageRoot, 'node_modules', '@deepseek-ai'))
       .filter(name => name.startsWith('dsh-'))
@@ -213,9 +214,9 @@ try {
     const overrides = Object.fromEntries([...new Set([...Object.keys(hostManifest.dependencies ?? {}), ...localInternalNames, ...legacyTransitiveNames])]
       .filter(name => name.startsWith('@deepseek-ai/dsh-'))
       .map(name => [name, internalVersion]))
-    const modernHost = /^(?:0\.1\.7|0\.2\.0)(?:[-+]|$)/.test(version)
-    overrides['@deepseek-ai/cordis'] = modernHost ? '4.0.4' : '4.0.2'
-    overrides['@deepseek-ai/schemastery'] = modernHost ? '3.18.4' : '3.18.2'
+    const modernHost = satisfies(version, '>=0.1.7-rc.1', { includePrerelease: true })
+    overrides['@deepseek-ai/cordis'] = modernHost ? hostManifest.dependencies['@deepseek-ai/cordis'] : '4.0.2'
+    overrides['@deepseek-ai/schemastery'] = modernHost ? hostManifest.dependencies['@deepseek-ai/schemastery'] : '3.18.2'
     const freshManifestPath = join(root, 'package.json')
     const freshManifest = JSON.parse(readFileSync(freshManifestPath, 'utf8'))
     freshManifest.overrides = overrides

@@ -333,6 +333,13 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_container_idx ON messages(namespace, block_id, position);
 
 -- Optional metadata shared by both Event pools. No historical backfill.
+CREATE TABLE IF NOT EXISTS event_merge_sources (
+  namespace TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  source_ids_json TEXT NOT NULL,
+  PRIMARY KEY (namespace, event_id),
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS event_metadata (
   namespace TEXT NOT NULL,
   event_id TEXT NOT NULL,
@@ -703,7 +710,7 @@ export class SqliteStorage implements StorageAdapter {
       FROM memory_spaces WHERE namespace = ?
     `).get(key) as SpaceRow | undefined;
     if (!space) return null;
-    if (space.schema_version !== STRATAGATE_STORAGE_SCHEMA_VERSION) {
+    if (space.schema_version !== STRATAGATE_STORAGE_SCHEMA_VERSION && !(this.readonly && space.schema_version === 12)) {
       throw new Error(`Unsupported stored StrataGate schema: ${space.schema_version}`);
     }
 
@@ -802,6 +809,7 @@ export class SqliteStorage implements StorageAdapter {
       SELECT * FROM agent_events WHERE namespace = ? ORDER BY position
     `).all(key) as unknown as EventRow[];
     const agentEvents: EventCard[] = mapEventRows(agentEventRows, agentSourcesByEvent, 'agent_events');
+    this.loadMergedSources(key, [...events, ...agentEvents]);
     // Read-only schema-12 databases may predate this additive optional table.
     const hasEventMetadata = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_metadata'").get();
     if (hasEventMetadata) {
@@ -1357,6 +1365,10 @@ export class SqliteStorage implements StorageAdapter {
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
     `);
+    // Upsert alone leaves merged-in message IDs behind after an undo. Remove only
+    // stale links, without rewriting every unchanged provenance row on each turn.
+    const deleteStaleEventSources = this.database.prepare(`DELETE FROM event_sources
+      WHERE namespace = ? AND event_id = ? AND message_id NOT IN (SELECT value FROM json_each(?))`);
     const insertEventSource = this.database.prepare(`
       INSERT INTO event_sources (namespace, event_id, message_id, position) VALUES (?, ?, ?, ?)
       ON CONFLICT (namespace, event_id, message_id) DO UPDATE SET position = excluded.position
@@ -1391,7 +1403,9 @@ export class SqliteStorage implements StorageAdapter {
         event.weight.forcedCap,
         event.createdAt,
         event.updatedAt,
-      );      for (const [position, messageId] of event.sourceMessageIds.entries()) {
+      );
+      deleteStaleEventSources.run(namespace, event.id, JSON.stringify(event.sourceMessageIds));
+      for (const [position, messageId] of event.sourceMessageIds.entries()) {
         insertEventSource.run(namespace, event.id, messageId, position);
       }
     }
@@ -1445,6 +1459,11 @@ export class SqliteStorage implements StorageAdapter {
       }
     }
 
+    this.database.prepare('DELETE FROM event_merge_sources WHERE namespace = ?').run(namespace);
+    const insertMergedSources = this.database.prepare('INSERT INTO event_merge_sources (namespace, event_id, source_ids_json) VALUES (?, ?, ?)');
+    for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
+      if (event.mergedFromEventIds?.length) insertMergedSources.run(namespace, event.id, JSON.stringify(event.mergedFromEventIds));
+    }
     this.database.prepare('DELETE FROM event_metadata WHERE namespace = ?').run(namespace);
     const insertEventMetadata = this.database.prepare(`
       INSERT INTO event_metadata (namespace, event_id, catalog_hints_json, extractor_version) VALUES (?, ?, ?, ?)
@@ -1833,7 +1852,7 @@ export class SqliteStorage implements StorageAdapter {
           .run(BACKGROUND_WORK_INDEX_VERSION);
       }
       for (const table of ['memory_spaces', 'blocks', 'block_summary_jobs', 'extraction_jobs', 'graph_state',
-        'memory_topic_state', 'events', 'agent_events', 'event_sources', 'agent_event_sources', 'event_metadata']) {
+        'memory_topic_state', 'events', 'agent_events', 'event_sources', 'agent_event_sources', 'event_metadata', 'event_merge_sources']) {
         for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
           if (table === 'memory_spaces' && operation === 'DELETE') continue;
           const row = operation === 'DELETE' ? 'old' : 'new';
@@ -1951,6 +1970,7 @@ export class SqliteStorage implements StorageAdapter {
         values.push(row.message_id); sources.set(row.event_id, values);
       }
       const batch = mapEventRows(rows, sources, table);
+      this.loadMergedSources(namespace, batch);
       const byId = new Map(batch.map((event) => [event.id, event]));
       for (const row of this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version FROM event_metadata
         WHERE namespace = ? AND event_id IN (${placeholders})`)
@@ -1998,6 +2018,16 @@ export class SqliteStorage implements StorageAdapter {
   namespaceRevision(namespace: string): number | null {
     const row = this.database.prepare('SELECT revision FROM memory_spaces WHERE namespace = ?').get(namespace) as { revision: number } | undefined;
     return row?.revision ?? null;
+  }
+
+  private loadMergedSources(namespace: string, events: EventCard[]): void {
+    if (!this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_merge_sources'").get()) return;
+    const byId = new Map(events.map(event => [event.id, event]));
+    const rows = this.database.prepare('SELECT event_id, source_ids_json FROM event_merge_sources WHERE namespace = ?').all(namespace) as Array<{ event_id: string; source_ids_json: string }>;
+    for (const row of rows) {
+      const event = byId.get(row.event_id);
+      if (event) event.mergedFromEventIds = parseJson<string[]>(row.source_ids_json, 'event_merge_sources.source_ids_json');
+    }
   }
 
   private migrate(): void {
@@ -2317,7 +2347,7 @@ export class SqliteStorage implements StorageAdapter {
 
   private assertSchemaVersion(): void {
     const version = this.userVersion();
-    if (version !== STRATAGATE_STORAGE_SCHEMA_VERSION) {
+    if (version !== STRATAGATE_STORAGE_SCHEMA_VERSION && !(this.readonly && version === 12)) {
       throw new Error(`Unsupported SQLite schema version: ${version}`);
     }
   }

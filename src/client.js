@@ -2492,12 +2492,12 @@ window.__ModuleLoader__.load({
         h('style', null, DREAMING_STYLES + DIRECTORY_PREVIEW_STYLES),
         h('div', { className: 'sg-dreaming-row' },
           h('div', { className: 'sg-dreaming-animation', 'aria-hidden': 'true' }, h('span', { className: 'sg-dreaming-moon' }, '☾'), h('span', { className: 'sg-dreaming-star' }, '✦'), h('span', { className: 'sg-dreaming-sleep' }, 'z')),
-          h('div', { className: 'sg-dreaming-copy', role: 'status', 'aria-live': 'polite' }, h('strong', null, running ? '正在做梦…' : pausing ? '正在暂停…' : paused ? 'Dreaming 已暂停' : run?.status === 'completed' ? '本轮 Dreaming 已完成' : run?.status === 'terminated' ? '本轮 Dreaming 已终止' : 'Dreaming'),
+          h('div', { className: 'sg-dreaming-copy', role: 'status', 'aria-live': 'polite' }, h('strong', null, running ? run.waitingForProjection ? 'Dreaming 正在准备…' : '正在做梦…' : pausing ? '正在暂停…' : paused ? 'Dreaming 已暂停' : run?.status === 'completed' ? '本轮 Dreaming 已完成' : run?.status === 'terminated' ? '本轮 Dreaming 已终止' : 'Dreaming'),
             h('span', null, run?.activity || '整理目录、总览与经验')),
           h('div', { className: 'sg-dreaming-actions' },
             !outstanding ? h('button', { type: 'button', disabled: busy, onClick: () => setCollapsed(true) }, '收起') : null,
             running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
-            paused ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
+            paused && !run.replanRequired ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
             outstanding ? h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: () => control('terminate') }, '终止') : null)),
         run ? h('div', { className: 'sg-dreaming-progress' }, h('progress', { max: Math.max(1, run.total), value: run.completed, 'aria-label': 'Dreaming 整理进度（批次）' }), h('span', null, Math.round(100 * run.completed / Math.max(1, run.total)) + '% · ' + run.completed + '/' + run.total + ' 批次')) : null,
         h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
@@ -2851,6 +2851,7 @@ window.__ModuleLoader__.load({
     function processingFingerprint(overview) {
       return JSON.stringify({
         failedJobs: Number(overview?.failedJobs || 0),
+        duplicateRepair: overview?.duplicateRepair ?? null,
         processingJobs: Number(overview?.processingJobs || 0),
         failures: (overview?.failedJobDetails || []).map(({ kind, id, attempts, updatedAt, lastError }) => ({ kind, id, attempts, updatedAt, lastError })),
         processing: (overview?.processingJobDetails || []).map(({ kind, id, status, attempts, updatedAt }) => ({ kind, id, status, attempts, updatedAt })),
@@ -3228,6 +3229,7 @@ window.__ModuleLoader__.load({
 
     function MoreHome({ setView }) {
       const rows = [
+        ['duplicates', '⇄', '重复记忆整理', '查看保留原因、合并候选与重新扫描'],
         ['display', '◐', '界面与显示', '控制短期记忆块、检索状态等前端提示'],
         ['import', '⇄', '导入其他 AI 的记忆', '将其他 AI 的历史记忆导入 StrataGate'],
         ['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断'],
@@ -3928,10 +3930,285 @@ window.__ModuleLoader__.load({
           graph.nodes.map((node) => h('div', { key: node.id, className: 'sg-related' }, h('span', null, node.name), h('span', { className: 'sg-related-time' }, (node.sourceEventIds || []).length + ' 条支撑事件')))))
     }
 
-    function SystemPage({ selected, blocks, onBack, backLabel = '更多', refresh }) {
+    const DUPLICATE_STYLES = `
+      .sg-memory-review .sg-header{padding:10px 12px;margin-bottom:12px}.sg-memory-review .sg-logo{width:28px;height:28px}.sg-memory-review .sg-brand-name{font-size:14px}.sg-memory-review .sg-header-row-secondary{margin-top:4px}.sg-memory-review .sg-tabs{margin-bottom:12px}.sg-memory-review .sg-dup-heading h2{font-size:21px}
+      .sg-dup-entry{display:flex;align-items:center;gap:12px;width:100%;margin:12px 0;padding:14px 16px;border:1px solid color-mix(in srgb,var(--sg-accent) 28%,var(--sg-border));border-radius:10px;background:var(--sg-accent-soft);color:var(--sg-accent);text-align:left;cursor:pointer}.sg-dup-entry>span{display:grid;gap:3px;flex:1}.sg-dup-entry strong{font-size:13px;font-weight:650}.sg-dup-entry small{font-size:11px;color:var(--sg-muted)}.sg-dup-entry:focus-visible{outline:2px solid var(--sg-accent);outline-offset:3px}
+      .sg-duplicates{container-type:inline-size;display:grid;gap:18px;color:var(--sg-text)}
+      .sg-dup-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.sg-dup-heading h2{margin:0;font-size:23px;font-weight:720;letter-spacing:-.6px}.sg-dup-heading p{margin:5px 0 0;color:var(--sg-muted);font-size:12px;line-height:1.65}
+      .sg-dup-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:8px 12px;border:1px solid var(--sg-border);border-radius:8px;background:transparent;color:var(--sg-text);font:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:background .18s,border-color .18s,transform .18s;white-space:normal;text-align:center}.sg-dup-button:hover:not(:disabled){background:var(--sg-soft);border-color:var(--sg-accent)}.sg-dup-button:active:not(:disabled){transform:translateY(1px)}.sg-dup-button:focus-visible,.sg-dup-choice:has(input:focus-visible){outline:2px solid var(--sg-accent);outline-offset:3px}.sg-dup-button:disabled{opacity:.42;cursor:not-allowed}.sg-dup-button.primary{background:var(--sg-accent);border-color:var(--sg-accent);color:#fff}.sg-dup-button.primary:hover:not(:disabled){background:color-mix(in srgb,var(--sg-accent) 86%,var(--sg-text));color:#fff}.sg-dup-button.text{border-color:transparent;color:var(--sg-muted);padding-inline:4px}.sg-dup-button svg{flex-shrink:0}
+      .sg-dup-navigation{display:flex;align-items:center;gap:8px;padding-bottom:14px;border-bottom:1px solid var(--sg-border)}.sg-dup-navigation select{flex:1;min-width:0;max-width:100%;padding:8px 10px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);font:inherit;font-size:12px}.sg-dup-count{color:var(--sg-muted);font-size:11px;white-space:nowrap}.sg-dup-navigation .sg-dup-button{padding:5px;min-width:30px;min-height:30px}
+      .sg-dup-pair{display:grid;gap:14px}.sg-dup-status-row{display:flex;align-items:center;justify-content:space-between;gap:10px}.sg-dup-status{display:inline-flex;align-items:center;gap:6px;color:var(--sg-accent);font-size:12px;font-weight:650}.sg-dup-status.done{color:var(--sg-muted)}.sg-dup-status small{font-weight:400;color:var(--sg-muted)}.sg-dup-reason{margin:0;padding:11px 13px;border-radius:8px;background:var(--sg-soft);color:var(--sg-muted);font-size:12px;line-height:1.65;overflow-wrap:anywhere}.sg-dup-reason strong{display:block;margin-bottom:3px;color:var(--sg-text);font-size:11px;font-weight:650}
+      .sg-dup-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:stretch}.sg-dup-card{display:flex;flex-direction:column;min-width:0;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-surface);overflow:hidden;transition:border-color .18s,box-shadow .18s}.sg-dup-card.selected{border-color:var(--sg-accent);box-shadow:inset 0 0 0 1px var(--sg-accent)}.sg-dup-card.archived{opacity:.68}.sg-dup-choice{display:flex;align-items:center;gap:8px;min-height:45px;padding:12px 13px;border-bottom:1px solid var(--sg-border);color:var(--sg-muted);font-size:12px;font-weight:600;cursor:pointer;background:color-mix(in srgb,var(--sg-soft) 45%,transparent)}.sg-dup-choice input{width:15px;height:15px;margin:0;accent-color:var(--sg-accent);flex-shrink:0}.sg-dup-choice input:disabled{cursor:not-allowed}.sg-dup-card.selected .sg-dup-choice{background:var(--sg-accent-soft);color:var(--sg-accent)}.sg-dup-choice em{margin-left:auto;font-size:10px;font-style:normal;font-weight:600}.sg-dup-letter{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:5px;background:var(--sg-soft);font-size:11px;font-weight:750}.sg-dup-card-body{display:grid;align-content:start;gap:11px;padding:14px 13px;flex:1}.sg-dup-card h3{margin:0;color:var(--sg-text);font-size:15px;font-weight:680;line-height:1.5;text-wrap:pretty}.sg-dup-card p{margin:0}.sg-dup-summary{font-size:12px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--sg-text)}.sg-dup-summary.collapsed{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}.sg-dup-expand{justify-self:start;padding:0;border:0;background:transparent;color:var(--sg-accent);font:inherit;font-size:11px;cursor:pointer}
+      .sg-dup-meta{display:flex;flex-wrap:wrap;gap:5px;color:var(--sg-muted);font-size:10px}.sg-dup-meta span{padding:3px 6px;border-radius:4px;background:var(--sg-soft)}.sg-dup-evidence{display:grid;gap:8px;margin:0;font-size:11px;line-height:1.65}.sg-dup-evidence dt{color:var(--sg-muted);font-size:10px}.sg-dup-evidence dd{margin:2px 0 0;color:var(--sg-text)}.sg-dup-evidence blockquote{margin:0;padding-left:9px;border-left:2px solid var(--sg-border)}.sg-dup-card-footer{padding:10px 13px;border-top:1px solid var(--sg-border);display:grid;gap:5px}.sg-dup-card-footer .sg-dup-button{justify-content:flex-start;min-height:28px;padding:0;border:0;text-align:left;font-size:11px;color:var(--sg-accent)}.sg-dup-card-footer small{color:var(--sg-muted);font-size:10px;line-height:1.5}
+      .sg-dup-method{display:grid;gap:8px;padding-top:4px}.sg-dup-method legend{padding:0;margin-bottom:8px;color:var(--sg-text);font-size:12px;font-weight:650}.sg-dup-method fieldset{padding:0;margin:0;border:0;min-width:0}.sg-dup-methods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.sg-dup-method label{display:grid;grid-template-columns:15px 1fr;align-content:start;gap:3px 7px;padding:11px;border:1px solid var(--sg-border);border-radius:8px;font-size:12px;cursor:pointer}.sg-dup-method input{margin:2px 0 0;width:14px;height:14px;accent-color:var(--sg-accent)}.sg-dup-method label:has(input:checked){border-color:var(--sg-accent);background:color-mix(in srgb,var(--sg-accent-soft) 38%,transparent)}.sg-dup-method label:has(input:disabled){cursor:not-allowed;color:var(--sg-muted)}.sg-dup-method label span{grid-column:2;color:var(--sg-muted);font-size:10px;line-height:1.5}.sg-dup-constraint{display:flex;gap:7px;margin:0;color:var(--sg-muted);font-size:11px;line-height:1.65}.sg-dup-constraint svg{flex-shrink:0;margin-top:2px}
+      .sg-dup-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding-top:13px;border-top:1px solid var(--sg-border)}.sg-dup-actions p{margin:0;color:var(--sg-muted);font-size:11px}.sg-dup-actions>div{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.sg-dup-preview{padding:17px;border:1px solid var(--sg-accent);border-radius:11px;background:color-mix(in srgb,var(--sg-accent-soft) 36%,var(--sg-surface))}.sg-dup-preview h3{margin:0 0 5px;font-size:16px;font-weight:680}.sg-dup-preview>p{margin:0 0 14px;color:var(--sg-muted);font-size:12px;line-height:1.65}.sg-dup-result{display:grid;grid-template-columns:48px minmax(0,1fr);gap:7px 9px;margin:0 0 13px;font-size:12px;line-height:1.6}.sg-dup-result dt{color:var(--sg-muted)}.sg-dup-result dd{margin:0;color:var(--sg-text);overflow-wrap:anywhere}.sg-dup-preview .sg-dup-actions{border-top-color:color-mix(in srgb,var(--sg-accent) 20%,var(--sg-border))}.sg-dup-notice{padding:11px 13px;border-radius:8px;background:var(--sg-soft);font-size:12px;line-height:1.65}.sg-dup-notice.error{color:var(--sg-danger);background:var(--sg-danger-soft)}.sg-dup-empty{display:grid;justify-items:center;gap:10px;padding:40px 24px;border:1px dashed var(--sg-border);border-radius:12px;text-align:center;color:var(--sg-muted)}.sg-dup-empty strong{font-size:15px;color:var(--sg-text)}.sg-dup-empty p{margin:0;max-width:35ch;font-size:12px;line-height:1.7}.sg-dup-skeleton{height:220px;border-radius:11px;background:var(--sg-soft);animation:sg-dup-pulse 1.5s ease-in-out infinite}.sg-dup-tools{padding-top:12px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11px;line-height:1.6}.sg-dup-tools summary{cursor:pointer;list-style-position:inside}.sg-dup-tools p{margin:8px 0}.sg-dup-tools .sg-dup-button{font-size:11px}
+      .sg-dup-history{display:flex;align-items:flex-start;gap:10px;margin:16px 0;padding:14px 15px;border-left:3px solid var(--sg-accent);border-radius:4px 9px 9px 4px;background:var(--sg-soft);font-size:12px;line-height:1.75}.sg-dup-history>svg{flex:none;margin-top:3px;color:var(--sg-accent)}.sg-dup-history strong{font-size:13px;font-weight:650;color:var(--sg-text)}.sg-dup-history p{margin:5px 0;color:var(--sg-muted);text-wrap:pretty}.sg-dup-history .sg-dup-button{margin-top:7px}
+      @keyframes sg-dup-pulse{50%{opacity:.45}}@media(prefers-reduced-motion:reduce){.sg-dup-skeleton{animation:none}.sg-dup-button,.sg-dup-card{transition:none}}
+      .sg-dup-source{display:grid;gap:12px;padding:14px 13px;border-top:1px solid var(--sg-border);background:var(--sg-soft);font-size:12px;line-height:1.7}.sg-dup-source h4{margin:0;font-size:12px}.sg-dup-source .sg-citation-message{background:var(--sg-surface);font-size:11px}.sg-dup-card.archived:has(.sg-dup-source){opacity:1}
+      .sg-dup-queues{display:flex;gap:5px;flex-wrap:wrap;padding:4px;background:var(--sg-soft);border-radius:9px}.sg-dup-queues button{flex:1;border:0}.sg-dup-queues button[aria-pressed=true]{background:var(--sg-surface);color:var(--sg-accent);box-shadow:0 1px 4px #0001}.sg-dup-editor{display:grid;gap:13px;margin:15px 0;padding:14px;border-radius:9px;background:var(--sg-surface)}.sg-dup-draft-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px}.sg-dup-editor label{display:grid;gap:7px;color:var(--sg-muted);font-size:11px}.sg-dup-editor input,.sg-dup-editor textarea{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--sg-border);border-radius:7px;padding:10px;background:var(--sg-surface);color:var(--sg-text);font:inherit;font-size:13px;line-height:1.8}.sg-dup-editor textarea{resize:vertical;min-height:160px}.sg-dup-editor input:focus-visible,.sg-dup-editor textarea:focus-visible{outline:2px solid var(--sg-accent);outline-offset:2px}.sg-dup-notice .sg-dup-button{margin-left:8px}
+      .sg-dup-options{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:10px}.sg-dup-option{display:grid;grid-template-columns:18px 1fr;align-content:start;gap:7px;padding:14px;border:1px solid var(--sg-border);border-radius:9px;background:transparent;color:var(--sg-text);text-align:left;font:inherit;cursor:pointer;transition:background .18s,border-color .18s}.sg-dup-option:first-child{background:var(--sg-accent-soft);border-color:color-mix(in srgb,var(--sg-accent) 55%,var(--sg-border))}.sg-dup-option strong{font-size:12px}.sg-dup-option span{grid-column:2;font-size:11px;line-height:1.75;color:var(--sg-muted)}.sg-dup-option:hover:not(:disabled){border-color:var(--sg-accent);background:var(--sg-soft)}.sg-dup-option:focus-visible{outline:2px solid var(--sg-accent);outline-offset:3px}.sg-dup-option:disabled{opacity:.5;cursor:default}
+      .sg-dup-summary{font-size:13px}.sg-dup-stage-title{margin:0;font-size:16px;font-weight:650}.sg-dup-stage-heading h3{margin:0 0 7px;font-size:19px;font-weight:650}.sg-dup-stage-heading p{margin:0;color:var(--sg-muted);font-size:12px;line-height:1.8;max-width:65ch}.sg-dup-back{justify-self:start}.sg-dup-steps{display:flex;gap:16px;font-size:11px;color:var(--sg-muted)}.sg-dup-steps [aria-current=step]{color:var(--sg-accent);font-weight:650}
+      .sg-dup-consequences{padding-top:16px;border-top:1px solid var(--sg-border)}.sg-dup-consequences h3{font-size:12px;margin:0 0 12px}.sg-dup-consequences .sg-dup-result{grid-template-columns:65px minmax(0,1fr)}.sg-dup-result-card{padding:18px;border:1px solid var(--sg-border);border-radius:9px;background:var(--sg-soft)}.sg-dup-result-card small{font-size:11px;color:var(--sg-muted)}.sg-dup-result-card h3{margin:7px 0 11px;font-size:16px}
+      .sg-dup-pair>details summary{cursor:pointer;font-size:12px;color:var(--sg-accent)}.sg-dup-pair>details .sg-dup-comparison{margin-top:14px}.sg-dup-card-body[for]{cursor:pointer}.sg-dup-card:has(input:focus-visible){outline:2px solid var(--sg-accent);outline-offset:3px}.sg-dup-selection-result{margin:0;padding:10px 13px;border-top:1px solid var(--sg-border);font-size:11px;line-height:1.7;color:var(--sg-muted)}.sg-dup-card.selected .sg-dup-selection-result{color:var(--sg-accent);background:var(--sg-accent-soft);font-weight:600}.sg-dup-card .sg-dup-source{border-radius:0}.sg-dup-card.archived{opacity:1}
+      .sg-dup-draft-skeleton{display:grid;gap:12px;padding:12px 0;min-height:180px}.sg-dup-draft-skeleton span{height:12px;border-radius:4px;background:var(--sg-soft);animation:sg-dup-pulse 1.5s ease-in-out infinite}.sg-dup-draft-skeleton span:last-child{width:70%}.sg-dup-editor{margin:0;border:1px solid var(--sg-border);padding:18px}.sg-dup-editor .sg-dup-notice{margin:0}.sg-dup-editor input:disabled,.sg-dup-editor textarea:disabled{opacity:.7}.sg-dup-button.primary{color:var(--sg-surface)}.sg-dup-button.primary:hover:not(:disabled){color:var(--sg-surface)}
+      @container(max-width:600px){.sg-dup-options{grid-template-columns:1fr}.sg-dup-option{padding:12px}.sg-dup-draft-heading{flex-wrap:wrap}}
+      @media(prefers-reduced-motion:reduce){.sg-dup-draft-skeleton span{animation:none}}
+      @container(max-width:420px){.sg-dup-comparison,.sg-dup-methods{grid-template-columns:1fr}.sg-dup-heading h2{font-size:21px}.sg-dup-card-body{padding:13px}.sg-dup-actions>div{width:100%;justify-content:space-between}.sg-dup-button.primary{flex:1}.sg-dup-preview{padding:13px}}
+    `
+
+    function DuplicateIcon({ kind = 'cards', size = 17 }) {
+      const paths = { cards: 'M7 3H3v14h10v-4M7 3v10h10V3H7Z', check: 'm4 10 4 4 8-8', info: 'M10 9v5m0-8v.2M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z', back: 'm12 5-5 5 5 5', next: 'm8 5 5 5-5 5', merge: 'M4 3v3c0 3 6 3 6 6v5m6-14v3c0 3-6 3-6 6m-3 2 3 3 3-3' }
+      return h('svg', { width: size, height: size, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }, h('path', { d: paths[kind] || paths.cards }))
+    }
+
+    function DuplicateEvidence({ namespace, card, hideSummary = false }) {
+      const [result, setResult] = React.useState(null)
+      const [error, setError] = React.useState('')
+      const [attempt, setAttempt] = React.useState(0)
+      React.useEffect(() => {
+        let active = true
+        setResult(null); setError('')
+        void api('sources', { namespace, eventId: card.id }).then(value => { if (active) setResult(value) })
+          .catch(reason => { if (active) setError(String(reason.message || reason)) })
+        return () => { active = false }
+      }, [namespace, card.id, attempt])
+      return h('section', { className: 'sg-dup-source', 'aria-label': '完整记忆与来源' },
+        h('h4', null, hideSummary ? '原始来源' : '完整记忆与来源'), !hideSummary ? h('p', { className: 'sg-dup-summary' }, card.summary) : null,
+        error ? h('div', { role: 'alert' }, error, h('button', { type: 'button', className: 'sg-dup-button', onClick: () => setAttempt(value => value + 1) }, '重试读取来源'))
+          : !result ? h('p', { role: 'status' }, '正在读取来源…')
+            : result.messages?.length ? h('div', { className: 'sg-citation-messages' }, result.messages.map(message => h('div', { key: message.id, className: 'sg-citation-message' },
+              h('span', { className: 'sg-citation-message-role' }, (message.role || 'Recorded') + (message.createdAt ? ' · ' + exactTime(message.createdAt) : '')), String(message.content || ''))))
+              : h('p', null, '当前没有可显示的原始来源消息。'))
+    }
+
+    function DuplicateCard({ card, letter, selected, onSelect, unavailable, disabled, namespace, fullContent = false, selectionMade = false }) {
+      const [expanded, setExpanded] = React.useState(false)
+      const [showSource, setShowSource] = React.useState(false)
+      const sourcePosition = React.useRef(null)
+      ;(React.useLayoutEffect || React.useEffect)(() => {
+        if (showSource || !sourcePosition.current) return
+        const { trigger, ancestors, top, left } = sourcePosition.current
+        trigger?.focus?.({ preventScroll: true })
+        for (const saved of ancestors) { saved.node.scrollTop = saved.top; saved.node.scrollLeft = saved.left }
+        window.scrollTo?.(left, top)
+        sourcePosition.current = null
+      }, [showSource])
+      const toggleSource = event => {
+        if (!showSource) {
+          const ancestors = []
+          for (let node = event.currentTarget.parentElement; node; node = node.parentElement) {
+            if (node.scrollHeight > node.clientHeight) ancestors.push({ node, top: node.scrollTop, left: node.scrollLeft })
+          }
+          sourcePosition.current = { trigger: event.currentTarget, ancestors, top: window.scrollY || 0, left: window.scrollX || 0 }
+        }
+        setShowSource(value => !value)
+      }
+      if (!card) return h('article', { className: 'sg-dup-card' }, h('div', { className: 'sg-dup-card-body' }, h('h3', null, '记忆 ' + letter), h('p', null, '原卡已不可用')))
+      const status = { active: '当前有效', superseded: '已被替代', archived: '已归档', forgotten: '已遗忘' }
+      const criticality = { routine: '一般记忆', preference: '偏好', identity: '个人经历', safety: '重要约束' }
+      const scope = { user: '个人', project: '项目', session: '本次会话' }
+      const temporal = card.temporal || {}
+      const date = temporal.happenedStart || temporal.originalText
+      return h('article', { className: 'sg-dup-card' + (selected ? ' selected' : '') + (card.status === 'archived' ? ' archived' : '') },
+        h('label', { className: 'sg-dup-choice' },
+          onSelect ? h('input', { id: 'sg-retain-' + card.id, type: 'radio', name: 'duplicate-retained', checked: selected, disabled: disabled || Boolean(unavailable), onChange: onSelect, 'aria-label': '只保留 ' + letter + '：' + card.title }) : h('span', { className: 'sg-dup-letter' }, letter),
+          h('span', null, onSelect ? '只保留 ' + letter : '记忆 ' + letter), h('em', null, status[card.status] || '')),
+        h(onSelect ? 'label' : 'div', { className: 'sg-dup-card-body', htmlFor: onSelect ? 'sg-retain-' + card.id : undefined }, h('h3', null, card.title),
+          h('div', { className: 'sg-dup-meta' }, date ? h('span', null, date) : null, h('span', null, criticality[card.criticality] || '一般记忆'), h('span', null, scope[card.scope] || card.scope || '个人'), card.weight?.pinned ? h('span', null, '已置顶') : null),
+          h('p', { className: 'sg-dup-summary' + (!expanded && !fullContent ? ' collapsed' : '') }, card.summary),
+          !fullContent && card.summary?.length > 160 ? h('button', { type: 'button', className: 'sg-dup-expand', onClick: () => setExpanded(!expanded), 'aria-expanded': expanded }, expanded ? '收起全文' : '展开全文') : null,
+          h('dl', { className: 'sg-dup-evidence' },
+            card.quotes?.length ? h(React.Fragment, null, h('dt', null, '引语'), h('dd', null, card.quotes.map(quote => h('blockquote', { key: quote }, quote)))) : null,
+            temporal.participants?.length ? h(React.Fragment, null, h('dt', null, '参与者'), h('dd', null, temporal.participants.join('、'))) : null,
+            card.tags?.length ? h(React.Fragment, null, h('dt', null, '标签'), h('dd', null, card.tags.join(' · '))) : null)),
+        fullContent && onSelect && !unavailable ? null : h('div', { className: 'sg-dup-card-footer' }, fullContent && onSelect ? null : h('button', { type: 'button', className: 'sg-dup-button', 'aria-expanded': showSource, onClick: toggleSource }, showSource ? '收起来源，返回对比' : '查看 ' + (card.sourceMessageIds?.length || 0) + ' 条来源与完整记忆'), unavailable ? h('small', null, unavailable) : null),
+        fullContent && onSelect ? h('p', { className: 'sg-dup-selection-result' }, !selectionMade ? '点击保留这张记忆' : selected ? '确认后保留这张' : '确认后将这张归档 · 原文和来源仍保留') : null,
+        showSource || fullContent && onSelect ? h(React.Fragment, null, h(DuplicateEvidence, { namespace, card, hideSummary: fullContent }), showSource ? h('button', { type: 'button', className: 'sg-dup-button text', onClick: toggleSource }, '收起来源，返回对比') : null) : null)
+    }
+
+    function DuplicatePair({ item, busy, namespace, onResolve, onPrepareDraft, onTakeOver, draftState, onDraftState }) {
+      const [selectedId, setSelectedId] = React.useState(draftState?.selectedId || '')
+      const [mode, setMode] = React.useState(draftState?.mode || '')
+      const [draft, setDraft] = React.useState(draftState?.draft || item.draft || { title: '', summary: '' })
+      const [draftError, setDraftError] = React.useState('')
+      const [draftBusy, setDraftBusy] = React.useState(false)
+      const [dirty, setDirty] = React.useState(Boolean(draftState?.dirty))
+      const [regenerate, setRegenerate] = React.useState(false)
+      const [saveError, setSaveError] = React.useState('')
+      const [draftOrigin, setDraftOrigin] = React.useState(draftState?.draftOrigin || (item.draft ? 'AI 合并稿 · 请核对' : '手动填写合并稿'))
+      const stageHeading = React.useRef(null)
+      React.useEffect(() => { onDraftState?.({ selectedId, mode, draft, draftOrigin, dirty }) }, [selectedId, mode, draft, draftOrigin, dirty])
+      React.useEffect(() => { if (mode) { stageHeading.current?.focus({ preventScroll: true }); stageHeading.current?.scrollIntoView({ block: 'nearest' }) } }, [mode])
+      const archived = item.outcome === 'merged' || item.outcome === 'selected'
+      const retained = item.outcome === 'kept' && (item.aiResolved || item.userReviewed)
+      const done = archived || retained
+      const awaitingAI = item.outcome === 'pending'
+      const selected = selectedId === item.leftId ? item.left : selectedId === item.rightId ? item.right : null
+      const letter = selectedId === item.leftId ? 'A' : 'B'
+      // Storage identity is an implementation detail; a merge never asks the user to choose a primary.
+      const mergeId = item.recommendedKeepId || (item.choices?.right?.canMerge ? item.rightId : item.leftId)
+      const mergeCard = mergeId === item.leftId ? item.left : item.right
+      const selection = item.choices?.[selectedId === item.leftId ? 'left' : 'right']
+      const draftValid = Boolean(draft.title.trim() && draft.summary.trim())
+      const generateDraft = async (force = false) => {
+        if (dirty && !force) { setRegenerate(true); return }
+        setRegenerate(false); setDraftBusy(true); setDraftError('')
+        try {
+          const result = await onPrepareDraft(item, force)
+          if (!result?.draft) throw new Error('AI 尚未生成完整稿，你可以手动填写或稍后重试。')
+          setDraft(result.draft); setDirty(false); setDraftOrigin('AI 合并稿 · 请核对')
+        } catch (reason) {
+          setDraftError(String(reason.message || reason).replace(/\s*[（(]duplicates[）)]$/, ''))
+        } finally { setDraftBusy(false) }
+      }
+      const start = value => {
+        setMode(value); setSaveError('')
+        if (value === 'select') setSelectedId('')
+        if (value === 'merge' && !draft.title && !draft.summary && onPrepareDraft) void generateDraft()
+      }
+      const save = async () => {
+        setSaveError('')
+        try { await onResolve(mode === 'both' ? 'keep' : mode, item, mode === 'select' ? selectedId : mode === 'merge' ? mergeId : undefined, mode === 'merge' ? draft : undefined) }
+        catch (reason) { setSaveError('你的选择和编辑已保留。' + String(reason.message || reason).replace(/\s*[（(]duplicates[）)]$/, '')) }
+      }
+      const cards = (selectable = false, originals = false) => h('div', { className: 'sg-dup-comparison', role: selectable ? 'radiogroup' : undefined, 'aria-label': selectable ? '选择要保留的记忆' : '双方完整记忆' },
+        [originals ? item.originalLeft || item.left : item.left, originals ? item.originalRight || item.right : item.right].map((card, i) => h(DuplicateCard, {
+          key: card?.id || i, card, letter: i ? 'B' : 'A', namespace, fullContent: true,
+          selected: selectable && selectedId === card?.id, selectionMade: Boolean(selectedId),
+          onSelect: selectable ? () => { setSelectedId(i ? item.rightId : item.leftId); setSaveError('') } : null,
+          disabled: busy || draftBusy, unavailable: selectable ? item.choices?.[i ? 'right' : 'left']?.selectBlockedReason : '' })))
+      const back = () => { setMode(''); setSaveError(''); setRegenerate(false) }
+      const result = done && item.keepId === item.leftId ? item.left : item.right
+      const consequences = h('section', { className: 'sg-dup-consequences' }, h('h3', null, '确认后会发生什么'),
+        h('dl', { className: 'sg-dup-result' },
+          h('dt', null, '日常检索'), h('dd', null, mode === 'merge' ? '显示上面的完整合并稿。' : mode === 'both' ? '两张记忆分别保留，内容和来源不变。' : '只显示记忆 ' + letter + ' · ' + (selected?.title || '')),
+          h('dt', null, '原始记录'), h('dd', null, mode === 'merge' ? '双方处理前的内容、来源和历史关联保留，可在已处理记录中核对。' : mode === 'both' ? '双方原卡均保留。' : '记忆 ' + (letter === 'A' ? 'B' : 'A') + ' 转入历史；独有内容不会合入所选卡，原文和来源仍保留。'),
+          mode === 'merge' && mergeCard?.temporal?.happenedStart ? h(React.Fragment, null, h('dt', null, '日期'), h('dd', null, '检索日期沿用 ' + mergeCard.temporal.happenedStart + '；请核对正文中的原安排、后续变化与当前事实。')) : null,
+          h('dt', null, '后续调整'), h('dd', null, '可在“已处理”查看结果；没有后续冲突时可撤销。')))
+      return h('section', { className: 'sg-dup-pair', 'aria-label': '记忆对比与处理', 'aria-busy': busy || draftBusy },
+        h('nav', { className: 'sg-dup-steps', 'aria-label': '处理步骤' }, ['对比记忆', '核对结果', '完成'].map((label, i) => h('span', { key: label, 'aria-current': (done ? 2 : mode ? 1 : 0) === i ? 'step' : undefined }, (i + 1) + ' ' + label))),
+        done ? h(React.Fragment, null,
+          h('h3', { className: 'sg-dup-stage-title' }, archived ? item.outcome === 'merged' ? '已整理成一张完整记忆' : '已保留记忆 ' + (item.keepId === item.leftId ? 'A' : 'B') : '已分别保留两张记忆'),
+          h('p', { className: 'sg-dup-reason' }, item.aiResolved ? '由 AI 自动处理 · ' + item.reason : item.reason),
+          archived ? h(React.Fragment, null, h('div', { className: 'sg-dup-result-card' }, h('small', null, '今后使用的记忆'), h('h3', null, result?.title), h('p', { className: 'sg-dup-summary' }, result?.summary)),
+            h('details', null, h('summary', null, item.originalLeft && item.originalRight ? '查看处理前的两张记忆与来源' : '查看两张记忆与来源（按当前记录）'), cards(false, true))) : cards(),
+          h('div', { className: 'sg-dup-actions' }, h('p', null, '撤销前会检查后续变化，避免覆盖新数据。'),
+            item.undoId ? h('button', { type: 'button', className: 'sg-dup-button', disabled: busy, onClick: () => onResolve('undo', item).catch(() => {}) }, '撤销本次处理')
+              : retained ? h('button', { type: 'button', className: 'sg-dup-button', disabled: busy, onClick: () => onTakeOver?.(item) }, '重新处理这组') : h('p', null, '此记录创建于支持撤销之前。'))) : awaitingAI ? h(React.Fragment, null,
+          h('div', { className: 'sg-dup-reason' }, h('strong', null, 'AI 会先判断这组记忆'), h('p', null, '判断明确的自动处理并留下记录；不确定或处理失败的，才会进入“需要你判断”。两张原卡目前均保留。'), h('button', { type: 'button', className: 'sg-dup-button', disabled: busy, onClick: () => onTakeOver(item) }, '我来处理这组')), cards()) : !mode ? h(React.Fragment, null,
+          h('p', { className: 'sg-dup-reason' }, h('strong', null, '为什么需要你判断'), item.reason), cards(), h('h3', { className: 'sg-dup-stage-title' }, '你希望怎么处理？'),
+          h('div', { className: 'sg-dup-options' }, [['merge', '合并双方内容', 'AI 整理完整稿，你可以编辑后再确认。'], ['select', '只保留一张', '查看完整内容，选择 A 或 B，另一张转入历史。'], ['both', '保留两张', '分别保留，结束这组整理。']].map(([value, title, description]) => h('button', { key: value, type: 'button', className: 'sg-dup-option', disabled: busy || draftBusy, onClick: () => start(value) }, h(DuplicateIcon, { kind: value === 'merge' ? 'merge' : 'cards' }), h('strong', null, title), h('span', null, description)))),
+          h('p', { className: 'sg-dup-constraint' }, '选择后先核对处理结果，确认保存前不会改动原卡。')) : h(React.Fragment, null,
+          h('button', { type: 'button', className: 'sg-dup-button text sg-dup-back', disabled: busy || draftBusy, onClick: back }, h(DuplicateIcon, { kind: 'back', size: 14 }), '返回对比'),
+          h('div', { className: 'sg-dup-stage-heading' }, h('h3', { ref: stageHeading, tabIndex: -1 }, mode === 'merge' ? '把双方信息整理成一张记忆' : mode === 'select' ? '只保留哪张记忆？' : '分别保留这两张记忆'), h('p', null, mode === 'merge' ? '双方有效信息会整理进完整稿，保存前你可以修改标题和正文。' : mode === 'select' ? '两张完整内容都在下方，点击要保留的卡片。另一张转入历史，内容不会自动合并。' : '适用于不同事件、前后进展，或暂时无法确认的情况。')),
+          mode === 'merge' ? h(React.Fragment, null,
+            item.historyNotice || item.mergeWarning ? h('p', { className: 'sg-dup-reason' }, item.historyNotice || item.mergeWarning) : null,
+            !item.canMerge && item.mergeBlockedReason ? h('p', { className: 'sg-dup-notice error', role: 'note' }, item.mergeBlockedReason, ' 仍可在下方整理草稿，原卡不会自动改动。') : null,
+            h('div', { className: 'sg-dup-editor' },
+              h('div', { className: 'sg-dup-draft-heading' }, h('strong', null, draftBusy ? 'AI 正在整理合并稿…' : draftOrigin), h('button', { type: 'button', className: 'sg-dup-button', disabled: busy || draftBusy, onClick: () => generateDraft(!dirty) }, '重新让 AI 整理')),
+              regenerate ? h('div', { className: 'sg-dup-reason' }, '重新生成会替换你当前编辑的标题和正文。', h('div', { className: 'sg-dup-actions' }, h('button', { type: 'button', className: 'sg-dup-button', onClick: () => setRegenerate(false) }, '保留当前编辑'), h('button', { type: 'button', className: 'sg-dup-button', onClick: () => generateDraft(true) }, '替换为新稿'))) : null,
+              draftError ? h('p', { role: 'alert', className: 'sg-dup-notice error' }, draftError, ' 原卡未改动，可直接填写下方完整记忆。') : null,
+              draftBusy ? h('div', { className: 'sg-dup-draft-skeleton', role: 'status', 'aria-label': '正在生成合并稿' }, [1, 2, 3, 4].map(i => h('span', { key: i }))) : h(React.Fragment, null,
+                h('label', null, '合并后的标题', h('input', { type: 'text', 'aria-label': '合并后的标题', value: draft.title, maxLength: 200, disabled: busy, onChange: event => { setDraft({ ...draft, title: event.target.value }); setDirty(true); setDraftOrigin('你已编辑') } })),
+                h('label', null, '合并后的完整正文', h('textarea', { 'aria-label': '合并后的完整正文', value: draft.summary, maxLength: 12000, rows: 8, disabled: busy, placeholder: '写出你希望今后记住的完整内容，保留时间、条件和不确定性。', onChange: event => { setDraft({ ...draft, summary: event.target.value }); setDirty(true); setDraftOrigin('你已编辑') } })),
+                h('p', { className: 'sg-dup-constraint' }, draftValid ? '将按此全文保存，原始证据另行保留。' : '请填写完整标题和正文后再保存。'))),
+            h('details', null, h('summary', null, '展开双方原卡，核对合并稿'), cards())) : cards(mode === 'select'),
+          mode === 'select' && selected?.status === 'superseded' ? h('p', { className: 'sg-dup-reason', role: 'note' }, '你选择的是历史版本 ' + letter + '。保存后它会重新成为有效记忆，另一张的新增内容不会合入；请确认这符合你的意思。') : null,
+          mode === 'select' && selected && selection?.selectBlockedReason ? h('p', { className: 'sg-dup-notice error', role: 'note' }, selection.selectBlockedReason) : null,
+          mode !== 'select' || selected ? consequences : h('p', { className: 'sg-dup-constraint' }, '尚未选择。请对比上方完整内容，再选择保留 A 或 B。'),
+          saveError ? h('p', { className: 'sg-dup-notice error', role: 'alert' }, saveError) : null,
+          h('div', { className: 'sg-dup-actions' }, h('p', null, '只有确认保存，才会更新记忆。'), h('div', null,
+            h('button', { type: 'button', className: 'sg-dup-button', disabled: busy || draftBusy, onClick: back }, '返回对比'),
+            h('button', { type: 'button', className: 'sg-dup-button primary', disabled: busy || draftBusy || mode === 'merge' && !draftValid || mode === 'select' && !selected, onClick: save }, busy ? '正在保存…' : saveError ? '重试保存' : mode === 'merge' ? '确认保存合并稿' : mode === 'both' ? '确认保留两张' : selected ? '确认只保留 ' + letter : '请选择 A 或 B')))))
+    }
+
+    function DuplicateReviewPage({ namespace, repair, onBack, openEvent, refresh }) {
+      const [page, setPage] = React.useState({ items: [], offset: 0, limit: 20, total: 0 })
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState('')
+      const [notice, setNotice] = React.useState('')
+      const [loading, setLoading] = React.useState(true)
+      const [index, setIndex] = React.useState(0)
+      const [queue, setQueue] = React.useState('review')
+      const [lastAction, setLastAction] = React.useState(null)
+      const draftCache = React.useRef(new Map())
+      const focusPair = React.useRef(null)
+      const committedRead = React.useRef(false)
+      const readFailure = reason => (committedRead.current ? '处理已保存，但读取结果失败。请重新读取结果。' : '') + String(reason.message || reason)
+      const requestId = React.useRef(0)
+      const load = (offset = 0, targetQueue = queue, focus = focusPair.current) => {
+        const id = ++requestId.current
+        setLoading(true)
+        return api('duplicates', { namespace, offset, limit: 20, queue: targetQueue, ...(focus ? { focusLeft: focus.leftId, focusRight: focus.rightId } : {}) }).then(value => {
+          if (id === requestId.current) { setPage(value); setIndex(i => value.focusIndex ?? Math.min(i, Math.max(0, value.items.length - 1))); focusPair.current = null; committedRead.current = false }
+        }).finally(() => { if (id === requestId.current) setLoading(false) })
+      }
+      React.useEffect(() => {
+        let active = true
+        const id = ++requestId.current
+        setLoading(true); setError('')
+        const focus = focusPair.current
+        void api('duplicates', { namespace, offset: page.namespace === namespace && page.queue === queue ? page.offset : 0, limit: 20, queue, ...(focus ? { focusLeft: focus.leftId, focusRight: focus.rightId } : {}) }).then(value => { if (active && id === requestId.current) { setPage(value); setIndex(i => value.focusIndex ?? (page.namespace === namespace && page.queue === queue ? Math.min(i, Math.max(0, value.items.length - 1)) : 0)); focusPair.current = null; committedRead.current = false } }).catch(reason => { if (active && id === requestId.current) setError(readFailure(reason)) }).finally(() => { if (active && id === requestId.current) setLoading(false) })
+        return () => { active = false }
+      }, [namespace, queue, JSON.stringify(repair)])
+      const pairInput = item => item ? { leftId: item.leftId, rightId: item.rightId, leftFingerprint: item.leftFingerprint, rightFingerprint: item.rightFingerprint, exact: item.exact, similarity: item.similarity } : undefined
+      const takeOver = item => {
+        setBusy(true); setError('')
+        return api('duplicates', { namespace }, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'takeover', pair: pairInput(item) }) })
+          .then(() => { focusPair.current = item; setQueue('review'); setNotice('已由你接管，AI 不再自动处理这组。'); return refresh() })
+          .catch(reason => setError(String(reason.message || reason))).finally(() => setBusy(false))
+      }
+      const prepareDraft = (item, regenerate = false) => {
+        setBusy(true)
+        return api('duplicates', { namespace }, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'draft', pair: pairInput(item), regenerate }) }).finally(() => setBusy(false))
+      }
+      const control = (action, item, keepId, draft) => {
+        let committed = false
+        setBusy(true); setError(''); setNotice('')
+        const pair = item ? { leftId: item.leftId, rightId: item.rightId, leftFingerprint: item.leftFingerprint,
+          rightFingerprint: item.rightFingerprint, exact: item.exact, similarity: item.similarity } : undefined
+        return api('duplicates', { namespace }, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, pair, keepId, draft, undoId: action === 'undo' ? item?.undoId : undefined }) })
+          .then(result => { committed = true; committedRead.current = true; if (action === 'undo') { for (const key of draftCache.current.keys()) { if (key.startsWith(namespace + ':' + item.leftId + ':' + item.rightId + ':')) draftCache.current.delete(key) } focusPair.current = item; setQueue('review') } setLastAction(result.undoId ? { ...item, undoId: result.undoId } : null); if (['merge', 'select', 'keep'].includes(action)) { focusPair.current = item; setQueue('history') } setNotice(action === 'rescan' ? '已重新扫描，AI 会先处理候选。' : action === 'undo' ? '已撤销，恢复了处理前的内容、状态和关联。' : action === 'merge' ? '已保存完整合并稿，双方证据与来源已保留。' : action === 'select' ? '已保留所选记忆，另一张已归档，内容未混合。' : '已确认保留两张。'); return refresh() })
+          .then(() => { if (action === 'rescan') setIndex(0); return action === 'undo' ? load(0, 'review', item) : ['merge', 'select', 'keep'].includes(action) ? load(0, 'history', item) : load(action === 'rescan' ? 0 : page.offset) })
+          .catch(reason => { if (committed) { setError('处理已保存，但读取结果失败。请重新读取结果。' + String(reason.message || reason)); return } if (!['merge', 'select', 'keep'].includes(action)) setError(String(reason.message || reason)); throw reason })
+          .finally(() => setBusy(false))
+      }
+      const navigate = direction => {
+        setError(''); setNotice('')
+        if (index + direction >= 0 && index + direction < page.items.length) { setIndex(index + direction); return }
+        const id = ++requestId.current
+        setLoading(true)
+        void api('duplicates', { namespace, offset: Math.max(0, page.offset + direction * page.limit), limit: 20, queue }).then(value => {
+          if (id === requestId.current) { setPage(value); setIndex(direction > 0 ? 0 : Math.max(0, value.items.length - 1)) }
+        }).catch(reason => { if (id === requestId.current) setError(String(reason.message || reason)) }).finally(() => { if (id === requestId.current) setLoading(false) })
+      }
+      const current = page.items[Math.min(index, Math.max(0, page.items.length - 1))]
+      const draftKey = current ? namespace + ':' + current.leftId + ':' + current.rightId + ':' + current.leftFingerprint + ':' + current.rightFingerprint : ''
+      return h(React.Fragment, null,
+        h(BackBar, { label: '更多', onBack }),
+        h('div', { className: 'sg-duplicates' },
+          h('header', { className: 'sg-dup-heading' }, h('div', null, h('h2', null, '重复记忆整理'), h('p', null, 'AI 先判断并整理。这里只需要你处理拿不准的记忆。')), h(DuplicateIcon, { size: 25 })),
+          h('nav', { className: 'sg-dup-queues', 'aria-label': '整理队列' }, [['review', '需要你判断', repair?.needsReview || 0], ['ai', '等待 AI', repair?.awaitingAI || 0], ['history', '已处理', (repair?.merged || 0) + (repair?.selected || 0) + (repair?.retained || 0) - (repair?.needsReview || 0) + (repair?.failed || 0)]].map(([value, label, count]) => h('button', { key: value, type: 'button', className: 'sg-dup-button', 'aria-pressed': queue === value, disabled: busy, onClick: () => { setQueue(value); setError(''); setIndex(0) } }, label + ' ' + Math.max(0, count)))),
+          error ? h('div', { role: 'alert', className: 'sg-dup-notice error' }, error, h('button', { type: 'button', className: 'sg-dup-button text', disabled: busy || loading, onClick: () => { setError(''); void load(page.offset).catch(reason => setError(readFailure(reason))) } }, '重新读取')) : null,
+          notice ? h('div', { role: 'status', className: 'sg-dup-notice', 'aria-live': 'polite' }, notice, lastAction ? h('button', { type: 'button', className: 'sg-dup-button', disabled: busy, onClick: () => void control('undo', lastAction).catch(() => {}) }, '撤销本次处理') : null) : null,
+          !error && (loading || page.namespace !== namespace || page.queue !== queue) ? h('div', { className: 'sg-dup-comparison', role: 'status', 'aria-label': '正在读取重复记忆' }, h('div', { className: 'sg-dup-skeleton' }), h('div', { className: 'sg-dup-skeleton' }))
+            : current && page.namespace === namespace && page.queue === queue ? h(React.Fragment, null,
+              h('nav', { className: 'sg-dup-navigation', 'aria-label': '切换候选组' },
+                h('button', { type: 'button', className: 'sg-dup-button', 'aria-label': '上一组', disabled: busy || page.offset + index <= 0, onClick: () => navigate(-1) }, h(DuplicateIcon, { kind: 'back', size: 14 })),
+                h('select', { value: index, disabled: busy, onChange: event => { setIndex(Number(event.target.value)); setNotice('') }, 'aria-label': '当前候选组' }, page.items.map((item, i) => h('option', { key: item.leftId + ':' + item.rightId, value: i }, item.left?.title || item.right?.title || '原卡已不可用'))),
+                h('span', { className: 'sg-dup-count' }, (page.offset + index + 1) + ' / ' + page.total),
+                h('button', { type: 'button', className: 'sg-dup-button', 'aria-label': '下一组', disabled: busy || page.offset + index + 1 >= page.total, onClick: () => navigate(1) }, h(DuplicateIcon, { kind: 'next', size: 14 }))),
+              h(DuplicatePair, { key: namespace + current.leftId + current.rightId + current.leftFingerprint + current.rightFingerprint + current.outcome + Boolean(current.userReviewed), item: current, busy, namespace, onResolve: control, onPrepareDraft: prepareDraft, onTakeOver: takeOver, draftState: draftCache.current.get(draftKey), onDraftState: value => { draftCache.current.set(draftKey, value); if (draftCache.current.size > 50) draftCache.current.delete(draftCache.current.keys().next().value) } }))
+              : !error ? h('section', { className: 'sg-dup-empty' }, h(DuplicateIcon, { kind: 'check', size: 28 }), h('strong', null, queue === 'review' ? '暂时没有需要你判断的记忆' : queue === 'ai' ? '没有等待 AI 的候选' : '还没有处理记录'), h('p', null, queue === 'review' ? 'AI 能处理的会自动完成。你可以在“已处理”查看结果。' : '扫描和处理进度会在对应队列中显示。')) : null,
+          h('details', { className: 'sg-dup-tools' }, h('summary', null, '重新检查记忆库'), h('p', null, '按当前规则重新扫描。后续判断可能使用当前模型，已完成的扫描不会在每次启动时重复执行。'),
+            h('button', { type: 'button', className: 'sg-dup-button', disabled: busy || loading, onClick: () => void control('rescan').catch(() => {}) }, '重新扫描与判断'))))
+    }
+
+    function SystemPage({ selected, blocks, onBack, backLabel = '更多', refresh, onDuplicates }) {
       const processing = blocks.filter((block) => block.status === 'processing').length
       const [refreshing, setRefreshing] = React.useState(false)
       const [feedback, setFeedback] = React.useState({ kind: '', text: '' })
+      const repair = selected.duplicateRepair
       const checkStatus = () => {
         const before = processingFingerprint(selected)
         setRefreshing(true)
@@ -3944,7 +4221,10 @@ window.__ModuleLoader__.load({
         }).finally(() => setRefreshing(false))
       }
       return h(React.Fragment, null, h(BackBar, { label: backLabel, onBack }), h('div', { className: 'sg-intro' }, h('h2', null, '系统状态'), h('p', null, '仅在这里展示记忆处理的工程状态')), h('div', { className: 'sg-pipeline' },
-        [['Block 数量', selected.blocks], ['待处理任务', processing], ['失败任务', selected.failedJobs], ['最近整理时间', formatTime(selected.lastActivityAt)], ['Event 提取', selected.failedJobDetails?.some((item) => item.kind === 'event-extraction') ? '有失败' : '正常'], ['图谱投影', selected.failedJobDetails?.some((item) => item.kind === 'graph-projection') ? '有失败' : '正常']].map(([label, value]) => h('div', { key: label, className: 'sg-stage' }, h('span', null, label), h('span', { className: 'sg-stage-value ' + (label === '失败任务' && value ? 'failed' : 'waiting') }, String(value))))), h('button', { type: 'button', className: 'sg-quiet-button', disabled: refreshing, onClick: () => void checkStatus(), style: { marginTop: '14px' } }, refreshing ? '↻ 正在读取…' : '↻ 重新检查'), feedback.text ? h('p', { className: 'sg-status-feedback ' + feedback.kind, role: feedback.kind === 'failed' ? 'alert' : 'status' }, feedback.text) : null)
+        [['Block 数量', selected.blocks], ['待处理任务', processing], ['失败任务', selected.failedJobs], ['最近整理时间', formatTime(selected.lastActivityAt)], ['Event 提取', selected.failedJobDetails?.some((item) => item.kind === 'event-extraction') ? '有失败' : '正常'], ['图谱投影', selected.failedJobDetails?.some((item) => item.kind === 'graph-projection') ? '有失败' : '正常']].map(([label, value]) => h('div', { key: label, className: 'sg-stage' }, h('span', null, label), h('span', { className: 'sg-stage-value ' + (label === '失败任务' && value ? 'failed' : 'waiting') }, String(value))))),
+        repair ? h('p', { className: 'sg-setting-note', role: 'status' }, '历史重复记忆整理' + (repair.status === 'completed' ? '已完成' : '进行中') + '：已扫描 ' + repair.scannedEvents + ' 张卡，归档重复卡 ' + repair.merged + ' 张；其余保留。' + (repair.failed ? ' 部分判断未完成，原卡已保留。' : '')) : null,
+        h('button', { type: 'button', className: 'sg-quiet-button', onClick: onDuplicates }, '查看重复候选与处理原因'),
+        h('button', { type: 'button', className: 'sg-quiet-button', disabled: refreshing, onClick: () => void checkStatus(), style: { marginTop: '14px' } }, refreshing ? '↻ 正在读取…' : '↻ 重新检查'), feedback.text ? h('p', { className: 'sg-status-feedback ' + feedback.kind, role: feedback.kind === 'failed' ? 'alert' : 'status' }, feedback.text) : null)
     }
 
     function AuditPage({ audit, auditPage, namespace, onBack, backLabel = '更多' }) {
@@ -4090,6 +4370,7 @@ window.__ModuleLoader__.load({
       const settingsWritable = pluginSettings?.writable === true
       const rows = [['Schema', 'v' + selected.schemaVersion], ['提取模型', '由 DSH 当前模型配置提供'], ['项目空间', selected.workspaceName || '当前工作区'], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
       const runtimeDiagnostics = [
+        ['duplicates', '⇄', '重复记忆整理', '查看保留原因、合并候选与重新扫描'],
         ['system', '✓', '系统状态', '处理概览与最近整理时间'],
         ['audit', '↗', '使用记录', '长期记忆何时被使用'],
         ['status', '↻', '后台任务', '处理进度、失败任务与重试'],
@@ -4398,7 +4679,7 @@ window.__ModuleLoader__.load({
         if (previous.item && ['event', 'block'].includes(previous.name)) loadSource(previous.name, previous.item)
         else setSource(null)
       }
-      const backLabel = view.back?.name === 'block' ? '短期记忆' : view.back?.name === 'event' ? '长期记忆' : view.back?.name === 'structure' ? '记忆结构' : section === 'short' ? '短期记忆' : '长期记忆'
+      const backLabel = view.back?.name === 'duplicates' ? '重复记忆整理' : view.back?.name === 'block' ? '短期记忆' : view.back?.name === 'event' ? '长期记忆' : view.back?.name === 'structure' ? '记忆结构' : section === 'short' ? '短期记忆' : '长期记忆'
       const refresh = (options = {}) => loadDashboard(namespace, { threadId: conversationId, force: true, ...options })
       const refreshDirectory = React.useCallback(() => loadDashboard(namespace, { threadId: conversationId, background: true, force: true }), [namespace, conversationId, loadDashboard])
       const selectConversation = (nextConversationId) => {
@@ -4425,7 +4706,8 @@ window.__ModuleLoader__.load({
       else if (view.name === 'status') content = h(ProcessingStatus, { overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, stage: view.stage, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
       else if (view.name === 'import') content = h(ImportPage, { namespace, onBack: moreBack, refresh })
       else if (view.name === 'structure') content = h(StructurePage, { events: data.events, eventPage: data.pagination?.events, graph: data.graph, openEvent, namespace, onBack: moreBack })
-      else if (view.name === 'system') content = h(SystemPage, { selected, blocks: data.blocks, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多', refresh })
+      else if (view.name === 'duplicates') content = h(DuplicateReviewPage, { namespace, repair: selected?.duplicateRepair, onBack: moreBack, openEvent, refresh })
+      else if (view.name === 'system') content = h(SystemPage, { selected, blocks: data.blocks, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多', refresh, onDuplicates: () => setView({ name: 'duplicates' }) })
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, auditPage: data.pagination?.audit, namespace, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'display') content = h(DisplayPage, { onBack: moreBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus })
@@ -4434,8 +4716,8 @@ window.__ModuleLoader__.load({
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
 
-      return h('main', { className: 'sg-memory', 'data-testid': 'stratagate-memory-ui' },
-        h('style', null, css),
+      return h('main', { className: 'sg-memory' + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-testid': 'stratagate-memory-ui' },
+        h('style', null, css + DUPLICATE_STYLES),
         h('header', { className: 'sg-header' },
           h('div', { className: 'sg-header-row sg-header-row-primary' },
             h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
@@ -4447,7 +4729,9 @@ window.__ModuleLoader__.load({
             h(HeaderCommunityLinks))),
         h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
-        view.name === 'status' ? null : h(MemoryStatusAlert, { overview: error ? null : selected, onOpen: (stage) => setView({ name: 'status', stage }) }),
+        view.name === 'status' || view.name === 'duplicates' ? null : h(MemoryStatusAlert, { overview: error ? null : selected, onOpen: (stage) => setView({ name: 'status', stage }) }),
+        view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
+          h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
         h('section', { key: section, className: 'sg-view', 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
           h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, active: view.name === 'root' })),
           view.name === 'root' ? null : content) : content),

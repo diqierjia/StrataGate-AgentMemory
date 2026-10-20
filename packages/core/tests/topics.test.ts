@@ -1133,7 +1133,7 @@ describe('rebuildable Event-backed topic directory', () => {
       expect(final.blocks).toEqual(original.blocks);
       expect(final.graphNodes).toEqual(original.graphNodes);
       expect(final.graphEdges).toEqual(original.graphEdges);
-      expect(final.schemaVersion).toBe(12);
+      expect(final.schemaVersion).toBe(13);
     } finally {
       await reader?.close(); await memory?.close();
       await rm(directory, { recursive: true, force: true });

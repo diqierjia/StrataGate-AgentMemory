@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { satisfies } from 'semver'
+import type { Context } from '@deepseek-ai/cordis'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -24,84 +26,6 @@ const SESSION_FORMAT_PACKAGES = [
 
 const RUNTIME_PACKAGES = [...CORE_RUNTIME_PACKAGES, ...SESSION_FORMAT_PACKAGES] as const
 
-const SUPPORTED_RUNTIME_FAMILIES = [
-  {
-    cli: '0.1.2-rc.1',
-    versions: {
-      '@deepseek-ai/cordis': '4.0.2',
-      '@deepseek-ai/dsh-agent-default-model': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-client-ui-conversation': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-llm': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-native-command': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-session': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-settings': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-system-prompt': '0.1.2-rc.1',
-      '@deepseek-ai/dsh-tools': '0.1.2-rc.1',
-      '@deepseek-ai/schemastery': '3.18.2',
-    },
-  },
-  {
-    cli: '0.1.5-rc.1',
-    versions: {
-      '@deepseek-ai/cordis': '4.0.2',
-      '@deepseek-ai/dsh-agent-default-model': '0.1.5-rc.2',
-      '@deepseek-ai/dsh-client-ui-conversation': '0.1.5-rc.2',
-      '@deepseek-ai/dsh-llm': '0.1.5-rc.2',
-      '@deepseek-ai/dsh-native-command': '0.1.5-rc.2',
-      '@deepseek-ai/dsh-session': '0.1.5-rc.2',
-      '@deepseek-ai/dsh-settings': '0.1.5-rc.2',
-      '@deepseek-ai/dsh-system-prompt': '0.1.5-rc.2',
-      '@deepseek-ai/dsh-tools': '0.1.5-rc.2',
-      '@deepseek-ai/schemastery': '3.18.2',
-    },
-  },
-  {
-    cli: '0.1.6-alpha.1',
-    versions: {
-      '@deepseek-ai/cordis': '4.0.2',
-      '@deepseek-ai/dsh-agent-default-model': '0.1.6-alpha.1',
-      '@deepseek-ai/dsh-client-ui-conversation': '0.1.6-alpha.1',
-      '@deepseek-ai/dsh-llm': '0.1.6-alpha.1',
-      '@deepseek-ai/dsh-native-command': '0.1.6-alpha.1',
-      '@deepseek-ai/dsh-session': '0.1.6-alpha.1',
-      '@deepseek-ai/dsh-settings': '0.1.6-alpha.1',
-      '@deepseek-ai/dsh-system-prompt': '0.1.6-alpha.1',
-      '@deepseek-ai/dsh-tools': '0.1.6-alpha.1',
-      '@deepseek-ai/schemastery': '3.18.2',
-    },
-  },
-  {
-    cli: '0.1.7-rc.1',
-    versions: {
-      '@deepseek-ai/cordis': '4.0.4',
-      '@deepseek-ai/dsh-agent-default-model': '0.1.7-rc.1',
-      '@deepseek-ai/dsh-client-ui-conversation': '0.1.7-rc.1',
-      '@deepseek-ai/dsh-llm': '0.1.7-rc.1',
-      '@deepseek-ai/dsh-native-command': '0.1.7-rc.1',
-      '@deepseek-ai/dsh-session': '0.1.7-rc.1',
-      '@deepseek-ai/dsh-settings': '0.1.7-rc.1',
-      '@deepseek-ai/dsh-system-prompt': '0.1.7-rc.1',
-      '@deepseek-ai/dsh-tools': '0.1.7-rc.1',
-      '@deepseek-ai/schemastery': '3.18.4',
-    },
-  },
-  {
-    cli: '0.1.7-rc.2',
-    versions: {
-      '@deepseek-ai/cordis': '4.0.4',
-      '@deepseek-ai/dsh-agent-default-model': '0.1.7-rc.2',
-      '@deepseek-ai/dsh-client-ui-conversation': '0.1.7-rc.2',
-      '@deepseek-ai/dsh-llm': '0.1.7-rc.2',
-      '@deepseek-ai/dsh-native-command': '0.1.7-rc.2',
-      '@deepseek-ai/dsh-session': '0.1.7-rc.2',
-      '@deepseek-ai/dsh-settings': '0.1.7-rc.2',
-      '@deepseek-ai/dsh-system-prompt': '0.1.7-rc.2',
-      '@deepseek-ai/dsh-tools': '0.1.7-rc.2',
-      '@deepseek-ai/schemastery': '3.18.4',
-    },
-  },
-] as const
-
 export interface DshRuntimeCompatibility {
   cliVersion: string
   packageVersions: Readonly<Record<string, string>>
@@ -111,21 +35,33 @@ export type DshRuntimePackageVersions = Readonly<Record<(typeof RUNTIME_PACKAGES
 
 export const STRATAGATE_MESSAGE_SOURCE_KIND = 'plugin:stratagate-memory' as const
 
-/** Match >=0.2.0-0 <0.2.1-0 without adding a runtime semver dependency. */
-function isDsh020Version(version: string): boolean {
-  const match = /^0\.2\.0(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/.exec(version)
-  if (!match) return false
-  const prerelease = match[1]?.split('.') ?? []
-  const build = match[2]?.split('.') ?? []
-  return [...prerelease, ...build].every((part) => part.length > 0)
-    && prerelease.every((part) => !/^\d+$/.test(part) || part === '0' || !part.startsWith('0'))
+const DSH_RUNTIME_RANGE = '0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0'
+const MODERN_API_RANGE = '>=0.1.7-rc.1'
+const SESSION_FORMAT_RUNTIME_RANGE = '>=0.2.0-0'
+const SEMVER_OPTIONS = { includePrerelease: true }
+
+/** Check readable method shapes without invoking host APIs or changing data. */
+export function assertDshMethods(scope: string, value: unknown, methods: readonly string[]): void {
+  const target = value as Record<string, unknown> | null | undefined
+  const missing = methods.filter((method) => typeof target?.[method] !== 'function')
+  if (missing.length) {
+    throw new Error(`StrataGate cannot use this DSH host: missing required interface ${missing.map((method) => `${scope}.${method}`).join(', ')}. Use a compatible host or plugin version.`)
+  }
+}
+
+/** Run before migration, opening the database, or registering plugin services. */
+export function assertDshHostContract(ctx: Context): void {
+  assertDshMethods('tools', ctx.tools, ['register', 'get'])
+  assertDshMethods('systemPrompt', ctx.systemPrompt, ['section'])
+  assertDshMethods('llm', ctx.llm, ['stream', 'listProviders'])
+  assertDshMethods('agentDefaultModel', ctx.agentDefaultModel, ['currentSelection'])
 }
 
 export function buildDshMessageSource(
   version: string,
   form?: 'instructions' | 'catalog' | 'snapshot' | 'notice' | 'relay' | 'recall',
 ): any {
-  const source = /^0\.1\.7(?:-|$)/.test(version) || isDsh020Version(version)
+  const source = satisfies(version, MODERN_API_RANGE, SEMVER_OPTIONS)
     ? { kind: STRATAGATE_MESSAGE_SOURCE_KIND }
     : { kind: 'plugin', plugin: 'stratagate-memory' }
   return form ? { ...source, form } : source
@@ -177,37 +113,33 @@ function isCompatiblePatch(version: string, major: number, minor: number, minimu
  * surface with unrelated missing-service or method errors.
  */
 export function classifyDshRuntime(packageVersions: DshRuntimePackageVersions): DshRuntimeCompatibility {
-  const family = SUPPORTED_RUNTIME_FAMILIES.find(({ versions }) => (
-    CORE_RUNTIME_PACKAGES.every((name) => packageVersions[name] === versions[name])
-  ))
-  if (family) return { cliVersion: family.cli, packageVersions }
-
   const dshVersion = packageVersions['@deepseek-ai/dsh-session']
   const sameDshFamily = CORE_RUNTIME_PACKAGES
     .filter((name) => name.startsWith('@deepseek-ai/dsh-'))
     .every((name) => packageVersions[name] === dshVersion)
-  // Preserve older host rules; the complete 0.2.0 runtime also owns the codecs
+  // Preserve older host rules; DSH 0.2.0 and later also own the codecs
   // used by startup migration and native Session checkpoint persistence.
-  const sameSessionFormatFamily = !isDsh020Version(dshVersion)
+  const sameSessionFormatFamily = !satisfies(dshVersion, SESSION_FORMAT_RUNTIME_RANGE, SEMVER_OPTIONS)
     || SESSION_FORMAT_PACKAGES.every((name) => packageVersions[name] === dshVersion)
-  if ((/^0\.1\.7-rc\.[1-9]\d*$/.test(dshVersion) || dshVersion === '0.1.7' || isDsh020Version(dshVersion))
+  const modernApi = satisfies(dshVersion, MODERN_API_RANGE, SEMVER_OPTIONS)
+  const compatibleVendors = modernApi
+    ? isCompatiblePatch(packageVersions['@deepseek-ai/cordis'], 4, 0, 4)
+      && isCompatiblePatch(packageVersions['@deepseek-ai/schemastery'], 3, 18, 4)
+    : packageVersions['@deepseek-ai/cordis'] === '4.0.2'
+      && packageVersions['@deepseek-ai/schemastery'] === '3.18.2'
+  if (satisfies(dshVersion, DSH_RUNTIME_RANGE, SEMVER_OPTIONS)
     && sameDshFamily
     && sameSessionFormatFamily
-    && isCompatiblePatch(packageVersions['@deepseek-ai/cordis'], 4, 0, 4)
-    && isCompatiblePatch(packageVersions['@deepseek-ai/schemastery'], 3, 18, 4)) {
-    return { cliVersion: dshVersion, packageVersions }
+    && compatibleVendors) {
+    return { cliVersion: dshVersion === '0.1.5-rc.2' ? '0.1.5-rc.1' : dshVersion, packageVersions }
   }
 
   const found = RUNTIME_PACKAGES.map((name) => `${name}@${packageVersions[name]}`).join(', ')
   throw new Error(
     'StrataGate cannot start because this DSH profile resolves an unsupported or mixed core runtime. '
-    + `Resolved: ${found}. Supported hosts are @deepseek-ai/dsh@0.1.2-rc.1 `
-    + '(internal DSH packages 0.1.2-rc.1) and @deepseek-ai/dsh@0.1.5-rc.1 '
-    + '(its real dependency tree uses internal DSH packages 0.1.5-rc.2), and '
-    + '@deepseek-ai/dsh@0.1.6-alpha.1 (internal DSH packages 0.1.6-alpha.1), and '
-    + 'the coherent DSH 0.1.7 family from rc.1 through the 0.1.7 release, and '
-    + 'the complete DSH 0.2.0 family (all alpha, beta, rc, and stable versions; >=0.2.0-0 <0.2.1-0) '
-    + '(Cordis 4.0.x from 4.0.4, Schemastery 3.18.x from 3.18.4). '
+    + `Resolved: ${found}. Supported DSH versions: ${DSH_RUNTIME_RANGE} (including prereleases). `
+    + 'Core DSH packages must share one version; DSH 0.2.0 and later also require matching Session Format packages. '
+    + 'Modern hosts require Cordis 4.0.x from 4.0.4 and Schemastery 3.18.x from 3.18.4; older hosts use 4.0.2 and 3.18.2. '
     + 'Reinstall or update stratagate-dsh through `dsh plugin --profile <name> add <package>` so the host supplies its peers.',
   )
 }

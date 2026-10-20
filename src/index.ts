@@ -19,7 +19,7 @@ import { registerMemoryTools } from './tools.js'
 import { observeModelStream } from './diagnostics.js'
 import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
 import { registerAdminRoutes } from './web.js'
-import { assertCompatibleDshRuntime } from './dsh-compatibility.js'
+import { assertCompatibleDshRuntime, assertDshHostContract } from './dsh-compatibility.js'
 import { installRetrievalFinalization } from './retrieval-finalization.js'
 import { migrateLegacyCitationSessions } from './legacy-session.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -90,6 +90,7 @@ function feedbackWebOrigin(ctx: Context): string | undefined {
 
 export async function apply(ctx: Context, config: StrataGateConfig): Promise<() => Promise<void>> {
   const compatibility = assertCompatibleDshRuntime()
+  assertDshHostContract(ctx)
   const resolved = resolveConfig(config)
   const legacyMigration = await migrateLegacyCitationSessions(resolved.sessionRoot)
   if (legacyMigration.failures.length > 0) {

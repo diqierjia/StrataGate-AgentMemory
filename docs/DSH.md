@@ -117,8 +117,8 @@ two differences:
   that thread — so no fabricated user message is ever created. Only when a session has no
   ingested messages at all does a synthetic `agent-memory:` provenance Block get created.
 - **Pre-write resolution.** Before writing, StrataGate searches existing memory (both pools)
-  for duplicates and conflicts. Exact and near duplicates reinforce the existing card instead
-  of writing a new one. Ambiguous lexical overlap triggers one synchronous model adjudication
+  for duplicates and conflicts. Only normalized text-identical active facts reinforce the existing card
+  without a model call. Other lexical overlap, including containment or reordered words, triggers synchronous model adjudication
   reusing the external-memory decision contract: `ADD`, `MERGE`, `SUPERSEDE` (high confidence
   only — low-confidence merge/supersede is downgraded to a non-destructive conflict mark),
   `CONFLICT` (symmetric back-links), or `IGNORE`. The tool result reports `action`, `gate`,
@@ -148,16 +148,34 @@ memory_record_use      memory_remember
 memory_profile_update
 ```
 
-`memory_get_blocks` accepts `scope=session` (the default, preserving the historical
-session-local behavior) or `scope=namespace` (all threads in the active project,
-session, or global namespace). Every response includes the selected `scope`,
+`memory_get_blocks` returns a paginated directory: each row contains only `id`,
+`title`, `turnRange`, and the current `level`. Read source content with `memory_expand_block`.
+It accepts `offset` and `limit` (default 12, bounded to 1–20), and returns `total`,
+`offset`, `limit`, and `nextOffset` (`null` at the end). `blockCount` counts all matching
+ready blocks before pagination. An offset past the end returns an empty page without
+reporting that the scope has no blocks.
+
+`scope=session` (the default) strictly matches the active `threadId`.
+`scope=namespace` includes all threads and legacy unthreaded blocks in the active project,
+session, or global namespace. Every response includes the selected `scope`,
 `namespace`, `threadId`, block counts, and `emptyReason`. A `null` reason means
-blocks were returned; `no_blocks_in_namespace` means the namespace has no sealed
+matching ready blocks exist; `no_blocks_in_namespace` means the namespace has no sealed
 blocks, `blocks_exist_in_other_threads` means only another thread has sealed
 blocks, and `open_tail_pending` means matching turns exist but have not sealed yet.
-`memory_search_raw` defaults to namespace scope and accepts the same `scope` filter,
+`memory_search_raw` defaults to namespace scope and uses the same strict thread filter for `scope=session`,
 so a raw hit's `blockId` can be followed by `memory_get_blocks(scope=namespace)`
 or `memory_expand_block` without an unexplained visibility mismatch.
+
+The deprecated `memory_search_elements` tool is no longer registered; use
+`memory_search_graph`. Legacy agent-memory provenance transcripts display `Recorded:`
+while preserving the stored raw messages.
+
+Automatic Event extraction now checks existing cards before admission. After upgrade,
+a resumable background task scans each existing namespace once when a model is available.
+Exact duplicates retain one card; similar candidates receive a dedicated conservative model
+review. Distinct timing, scope, versions, progress, and uncertain facts remain separate.
+Confirmed redundant cards are archived with their original provenance, never deleted.
+System Status shows a summary without requiring pair-by-pair user action.
 
 Search responses use compact cards by default. Event cards keep `id`, `title`, `summary`, source time,
 status/scope, `sourceBlockId`, `batchId`, and `evidenceRefs`; graph cards keep `id`, `name`, type,
@@ -237,9 +255,13 @@ For diagnostics, the five most recent successful memory-model responses are reta
 
 ## Compatibility and permissions
 
-Installation peers and startup checks support the complete DSH `0.2.0` version family: all Alpha, Beta, RC, and stable releases (`>=0.2.0-0 <0.2.1-0`), without enumerating individual prereleases. Previously supported DSH `0.1.2-rc.1`, CLI `0.1.5-rc.1` (internal packages `0.1.5-rc.2`), `0.1.6-alpha.1`, and the `0.1.7` family from rc.1 through stable remain supported. Startup still requires one coherent internal DSH version and compatible Cordis `4.0.x` patches from `4.0.4` and Schemastery `3.18.x` patches from `3.18.4`; older hosts retain their original dependency families. DSH `0.1.8`, `0.2.1`, and their prereleases remain excluded.
+DSH `0.2.1-rc.1` reads the unified host declaration `engines.dsh: "0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0"`; older hosts use the peer declarations. CLI `0.1.5-rc.1` shipped internal packages at `0.1.5-rc.2`, explaining the different lower bounds.
 
-Development dependencies are pinned to DSH `0.2.0-rc.2` for reproducible checks. The release-gate matrix is configured to verify the previously listed older hosts plus `0.2.0-rc.1` and `0.2.0-rc.2` on Node `24`, Linux, and Windows. `dshWorkshop.compatibility.dshVersions` records concrete verification hosts; installation compatibility comes from the full peer ranges, so that test list does not restrict future `0.2.0` updates.
+Installation peers use continuous compatibility ranges: `0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0` for general DSH interfaces and `>=0.1.5-rc.2 <0.3.0-0` for Session Format interfaces. Existing legacy adapters remain available. Hosts such as `0.2.1-rc.1` and later `0.2.x` updates need no individual whitelist entries or patch-version upper bounds. DSH `0.3.0`, including every prerelease, remains outside the support boundary until its key interfaces are verified. DSH checks these ranges with `includePrerelease`, accepting alpha, beta, RC, and stable versions within the boundary; ordinary npm range matching does not guarantee acceptance of later prereleases.
+
+Startup still requires one coherent internal DSH version. From the `0.2.0` prereleases onward, Session Format packages must also match the core version. Modern hosts require Cordis `4.0.x` patches from `4.0.4` and Schemastery `3.18.x` patches from `3.18.4`; older hosts retain their original dependency families. Before migration or database access, startup checks tool registration, system prompt, model streaming, and default model selection interfaces. The migration loader also validates codec, migration-stage, and restoration entry points before proceeding. Missing interfaces stop the operation with a specific diagnostic. Method presence alone does not prove behavioral compatibility: strict artifact validation, immutable source generations, and recovery receipts remain in place. A continuous range does not mean every version within it has been tested.
+
+Development dependencies remain pinned to DSH `0.2.0-rc.2` for reproducible checks. `dshWorkshop.compatibility.dshVersions` records concrete regression hosts rather than an installation whitelist. Use `DSH_VERSION=<version> node scripts/run-dsh-compatibility.mjs` to check a new host within the peer ranges. Current repository policy skips GitHub CI and Roadmap synchronization while retaining local verification.
 
 On DSH `0.2.0`, the host-owned `dsh-session-format`, `dsh-session-format-catalog`, and `dsh-session-format-v0-to-v1` packages must also match the core DSH version. Mixed or missing Session Format packages stop startup before legacy migration; earlier hosts retain their existing compatibility rules.
 

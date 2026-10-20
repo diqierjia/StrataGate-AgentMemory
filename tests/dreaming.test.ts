@@ -20,18 +20,22 @@ import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { DshDreamingSessions } from '../src/dreaming-session.js'
-import JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as JsonlPersistenceModule from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionQuery from '@deepseek-ai/dsh-session-query-sqlite'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
+import BasicCompaction from '@deepseek-ai/dsh-compaction-basic'
 import * as StrataGatePlugin from '../src/index.js'
 
 const cleanups: Array<() => Promise<void>> = []
+// DSH 0.2.1 exposes the plugin as named exports; earlier hosts use a default class.
+const JsonlPersistence = (JsonlPersistenceModule as any).default ?? JsonlPersistenceModule
 afterEach(async () => { while (cleanups.length) await cleanups.pop()!() })
-async function fixture(count = 2, userMessage = '用户明确要求保留来源，优化目录。', namespace = 'dreaming-test') {
+async function fixture(count = 2, userMessage = '用户明确要求保留来源，优化目录。', namespace = 'dreaming-test', now?: () => Date) {
   const directory = await mkdtemp(join(tmpdir(), 'stratagate-dreaming-'))
   const database = join(directory, 'memory.sqlite')
-  const options = { database, namespace, blockTurnSize: 1, disableElementProjection: true,
+  const options = { database, namespace, blockTurnSize: 1, disableElementProjection: true, ...(now ? { now } : {}),
     summarizer: async () => ({ l0Title: '项目', l0Tags: [], l1Summary: '项目资料', l2Keypoints: [], shouldExtract: false }) }
   const memory = await StrataGate.open(options)
   const opened = [memory]
@@ -58,6 +62,234 @@ async function fixture(count = 2, userMessage = '用户明确要求保留来源�
     reopen: async () => { const next = await StrataGate.open(options); opened.push(next); return next } }
 }
 const claim = (run: DreamingRun) => ({ id: run.id, owner: run.owner, epoch: run.epoch })
+
+describe('Dreaming trace regressions: completion and overview maintenance', () => {
+  it('lets a final native summary finish after heartbeat ticks without renewing the completed claim', async () => {
+    const f = await fixture(1)
+    const runtime = runtimeFor(f.database, async () => { throw new Error('No live model calls') })
+    let requests = 0, finalStarted = false, cancelled = false, release!: () => void
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      if (++requests === 1) { yield* nativeCall('dreaming_finish', {}); return }
+      yield { type: 'text-delta', index: 0, text: '开始总结。' }
+      await new Promise<void>(resolve => {
+        release = resolve; finalStarted = true
+        options.signal.addEventListener('abort', () => { cancelled = true; resolve() }, { once: true })
+      })
+      yield { type: 'text-delta', index: 0, text: '总结完整结束。' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      await runtime.adminDreamingControl(f.namespace, 'start')
+      await vi.waitFor(() => expect(finalStarted).toBe(true))
+      const status = (await runtime.adminDreamingStatus(f.namespace) as any).run
+      expect(status).toMatchObject({ status: 'completed', completed: 1 })
+      const finished = (await f.reopen()).exportSnapshot().memoryTopicState!.dreaming!
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(cancelled).toBe(false)
+      expect((await f.reopen()).exportSnapshot().memoryTopicState!.dreaming).toEqual(finished)
+      release()
+      const agent = ctx.agents.get(status.sessionId)!
+      await agent.whenIdle()
+      const events = agent.session.snapshotEvents()
+      expect(JSON.stringify(agent.session.deriveMessages())).toContain('总结完整结束。')
+      expect(JSON.stringify(events.find(event => event.type === 'turn/end'))).not.toContain('aborted')
+      expect(events.some(event => event.type === 'turn/end')).toBe(true)
+      expect(requests).toBe(2)
+    } finally { release?.(); vi.useRealTimers() }
+  })
+
+  it('accepts only the same completed heartbeat, leaving timestamps and lease untouched', async () => {
+    const f = await fixture(1)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'owner' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    run = await f.memory.dreaming({ kind: 'finish-unit', ...claim(run) })
+    expect(await f.memory.dreaming({ kind: 'heartbeat', ...claim(run) })).toEqual(run)
+    expect(run.leaseUntil).toBeNull()
+    await expect(f.memory.dreaming({ kind: 'heartbeat', ...claim(run), owner: 'foreign' })).rejects.toThrow('claim changed')
+    await expect(f.memory.dreaming({ kind: 'heartbeat', ...claim(run), epoch: run.epoch + 1 })).rejects.toThrow('claim changed')
+    await expect(f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'rename-chapter', title: '迟到写入' }] })).rejects.toThrow('claim changed')
+    await f.memory.dreaming({ kind: 'start', owner: 'new-owner' })
+    await expect(f.memory.dreaming({ kind: 'heartbeat', ...claim(run) })).rejects.toThrow('Unknown Dreaming run')
+  })
+
+  it('relocates overview prose with Event membership atomically without duplicates or cross-index workarounds', async () => {
+    const f = await fixture(3)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    const facts = f.events.map((event, index) => ({ kind: 'history' as const, text: `独有事实 ${index}`, sourceEventIds: [event.id] }))
+    run = await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [
+      { kind: 'move-events', eventIds: [f.events[2]!.id], title: '无关小节' },
+      { kind: 'set-overview', title: '开发', entries: facts.slice(0, 2) },
+      { kind: 'set-overview', title: '无关小节', entries: [facts[2]!] },
+    ] })
+    const untouched = structuredClone(f.memory.getMemoryTopic(f.topicId)!.overview.find(part => part.title === '无关小节'))
+    const beforeEvents = structuredClone(f.memory.listAllEvents())
+    run = await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [
+      { kind: 'move-events', eventIds: [f.events[1]!.id], title: '新分类' },
+      { kind: 'rewrite-overview', titles: ['开发', '新分类'], entries: [
+        { ...facts[0]!, title: '开发' }, { ...facts[1]!, title: '新分类' },
+      ] },
+    ] })
+    const reopened = await f.reopen()
+    expect(reopened.getMemoryTopic(f.topicId)!.overview).toHaveLength(3)
+    expect(reopened.getMemoryTopic(f.topicId)!.overview).toEqual(expect.arrayContaining([
+      untouched, { ...facts[0]!, title: '开发' }, { ...facts[1]!, title: '新分类' },
+    ]))
+    expect(reopened.getMemoryTopic(f.topicId)!.sections!.find(section => section.title === '新分类')!.sourceEventIds).toEqual([f.events[1]!.id])
+    expect(reopened.listAllEvents()).toEqual(beforeEvents)
+    expect(run.changedBatches).toBe(2)
+  })
+
+  it('merges into an existing destination while preserving its content and leaving no source duplicate', async () => {
+    const f = await fixture(2)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    run = await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [
+      { kind: 'move-events', eventIds: [f.events[1]!.id], title: '目标' },
+      { kind: 'set-overview', title: '开发', entries: [{ kind: 'history', text: '来源事实', sourceEventIds: [f.events[0]!.id] }] },
+      { kind: 'set-overview', title: '目标', entries: [{ kind: 'history', text: '目标原有事实', sourceEventIds: [f.events[1]!.id] }] },
+    ] })
+    await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'rewrite-overview', titles: ['开发', '目标'], entries: [
+      { kind: 'history', title: '目标', text: '来源事实；目标原有事实。', sourceEventIds: f.events.map(event => event.id) },
+    ] }] })
+    const topic = (await f.reopen()).getMemoryTopic(f.topicId)!
+    expect(topic.overview).toEqual([{ kind: 'history', title: '目标', text: '来源事实；目标原有事实。', sourceEventIds: f.events.map(event => event.id) }])
+    // Overview routing and Event membership are deliberately independent.
+    expect(topic.sections!.find(section => section.title === '开发')!.sourceEventIds).toEqual([f.events[0]!.id])
+  })
+
+  it('leaves unselected legacy overview entries byte-for-byte intact', async () => {
+    const f = await fixture(2)
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const snapshot = f.memory.exportSnapshot()
+    const topic = snapshot.memoryTopicState!.topics.find(item => item.id === f.topicId)!
+    topic.sections = [{ title: '开发', sourceEventIds: [f.events[0]!.id] }, { title: '旧资料', sourceEventIds: [f.events[1]!.id] }]
+    const legacy = { kind: 'history' as const, title: '旧资料', text: '与本次整理无关的遗留段落', sourceEventIds: [f.events[1]!.id] }
+    topic.overview = [legacy, structuredClone(legacy)]
+    const storage = new SqliteStorage({ filename: f.database })
+    try { await storage.save(f.namespace, snapshot, f.memory.storageRevision) } finally { storage.close() }
+    await f.memory.reloadFromStorage()
+    const before = JSON.stringify(f.memory.getMemoryTopic(f.topicId)!.overview)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'rewrite-overview', titles: ['开发'], entries: [
+      { kind: 'history', title: '开发', text: '本次有证据的新概要', sourceEventIds: [f.events[0]!.id] },
+    ] }] })
+    const unrelated = (await f.reopen()).getMemoryTopic(f.topicId)!.overview.filter(part => part.title === '旧资料')
+    expect(JSON.stringify(unrelated)).toBe(before)
+    expect(unrelated).toHaveLength(2)
+  })
+
+  it('rejects duplicate appends without reordering interleaved overview entries into fake progress', async () => {
+    const f = await fixture(2)
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const snapshot = f.memory.exportSnapshot()
+    const topic = snapshot.memoryTopicState!.topics.find(item => item.id === f.topicId)!
+    topic.sections = [{ title: '开发', sourceEventIds: [f.events[0]!.id] }, { title: '其他', sourceEventIds: [f.events[1]!.id] }]
+    const entry = { kind: 'history' as const, title: '开发', text: '开发事实一', sourceEventIds: [f.events[0]!.id] }
+    topic.overview = [entry, { kind: 'history', title: '其他', text: '其他事实', sourceEventIds: [f.events[1]!.id] }, { ...entry, text: '开发事实二' }]
+    const storage = new SqliteStorage({ filename: f.database })
+    try { await storage.save(f.namespace, snapshot, f.memory.storageRevision) } finally { storage.close() }
+    await f.memory.reloadFromStorage()
+    const before = structuredClone(f.memory.getMemoryTopic(f.topicId))
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    await expect(f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'append-overview', title: '开发', entries: [entry] }] })).rejects.toThrow('unchanged or previous state')
+    expect((await f.reopen()).getMemoryTopic(f.topicId)).toEqual(before)
+  })
+
+  it('consolidates obsolete prose and repeated corrections into one sourced entry through native tools', async () => {
+    const f = await fixture(3)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'old' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    run = await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'set-overview', title: '开发', entries: [
+      { kind: 'open-question', text: '当前状态待确认。', sourceEventIds: [f.events[0]!.id] },
+      { kind: 'change', text: '补充：后续已确认。', sourceEventIds: [f.events[1]!.id] },
+    ] }] })
+    await f.memory.dreaming({ kind: 'suspend', ...claim(run), reason: 'fixture' })
+    const runtime = runtimeFor(f.database, async () => { throw new Error('No legacy model') })
+    let requests = 0
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      if (++requests === 1) {
+        expect(JSON.stringify(options.tools)).toContain('rewrite-overview')
+        expect(JSON.stringify(options.messages)).toContain('do not keep an obsolete claim as a current fact')
+        yield* nativeCall('dreaming_directory', { operations: [{ kind: 'rewrite-overview', titles: ['开发'], entries: [
+          { kind: 'change', title: '开发', text: '早期未确认，后续已明确；原先的待确认说法已过时。', sourceEventIds: f.events.map(event => event.id) },
+        ] }] })
+      } else if (requests === 2) yield* nativeCall('dreaming_finish', {})
+      else { yield { type: 'text-delta', index: 0, text: '已合并更正。' }; yield { type: 'finish', reason: { kind: 'stop' } } }
+    })
+    await runtime.adminDreamingControl(f.namespace, 'resume', run.id)
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'completed', changedBatches: 2 } }))
+    const status = (await runtime.adminDreamingStatus(f.namespace) as any).run
+    await ctx.agents.get(status.sessionId)!.whenIdle()
+    const overview = (await f.reopen()).getMemoryTopic(f.topicId)!.overview
+    expect(overview).toHaveLength(1)
+    expect(overview[0]).toMatchObject({ text: '早期未确认，后续已明确；原先的待确认说法已过时。', sourceEventIds: f.events.map(event => event.id) })
+  })
+
+  it.each(['source', 'destination'] as const)('rejects losing %s citations and rolls back every operation', async missing => {
+    const f = await fixture(2)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    run = await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [
+      { kind: 'move-events', eventIds: [f.events[1]!.id], title: '目标' },
+      { kind: 'set-overview', title: '开发', entries: [{ kind: 'history', text: '来源内容', sourceEventIds: [f.events[0]!.id] }] },
+      { kind: 'set-overview', title: '目标', entries: [{ kind: 'history', text: '目标原有内容', sourceEventIds: [f.events[1]!.id] }] },
+    ] })
+    const before = structuredClone(f.memory.getMemoryTopic(f.topicId))
+    const missingId = f.events[missing === 'source' ? 0 : 1]!.id
+    await expect(f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [
+      { kind: 'rename-chapter', title: '不应保存' },
+      { kind: 'rewrite-overview', titles: ['开发', '目标'], entries: [
+        { kind: 'history', title: '目标', text: '不完整替换', sourceEventIds: f.events.filter(event => event.id !== missingId).map(event => event.id) },
+      ] },
+    ] })).rejects.toThrow(`overview-source-reference-missing: preserve existing overview evidence for Event ${JSON.stringify(missingId)}`)
+    expect(f.memory.getMemoryTopic(f.topicId)).toEqual(before)
+    expect((await f.reopen()).getMemoryTopic(f.topicId)).toEqual(before)
+  })
+
+  it('identifies unread, foreign and unavailable sources precisely; retrieval repairs only unread citations', async () => {
+    const f = await fixture(25)
+    const foreign = await f.memory.addEvent({ title: '别章事实', summary: '不属于当前章节', sourceBlockId: f.block.id, sourceMessageIds: [f.block.l5Raw[0]!.id] })
+    const job = (await f.memory.claimNextTopicProjection())!
+    await f.memory.completeTopicProjection(job.jobId, { topics: [{ title: '另一个章节', description: '其他主题', sourceEventIds: [foreign.id], sections: [{ title: '其他', sourceEventIds: [foreign.id] }], overview: [] }] })
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    const unread = f.events.find(event => !run.units[0]!.eventIds.includes(event.id))!
+    const write = (ids: string[]) => f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'set-overview', title: '开发', entries: [{ kind: 'history', text: '有来源事实', sourceEventIds: ids }] }] })
+    await expect(write([unread.id])).rejects.toThrow(`overview-source-not-retrieved: Event ${JSON.stringify(unread.id)}`)
+    await expect(write([unread.id, foreign.id])).rejects.toThrow(`overview-source-not-in-chapter: Event ${JSON.stringify(foreign.id)}`)
+    await expect(write(['fabricated'])).rejects.toThrow('overview-source-unavailable: Event "fabricated"')
+    for (const event of [unread, foreign]) {
+      const action = { tool: 'dreaming_read', args: { kind: 'event', id: event.id } }
+      const read = await dreamingTool(f.memory, run, action)
+      run = await f.memory.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result: read.result }, evidenceIds: read.evidenceIds, estimatedTokens: 0 })
+    }
+    await expect(write([foreign.id])).rejects.toThrow('overview-source-not-in-chapter')
+    await write([unread.id])
+    expect((await f.reopen()).getMemoryTopic(f.topicId)!.overview[0]!.sourceEventIds).toEqual([unread.id])
+  })
+
+  it.each(['unknown-section', 'duplicate-section', 'missing-title', 'outside-title', 'blank-text', 'empty-citations', 'null-entry'] as const)('rejects malformed overview rewrites atomically: %s', async mode => {
+    const f = await fixture(1)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    const before = structuredClone(f.memory.getMemoryTopic(f.topicId))
+    const operation: any = { kind: 'rewrite-overview', titles: ['开发'], entries: [{ title: '开发', kind: 'history', text: '内容', sourceEventIds: [f.events[0]!.id] }] }
+    if (mode === 'unknown-section') operation.titles = ['不存在']
+    if (mode === 'duplicate-section') operation.titles = ['开发', '开发']
+    if (mode === 'missing-title') delete operation.entries[0].title
+    if (mode === 'outside-title') operation.entries[0].title = '未选中的小节'
+    if (mode === 'blank-text') operation.entries[0].text = '  '
+    if (mode === 'empty-citations') operation.entries[0].sourceEventIds = []
+    if (mode === 'null-entry') operation.entries = [null]
+    await expect(f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'rename-chapter', title: '不能保存' }, operation] })).rejects.toThrow()
+    expect((await f.reopen()).getMemoryTopic(f.topicId)).toEqual(before)
+  })
+})
+
 async function seedQuotes(f: Awaited<ReturnType<typeof fixture>>, quotes: string) {
   const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
   const snapshot = f.memory.exportSnapshot()
@@ -71,15 +303,89 @@ async function seedQuotes(f: Awaited<ReturnType<typeof fixture>>, quotes: string
   await f.memory.reloadFromStorage()
   return fingerprint
 }
-async function seedOverview(f: Awaited<ReturnType<typeof fixture>>, count: number) {
+async function seedOverview(f: Awaited<ReturnType<typeof fixture>>, count: number, detail = '') {
   const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
   const snapshot = f.memory.exportSnapshot()
   snapshot.memoryTopicState!.topics.find(t => t.id === f.topicId)!.overview = Array.from({ length: count }, (_, i) => ({
-    kind: 'history', title: '开发', text: `有来源的总览 ${i}。`, sourceEventIds: [f.events[0]!.id],
+    kind: 'history', title: '开发', text: `有来源的总览 ${i}。${detail}`, sourceEventIds: [f.events[0]!.id],
   }))
   const db = new SqliteStorage({ filename: f.database })
   try { await db.save(f.namespace, snapshot, f.memory.storageRevision) } finally { db.close() }
   await f.memory.reloadFromStorage()
+}
+async function pendingProjection(f: Awaited<ReturnType<typeof fixture>>) {
+  const event = await f.memory.addEvent({ title: '等待目录投影的新事件', summary: '已有队列，与新对话无关。',
+    sourceBlockId: f.block.id, sourceMessageIds: [f.block.l5Raw[0]!.id] })
+  return { event, job: (await f.memory.claimNextTopicProjection())! }
+}
+
+describe('r3 Dreaming projection wait regressions', () => {
+  it('polls a draining projection for two minutes without saving per poll, while heartbeat renews the claim', async () => {
+    let now = Date.now()
+    const f = await fixture(1, undefined, undefined, () => new Date(now))
+    const { job } = await pendingProjection(f)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'r3' })
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const saves = vi.spyOn(SqliteStorage.prototype, 'save')
+    try {
+      for (let poll = 1; poll <= 600; poll++) {
+        now += 200
+        if (poll % 100 === 0) await f.memory.dreaming({ kind: 'heartbeat', ...claim(run) })
+        run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+        expect(run).toMatchObject({ status: 'running', waitingForProjection: true, calls: 0 })
+      }
+      expect(saves).toHaveBeenCalledTimes(6)
+      expect(Date.parse(run.leaseUntil!)).toBeGreaterThan(now)
+      const other = await f.reopen()
+      expect(other.exportSnapshot().memoryTopicState!.dreaming).toMatchObject({ id: run.id, waitingForProjection: true })
+      await other.failTopicProjection(job.jobId, new Error('projection failed on another connection'))
+      run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+      expect(run.waitingForProjection).not.toBe(true)
+      expect(run.status).toBe('running')
+    } finally { saves.mockRestore() }
+  })
+
+  it.each(['complete', 'fail', 'expire'] as const)('waits for the first directory projection and handles %s without an initial chapter', async end => {
+    let now = Date.now()
+    const f = await fixture(0, undefined, undefined, () => new Date(now))
+    await expect(f.memory.dreaming({ kind: 'start', owner: 'r3' })).rejects.toThrow('尚无可整理')
+    const { job, event } = await pendingProjection(f)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'r3' })
+    expect(run).toMatchObject({ status: 'running', waitingForProjection: true, units: [] })
+    expect(await f.memory.claimNextTopicProjection()).toBeNull()
+    await f.memory.dreaming({ kind: 'pause', id: run.id })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    expect(run.status).toBe('paused')
+    const other = await f.reopen()
+    expect(await other.claimNextTopicProjection()).toBeNull()
+    run = await other.dreaming({ kind: 'resume', id: run.id, owner: 'r3-restarted' })
+    if (end === 'complete') await other.completeTopicProjection(job.jobId, { topics: [{ title: '首次章节', description: '新生成', sourceEventIds: [event.id], overview: [] }] })
+    else if (end === 'fail') await other.failTopicProjection(job.jobId, new Error('first projection failed'))
+    else now += 6 * 60_000
+    if (end === 'expire') {
+      // Restart can reclaim the expired Dreaming lease while retaining the wait and exclusive reservation.
+      await other.reloadFromStorage()
+      run = await other.dreaming({ kind: 'resume', id: run.id, owner: 'after-expiry' })
+    }
+    run = await other.dreaming({ kind: 'prepare', ...claim(run) })
+    expect(run.waitingForProjection).not.toBe(true)
+    expect(run.calls).toBe(0)
+    expect(run.status).toBe(end === 'complete' ? 'running' : 'completed')
+    if (end === 'complete') expect(run.units[0]!.eventIds).toEqual([event.id])
+    else {
+      now += 60_001 // A failed projection retains its ordinary retry backoff.
+      expect(other.hasPendingTopicWork()).toBe(true)
+    }
+  })
+})
+
+async function editTopicOutsideDreaming(f: Awaited<ReturnType<typeof fixture>>) {
+  const other = await f.reopen()
+  const snapshot = other.exportSnapshot()
+  snapshot.memoryTopicState!.topics[0]!.title = '并发改名'
+  const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+  const db = new SqliteStorage({ filename: f.database })
+  try { await db.save(f.namespace, snapshot, other.storageRevision) } finally { db.close() }
 }
 async function seedLegacyTokenLimit(f: Awaited<ReturnType<typeof fixture>>) {
   const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
@@ -94,8 +400,8 @@ function directoryTask(options: any) {
     if (block.type !== 'text') return []
     try { const value = JSON.parse(block.text); return value.currentDirectoryTask ? [value.currentDirectoryTask] : [] } catch { return [] }
   }) : [])
-  expect(tasks).toHaveLength(1)
-  return tasks[0]
+  expect(tasks.length).toBeGreaterThan(0)
+  return tasks.at(-1)
 }
 async function nativeHost(runtime: StrataGateRuntime, directory: string, stream: (options: any) => AsyncIterable<any>, mountDreamingHost = true) {
   const ctx = new Context()
@@ -105,7 +411,7 @@ async function nativeHost(runtime: StrataGateRuntime, directory: string, stream:
   await ctx.plugin(JsonlPersistence, { root: join(directory, 'sessions'), compression: 'none' })
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 })
   ctx.on('llm/stream', stream)
-  if (mountDreamingHost) runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: 'fixture', maxTokens: 32768 })))
+  if (mountDreamingHost) runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: 'fixture' })))
   return ctx
 }
 function* nativeCall(name: string, args: unknown, id = 'call', index = 0) {
@@ -258,11 +564,11 @@ describe('directory Dreaming persistence and source-only tools', () => {
       yield* nativeCall('dreaming_search', { kind: 'events', query: `never-matches-${++calls}` }, `call-${calls}`)
     })
     await runtime.adminDreamingControl(f.namespace, 'start')
-    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'paused', completed: 0, calls: 6 } }))
-    expect(calls).toBe(6)
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'paused', completed: 0, calls: 12 } }), { timeout: 3000 })
+    expect(calls).toBe(12)
     await runtime.close()
     const reopened = await f.reopen()
-    expect(reopened.exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'paused', idleCalls: 6 })
+    expect(reopened.exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'paused', idleCalls: 12 })
   })
 
   it('accounts actual native request input including task, system prompt and JSON tool schemas', async () => {
@@ -351,7 +657,9 @@ describe('directory Dreaming persistence and source-only tools', () => {
           { kind: 'experience', text: '检查完来源后保留这条经验。', sourceEventIds: [task.events[0].id] },
         ] }] }, 'saved-once')
       } else if (batch === 1 && attempt === 4) {
-        expect(task.recentTools.at(-1).result.saved).toBe(true)
+        expect(options.messages.some((message: any) => message.role === 'tool' && message.content.some((block: any) => {
+          try { return JSON.parse(block.text).saved === true } catch { return false }
+        }))).toBe(true)
         yield { type: 'finish', reason: { kind: 'stop' } }
       } else yield* nativeCall('dreaming_finish', { summary: '本批已检查完毕。' }, `finish-${batch}`)
     })
@@ -386,26 +694,36 @@ describe('directory Dreaming persistence and source-only tools', () => {
     expect(requests).toBe(1)
   })
 
-  it('interrupts an oversized text-only response before it can spend the full tool-call response budget', async () => {
+  it('uses the host output setting and allows long output to reach a native tool call', async () => {
     const f = await fixture()
     const runtime = runtimeFor(f.database, async () => { throw new Error('legacy') })
-    let dispatched = 0, yielded = false
+    let dispatched = 0, aborted = false
     const ctx = await nativeHost(runtime, f.directory, async function* (options) {
       dispatched++
-      yield { type: 'text-delta', index: 0, text: 'Let me call dreaming_directory. '.repeat(1100) }
-      yielded = true
-      yield { type: 'finish', reason: { kind: options.signal.aborted ? 'aborted' : 'stop' } }
+      expect(options.maxTokens).toBe(65_536)
+      if (dispatched === 1) {
+        const text = '核对后的整理说明。'.repeat(4000)
+        expect(estimateTokens(text)).toBeGreaterThan(32_768)
+        yield { type: 'text-delta', index: 0, text }
+        aborted = options.signal.aborted
+        for (const chunk of nativeCall('dreaming_finish', {})) yield chunk.type === 'tool-call-delta' ? { ...chunk, index: 1 } : chunk
+      } else {
+        yield { type: 'text-delta', index: 0, text: '已检查完毕，无需修改。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
     })
+    ctx.on('agent/request', async (_payload, next) => ({ ...await next(), maxTokens: 65_536 }))
     await runtime.adminDreamingControl(f.namespace, 'start')
-    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({
-      run: { status: 'paused', completed: 0, reason: expect.stringContaining('没有产生 Dreaming 工具调用') },
-    }))
+    await vi.waitFor(async () => {
+      const status = await runtime.adminDreamingStatus(f.namespace)
+      expect(status, JSON.stringify(status)).toMatchObject({ run: { status: 'completed', completed: 1 } })
+    })
     const run = (await runtime.adminDreamingStatus(f.namespace) as any).run
     await ctx.agents.get(run.sessionId)!.whenIdle()
-    expect(dispatched).toBe(1)
-    expect(yielded).toBe(true)
-    expect(run.calls).toBe(1)
-    expect((await f.reopen()).exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'paused', cursor: 0, changedBatches: 0 })
+    expect(dispatched).toBe(2)
+    expect(aborted).toBe(false)
+    expect(run.calls).toBe(2)
+    expect((await f.reopen()).exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'completed', cursor: 1, changedBatches: 0 })
   })
 
   it('reads more than six directory pages, persists coverage across resume, and completes in the same session', async () => {
@@ -413,13 +731,15 @@ describe('directory Dreaming persistence and source-only tools', () => {
     await seedOverview(f, 52)
     const runtime = runtimeFor(f.database, async () => { throw new Error('legacy') })
     let requests = 0, finished = false
-    const seen: number[] = [], inputs: number[] = []
+    const seen: number[] = []
     const ctx = await nativeHost(runtime, f.directory, async function* (options) {
       requests++
       if (finished) { yield { type: 'text-delta', index: 0, text: '全部检查完毕，无需修改。' }; yield { type: 'finish', reason: { kind: 'stop' } }; return }
       const task = directoryTask(options)
-      inputs.push(estimateTokens(JSON.stringify(options.messages)))
-      const offset = task.directoryReadProgress.overview.nextUnreadOffset
+      const pages = options.messages.filter((m: any) => m.role === 'tool').flatMap((m: any) => m.content.flatMap((b: any) => {
+        try { const result = JSON.parse(b.text); return result.overview ? [result.overview] : [] } catch { return [] }
+      }))
+      const offset = pages.length ? pages.at(-1).nextOffset : task.directoryReadProgress.overview.nextUnreadOffset
       if (offset === null) { finished = true; yield* nativeCall('dreaming_finish', {}); return }
       seen.push(offset)
       if (seen.length === 4) {
@@ -442,12 +762,142 @@ describe('directory Dreaming persistence and source-only tools', () => {
     await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'completed', completed: 1, sessionId: first.sessionId } }), { timeout: 7000 })
     await ctx.agents.get(first.sessionId)!.whenIdle()
     expect(seen).toEqual([0, 5, 10, 15, 15, 20, 25, 30, 35, 40, 45, 50])
-    expect(Math.max(...inputs.slice(4))).toBeLessThan(inputs[0]! + 12_000)
+    const agent = ctx.agents.get(first.sessionId)!
+    expect(agent.session.snapshotEvents().filter(e => e.type === 'user/message' && JSON.stringify(e.data).includes('currentDirectoryTask'))).toHaveLength(2)
+    expect(agent.session.snapshotEvents().some(e => typeof e.surfaceOp === 'object' && e.surfaceOp.op === 'replace')).toBe(false)
     const final = (await f.reopen()).exportSnapshot().memoryTopicState!.dreaming!
     expect(final.status).toBe('completed')
     expect(final.tokenLimit).toBeNull()
     expect(final.idleCalls).toBe(0)
     expect(final.directoryReads?.[JSON.stringify([f.topicId, 'overview'])]?.indices).toHaveLength(52)
+  })
+
+  it('allows eleven unproductive reads across reopen, resets on fresh content and pauses on the twelfth', async () => {
+    const f = await fixture(1)
+    await seedOverview(f, 52)
+    let memory = f.memory
+    let run = await memory.dreaming({ kind: 'start', owner: 'idle-limit' })
+    run = await memory.dreaming({ kind: 'prepare', ...claim(run) })
+    const readPage = async (offset: number) => {
+      const action = { tool: 'memory_expand_topic', args: { id: f.topicId, offset, limit: 20 } }
+      const read = await dreamingTool(memory, run, action)
+      run = await memory.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result: read.result }, estimatedTokens: 0 })
+    }
+    await readPage(0)
+    for (let count = 1; count <= 11; count++) {
+      await readPage(0)
+      expect(run).toMatchObject({ status: 'running', idleCalls: count })
+      if (count === 6) memory = await f.reopen()
+    }
+    await readPage(20)
+    expect(run).toMatchObject({ status: 'running', idleCalls: 0 })
+    for (let count = 1; count <= 11; count++) {
+      await readPage(20)
+      expect(run).toMatchObject({ status: 'running', idleCalls: count })
+    }
+    await readPage(20)
+    expect(run).toMatchObject({ status: 'paused', idleCalls: 12, reason: '连续调用没有有效进展，断点已保存' })
+    expect((await f.reopen()).exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'paused', idleCalls: 12 })
+  })
+
+  it('retains all relevant overview, earlier source pages and working conclusions in the native conversation', async () => {
+    const f = await fixture(1, '早期来源标记。' + '原始来源正文。'.repeat(4000))
+    await seedOverview(f, 84, '这是已有事实的来源说明。'.repeat(12))
+    const runtime = runtimeFor(f.database, async () => { throw new Error('legacy') })
+    let requests = 0
+    const conclusion = '已核对旧总览第83条，本批事实已有覆盖，无需重复追加。'
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      requests++
+      const task = directoryTask(options)
+      expect(task.currentTopic.existingOverview.items).toHaveLength(84)
+      expect(task.currentTopic.existingOverview.omittedOffsets).toEqual([])
+      expect(estimateTokens(JSON.stringify(task.currentTopic.existingOverview.items))).toBeGreaterThan(4000)
+      if (requests === 1) {
+        yield { type: 'text-delta', index: 0, text: conclusion }
+        for (const chunk of nativeCall('dreaming_read', { kind: 'block', id: f.block.id, level: 5, offset: 0, limit: 12000 })) yield chunk.type === 'tool-call-delta' ? { ...chunk, index: 1 } : chunk
+      } else if (requests === 2) {
+        expect(JSON.stringify(options.messages)).toContain(conclusion)
+        yield* nativeCall('dreaming_read', { kind: 'block', id: f.block.id, level: 5, offset: 12000, limit: 12000 }, 'next-source-page')
+      } else if (requests === 3) {
+        const text = JSON.stringify(options.messages)
+        expect(text).toContain(conclusion)
+        expect(text).toContain('早期来源标记')
+        const results = options.messages.filter((m: any) => m.role === 'tool')
+        expect(results).toHaveLength(2)
+        expect(estimateTokens(JSON.stringify(results))).toBeGreaterThan(6000)
+        expect(text).not.toContain('checkpointed')
+        yield* nativeCall('dreaming_finish', { summary: '已有总览覆盖，无需重复追加。' })
+      } else {
+        yield { type: 'text-delta', index: 0, text: '检查完毕，无需修改。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    })
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'completed', changedBatches: 0 } }), { timeout: 5000 })
+    const status = (await runtime.adminDreamingStatus(f.namespace) as any).run
+    const agent = ctx.agents.get(status.sessionId)!
+    await agent.whenIdle()
+    const events = agent.session.snapshotEvents()
+    expect(events.filter(e => e.type === 'user/message' && JSON.stringify(e.data).includes('currentDirectoryTask'))).toHaveLength(1)
+    expect(events.some(e => typeof e.surfaceOp === 'object' && e.surfaceOp.op === 'replace')).toBe(false)
+    expect((await f.reopen()).getMemoryTopic(f.topicId)?.overview).toHaveLength(84)
+  })
+
+  it.each(['pressure', 'overflow'] as const)('lets native Harness compaction preserve findings and resume after %s', async mode => {
+    const f = await fixture(1, '供宿主压缩的来源正文。'.repeat(1800))
+    await seedOverview(f, 84, '已有来源与待核对内容。'.repeat(20))
+    const runtime = runtimeFor(f.database, async () => { throw new Error('legacy') })
+    let requests = 0, summaries = 0
+    const errors: string[] = [], summaryObservations: unknown[] = []
+    const checkpoint = '宿主摘要：目录开发小节已有84条总览，当前批待完成；核对结论沿用最近对话。'
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      if (options.purpose === 'compaction') {
+        summaries++
+        const before = (await runtime.adminDreamingStatus(f.namespace) as any).run
+        summaryObservations.push({ calls: before.calls, hasConclusion: JSON.stringify(options.messages).includes('当前批次已核对，不应重复写入。') })
+        expect(before.calls).toBe(mode === 'pressure' ? 1 : 2)
+        // The host summarizes the older task while retaining the recent
+        // assistant/tool pair verbatim. Its prefix need not contain that pair.
+        expect(JSON.stringify(options.messages)).toContain('currentDirectoryTask')
+        expect(JSON.stringify(options.messages)).toContain('有来源的总览 83')
+        yield { type: 'text-delta', index: 0, text: checkpoint }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+        expect((await runtime.adminDreamingStatus(f.namespace) as any).run.calls).toBe(before.calls)
+        return
+      }
+      requests++
+      if (requests === 1) {
+        yield { type: 'text-delta', index: 0, text: '当前批次已核对，不应重复写入。' }
+        for (const chunk of nativeCall('dreaming_read', { kind: 'block', id: f.block.id, level: 5, offset: 0, limit: 12000 })) yield chunk.type === 'tool-call-delta' ? { ...chunk, index: 1 } : chunk
+      } else if (mode === 'overflow' && requests === 2) {
+        yield { type: 'finish', reason: { kind: 'error', failure: { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'fixture context overflow' } } }
+      } else if (requests === (mode === 'pressure' ? 2 : 3)) {
+        expect(summaries).toBe(1)
+        expect(JSON.stringify(options.messages)).toContain(checkpoint)
+        expect(JSON.stringify(options.messages)).toContain('当前批次已核对，不应重复写入。')
+        yield* nativeCall('dreaming_finish', { summary: '沿用宿主摘要中的覆盖判断，无需修改。' })
+      } else {
+        yield { type: 'text-delta', index: 0, text: '整理检查完成。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    })
+    ctx.on('agent/error', ({ error }) => { errors.push(String(error)) })
+    await ctx.plugin(TokenMeter)
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ context: { contextWindow: mode === 'pressure' ? 30000 : 256000 }, defaultMaxTokens: 2048 } as any)
+    await ctx.plugin(BasicCompaction, { thresholdRatio: .4, headroomTokens: 1024, maxTokens: 2048, retainTokens: 1024 })
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(async () => {
+      const status = await runtime.adminDreamingStatus(f.namespace)
+      expect(status, JSON.stringify({ status, requests, summaries, errors, summaryObservations })).toMatchObject({ run: { status: 'completed', changedBatches: 0 } })
+    }, { timeout: 7000 })
+    const status = (await runtime.adminDreamingStatus(f.namespace) as any).run
+    const agent = ctx.agents.get(status.sessionId)!
+    await agent.whenIdle()
+    expect(summaries).toBe(1)
+    expect(status.calls).toBe(requests)
+    expect(agent.session.snapshotEvents().filter(e => e.type === 'compaction/summary')).toHaveLength(1)
+    expect(agent.session.snapshotEvents().filter(e => typeof e.surfaceOp === 'object' && e.surfaceOp.op === 'replace').every(e => e.type === 'user/message' && !JSON.stringify(e.data).includes('plugin:stratagate-memory'))).toBe(true)
+    expect((await f.reopen()).exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'completed', cursor: 1, changedBatches: 0 })
   })
 
   it('rejects forged directory progress and repeated or overlapping pages after a SQLite reopen', async () => {
@@ -468,8 +918,8 @@ describe('directory Dreaming persistence and source-only tools', () => {
     forged.overview.items[0].text = '伪造的内容'
     run = await reopened.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result: forged }, estimatedTokens: 0 })
     expect(run.idleCalls).toBe(1)
-    for (let i = 0; i < 5; i++) run = await reopened.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result: read.result }, estimatedTokens: 0 })
-    expect(run).toMatchObject({ status: 'paused', idleCalls: 6 })
+    for (let i = 0; i < 11; i++) run = await reopened.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result: read.result }, estimatedTokens: 0 })
+    expect(run).toMatchObject({ status: 'paused', idleCalls: 12 })
   })
 
   it('counts new topic-list pages as progress across reopen, but not changed queries that repeat known items', async () => {
@@ -496,13 +946,13 @@ describe('directory Dreaming persistence and source-only tools', () => {
       topics: [{ id: base.id + '-0', title: '伪造新标题', description: base.description, sourceEventCount: 1 }] } }
     run = await memory.dreaming({ kind: 'checkpoint', ...claim(run), trace: forged, estimatedTokens: 0 })
     expect(run.idleCalls).toBe(1)
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 11; i++) {
       const action = { tool: 'memory_list_topics', args: { query: `项目 ${i}`, offset: 0, limit: 20 } }
       const read = await dreamingTool(memory, run, action)
       run = await memory.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result: read.result }, estimatedTokens: 0 })
     }
-    expect(run).toMatchObject({ status: 'paused', idleCalls: 6 })
-    expect((await f.reopen()).exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'paused', idleCalls: 6 })
+    expect(run).toMatchObject({ status: 'paused', idleCalls: 12 })
+    expect((await f.reopen()).exportSnapshot().memoryTopicState?.dreaming).toMatchObject({ status: 'paused', idleCalls: 12 })
   })
 
   it('rejects the real malformed nested write through native schemas and lets the Agent correct it', async () => {
@@ -516,15 +966,11 @@ describe('directory Dreaming persistence and source-only tools', () => {
         expect(schema.oneOf.every((branch: any) => branch.required.includes('kind'))).toBe(true)
         yield* nativeCall('dreaming_directory', { operations: [{ operations: [{ title: '开发', entries: [] }] }] }, 'malformed')
       } else if (requests === 2) {
-        expect(JSON.stringify(options.messages)).toContain('validationErrors')
-        expect(JSON.stringify(options.messages)).toMatch(/kind|operations/)
+        expect(options.messages.some((m: any) => m.role === 'tool' && m.isError && JSON.stringify(m.content).match(/kind|operations/))).toBe(true)
         yield* nativeCall('memory_expand_topic', { id: f.topicId })
       } else if (requests === 3) {
-        const snapshots = options.messages.flatMap((m: any) => m.content.flatMap((b: any) => {
-          if (b.type !== 'text') return []
-          try { const value = JSON.parse(b.text); return Array.isArray(value.validationErrors) ? [value] : [] } catch { return [] }
-        }))
-        expect(snapshots.at(-1).validationErrors).toHaveLength(1)
+        expect(options.messages.filter((m: any) => m.role === 'tool' && m.isError)).toHaveLength(1)
+        expect(JSON.stringify(options.messages)).not.toContain('validationErrors')
         yield* nativeCall('dreaming_directory', { operations: [{ kind: 'append-overview', title: '开发', entries: [{ kind: 'experience', text: '保留明确来源。', sourceEventIds: [f.events[0]!.id] }] }] }, 'corrected')
       } else if (requests === 4) yield* nativeCall('dreaming_finish', {})
       else { yield { type: 'text-delta', index: 0, text: '已补充一段有来源的经验。' }; yield { type: 'finish', reason: { kind: 'stop' } } }
@@ -576,7 +1022,7 @@ describe('directory Dreaming persistence and source-only tools', () => {
     expect((await f.reopen()).getMemoryTopic(f.topicId)?.overview.some(entry => entry.text === '保留有来源的经验。')).toBe(true)
   })
 
-  it('pauses a provider error without accepting the host automatic retry policy', async () => {
+  it('allows a bounded host retry and pauses after the host declines further recovery', async () => {
     const f = await fixture(1)
     const runtime = runtimeFor(f.database, async () => { throw new Error('legacy') })
     let requests = 0
@@ -584,10 +1030,12 @@ describe('directory Dreaming persistence and source-only tools', () => {
       requests++
       yield { type: 'finish', reason: { kind: 'error', failure: { code: 'RATE_LIMITED', message: 'fixture error' } } }
     })
-    ctx.on('agent/request-error', async () => ({ kind: 'retry' }))
+    let recoveries = 0
+    ctx.on('agent/request-error', async () => ++recoveries === 1 ? { kind: 'retry' } : undefined)
     await runtime.adminDreamingControl(f.namespace, 'start')
-    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'paused', reason: expect.stringContaining('没有自动重试') } }))
-    expect(requests).toBe(1)
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'paused', reason: expect.stringContaining('宿主未能恢复') } }))
+    expect(requests).toBe(2)
+    expect(recoveries).toBe(2)
   })
 
   it('allows reasoning and genuine directory arguments larger than the ordinary explanation boundary', async () => {
@@ -668,11 +1116,11 @@ describe('directory Dreaming persistence and source-only tools', () => {
     }
     expect(pages).toBeGreaterThan(12)
     const action = { tool: 'dreaming_read', args: { kind: 'block', id: f.block.id, level: 5 } }
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 12; i++) {
       const read = await dreamingTool(f.memory, run, action)
       run = await f.memory.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result: read.result }, estimatedTokens: 0 })
     }
-    expect(run).toMatchObject({ status: 'paused', idleCalls: 6 })
+    expect(run).toMatchObject({ status: 'paused', idleCalls: 12 })
   })
 
   it('reconstructs the same large Event across reordered fields and a SQLite restart', async () => {
@@ -985,6 +1433,7 @@ describe('directory Dreaming persistence and source-only tools', () => {
     ] })
     const merged = f.memory.getMemoryTopic(f.topicId)!
     expect(merged.sectionAliases?.[secondKey]).toBe(oldKey)
+    await f.memory.dreaming({ kind: 'finish-unit', ...claim(run) })
     const extra = await f.memory.addEvent({ title: '新增协作', summary: '用户确认继续保留来源。', sourceBlockId: f.block.id, sourceMessageIds: [f.block.l5Raw[0]!.id] })
     const job = (await f.memory.claimNextTopicProjection())!
     await f.memory.completeTopicProjection(job.jobId, { topics: [{ topicId: f.topicId, title: '项目', description: '项目资料', sourceEventIds: [extra.id], sections: [{ title: '协作', sourceEventIds: [extra.id] }], overview: [] }] })
@@ -1098,6 +1547,179 @@ function runtimeFor(database: string, step: (payload: any) => Promise<any>, abor
 }
 
 describe('Dreaming Agent orchestration and admin API', () => {
+  it.each(['native', 'detached'] as const)('starts the %s runner while the first chapter is still being projected', async mode => {
+    const f = await fixture(0)
+    const { job, event } = await pendingProjection(f)
+    const step = vi.fn(async () => ({ tool: 'finish', args: {} }))
+    const hostCalls = vi.fn()
+    const runtime = runtimeFor(f.database, step)
+    if (mode === 'native') await nativeHost(runtime, f.directory, async function* () {
+      hostCalls()
+      if (hostCalls.mock.calls.length === 1) yield* nativeCall('dreaming_finish', {})
+      else { yield { type: 'text-delta', index: 0, text: '完成。' }; yield { type: 'finish', reason: { kind: 'stop' } } }
+    })
+    expect(await runtime.adminDreamingControl(f.namespace, 'start')).toMatchObject({ run: {
+      status: 'running', waitingForProjection: true, total: 0, calls: 0 } })
+    expect(step).not.toHaveBeenCalled(); expect(hostCalls).not.toHaveBeenCalled()
+    const other = await f.reopen()
+    await other.completeTopicProjection(job.jobId, { topics: [{ title: '首次章节', description: '等待后生成', sourceEventIds: [event.id], overview: [] }] })
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: {
+      status: 'completed', total: 1, completed: 1, waitingForProjection: false } }), { timeout: 4000 })
+    expect(mode === 'native' ? hostCalls : step).toHaveBeenCalled()
+  })
+  it.each(['native', 'detached'] as const)('drains a preclaimed projection before the %s runner spends a model call and plans the resulting chapters', async mode => {
+    const f = await fixture(1)
+    const { job, event } = await pendingProjection(f)
+    const step = vi.fn(async () => ({ tool: 'finish', args: {} }))
+    const runtime = runtimeFor(f.database, step)
+    const hostCalls = vi.fn()
+    if (mode === 'native') await nativeHost(runtime, f.directory, async function* (options) {
+      hostCalls()
+      if (hostCalls.mock.calls.length <= 2) {
+        const task = directoryTask(options)
+        expect(task.totalBatches).toBe(2)
+        yield* nativeCall('dreaming_finish', {})
+      } else { yield { type: 'text-delta', index: 0, text: '完成。' }; yield { type: 'finish', reason: { kind: 'stop' } } }
+    })
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: {
+      status: 'running', waitingForProjection: true, calls: 0, activity: expect.stringContaining('等待当前后台目录整理') } }))
+    expect(step).not.toHaveBeenCalled()
+    expect(hostCalls).not.toHaveBeenCalled()
+    const other = await f.reopen()
+    expect(other.hasPendingTopicWork()).toBe(false)
+    expect(await other.claimNextTopicProjection()).toBeNull()
+    await (runtime as any).retryTopicWrite(f.namespace, other, () => other.completeTopicProjection(job.jobId, { topics: [{ title: '投影新增章节', description: '等待期间由既有投影生成',
+      sourceEventIds: [event.id], sections: [{ title: '新小节', sourceEventIds: [event.id] }], overview: [] }] }))
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: {
+      status: 'completed', waitingForProjection: false, completed: 2, total: 2 } }), { timeout: 4000 })
+    const saved = (await f.reopen()).exportSnapshot().memoryTopicState!.dreaming!
+    expect(saved.units.flatMap(unit => unit.eventIds)).toContain(event.id)
+    expect(mode === 'native' ? hostCalls : step).toHaveBeenCalled()
+  })
+
+  it('lets a user pause and terminate while waiting without issuing a model request', async () => {
+    const f = await fixture(1)
+    const { job, event } = await pendingProjection(f)
+    const step = vi.fn(async () => ({ tool: 'finish', args: {} }))
+    const runtime = runtimeFor(f.database, step)
+    const started = await runtime.adminDreamingControl(f.namespace, 'start') as any
+    await runtime.adminDreamingControl(f.namespace, 'pause', started.run.id)
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'paused', calls: 0 } }))
+    const other = await f.reopen()
+    await other.completeTopicProjection(job.jobId, { topics: [{ title: '收尾章节', description: '暂停仍允许既有投影收尾',
+      sourceEventIds: [event.id], sections: [{ title: '新小节', sourceEventIds: [event.id] }], overview: [] }] })
+    expect(await other.claimNextTopicProjection()).toBeNull()
+    await runtime.adminDreamingControl(f.namespace, 'terminate', started.run.id)
+    expect(step).not.toHaveBeenCalled()
+    expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'terminated' } })
+  })
+
+  it.each(['finish', 'terminate'] as const)('reserves only the selected namespace across connections and pause, and releases it on %s', async end => {
+    const f = await fixture(1)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    const other = await f.reopen()
+    await other.addEvent({ title: '之后的投影待办', summary: '不能抢占 Dreaming 的目录', sourceBlockId: f.block.id, sourceMessageIds: [f.block.l5Raw[0]!.id] })
+    expect(other.hasPendingTopicWork()).toBe(false)
+    expect(await other.claimNextTopicProjection()).toBeNull()
+    await f.memory.reloadFromStorage()
+    await f.memory.dreaming({ kind: 'suspend', ...claim(run), reason: '用户暂停' })
+    const cold = await f.reopen()
+    expect(cold.hasPendingTopicWork()).toBe(false)
+    expect(await cold.claimNextTopicProjection()).toBeNull()
+    const different = await StrataGate.open({ database: f.database, namespace: 'independent-namespace', blockTurnSize: 1, disableElementProjection: true,
+      summarizer: async () => ({ l0Title: '独立空间', l0Tags: [], l1Summary: '独立空间', l2Keypoints: [], shouldExtract: false }) })
+    try {
+      await different.appendTurn({ user: '另一个空间', assistant: '记录' })
+      const block = different.listBlocks()[0]!
+      await different.addEvent({ title: '其他空间待办', summary: '不被这个 Dreaming 阻挡', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] })
+      expect(await different.claimNextTopicProjection()).not.toBeNull()
+    } finally { await different.close() }
+    await f.memory.reloadFromStorage()
+    if (end === 'finish') {
+      run = await f.memory.dreaming({ kind: 'resume', id: run.id, owner: 'a' })
+      await f.memory.dreaming({ kind: 'finish-unit', ...claim(run) })
+    } else await f.memory.dreaming({ kind: 'terminate', id: run.id })
+    await cold.reloadFromStorage()
+    expect(cold.hasPendingTopicWork()).toBe(true)
+    expect(await cold.claimNextTopicProjection()).not.toBeNull()
+  })
+
+  it('finishes waiting after a projection lease expires and rejects its late result without overwriting Dreaming', async () => {
+    let now = Date.now()
+    const f = await fixture(1, undefined, undefined, () => new Date(now))
+    const { job, event } = await pendingProjection(f)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    expect(run.waitingForProjection).toBe(true)
+    // Advance the fixture clock while renewing only Dreaming, as if the
+    // projection's owning process crashed and stopped renewing its own lease.
+    for (let minute = 0; minute < 6; minute++) {
+      now += 60_000
+      await f.memory.dreaming({ kind: 'heartbeat', ...claim(run) })
+    }
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    expect(run.waitingForProjection).not.toBe(true)
+    await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [{ kind: 'rename-chapter', title: 'Dreaming 已整理' }] })
+    await expect(f.memory.completeTopicProjection(job.jobId, { topics: [{ title: '过期投影', description: '迟到结果',
+      sourceEventIds: [event.id], overview: [] }] })).rejects.toThrow('source-changed')
+    expect(f.memory.getMemoryTopic(f.topicId)?.title).toBe('Dreaming 已整理')
+    await f.memory.dreaming({ kind: 'finish-unit', ...claim(run) })
+    expect(await f.memory.claimNextTopicProjection()).not.toBeNull()
+  })
+
+  it('resumes waiting after a host restart and handles a failed draining projection without spending Dreaming calls early', async () => {
+    const f = await fixture(1)
+    const { job } = await pendingProjection(f)
+    const step = vi.fn(async () => ({ tool: 'finish', args: {} }))
+    const first = runtimeFor(f.database, step)
+    const status = await first.adminDreamingControl(f.namespace, 'start') as any
+    await first.close()
+    expect(step).not.toHaveBeenCalled()
+    const next = runtimeFor(f.database, step)
+    await next.adminDreamingControl(f.namespace, 'resume', status.run.id)
+    expect(step).not.toHaveBeenCalled()
+    const other = await f.reopen()
+    await (next as any).retryTopicWrite(f.namespace, other, () => other.failTopicProjection(job.jobId, new Error('test provider failure')))
+    await vi.waitFor(async () => expect(await next.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'completed', completed: 1 } }))
+    expect(step).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops a changed-directory proposal immediately in the native runner without another model request', async () => {
+    const f = await fixture(1)
+    const runtime = runtimeFor(f.database, async () => { throw new Error('legacy must not run') })
+    const requests = vi.fn()
+    const ctx = await nativeHost(runtime, f.directory, async function* () {
+      requests()
+      await editTopicOutsideDreaming(f)
+      yield* nativeCall('dreaming_directory', { operations: [{ kind: 'rename-chapter', title: '过期提案' }] })
+    })
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: {
+      status: 'paused', replanRequired: true, calls: 1, reason: expect.stringContaining('终止本轮后重新开始') } }))
+    const status = (await runtime.adminDreamingStatus(f.namespace) as any).run
+    await ctx.agents.get(status.sessionId)!.whenIdle()
+    expect(requests).toHaveBeenCalledTimes(1)
+    const history = JSON.stringify(ctx.agents.get(status.sessionId)!.session.deriveMessages())
+    expect(history).toContain('请从目录页终止本轮后重新开始')
+    expect(await runtime.adminDreamingControl(f.namespace, 'terminate', status.id)).toMatchObject({ run: { status: 'terminated' } })
+    expect((await f.reopen()).getMemoryTopic(f.topicId)?.title).toBe('并发改名')
+  })
+
+  it('marks an old paused directory conflict as requiring replan on resume without spending a model call', async () => {
+    const f = await fixture(1)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'old' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    await f.memory.dreaming({ kind: 'suspend', ...claim(run), reason: '连续调用没有有效进展，断点已保存' })
+    await editTopicOutsideDreaming(f)
+    const step = vi.fn(async () => ({ tool: 'finish', args: {} }))
+    const runtime = runtimeFor(f.database, step)
+    expect(await runtime.adminDreamingControl(f.namespace, 'resume', run.id)).toMatchObject({ run: {
+      status: 'paused', replanRequired: true, calls: 0, reason: expect.stringContaining('继续本轮无法解除冲突') } })
+    expect(step).not.toHaveBeenCalled()
+    await expect(runtime.adminDreamingControl(f.namespace, 'resume', run.id)).rejects.toThrow('终止本轮后重新开始')
+  })
+
   it('lets the Agent retrieve, modify and finish through the real persistent runner', async () => {
     const f = await fixture()
     const actions = [
@@ -1156,7 +1778,7 @@ describe('Dreaming Agent orchestration and admin API', () => {
     let ctx: Context | undefined
     let finished = false
     if (mode === 'native') ctx = await nativeHost(runtime, f.directory, async function* (options) {
-      expect(options.maxTokens).toBe(32768)
+      expect(options.maxTokens).toBeUndefined()
       if (finished) {
         yield { type: 'text-delta', index: 0, text: '完成。' }; yield { type: 'finish', reason: { kind: 'stop' } }
       } else {

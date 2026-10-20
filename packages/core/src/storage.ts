@@ -3,7 +3,7 @@ import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventT
 import type { ElementCard, EventCard, ExternalMemoryImportJob, GraphEdge, GraphNode, MemoryBlock, RawMessage } from './types.js';
 import type { MemoryTopicState } from './topics.js';
 
-export const STRATAGATE_STORAGE_SCHEMA_VERSION = 12;
+export const STRATAGATE_STORAGE_SCHEMA_VERSION = 13;
 export const KNOWLEDGE_GRAPH_PROJECTOR_VERSION = 1;
 export const DERIVATION_MAX_ATTEMPTS = 3;
 export const DERIVATION_LEASE_MS = 5 * 60_000;
@@ -43,7 +43,7 @@ export interface BlockSummaryJob {
   leaseUntil?: string | null;
 }
 
-export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance' | 'dreamingStep';
+export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance' | 'dreamingStep' | 'eventDuplicateDecider';
 
 export interface SuccessfulModelResponse {
   id: string;
@@ -420,7 +420,7 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
       schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION,
       agentEvents: [],
     };
-  } else if (schemaVersion === 11) {
+  } else if (schemaVersion === 12) {
     snapshot = { ...structuredClone(value as StrataGateSnapshot), schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION };
   } else if (schemaVersion === STRATAGATE_STORAGE_SCHEMA_VERSION) {
     snapshot = structuredClone(value) as StrataGateSnapshot;

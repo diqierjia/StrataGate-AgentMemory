@@ -152,23 +152,6 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
   }))
 
   ctx.tools.register(defineTool({
-    name: 'memory_search_elements',
-    description: 'This tool is provided by the StrataGate plugin. Deprecated compatibility search for legacy Element-card data. Returns compact fact hits; rankScore is BM25/RRF ordering only, never confidence or factual accuracy. Prefer memory_search_graph.',
-    parameters: {
-      query: { type: 'string', required: true },
-      limit: { type: 'integer' },
-      name: { type: 'string' },
-      elementType: { type: 'string', enum: ['person', 'project', 'organization', 'tool', 'place'] as const },
-    },
-    output: jsonOutput,
-    execute: async (args, exec) => runtime.searchElements(sessionOf(exec), args.query, {
-      ...(args.limit !== undefined ? { limit: args.limit } : {}),
-      ...(args.name ? { name: args.name } : {}),
-      ...(args.elementType ? { type: args.elementType } : {}),
-    }) as never,
-  }))
-
-  ctx.tools.register(defineTool({
     name: 'memory_search_raw',
     description: 'This tool is provided by the StrataGate plugin. Search archived messages when summarized memories are insufficient. Returns compact raw hits (message id, blockId, excerpt, role, and time); use memory_expand_block with blockId for complete source details. By default searches the whole current namespace; use scope=session for the active thread. Returns evidence refs and batchId for assessment.',
     parameters: {
@@ -182,12 +165,14 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_get_blocks',
-    description: 'This tool is provided by the StrataGate plugin. List decayed conversation-block summaries and their current detail levels. Defaults to the active session only; use scope=namespace to inspect every thread in the current namespace. The response always reports scope, namespace, threadId, counts, and a machine-readable emptyReason when no blocks match.',
+    description: 'This tool is provided by the StrataGate plugin. Browse a paginated block directory containing only id, title, turnRange, and current detail level. Use memory_expand_block for source content. Defaults to blocks with the active threadId only; use scope=namespace to browse every thread and legacy unthreaded blocks in the current namespace. Reports counts, offset, limit, nextOffset, and emptyReason; use nextOffset to continue.',
     parameters: {
       scope: { type: 'string', enum: ['session', 'namespace'] as const, description: 'Query range. Defaults to session to preserve existing isolation behavior.' },
+      offset: { type: 'integer', description: '从第几项开始，使用返回的 nextOffset 继续。' },
+      limit: { type: 'integer', description: '每页 1-20 项，默认 12 项。' },
     },
     output: jsonOutput,
-    execute: async (args, exec) => runtime.blocks(sessionOf(exec), args.scope) as never,
+    execute: async (args, exec) => runtime.blocks(sessionOf(exec), args.scope, args) as never,
   }))
 
   ctx.tools.register(defineTool({
@@ -233,7 +218,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
       missing: { type: 'string', required: true },
       next_strategy: {
         type: 'string',
-        enum: ['answer', 'search_events', 'expand_event', 'search_graph', 'expand_graph_node', 'search_elements', 'expand_element', 'search_raw_memory', 'expand_block'] as const,
+        enum: ['answer', 'search_events', 'expand_event', 'search_graph', 'expand_graph_node', 'expand_element', 'search_raw_memory', 'expand_block'] as const,
         required: true,
       },
     },

@@ -9,7 +9,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, ProfilePage, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { MemoryPage, LongTermPage,')
+  ).replace('exports.__test = {', 'exports.__test = { DreamingPanel, MemoryPage, LongTermPage,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -61,6 +61,29 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
+  it('shows projection drain status and requires restart instead of offering resume for a conflicted Dreaming', () => {
+    const baseRun = { id: 'review', sessionId: null, status: 'running', waitingForProjection: true,
+      activity: '等待当前后台目录整理完成，随后开始 Dreaming', completed: 0, total: 2 }
+    const globals = { react: {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState: (initial: unknown) => [initial, () => {}], useRef: (current: unknown) => ({ current }),
+      useEffect: () => {}, useCallback: (callback: unknown) => callback,
+    } }
+    const { DreamingPanel } = loadSupportHelpers([], globals)
+    const waiting = DreamingPanel({ namespace: 'test', initialRun: baseRun, active: true, available: true })
+    expect(JSON.stringify(waiting)).toContain('Dreaming 正在准备…')
+    expect(JSON.stringify(waiting)).toContain('等待当前后台目录整理完成')
+    expect(buttonProps(waiting, '暂停')).toBeDefined()
+    expect(buttonProps(waiting, '终止')).toBeDefined()
+    const conflicted = DreamingPanel({ namespace: 'test', initialRun: { ...baseRun, status: 'paused', replanRequired: true,
+      reason: '请终止本轮后重新开始；已保存的修改会保留' }, active: true, available: true })
+    expect(buttonProps(conflicted, '继续')).toBeUndefined()
+    expect(buttonProps(conflicted, '终止')).toBeDefined()
+    expect(JSON.stringify(conflicted)).toContain('请终止本轮后重新开始')
+    const paused = DreamingPanel({ namespace: 'test', initialRun: { ...baseRun, status: 'paused', replanRequired: false }, active: true, available: true })
+    expect(buttonProps(paused, '继续')).toBeDefined()
+  })
+
   it('preserves feedback navigation from workspace A to B with one dashboard request', async () => {
     // Run the production MemoryPage and dependency-aware hook effects across
     // renders. Requests stay pending during the namespace transition.
@@ -2054,7 +2077,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).not.toContain('sg-processing-alert')
     expect(source).not.toContain('正在触发记忆整理')
     expect(source.match(/h\(MemoryStatusAlert/g)).toHaveLength(1)
-    expect(source).toContain("view.name === 'status' ? null : h(MemoryStatusAlert")
+    expect(source).toContain("view.name === 'status' || view.name === 'duplicates' ? null : h(MemoryStatusAlert")
     expect(source).toContain("'aria-live': 'polite'")
     expect(source).toContain('processingJobs')
     expect(source).toContain('processingJobDetails')

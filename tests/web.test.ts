@@ -9,7 +9,7 @@ import { handleAdminRequest, type WebResponse } from '../src/web.js'
 const fullFailure = 'StrataGate model response was not valid JSON\nRaw response (full):\n' + 'x'.repeat(600)
 
 const snapshot: StrataGateSnapshot = {
-  schemaVersion: 12,
+  schemaVersion: 13,
   currentTurn: 8,
   blockTurnSize: 4,
   blockDecayLambda: 0.3,
@@ -1040,6 +1040,22 @@ describe('StrataGate admin routes', () => {
     const second = await request('/api/stratagate/dashboard?namespace=dsh%3Aproject%3Atest', 'GET', runtime, undefined, { 'if-none-match': oldEtag })
     expect(second.status).toBe(200)
     expect(second.headers.ETag).not.toBe(oldEtag)
+  })
+
+  it('refreshes duplicate repair progress even when no Event revision changed', async () => {
+    let completed = false
+    const repairRuntime = { ...runtime, adminDuplicateRepairStatus: () => ({ version: 1,
+      status: completed ? 'completed' : 'pending', scannedAt: '2026-10-18T00:00:00Z', scannedEvents: 2,
+      candidates: 1, processed: completed ? 1 : 0, merged: 0, retained: completed ? 1 : 0, failed: 0,
+    }) } as unknown as StrataGateRuntime
+    const first = await request('/api/stratagate/dashboard?namespace=dsh%3Aproject%3Atest', 'GET', repairRuntime)
+    expect(first.body.processing).toBe(true)
+    completed = true
+    const second = await request('/api/stratagate/dashboard?namespace=dsh%3Aproject%3Atest', 'GET', repairRuntime, undefined, { 'if-none-match': first.headers.ETag! })
+    expect(second.status).toBe(200)
+    expect(second.headers.ETag).not.toBe(first.headers.ETag)
+    expect(second.body.processing).toBe(false)
+    expect(second.body.overview.namespaces[0].duplicateRepair).toMatchObject({ status: 'completed', retained: 1 })
   })
 
   it('filters short-term Blocks and the open tail by the selected conversation', async () => {

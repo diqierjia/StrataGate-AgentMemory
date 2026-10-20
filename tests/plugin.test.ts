@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,6 +18,25 @@ import * as plugin from '../src/index.js'
 import { AGENT_FEEDBACK_ENABLED } from '../src/tools.js'
 
 describe('DSH plugin composition', () => {
+  it('rejects a missing host interface before database creation or legacy migration', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-contract-preflight-'))
+    try {
+      const sessionRoot = join(directory, 'sessions')
+      const sessionDirectory = join(sessionRoot, 'project', 'session')
+      await mkdir(sessionDirectory, { recursive: true })
+      const sourcePath = join(sessionDirectory, 'session.jsonl')
+      await copyFile(new URL('fixtures/legacy-session-v0/session.jsonl', import.meta.url), sourcePath)
+      const original = await readFile(sourcePath)
+      const database = join(directory, 'memory.db')
+      await expect(plugin.apply({ tools: {} } as unknown as Context, { database, sessionRoot }))
+        .rejects.toThrow('tools.register')
+      expect(existsSync(database)).toBe(false)
+      expect(existsSync(join(sessionDirectory, 'session.v1.jsonl'))).toBe(false)
+      expect(existsSync(join(sessionDirectory, 'stratagate-legacy-citations-v1.json'))).toBe(false)
+      expect(await readFile(sourcePath)).toEqual(original)
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
   it('observes main-chat usage through the real LLM waterfall without adding error reminders', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-chat-usage-'))
     const ctx = new Context()
@@ -342,7 +361,6 @@ describe('DSH plugin composition', () => {
         'memory_search_events',
         'memory_search_graph',
         'memory_expand_graph_node',
-        'memory_search_elements',
         'memory_search_raw',
         'memory_get_blocks',
         'memory_expand_block',

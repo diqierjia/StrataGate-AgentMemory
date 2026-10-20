@@ -4,10 +4,14 @@ import { effectiveGraphNodeView, estimateTokens, memoryTopicEventFingerprint, me
 import { topicPage } from './topics.js'
 
 export interface DreamingAction { tool: string; args: Record<string, unknown> }
+/** Shared by native and detached hosts so operation semantics cannot diverge. */
+export const DREAMING_DIRECTORY_GUIDANCE = `set-overview {title,entries} replaces ONLY the named section's entire overview, not the chapter. append-overview {title,entries} adds genuinely new facts only. move-events changes Event membership only; it does not move overview prose.
+To relocate or consolidate overview facts across sections, use rewrite-overview {titles:[all affected source and destination section names],entries:[{title,kind,text,sourceEventIds}]}. It atomically replaces ALL overview entries in the named sections; include every unique supported fact to retain, including existing destination content. Entries must name one of those sections; other sections remain untouched. Sections must already exist (move-events can create a destination first in the same operations array). For a pure move, keep the original text and citations and change its title; do not leave a duplicate or a cross-reference solely to satisfy source preservation.
+Before any replacement, retrieve all existing cited Events not already supplied in full. Preserve the union of their sourceEventIds across the replacement, even when a fact moves to another selected section. When newer evidence corrects old prose, update or consolidate that prose with both old and new citations, retaining its timeline, scope, uncertainty and any still-valid details; do not keep an obsolete claim as a current fact and append another correction. Conflicting evidence is not settled merely because it is newer. Use set-overview for corrections within one section and rewrite-overview across sections. Each overview text is at most 1000 Unicode characters. On rejection, use the named Event and reason: retrieve an unread source; a foreign-chapter source cannot be authorized by reading it. Failed operations save nothing.`
 const LIMIT = DREAMING_SOURCE_PAGE_CHARACTERS
 function integer(value: unknown, fallback: number, maximum: number): number {
   if (value === undefined) return fallback
-  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > maximum) throw new Error('Invalid page parameter')
+  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > maximum) throw new Error(`Invalid page parameter: expected an integer from 0 to ${maximum}`)
   return Number(value)
 }
 function page<T>(items: T[], args: Record<string, unknown>): unknown {
@@ -119,10 +123,8 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       nextReadOffset: Math.max(0, run.readOffsets[event.id] ?? 0), readComplete: run.readOffsets[event.id] === -1 })
   const sections = topic ? memoryTopicMembershipSections(topic) : []
   const relevantTitles = sections.filter(section => section.sourceEventIds.some(id => unit.eventIds.includes(id))).map(section => section.title)
-  let overviewTokens = 0
   const relevantOverview = (topic?.overview ?? []).map((entry, offset) => ({ ...entry, offset }))
     .filter(entry => memoryTopicOverviewMatchesSection(entry, relevantTitles))
-  const existingOverview = relevantOverview.filter(entry => { overviewTokens += estimateTokens(JSON.stringify(entry)); return overviewTokens <= 4000 })
   const directoryReadProgress = topic ? Object.fromEntries(([['sections', sections], ['overview', topic.overview]] as const).map(([field, items]) => {
     const saved = run.directoryReads?.[JSON.stringify([topic.id, field])]
     const indices = saved?.contentVersion === dreamingTopicVersion(items) ? saved.indices : []
@@ -135,22 +137,14 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
         return ranges
       }, []), nextUnreadOffset: items.findIndex((_, index) => !seen.has(index)) < 0 ? null : items.findIndex((_, index) => !seen.has(index)) }]
   })) : {}
-  let traceTokens = 0
-  const recentTools = run.trace.map(trace => ({ ...trace })).reverse().map(trace => {
-    traceTokens += estimateTokens(JSON.stringify(trace))
-    if (traceTokens <= 6000) return trace
-    return { tool: trace.tool, args: {}, result: { checkpointed: true, note: '较早的结果保存在会话记录中；需要原文时重新分页读取。' } }
-  }).reverse()
-  const lastWriteFailure = run.lastWriteFailure && (estimateTokens(JSON.stringify(run.lastWriteFailure)) <= 4000 ? run.lastWriteFailure
-    : { error: run.lastWriteFailure.error, note: '上次未提交的提案过大；请依据本批来源分成更小的目录操作重新提交。完整失败提案保留在会话记录中。' })
   return { scope: run.scope, policyVersion: run.policyVersion, completedBatches: run.cursor, totalBatches: run.units.length,
     currentTopic: topic ? { id: topic.id, title: topic.title, description: topic.description,
       sections: sections.slice(0, 20).map(section => ({ title: section.title, totalEvents: section.sourceEventIds.length,
         batchEventIds: section.sourceEventIds.filter(id => unit.eventIds.includes(id)) })), totalSections: sections.length,
-      existingOverview: { items: existingOverview, totalRelevant: relevantOverview.length,
-        omittedOffsets: relevantOverview.slice(existingOverview.length).map(entry => entry.offset) } } : null,
-    events, directoryReadProgress, lastWriteFailure: lastWriteFailure ?? null,
-    retrievedEvidenceIds: Object.keys(run.evidenceVersions).slice(-100), totalRetrievedEvidence: Object.keys(run.evidenceVersions).length, recentTools }
+      existingOverview: { items: relevantOverview, totalRelevant: relevantOverview.length, omittedOffsets: [] } } : null,
+    events, directoryReadProgress, lastWriteFailure: run.lastWriteFailure ?? null,
+    retrievedEvidenceIds: Object.keys(run.evidenceVersions).slice(-100), totalRetrievedEvidence: Object.keys(run.evidenceVersions).length,
+    recentTools: run.trace }
 }
 export function dreamingEstimatedTokens(payload: unknown, action: DreamingAction): number {
   // Explicitly an estimate, not provider billing or a monetary price.
@@ -162,8 +156,11 @@ export function dreamingStatus(run?: DreamingRun): unknown {
   const interrupted = ['running', 'pausing'].includes(run.status) && !!run.leaseUntil && Date.parse(run.leaseUntil) <= Date.now()
   const legacyBoundary = run.status === 'paused' && run.tokenLimit != null && /消耗边界/.test(run.reason ?? '')
   return { id: run.id, sessionId: run.sessionId ?? null, status: interrupted ? 'paused' : run.status, scope: run.scope,
-    activity: interrupted ? '已暂停' : run.activity,
+    activity: interrupted || run.status === 'paused'
+      ? run.replanRequired ? '需要重新开始；后台目录整理等待本轮终止' : '已暂停；后台目录整理等待本轮继续或终止'
+      : run.activity,
     reason: interrupted ? '上次运行已中断，可以继续' : legacyBoundary ? '上次整理已暂停，可以继续；已完成的修改已保存。' : run.reason,
+    waitingForProjection: !!run.waitingForProjection, replanRequired: !!run.replanRequired,
     completed: run.cursor, total: run.units.length, changedBatches: run.changedBatches, calls: run.calls,
     estimatedTokens: run.estimatedTokens, updatedAt: run.updatedAt }
 }

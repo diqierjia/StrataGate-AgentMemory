@@ -947,10 +947,10 @@ describe('DSH runtime ingestion', () => {
       expect(sessionResult.namespaceBlockCount).toBe(namespaceMode === 'session' ? 0 : 1)
       expect(sessionResult.emptyReason).toBe(namespaceMode === 'session' ? 'no_blocks_in_namespace' : 'blocks_exist_in_other_threads')
 
-      const namespaceResult = await runtime.blocks(sessionB, 'namespace') as { results: Array<{ threadId?: string }>; scope: string }
+      const namespaceResult = await runtime.blocks(sessionB, 'namespace') as { results: Array<{ id: string }>; scope: string }
       expect(namespaceResult.scope).toBe('namespace')
       expect(namespaceResult.results).toHaveLength(namespaceMode === 'session' ? 0 : 1)
-      if (namespaceMode !== 'session') expect(namespaceResult.results[0]?.threadId).toBe(String(sessionA.id))
+      if (namespaceMode !== 'session') expect(namespaceResult.results[0]?.id).toBe(memory.listBlocks()[0]!.id)
 
       const raw = await runtime.searchRaw(sessionB, 'namespace-visible') as { results: Array<{ message: { threadId?: string } }> }
       expect(raw.results).toHaveLength(namespaceMode === 'session' ? 0 : 1)
@@ -1653,6 +1653,7 @@ describe('DSH runtime ingestion', () => {
         database,
         namespace,
         blockTurnSize: 1,
+        eventDuplicateDecider:async()=>({action:'KEEP_LEFT',confidence:.99,reason:'Same package-manager decision',draft:{title:'Use pnpm',summary:'The project uses pnpm.'}}),
         summarizer: async () => ({
           l0Title: 'package manager', l0Tags: ['pnpm'], l1Summary: 'Use pnpm.', l2Keypoints: ['pnpm'], shouldExtract: true,
         }),
@@ -1679,7 +1680,7 @@ describe('DSH runtime ingestion', () => {
       await seed.close()
 
       const batch = await runtime.searchEvents(activeSession, 'pnpm') as { batchId: string; evidenceRefs: string[] }
-      expect(batch.evidenceRefs).toHaveLength(3)
+      expect(batch.evidenceRefs).toHaveLength(2)
       await runtime.assess(activeSession, {
         verdict: 'sufficient',
         evidence_refs: batch.evidenceRefs,

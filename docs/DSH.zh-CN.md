@@ -108,7 +108,7 @@ DSH_HOME/stratagate/memory.db
 `memory_remember` 让 agent 主动记录值得记忆的事实：适用于特定情境的用户偏好、事实纠正、决定和持久的项目事实。记录会进入与对话派生记忆相同的长期 Event 管线，但有两点不同：
 
 - **隔离存储。** agent 记录的 Event 存放在专属的 `agent_events` 隔离表中，数据模型与普通 Event 完全一致，但与被动对话表物理分离。其溯源直接引用**记录会话中的真实对话消息** —— 优先取 open tail 中的 user/assistant 消息，其次取该会话最新封存 Block 的消息 —— 绝不生成虚构的 user 消息。仅当会话中没有任何已摄取消息时，才会创建合成的 `agent-memory:` 溯源 Block。
-- **写入前消解。** 写入前，StrataGate 会先在两个池中检索重复与冲突：精确或高度近似的重复会强化既有卡片而不新写；词面重叠模糊的记录会触发一次同步模型仲裁，复用外部记忆导入的决策契约 —— `ADD`、`MERGE`、`SUPERSEDE`（仅高置信度；低置信度的合并/取代会降级为非破坏性的冲突标记）、`CONFLICT`（双向回链）或 `IGNORE`。工具结果会回报 `action`、`gate` 与 `reason`。与既有记忆没有实质重叠的事实直接写入，不调用模型。
+- **写入前消解。** 写入前，StrataGate 会先在两个池中检索重复与冲突：只有规范化全文一致的当前有效事实直接强化既有卡片；其他词面重合（包括单向包含和词序变化）走同步模型仲裁，复用外部记忆导入的决策契约 —— `ADD`、`MERGE`、`SUPERSEDE`（仅高置信度；低置信度的合并/取代会降级为非破坏性的冲突标记）、`CONFLICT`（双向回链）或 `IGNORE`。没有仲裁器或调用失败时保留新增内容并标记冲突，不因相似度丢弃。仲裁后的并发重复检查同样只直接强化全文一致的当前有效事实。工具结果会回报 `action`、`gate` 与 `reason`。与既有记忆没有实质重叠的事实直接写入，不调用模型。
 
 其余行为与普通 Event 一致：agent 记录会投影进 Knowledge Graph，跨会话持久保存，走同样的 turn 衰减与引用强化生命周期（`memory_assess` → `memory_record_use`），也可以通过该生命周期遗忘。检索为两个池各开一条独立的 top-k 通道 —— 被动池与 agent 池分别独立排序，再按加权 RRF 融合，任何一方都无法把另一方挤出结果窗口。agent 通道的占比由 `agentMemoryRetrievalWeight` 配置（默认 `1` = 平权；`0` = 记录保留但不再浮现；更大值提升 agent 记录的排序权重），卡片带 `source: 'agent-recorded'` 标记。记忆面板通过 `/api/stratagate/agent-memories`（查询参数 `session` 与 `includeArchived=true`）展示这些记录。可用 `agentMemoryEnabled: false` 整体关闭该功能，同时注销对应工具。
 
@@ -128,14 +128,24 @@ memory_record_use      memory_remember
 memory_profile_update
 ```
 
-`memory_get_blocks` 支持 `scope=session`（默认值，保留历史上的当前会话隔离语义）和
-`scope=namespace`（当前 project、session 或 global 命名空间中的全部 thread）。每次响应都会
-包含实际 `scope`、`namespace`、`threadId`、Block 计数，以及机器可读的 `emptyReason`：返回
-Block 时为 `null`；`no_blocks_in_namespace` 表示命名空间没有已封存 Block；
+`memory_get_blocks` 返回分页目录，每项仅含 `id`、`title`、`turnRange` 和当前 `level`；
+正文通过 `memory_expand_block` 获取。支持 `offset/limit`，默认每页 12 项，限制在 1–20 项，
+返回 `total/offset/limit/nextOffset`，末页的 `nextOffset` 为 `null`。
+`blockCount` 表示分页前匹配的就绪块总数；offset 超出末页时返回空页，不误报范围内没有块。
+
+`scope=session`（默认值）严格匹配当前 `threadId`；`scope=namespace` 包含当前 project、session
+或 global 命名空间中的全部 thread 及没有 threadId 的旧块。每次响应都会
+包含实际 `scope`、`namespace`、`threadId`、Block 计数，以及机器可读的 `emptyReason`：
+匹配的就绪 Block 存在时为 `null`；`no_blocks_in_namespace` 表示命名空间没有已封存 Block；
 `blocks_exist_in_other_threads` 表示只有其他 thread 有已封存 Block；`open_tail_pending`
 表示匹配的轮次存在但尚未封存。`memory_search_raw` 默认使用 namespace 范围，也接受同样的
-`scope` 过滤，因此可以用 `memory_get_blocks(scope=namespace)` 或 `memory_expand_block`
+`scope` 过滤，`scope=session` 同样严格按 threadId 匹配。因此可以用 `memory_get_blocks(scope=namespace)` 或 `memory_expand_block`
 继续浏览 raw 命中的 `blockId`，不会再出现范围不明的空结果。
+
+deprecated 的 `memory_search_elements` 已停止注册，请使用 `memory_search_graph`。
+旧 agent-memory 来源块的转录展示改为 `Recorded:`，原始消息记录保持不变。
+
+重复记忆由程序发现候选、AI 优先判断并整理完整合并稿。明确应保留两张的结果直接完成；只有不确定、证据不足或未完成的候选进入人工队列。用户可编辑完整稿、仅保留 A/B 或同时保留，并查看来源、处理历史及撤销。双方证据和历史记录保留，后续新增记忆也会发现新候选。任务和调用预算可跨重启恢复。详见 [Event 提取与重复卡整理](event-extractor.md)。
 
 搜索默认返回紧凑卡片：Event 保留 `id`、标题、摘要、时间、状态/范围和 `sourceBlockId`；Graph
 保留 `id`、名称、类型、别名、当前状态及可解释的 `matchedFields`/`matchReason`；Raw 保留消息
@@ -214,11 +224,13 @@ Topic Projection 优先将全部本批 Event 完整分配到章节和小节。�
 
 ## 兼容性与权限
 
-安装声明与启动检查支持整个 DSH `0.2.0` 版本族：全部 Alpha、Beta、RC 和正式版（`>=0.2.0-0 <0.2.1-0`），无需逐个列出预发布版本。此前支持的 DSH `0.1.2-rc.1`、CLI `0.1.5-rc.1`（内部包 `0.1.5-rc.2`）、`0.1.6-alpha.1`，以及从 rc.1 到正式版的 `0.1.7` 仍受支持。启动时仍要求核心 DSH 包来自同一个版本，并限制 Cordis 为 `4.0.x`（从 `4.0.4` 起）、Schemastery 为 `3.18.x`（从 `3.18.4` 起）；早期宿主保留其原有依赖族。`0.1.8`、`0.2.1` 及其预发布版本均不在支持范围内。
+新版 DSH（从 `0.2.1-rc.1` 起）直接读取统一宿主声明 `engines.dsh: "0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0"`；旧版宿主继续使用 peer 声明。CLI `0.1.5-rc.1` 对应内部包 `0.1.5-rc.2`，两者下限不同是历史发布差异。
 
-开发依赖固定为 DSH `0.2.0-rc.2`，保证检查可复现。发布门禁配置在 Node `24`、Linux 和 Windows 上验证此前列出的旧宿主，以及 `0.2.0-rc.1` 和 `0.2.0-rc.2`。`dshWorkshop.compatibility.dshVersions` 记录用于验证的具体宿主；安装兼容性由完整的 peer 版本范围声明，测试版本列表不会限制新的 `0.2.0` 更新。
+安装声明使用连续兼容范围：普通 DSH 接口为 `0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0`，Session Format 接口为 `>=0.1.5-rc.2 <0.3.0-0`。保留已有旧版适配，取消每次宿主升级都追加白名单和设置补丁版本上限的做法；`0.2.1-rc.1` 及后续 `0.2.x` 更新无需逐版追加。`0.3.0` 及其全部预发布版暂不接纳，待关键接口验证后再调整边界。DSH 的兼容检查启用了 `includePrerelease`，范围内的 Alpha、Beta、RC 和正式版均可匹配；普通 npm 的默认范围匹配不保证接纳后续预发布版。
 
-在 DSH `0.2.0` 上，由宿主提供的 `dsh-session-format`、`dsh-session-format-catalog` 和 `dsh-session-format-v0-to-v1` 也必须与核心 DSH 包版本一致。Session Format 包混装或缺失时，插件会在旧会话迁移前拒绝启动；早期宿主保留原有兼容规则。
+运行时仍要求核心 DSH 包来自同一个版本；从 `0.2.0` 预发布版起，也要求 Session Format 包与核心版本一致。新版宿主的 Cordis 保持 `4.0.x`（从 `4.0.4` 起）、Schemastery 保持 `3.18.x`（从 `3.18.4` 起），早期宿主保留其原有依赖族。启动时先检查工具注册、系统提示词、模型调用和默认模型选择接口，再迁移会话或打开数据库；迁移模块加载后，先验证编解码器、迁移阶段和恢复校验入口。接口缺失时给出具体名称并停止操作。方法存在不保证行为完全兼容，迁移仍保留严格内容校验、原始代际不变与恢复收据；连续版本范围也不代表已实测其中每个版本。
+
+开发依赖固定为 DSH `0.2.0-rc.2`，保证检查可复现。`dshWorkshop.compatibility.dshVersions` 记录用于回归验证的具体宿主，不是安装白名单；安装兼容性由 peer 版本范围声明。可通过 `DSH_VERSION=目标版本 node scripts/run-dsh-compatibility.mjs` 验证范围内的新宿主。按当前仓库约定跳过 GitHub CI 与 Roadmap 同步，保留本地验证。
 
 DSH 核心包现在都是由宿主提供的可选 peer。若某个 profile 曾在本地安装这些 peer，升级后、启动前运行 `dsh plugin --profile <名称> exec stratagate-dsh-repair`。该命令只会把已知 DSH 运行时包移动到 profile 内的 `.stratagate-runtime-backups` 并写入恢复收据，不会删除包或触碰会话数据。启动时 bootstrap 还会把 StrataGate 自身的 DSH 导入定向到宿主维护的共享模块回退目录，再检查实际解析出的 DSH 核心族；未知宿主会立即给出明确错误并停止，而不是让正文区域空白。对于受支持的 DSH `0.1.5`、`0.1.6`、`0.1.7` 和 `0.2.0`，含已废弃 `stratagate/memory-citations` 事件的 v0 会话会先复制成经过校验的 v1 代际，再由宿主继续其迁移链；原始 v0 日志不会被修改，并写入 `stratagate-legacy-citations-v1.json` 记录源/目标哈希和恢复说明。
 

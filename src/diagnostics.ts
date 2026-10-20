@@ -5,7 +5,7 @@ import type { GenerateOptions, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-
 
 const DAY = 86_400_000
 const VERSION = (() => { try { return String(createRequire(import.meta.url)('../package.json').version) } catch { return 'unknown' } })()
-export const DIAGNOSTIC_STAGES = ['summarizer', 'extractor', 'projector', 'graphProjector', 'topicProjector', 'externalMemoryExtractor', 'externalMemoryDecider', 'profileMaintenance', 'dreamingStep', 'chat', 'ingestion', 'autoContext', 'directory', 'tools', 'frontend', 'retrieval'] as const
+export const DIAGNOSTIC_STAGES = ['summarizer', 'extractor', 'projector', 'graphProjector', 'topicProjector', 'externalMemoryExtractor', 'externalMemoryDecider', 'profileMaintenance', 'dreamingStep', 'eventDuplicateDecider', 'chat', 'ingestion', 'autoContext', 'directory', 'tools', 'frontend', 'retrieval'] as const
 export type DiagnosticStage = typeof DIAGNOSTIC_STAGES[number]
 type Counters = Record<string, number>
 export interface DiagnosticScope { namespace: string; stage: DiagnosticStage; taskId?: string; calls?: number; memoryInputEstimate?: number }

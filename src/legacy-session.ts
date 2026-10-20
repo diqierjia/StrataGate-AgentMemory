@@ -14,6 +14,7 @@ import {
 import { basename, dirname, join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { encodeSeqRanges, KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
+import { assertDshMethods } from './dsh-compatibility.js'
 import type {
   SessionFormatArtifact,
   SessionFormatEvent,
@@ -64,6 +65,15 @@ export interface LegacySessionMigrationResult {
   migrated: number
   skipped: number
   failures: ReadonlyArray<{ path: string; error: string }>
+}
+
+/** Validate the migration boundary before inspecting or publishing generations. */
+export function assertDshMigrationContract(value: unknown): void {
+  const modules = value as Partial<MigrationModules> | null | undefined
+  assertDshMethods('releasedV0SessionFormatCodec', modules?.releasedV0SessionFormatCodec, ['createDecoder'])
+  assertDshMethods('releasedV1SessionFormatCodec', modules?.releasedV1SessionFormatCodec, ['decodeHeader', 'createDecoder'])
+  assertDshMethods('sessionFormatV0ToV1', modules?.sessionFormatV0ToV1, ['migrateHeader', 'createStage', 'validateTargetHeader'])
+  assertDshMethods('sessionFormat', modules, ['restoreReleasedV1Artifact'])
 }
 
 interface PreparedGeneration {
@@ -256,6 +266,7 @@ export function prepareLegacyCitationGeneration(
 async function loadMigrationModules(): Promise<MigrationModules | undefined> {
   try {
     const edge = await import('@deepseek-ai/dsh-session-format-v0-to-v1')
+    assertDshMigrationContract(edge)
     return {
       releasedV0SessionFormatCodec: edge.releasedV0SessionFormatCodec,
       releasedV1SessionFormatCodec: edge.releasedV1SessionFormatCodec,

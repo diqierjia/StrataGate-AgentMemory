@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { StrataGate } from '../src/store.js'
 import { SqliteStorage } from '../src/sqlite.js'
 import { tokenContainment } from '../src/store.js'
-import type { ExternalMemoryDecision } from '../src/types.js'
+import type { ExternalMemoryDecision, ExternalMemoryDecider } from '../src/types.js'
 
 let sequence = 0
 
@@ -108,7 +108,7 @@ describe('StrataGate.recordAgentEvent', () => {
     expect(after.weight.lastAdoptedTurn).toBeGreaterThanOrEqual(beforeTurn)
   })
 
-  it('reinforces on a near-duplicate without calling the decider', async () => {
+  it('adjudicates a contained phrase instead of treating overlap as equivalence', async () => {
     const memory = openMemory()
     await seedPassiveEvent(memory)
     let deciderCalls = 0
@@ -116,9 +116,78 @@ describe('StrataGate.recordAgentEvent', () => {
       content: 'The deployment pipeline',
       decider: async () => { deciderCalls += 1; return { action: 'ADD', confidence: 1 } },
     })
-    expect(deciderCalls).toBe(0)
-    expect(result).toMatchObject({ action: 'REINFORCED', gate: 'near-duplicate', recorded: false })
-    expect(memory.listAgentEvents()).toHaveLength(0)
+    expect(deciderCalls).toBe(1)
+    expect(result).toMatchObject({ action: 'ADDED', gate: 'decider', recorded: true })
+    expect(memory.listAgentEvents()).toHaveLength(1)
+  })
+
+  it.each([
+    ['用户喜欢喝茶。', '用户喜欢喝茶，但是不喜欢咖啡。'],
+    ['Alice trusts Bob.', 'Bob trusts Alice.'],
+    ['用户喜欢喝茶。', '用户不喜欢喝茶。'],
+    ['用户喜欢喝茶。', '用户以前喜欢喝茶，现在改喝咖啡。'],
+  ])('preserves new, reversed, negated or changed facts: %s -> %s', async (oldText, content) => {
+    const memory = openMemory()
+    const old = await memory.recordAgentEvent({ content: oldText })
+    const decide = vi.fn(async () => ({ action: 'ADD' as const, confidence: 1 }))
+    const result = await memory.recordAgentEvent({ content, decider: decide })
+    expect(decide).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ action: 'ADDED', gate: 'decider', recorded: true })
+    expect(memory.listAgentEvents().find(e => e.id === result.eventId)?.summary).toBe(content)
+    expect(memory.listAgentEvents().find(e => e.id === old.eventId)?.weight.mentionCount).toBe(1)
+  })
+
+  it('preserves additional facts when no adjudicator is available', async () => {
+    const memory = openMemory()
+    await memory.recordAgentEvent({ content: '用户喜欢喝茶。' })
+    const result = await memory.recordAgentEvent({ content: '用户喜欢喝茶，但是不喜欢咖啡。' })
+    expect(result).toMatchObject({ action: 'CONFLICT_MARKED', recorded: true })
+    expect(memory.listAgentEvents().find(e => e.id === result.eventId)?.summary).toContain('不喜欢咖啡')
+  })
+
+  it('keeps normalized text-identical reinforcement cheap without an adjudicator', async () => {
+    const memory = openMemory()
+    await memory.recordAgentEvent({ content: 'The user drinks tea.' })
+    const decide = vi.fn(async () => ({ action: 'ADD' as const, confidence: 1 }))
+    const result = await memory.recordAgentEvent({ content: '  THE  USER drinks tea.  ', decider: decide })
+    expect(result).toMatchObject({ action: 'REINFORCED', gate: 'exact-duplicate', recorded: false })
+    expect(decide).not.toHaveBeenCalled()
+    expect(memory.listAgentEvents()).toHaveLength(1)
+  })
+
+  it('does not bypass an ADD decision when a contained fact arrives during adjudication', async () => {
+    const memory = openMemory()
+    await memory.recordAgentEvent({ content: '用户喜欢喝茶。' })
+    const decide = vi.fn(async () => {
+      await memory.recordAgentEvent({ content: '用户喜欢喝茶，喝红茶。' })
+      return { action: 'ADD' as const, confidence: 1 }
+    })
+    const result = await memory.recordAgentEvent({ content: '用户喜欢喝茶，喝红茶，但是不喜欢咖啡。', decider: decide })
+    expect(decide).toHaveBeenCalledTimes(1)
+    expect(result).toMatchObject({ action: 'ADDED', gate: 'decider', recorded: true })
+    expect(memory.listAgentEvents().find(e => e.id === result.eventId)?.summary).toContain('不喜欢咖啡')
+  })
+
+  it('still collapses an identical concurrent write after adjudication', async () => {
+    const memory = openMemory()
+    await memory.recordAgentEvent({ content: '用户喜欢喝茶。' })
+    const content = '用户喜欢喝茶，但是不喜欢咖啡。'
+    const result = await memory.recordAgentEvent({ content, decider: async () => {
+      await memory.recordAgentEvent({ content })
+      return { action: 'ADD', confidence: 1 }
+    } })
+    expect(result).toMatchObject({ action: 'REINFORCED', gate: 'exact-duplicate', recorded: false })
+    expect(memory.listAgentEvents().filter(e => e.summary === content)).toHaveLength(1)
+  })
+
+  it('does not reinforce an identical superseded fact as if it were current', async () => {
+    const memory = openMemory()
+    const first = await memory.recordAgentEvent({ content: '用户喜欢喝茶。' })
+    const old = memory.listAgentEvents().find(e => e.id === first.eventId)!
+    old.status = 'superseded'
+    const result = await memory.recordAgentEvent({ content: '用户喜欢喝茶。', decider: async () => ({ action: 'ADD', confidence: 1 }) })
+    expect(result.action).not.toBe('REINFORCED')
+    expect(old.weight.mentionCount).toBe(1)
   })
 
   it('marks heuristic conflicts when matches are ambiguous and no decider exists', async () => {
@@ -136,26 +205,121 @@ describe('StrataGate.recordAgentEvent', () => {
     expect(passive.status).toBe('active')
   })
 
-  it('applies a high-confidence decider SUPERSEDE across pools', async () => {
+  it.each(['MERGE', 'SUPERSEDE'] as const)('applies a high-confidence decider %s across pools', async (action) => {
     const memory = openMemory()
     const passiveId = await seedPassiveEvent(memory)
     const result = await memory.recordAgentEvent({
       content: 'The deployment pipeline switched to GitLab.',
       decider: async ({ matches }): Promise<ExternalMemoryDecision> => ({
-        action: 'SUPERSEDE',
+        action,
         existingEventIds: [matches[0]!.event.id],
         confidence: 0.92,
         reason: '明确的新状态',
       }),
     })
     expect(result).toMatchObject({
-      action: 'SUPERSEDED', gate: 'decider', recorded: true, existingEventIds: [passiveId], confidence: 0.92,
+      action: action === 'MERGE' ? 'MERGED' : 'SUPERSEDED', gate: 'decider', recorded: true, existingEventIds: [passiveId], confidence: 0.92,
     })
     const passive = memory.listEvents().find(({ id }) => id === passiveId)!
     expect(passive.status).toBe('superseded')
     expect(passive.supersededBy).toBe(result.eventId)
     expect(passive.weight.forcedCap).toBe(0.1)
     expect(memory.listAgentEvents()[0]!.temporal.supersedesEventIds).toEqual([passiveId])
+  })
+
+  describe('automatic historical target protection', () => {
+    it('keeps the original candidate when MERGE is downgraded for a historical target', async () => {
+      const memory = openMemory()
+      await seedPassiveEvent(memory)
+      const block = memory.listBlocks()[0]!
+      const a = await memory.addEvent({ title: '用户住北京', summary: '用户住北京', sourceBlockId: block.id, sourceMessageIds: [] })
+      await memory.addEvent({
+        title: '用户住上海', summary: '用户住上海', sourceBlockId: block.id, sourceMessageIds: [],
+        temporal: { supersedesEventIds: [a.id] },
+      })
+      const result = await memory.recordAgentEvent({
+        content: '用户今天重新搬回北京',
+        decider: async () => ({
+          action: 'MERGE' as const,
+          existingEventIds: [a.id],
+          confidence: 1,
+          mergedCandidate: { title: '用户住北京', summary: '用户住北京' },
+        }),
+      })
+      expect(result).toMatchObject({ action: 'CONFLICT_MARKED', downgradedFrom: 'MERGE' })
+      expect(memory.listAgentEvents().find(e => e.id === result.eventId)?.summary).toBe('用户今天重新搬回北京')
+    })
+
+    it.each(['MERGE', 'SUPERSEDE'] as const)('preserves A -> C when %s selects historical A in either pool', async (action) => {
+      for (const pool of ['passive', 'agent'] as const) {
+        const memory = openMemory()
+        await seedPassiveEvent(memory)
+        const block = memory.listBlocks()[0]!
+        const agentId = pool === 'agent' ? (await memory.recordAgentEvent({ content: '住北京' })).eventId : undefined
+        const a = pool === 'agent'
+          ? memory.listAgentEvents().find(e => e.id === agentId)!
+          : await memory.addEvent({ title: '住北京', summary: '住北京', sourceBlockId: block.id, sourceMessageIds: [] })
+        const c = await memory.addEvent({
+          title: '住上海', summary: '住上海', sourceBlockId: block.id, sourceMessageIds: [],
+          temporal: { supersedesEventIds: [a.id] },
+        })
+        const decide = vi.fn<ExternalMemoryDecider>(async ({ matches, candidate }) => {
+          expect(matches.some(({ event }: { event: { id: string } }) => event.id === a.id)).toBe(true)
+          return { action, existingEventIds: [a.id], confidence: 1, mergedCandidate: candidate }
+        })
+        const result = await memory.recordAgentEvent({ content: '用户住在北京。', decider: decide })
+        expect(decide).toHaveBeenCalledTimes(1)
+        expect(result).toMatchObject({ action: 'CONFLICT_MARKED', downgradedFrom: action, recorded: true, existingEventIds: [a.id] })
+        expect(a).toMatchObject({ status: 'superseded', supersededBy: c.id })
+        expect(c.status).toBe('active')
+        expect(c.temporal.supersedesEventIds).toEqual([a.id])
+        const b = memory.listAgentEvents().find(e => e.id === result.eventId)!
+        expect(b.summary).toBe('用户住在北京。')
+        expect(b.temporal.supersedesEventIds ?? []).toEqual([])
+        expect(b.temporal.conflictsWithEventIds).toEqual([a.id])
+      }
+    })
+
+    it.each(['MERGE', 'SUPERSEDE'] as const)('rechecks the whole %s target set after adjudication without retargeting', async (action) => {
+      const memory = openMemory()
+      const aId = await seedPassiveEvent(memory)
+      const block = memory.listBlocks()[0]!
+      const stillActive = await memory.addEvent({ title: 'The deployment pipeline uses staging', summary: 'The deployment pipeline uses staging.', sourceBlockId: block.id, sourceMessageIds: [] })
+      let cId: string | undefined
+      const result = await memory.recordAgentEvent({
+        content: 'The deployment pipeline switched to GitLab.',
+        decider: async ({ matches }) => {
+          expect(matches.map(m => m.event.id)).toEqual(expect.arrayContaining([aId, stillActive.id]))
+          const c = await memory.addEvent({ title: 'Replacement', summary: 'A newer state.', sourceBlockId: block.id, sourceMessageIds: [], temporal: { supersedesEventIds: [aId] } })
+          cId = c.id
+          return { action, existingEventIds: [aId, stillActive.id], confidence: 1 }
+        },
+      })
+      expect(result).toMatchObject({ action: 'CONFLICT_MARKED', downgradedFrom: action })
+      expect(memory.listEvents().find(e => e.id === aId)).toMatchObject({ status: 'superseded', supersededBy: cId })
+      expect(stillActive.status).toBe('active')
+      expect(stillActive.supersededBy).toBeNull()
+      expect(memory.listEvents().find(e => e.id === cId)?.status).toBe('active')
+      expect(memory.listAgentEvents().find(e => e.id === result.eventId)?.temporal.supersedesEventIds ?? []).toEqual([])
+    })
+
+    it.each(['MERGE', 'SUPERSEDE'] as const)('rejects a target archived while %s is pending, including candidate relationship fields', async (action) => {
+      const memory = openMemory()
+      const aId = await seedPassiveEvent(memory)
+      const a = memory.listEvents().find(e => e.id === aId)!
+      const result = await memory.recordAgentEvent({
+        content: 'The deployment pipeline switched to GitLab.',
+        decider: async ({ candidate }) => {
+          a.status = 'archived'
+          return { action, existingEventIds: [aId], confidence: 1,
+            mergedCandidate: { ...candidate, temporal: { supersedesEventIds: [aId] } } }
+        },
+      })
+      expect(result).toMatchObject({ action: 'CONFLICT_MARKED', downgradedFrom: action })
+      expect(a.status).toBe('archived')
+      expect(a.supersededBy).toBeNull()
+      expect(memory.listAgentEvents().find(e => e.id === result.eventId)?.temporal.supersedesEventIds ?? []).toEqual([])
+    })
   })
 
   it('downgrades a low-confidence MERGE into a non-destructive conflict mark', async () => {
@@ -373,6 +537,33 @@ describe('StrataGate.recordAgentEvent', () => {
 describe('agent event persistence', () => {
   beforeEach(() => { sequence = 0 })
 
+  it('preserves historical successor links after automatic adjudication and SQLite reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-history-'))
+    const options = {
+      database: join(directory, 'memory.db'), namespace: 'agent:history', blockTurnSize: 1,
+      summarizer: nonExtractingSummarizer,
+      graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+    }
+    try {
+      const memory = await StrataGate.open(options)
+      const first = await memory.recordAgentEvent({ content: '住北京' })
+      const c = await memory.addEvent({ title: '住上海', summary: '住上海', sourceBlockId: first.sourceBlockId!, sourceMessageIds: [], temporal: { supersedesEventIds: [first.eventId!] } })
+      const b = await memory.recordAgentEvent({ content: '用户住在北京。', decider: async () => ({ action: 'SUPERSEDE', existingEventIds: [first.eventId!], confidence: 1 }) })
+      await memory.close()
+      const reopened = await StrataGate.open(options)
+      try {
+        expect(b).toMatchObject({ action: 'CONFLICT_MARKED', downgradedFrom: 'SUPERSEDE' })
+        expect(reopened.listAgentEvents().find(e => e.id === first.eventId)).toMatchObject({ status: 'superseded', supersededBy: c.id })
+        expect(reopened.listEvents().find(e => e.id === c.id)?.status).toBe('active')
+        expect(reopened.listAgentEvents().find(e => e.id === b.eventId)?.temporal.supersedesEventIds ?? []).toEqual([])
+      } finally {
+        await reopened.close()
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('persists agent events into the isolated agent_events table and restores them', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-events-'))
     const database = join(directory, 'memory.db')
@@ -452,7 +643,7 @@ describe('agent event persistence', () => {
 
       const storage = new SqliteStorage({ filename: database })
       const loaded = await storage.load(options.namespace)
-      expect(loaded?.snapshot.schemaVersion).toBe(12)
+      expect(loaded?.snapshot.schemaVersion).toBe(13)
       expect(loaded?.snapshot.agentEvents).toEqual([])
       expect(loaded?.snapshot.events).toEqual(before.events)
       await storage.close()

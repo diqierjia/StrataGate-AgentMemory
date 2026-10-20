@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { setTimeout as delay } from 'node:timers/promises'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openNativePath } from '@deepseek-ai/dsh-native-command'
 import { validateArgs } from '@deepseek-ai/dsh-tools'
@@ -55,6 +56,8 @@ import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore } from './metadata.js'
+import { EventDuplicateMaintenance, sourceContext } from './event-duplicate-maintenance.js'
+import { eventDuplicateMergeCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, validEventMergeDraft, type EventDuplicatePair, type EventMergeDraft } from '@diqier/stratagate'
 import { DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
 import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
 import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, type DreamingAction } from './dreaming.js'
@@ -67,6 +70,11 @@ export interface DreamingHost {
 }
 type ClaimedDreamingCommand = Extract<DreamingCommand, { owner: string; epoch: number }>
 export type DreamingOperation = ClaimedDreamingCommand extends infer T ? T extends ClaimedDreamingCommand ? Omit<T, 'id' | 'owner' | 'epoch'> : never : never
+
+function dreamingConflict(error: unknown): boolean {
+  return error instanceof Error && /^(Directory changed during Dreaming|Dreaming sources changed|Dreaming evidence changed)/.test(error.message)
+}
+const DREAMING_REPLAN_REASON = '目录或来源在整理期间发生变化，请终止本轮后重新开始；已保存的修改会保留，继续本轮无法解除冲突'
 
 export { estimateTokens }
 
@@ -355,7 +363,9 @@ export class StrataGateRuntime {
   }
 
   private async runBackgroundWorker(): Promise<void> {
-    if (this.closed || !this.models.isReady()) return
+    if (this.closed) return
+    void this.runEventDuplicateMaintenance().catch((error: unknown) => this.onIngestError(error))
+    if (!this.models.isReady()) return
     void this.runProfileMaintenance().catch((error: unknown) => this.onIngestError(error))
     let namespaces: string[]
     try {
@@ -415,6 +425,156 @@ export class StrataGateRuntime {
     })()
     this.profileMaintenanceRun = run
     try { return await run } finally { if (this.profileMaintenanceRun === run) this.profileMaintenanceRun = undefined }
+  }
+
+  private duplicateMaintenance?: EventDuplicateMaintenance
+  private duplicateMaintenanceRun: Promise<boolean> | undefined
+
+  /** Upgrade repair: one durable scan per namespace; bounded independent background work. */
+  async runEventDuplicateMaintenance(): Promise<boolean> {
+    if (this.duplicateMaintenanceRun) return this.duplicateMaintenanceRun
+    if (this.closed || this.config.database === ':memory:' || !existsSync(this.config.database)) return false
+    const canDecide = this.models.isReady() && typeof this.models.eventDuplicateDecider === 'function'
+    const run = (async () => {
+      for (const namespace of canDecide ? await this.adminNamespaces() : EventDuplicateMaintenance.pendingManualNamespaces(this.config.database)) {
+        if (this.closed) break
+        const details = this.duplicateMaintenance?.details(namespace) ?? EventDuplicateMaintenance.readDetails(this.config.database, namespace)
+        const pendingUndo = details.find(pair => pair.undo?.pending)
+        const needsCheckpoint = details.some(pair => pair.manualResolution) || Boolean(pendingUndo)
+        if (!canDecide && !needsCheckpoint) continue
+        this.duplicateMaintenance ??= new EventDuplicateMaintenance(this.config.database)
+        if (pendingUndo?.undo) {
+          const { memory, owned } = await this.openAdminMemory(namespace)
+          try { return await this.duplicateMaintenance.undo(namespace, pendingUndo, pendingUndo.undo.id, data => memory.undoDuplicateReview(data)) }
+          finally { if (owned) await memory.close() }
+        }
+        if (needsCheckpoint) {
+          const snapshot = await this.adminSnapshot(namespace)
+          if (snapshot && this.duplicateMaintenance.recoverManualChoices(namespace, snapshot)) return true
+        }
+        if (!canDecide) continue
+        const changed = await this.duplicateMaintenance.tick(namespace, {
+          snapshot: () => this.adminSnapshot(namespace),
+          decide: (context) => this.models.runDetached(`stratagate-event-dedup:${namespace}`,
+            () => this.models.eventDuplicateDecider(context), AbortSignal.timeout(30_000), namespace),
+          archive: async (pair, keepId, draft, prepareUndo) => {
+            if (!draft || !prepareUndo) return false
+            const { memory, owned } = await this.openAdminMemory(namespace)
+            try { return await memory.reviewDuplicateEvents(pair, keepId, 'merge', prepareUndo, draft) }
+            finally { if (owned) await memory.close() }
+          },
+        })
+        if (changed) return true
+      }
+      return false
+    })()
+    this.duplicateMaintenanceRun = run
+    try { return await run } finally { if (this.duplicateMaintenanceRun === run) this.duplicateMaintenanceRun = undefined }
+  }
+
+  adminDuplicateRepairStatus(namespace: string) {
+    if (this.duplicateMaintenance) return this.duplicateMaintenance.summary(namespace)
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    return EventDuplicateMaintenance.readSummary(this.config.database, namespace)
+  }
+
+  async adminDuplicateRepairPairs(namespace: string, offset = 0, limit = 20, queue = 'all', focus?: { leftId: string; rightId: string }) {
+    const snapshot = await this.adminSnapshot(namespace)
+    if (!snapshot) throw new Error('Unknown namespace')
+    const pairs = this.config.database === ':memory:' ? [] : this.duplicateMaintenance?.details(namespace)
+      ?? EventDuplicateMaintenance.readDetails(this.config.database, namespace)
+    const cards = new Map([...snapshot.events, ...snapshot.agentEvents].map(card => [card.id, card]))
+    const joined = (original: EventCard | undefined, kept: EventCard | undefined) => original?.status === 'archived' && kept
+      && (kept.mergedFromEventIds?.includes(original.id) || original.supersededBy === kept.id
+        && ![...cards.values()].some(card => card.id !== kept.id && card.mergedFromEventIds?.includes(original.id)))
+    const items = pairs.map(pair => {
+      const left = cards.get(pair.leftId); const right = cards.get(pair.rightId)
+      const merged = joined(left, right) || joined(right, left)
+      const archived = merged ? left?.status === 'archived' ? left : right : null
+      const keeper = merged ? archived === left ? right : left : null
+      const outcome = merged ? pair.outcome === 'selected' || pair.outcome !== 'merged' && !keeper?.mergedFromEventIds?.includes(archived!.id) ? 'selected' : 'merged' : pair.outcome ?? 'pending'
+      const historicalMerge = left?.status === 'superseded' || right?.status === 'superseded'
+      const choice = (kept: EventCard | undefined, other: EventCard | undefined) => {
+        const selectBlockedReason = !kept || !other ? '原卡已不可用'
+          : ![kept, other].every(card => card.status === 'active' || card.status === 'superseded') ? '该组已处理，或原卡已归档'
+            : other.weight.pinned ? '另一张已置顶，请先取消置顶再归档'
+              : [...cards.values()].some(card => card.id !== other.id && card.mergedFromEventIds?.includes(other.id)) ? '另一张是已合并记忆的原始证据，不能独立处理' : ''
+        const mergeBlockedReason = !kept || !other ? '原卡已不可用'
+          : eventDuplicateManualMergeBlockReason(kept, other)
+            || ([...cards.values()].some(card => card.id !== other.id && card.mergedFromEventIds?.includes(other.id)) ? '另一张是已合并记忆的原始证据，不能再次独立合并。' : '')
+        return { canSelect: !selectBlockedReason, selectBlockedReason,
+          canMerge: !merged && !mergeBlockedReason, mergeBlockedReason }
+      }
+      const choices = { left: choice(left, right), right: choice(right, left) }
+      const canMerge = choices.left.canMerge || choices.right.canMerge
+      const { undo, manualResolution: _intent, ...publicPair } = pair
+      return { ...publicPair, undoId: undo?.id, ...(left && right ? { leftFingerprint: eventDuplicateFingerprint(left), rightFingerprint: eventDuplicateFingerprint(right) } : {}),
+        outcome, keepId: keeper?.id ?? pair.keepId, left: left ?? null, right: right ?? null,
+        canMerge, historicalMerge,
+        recommendedKeepId: canMerge ? !choices.left.canMerge ? right?.id : !choices.right.canMerge ? left?.id
+          : pair.action === 'KEEP_LEFT' ? left?.id : pair.action === 'KEEP_RIGHT' ? right?.id
+            : (right?.temporal.happenedStart || right?.createdAt || '') >= (left?.temporal.happenedStart || left?.createdAt || '') ? right?.id : left?.id : undefined,
+        historyNotice: historicalMerge ? '其中一张是历史版本。可把仍然有效的信息补入当前卡；旧卡原文、双方来源和原有历史关系都会保留。请勿把已失效的事实改写成当前事实。' : '',
+        mergeWarning: left && right && !historicalMerge && !eventDuplicateMergeCompatible(left, right) ? '两张卡的日期或事实字段有差异。请在完整稿中区分原安排、后续变化与当前事实；双方原始证据仍保留。' : '',
+        mergeBlockedReason: canMerge ? '' : choices.left.mergeBlockedReason || choices.right.mergeBlockedReason, choices,
+        originalLeft: undo?.data?.changes.find(change => change.id === pair.leftId && (change.collection === 'events' || change.collection === 'agentEvents'))?.before,
+        originalRight: undo?.data?.changes.find(change => change.id === pair.rightId && (change.collection === 'events' || change.collection === 'agentEvents'))?.before,
+        reason: pair.reason || '等待判断；双方原卡均保留' }
+    })
+    const filtered = items.filter(item => queue === 'review' ? !item.aiResolved && !item.userReviewed && (item.outcome === 'kept' || item.outcome === 'failed')
+      : queue === 'ai' ? item.outcome === 'pending' : queue === 'history' ? item.outcome === 'merged' || item.outcome === 'selected' || item.aiResolved || item.userReviewed : true)
+    const position = focus ? filtered.findIndex(item => item.leftId === focus.leftId && item.rightId === focus.rightId) : -1
+    if (position >= 0) offset = Math.floor(position / limit) * limit
+    return { namespace, total: filtered.length, offset, limit, queue, focusIndex: position >= 0 ? position - offset : undefined, items: filtered.slice(offset, offset + limit) }
+  }
+
+  async adminDuplicateRepairControl(namespace: string, action: 'rescan' | 'merge' | 'select' | 'keep' | 'undo' | 'draft' | 'takeover', pair?: EventDuplicatePair, keepId?: string, undoId?: string, draft?: EventMergeDraft, regenerate = false) {
+    if (this.config.database === ':memory:') throw new Error('一次性整理需要持久化数据库')
+    const snapshot = await this.adminSnapshot(namespace)
+    if (!snapshot) throw new Error('Unknown namespace')
+    this.duplicateMaintenance ??= new EventDuplicateMaintenance(this.config.database)
+    if (action === 'rescan') { await this.duplicateMaintenance.rescan(namespace, snapshot); this.wakeBackgroundWorker(); return { ok: true } }
+    if (!pair) throw new Error('候选不能为空')
+    if (action === 'undo') {
+      const { memory, owned } = await this.openAdminMemory(namespace)
+      try { return { ok: await this.duplicateMaintenance.undo(namespace, pair, undoId ?? '', data => memory.undoDuplicateReview(data)) } }
+      finally { if (owned) await memory.close() }
+    }
+    const events = [...snapshot.events, ...snapshot.agentEvents]
+    const left = events.find(event => event.id === pair.leftId); const right = events.find(event => event.id === pair.rightId)
+    if (!left || !right) throw new Error('其中一张原卡已不可用。你的合并稿仍保留，请重新读取原卡后核对。')
+    if (eventDuplicateFingerprint(left) !== pair.leftFingerprint || eventDuplicateFingerprint(right) !== pair.rightFingerprint) {
+      throw new Error('原卡在整理期间发生了变化。你的合并稿仍保留，请重新读取原卡，核对变化后再保存。')
+    }
+    if (action === 'takeover') { this.duplicateMaintenance.takeOver(namespace, pair); return { ok: true } }
+    if (action === 'draft') {
+      const context = { purpose: 'manual-merge-preview', instruction: '若包含历史版本，仅将仍有效的信息补入当前事实；保留时间、变化与不确定性，不把已失效事实写成当前事实。', left: sourceContext(left, snapshot), right: sourceContext(right, snapshot) }
+      const cached = this.duplicateMaintenance.details(namespace).find(item => item.leftId === pair.leftId && item.rightId === pair.rightId)
+      if ((regenerate || !(cached?.draftFingerprints === pair.leftFingerprint + pair.rightFingerprint && validEventMergeDraft(cached.draft))) && !this.models.isReady()) throw new Error('AI 暂不可用。你可以直接编辑完整记忆，也可以保留两张。')
+      const result = await this.duplicateMaintenance.prepareDraft(namespace, pair, async () => {
+        if (!this.models.isReady()) throw new Error('AI 暂不可用。你可以直接编辑完整记忆，也可以保留两张。')
+        // User-requested drafts use full evidence and the configured model timeout.
+        // The smaller context/cost limits apply only to automatic maintenance.
+        return this.models.runDetached(`stratagate-merge-draft:${namespace}`, () => this.models.eventDuplicateDecider(context),
+          AbortSignal.timeout(this.config.structuredTaskTimeoutMs ?? 120_000), namespace)
+      }, regenerate)
+      return { ok: true, ...result }
+    }
+    if (action === 'merge' && !validEventMergeDraft(draft)) throw new Error('请先生成或填写完整的合并标题和正文，再确认合并。')
+    if (action === 'merge') {
+      const kept = keepId === left.id ? left : right; const other = kept === left ? right : left
+      const reason = eventDuplicateManualMergeBlockReason(kept, other)
+      if (reason) throw new Error(reason)
+      if (events.some(card => card.id !== other.id && card.mergedFromEventIds?.includes(other.id))) {
+        throw new Error('另一张已是其他合并记忆的原始证据。请使用那张合并后的记忆继续整理；你的草稿仍保留。')
+      }
+    }
+    const ok = await this.duplicateMaintenance.resolve(namespace, pair, action === 'keep' ? null : keepId ?? '', async (review, id, prepareUndo) => {
+      const { memory, owned } = await this.openAdminMemory(namespace)
+      try { return await memory.reviewDuplicateEvents(review, id, action === 'select' ? 'select' : 'merge', prepareUndo, action === 'merge' ? draft : undefined, 'manual') } finally { if (owned) await memory.close() }
+    }, action === 'select' ? 'select' : 'merge')
+    if (!ok) throw new Error('保存前原卡的状态或证据发生变化，未覆盖原卡。你的选择和草稿仍保留，请重新读取原卡后核对。')
+    return { ok, undoId: this.duplicateMaintenance.details(namespace).find(item => item.leftId === pair.leftId && item.rightId === pair.rightId)?.undo?.id }
   }
 
   getPersistentProfile(): PersistentProfile {
@@ -813,7 +973,7 @@ export class StrataGateRuntime {
     const threadId = String(session.id)
     const results = memory.searchRawMemory(query, limit, scope === 'namespace'
       ? {}
-      : { threadId, includeUnthreaded: true })
+      : { threadId })
       .slice(0, limit)
     const blockTitles = new Map(memory.listBlocks().map((block) => [block.id, blockCitationTitle(block)]))
     return this.batch(session, results.map((result, index) => ({
@@ -826,19 +986,22 @@ export class StrataGateRuntime {
     })), results.map(compactRawHit), { scope, namespace: this.namespaceFor(session), threadId })
   }
 
-  async blocks(session: Session, scope: BlockQueryScope = 'session'): Promise<unknown> {
+  async blocks(session: Session, scope: BlockQueryScope = 'session', options: { offset?: number; limit?: number } = {}): Promise<unknown> {
     await this.flush()
     const memory = await this.space(session)
     const threadId = String(session.id)
     const snapshot = memory.exportSnapshot()
     const namespaceBlockCount = snapshot.blocks.length
     const namespaceThreadIds = [...new Set(snapshot.blocks.map((block) => block.threadId).filter((value): value is string => Boolean(value)))]
-    const openTailCount = snapshot.openTail.filter((message) => scope === 'namespace' || message.threadId === threadId || message.threadId === undefined).length
-    const results = scope === 'namespace'
-      ? memory.getBlockContext()
-      : memory.getBlockContext().filter((block) => block.threadId === threadId || block.threadId === undefined)
+    const openTailCount = snapshot.openTail.filter((message) => scope === 'namespace' || message.threadId === threadId).length
+    const matches = memory.getBlockContext(scope === 'session' ? threadId : undefined)
+    const offset = Math.max(0, Math.floor(Number.isFinite(options.offset) ? options.offset! : 0))
+    const limit = Math.max(1, Math.min(20, Math.floor(Number.isFinite(options.limit) ? options.limit! : 12)))
     const blockTitles = new Map(memory.listBlocks().map((block) => [block.id, blockCitationTitle(block)]))
-    const emptyReason: BlockEmptyReason | null = results.length > 0
+    const results = matches.slice(offset, offset + limit).map(({ id, turnRange, level }) => ({
+      id, title: compactText(blockTitles.get(id) ?? 'Block', 240), turnRange, level,
+    }))
+    const emptyReason: BlockEmptyReason | null = matches.length > 0
       ? null
       : namespaceBlockCount === 0
         ? (openTailCount > 0 ? 'open_tail_pending' : 'no_blocks_in_namespace')
@@ -847,7 +1010,11 @@ export class StrataGateRuntime {
       scope,
       namespace: this.namespaceFor(session),
       threadId,
-      blockCount: results.length,
+      blockCount: matches.length,
+      total: matches.length,
+      offset,
+      limit,
+      nextOffset: offset + results.length < matches.length ? offset + results.length : null,
       namespaceBlockCount,
       namespaceThreadIds,
       openTailCount,
@@ -1265,6 +1432,8 @@ export class StrataGateRuntime {
     await Promise.allSettled(this.backgroundNamespaceRuns.values())
     if (this.backgroundWorkerRun) await Promise.allSettled([this.backgroundWorkerRun])
     if (this.profileMaintenanceRun) await Promise.allSettled([this.profileMaintenanceRun])
+    if (this.duplicateMaintenanceRun) await Promise.allSettled([this.duplicateMaintenanceRun])
+    this.duplicateMaintenance?.close()
     await Promise.allSettled(this.migrationRuns.values())
     await Promise.allSettled(this.derivationRuns.values())
     await Promise.allSettled(this.externalImportRuns.values())
@@ -1689,7 +1858,13 @@ export class StrataGateRuntime {
           result = read.result; evidenceIds = read.evidenceIds
         } finally { if (opened.owned) await opened.memory.close() }
       }
-    } catch (error) { result = { error: error instanceof Error ? error.message : 'Tool failed' } }
+    } catch (error) {
+      if (dreamingConflict(error)) {
+        await this.dreamingMutate(namespace, run, { kind: 'suspend', reason: DREAMING_REPLAN_REASON, replanRequired: true })
+        return { error: DREAMING_REPLAN_REASON, replanRequired: true }
+      }
+      result = { error: error instanceof Error ? error.message : 'Tool failed' }
+    }
     await this.dreamingMutate(namespace, run, { kind: 'checkpoint', trace: { ...action, result }, evidenceIds, estimatedTokens: 0 })
     return result
   }
@@ -1714,7 +1889,8 @@ export class StrataGateRuntime {
     const run = await this.retryExternalImportWrite(namespace, memory => memory.dreaming(command.kind === 'start' && this.agentMemoryRetrievalWeight <= 0
       ? { ...command, allowedEventIds: memory.listEvents().filter(event => event.status !== 'forgotten' && event.status !== 'archived').map(event => event.id) } : command))
     if (action === 'terminate') this.dreamingControllers.get(namespace)?.abort(new Error('用户已终止本轮 Dreaming'))
-    if (action === 'start' || action === 'resume') this.startDreaming(namespace, run)
+    if ((action === 'start' || action === 'resume') && run.status === 'running') this.startDreaming(namespace, run)
+    if (action === 'terminate') this.wakeBackgroundWorker()
     return this.adminDreamingStatus(namespace)
   }
 
@@ -1729,13 +1905,22 @@ export class StrataGateRuntime {
     const heartbeat = setInterval(() => {
       if (renewing || controller.signal.aborted) return
       renewing = true
-      void mutate({ kind: 'heartbeat', ...claim }).catch(() => controller.abort(new Error('Dreaming 任务认领已变化'))).finally(() => { renewing = false })
+      void mutate({ kind: 'heartbeat', ...claim }).then(run => {
+        if (run.status === 'completed') clearInterval(heartbeat)
+      }).catch(() => controller.abort(new Error('Dreaming 任务认领已变化'))).finally(() => { renewing = false })
     }, 20_000)
     heartbeat.unref?.()
     const task = (async () => {
       try {
+        let ready = initial
+        while (ready.waitingForProjection && !controller.signal.aborted) {
+          ready = await mutate({ kind: 'prepare', ...claim })
+          if (ready.status !== 'running') return
+          if (ready.waitingForProjection) await delay(200, undefined, { signal: controller.signal })
+        }
+        if (controller.signal.aborted || this.closed) return
         if (this.dreamingHost) {
-          await this.dreamingHost.run(namespace, initial, controller.signal)
+          await this.dreamingHost.run(namespace, ready, controller.signal)
           return
         }
         while (!this.closed && !controller.signal.aborted) {
@@ -1772,6 +1957,10 @@ export class StrataGateRuntime {
                 } finally { if (opened.owned) await opened.memory.close() }
               }
             } catch (error) {
+              if (dreamingConflict(error)) {
+                await mutate({ kind: 'suspend', ...claim, reason: DREAMING_REPLAN_REASON, replanRequired: true })
+                return
+              }
               result = { error: error instanceof Error ? error.message : 'Tool failed' }
             }
             const saved = await mutate({ kind: 'checkpoint', ...claim, trace: { ...action, result }, evidenceIds, estimatedTokens: dreamingEstimatedTokens(payload, action) })
@@ -1781,8 +1970,10 @@ export class StrataGateRuntime {
           await new Promise<void>(resolve => setTimeout(resolve, 100))
         }
       } catch (error) {
-        await mutate({ kind: 'suspend', ...claim, reason: this.closed ? '宿主已关闭，进度已保存' : error instanceof Error ? error.message.slice(0, 300) : '运行失败，进度已保存' }).catch(() => {})
-      } finally { clearInterval(heartbeat) }
+        await mutate({ kind: 'suspend', ...claim,
+          reason: this.closed ? '宿主已关闭，进度已保存' : dreamingConflict(error) ? DREAMING_REPLAN_REASON : error instanceof Error ? error.message.slice(0, 300) : '运行失败，进度已保存',
+          ...(dreamingConflict(error) ? { replanRequired: true } : {}) }).catch(() => {})
+      } finally { clearInterval(heartbeat); this.wakeBackgroundWorker() }
     })().finally(() => {
       if (this.dreamingRuns.get(namespace) === task) this.dreamingRuns.delete(namespace)
       if (this.dreamingControllers.get(namespace) === controller) this.dreamingControllers.delete(namespace)
@@ -2105,6 +2296,7 @@ export class StrataGateRuntime {
         blockDecayLambda: this.blockDecayLambda,
         summarizer: this.models.summarizer,
         extractor: this.models.extractor,
+        ...(typeof this.models.eventDuplicateDecider === 'function' ? { eventDuplicateDecider: this.models.eventDuplicateDecider } : {}),
         graphProjector: this.models.graphProjector,
         disableElementProjection: true,
       })
@@ -2294,6 +2486,7 @@ export class StrataGateRuntime {
         blockDecayLambda: this.blockDecayLambda,
         summarizer: this.models.summarizer,
         extractor: this.models.extractor,
+        ...(typeof this.models.eventDuplicateDecider === 'function' ? { eventDuplicateDecider: this.models.eventDuplicateDecider } : {}),
         graphProjector: this.models.graphProjector,
         disableElementProjection: true,
       }).then(async (memory) => {
@@ -2514,6 +2707,7 @@ export class StrataGateRuntime {
         ...(options.derivation ? {
           summarizer: this.models.summarizer,
           extractor: this.models.extractor,
+          ...(typeof this.models.eventDuplicateDecider === 'function' ? { eventDuplicateDecider: this.models.eventDuplicateDecider } : {}),
         } : {}),
         graphProjector: this.models.graphProjector,
         disableElementProjection: true,

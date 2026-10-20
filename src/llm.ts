@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { DREAMING_DIRECTORY_GUIDANCE } from './dreaming.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BlockAssembler, createUserMessage, type ContentBlock, type ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { parameterSchemaSpecToJsonSchema, validateArgs, type ParameterSchemaSpec, type ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
@@ -10,6 +11,7 @@ import type {
   ElementProjector,
   EventCardInput,
   EventExtractor,
+  EventDuplicateDecision,
   ExternalMemoryAction,
   ExternalMemoryCandidate,
   ExternalMemoryDecider,
@@ -32,7 +34,7 @@ import type {
   TopicProjector,
   TopicProjectionDiagnostics,
 } from '@diqier/stratagate'
-import { TOPIC_OVERVIEW_MAX_CHARACTERS, validateTopicOverviewText, TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
+import { EVENT_DUPLICATE_REVIEW_RULES, TOPIC_OVERVIEW_MAX_CHARACTERS, validateTopicOverviewText, TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
 import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, validateProfile, type PersistentProfile } from '@diqier/stratagate'
 import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
 import { dshMessageSource } from './dsh-compatibility.js'
@@ -98,6 +100,7 @@ const STRUCTURED_FIELDS = {
   dreamingStep: ['tool', 'args'],
   externalMemoryExtractor: ['reason', 'candidates'],
   externalMemoryDecider: ['action', 'reason', 'confidence'],
+  eventDuplicateDecider: ['action', 'reason', 'confidence'],
   profileMaintenance: Object.keys(PROFILE_FIELDS),
 } as const
 const STRING_ARRAY: ValueSchemaSpec = { type: 'array', items: { type: 'string' } }
@@ -371,6 +374,17 @@ const STRUCTURED_TOOLS = {
     name: 'stratagate_decide_external_memory',
     description: 'Decide how one external memory candidate relates to retrieved local events.',
     parameters: EXTERNAL_MEMORY_DECIDER_PARAMETERS,
+  },
+  eventDuplicateDecider: {
+    name: 'stratagate_review_duplicate_events',
+    description: 'Review candidate memories: merge the same fact into a complete draft, retain distinct facts, or ask for human review.',
+    parameters: {
+      action: { type: 'string', enum: ['KEEP_LEFT', 'KEEP_RIGHT', 'KEEP_BOTH', 'REVIEW'] as const, required: true },
+      confidence: { type: 'number', required: true },
+      reason: { type: 'string', required: true },
+      mergedTitle: { type: 'string' },
+      mergedSummary: { type: 'string' },
+    },
   },
   externalMemoryExtractor: {
     name: 'stratagate_recover_external_memory',
@@ -675,8 +689,8 @@ export class DshModelBridge {
     return this.sessions.run({ sessionId: sessionId as Session['id'], ...(signal ? { signal } : {}), ...(namespace ? { namespace } : {}) }, operation)
   }
 
-  dreamingModelOptions(): { provider: string; model: string; maxTokens: number } {
-    return { ...this.resolveRoute(), maxTokens: TOPIC_OUTPUT_TOKEN_BUDGET }
+  dreamingModelOptions(): { provider: string; model: string } {
+    return this.resolveRoute()
   }
 
   readonly dreamingStep = async (payload: unknown): Promise<{ tool: string; args: Record<string, unknown> }> => {
@@ -687,7 +701,8 @@ memory_list_topics {query?,offset?,limit?}: paginated directory navigation.
 memory_expand_topic {id,offset?,limit?}: sections and overview page; navigation, not new evidence.
 dreaming_search {kind:events|raw|graph,query,topicId?,offset?,limit?}: read-only frozen-run retrieval.
 dreaming_read {kind:event|block|graph_node,id,level?,offset?,limit?}: source details, with paging; no reinforcement or decay mutation.
-dreaming_directory {operations:[...]}: atomic current-chapter operations, chosen from rename-chapter {title,description?}, rename-section {from,title}, merge-sections {from:[titles],title}, move-events {eventIds:[current batch IDs],title}, set-overview {title,entries:[{kind:history|decision|change|scope|open-question|experience,text,sourceEventIds}]}. Existing summaries are navigation; use supplied or retrieved full Event evidence. Each overview text is at most 1000 Unicode characters; split into independently grounded entries if needed. set-overview replaces that section's overview: retrieve existing supporting Events and preserve valid unique content before replacing. Other chapter membership is out of scope. If a write is rejected, correct it or retrieve missing evidence.
+dreaming_directory {operations:[...]}: atomic current-chapter operations, chosen from rename-chapter {title,description?}, rename-section {from,title}, merge-sections {from:[titles],title}, move-events {eventIds:[current batch IDs],title}, set-overview / append-overview {title,entries:[{kind:history|decision|change|scope|open-question|experience,text,sourceEventIds}]}, rewrite-overview {titles,entries:[{title,kind,text,sourceEventIds}]}. Existing summaries are navigation; use supplied or retrieved full Event evidence. Other chapter membership is out of scope.
+${DREAMING_DIRECTORY_GUIDANCE}
 Choose exactly one action using stratagate_dreaming_step. args is an object. Finish args may contain a short summary.`, payload) as { tool: string; args: Record<string, unknown> }
   }
 
@@ -896,6 +911,16 @@ Use project scope for repository decisions, user scope for stable preferences/id
       }
       throw new TopicProjectionError('provider-failed', 'provider or route error')
     }
+  }
+
+  readonly eventDuplicateDecider = async (context: unknown): Promise<EventDuplicateDecision> => {
+    const raw = object(await this.callStructured('eventDuplicateDecider',
+      EVENT_DUPLICATE_REVIEW_RULES + '\nCall stratagate_review_duplicate_events exactly once.', context))
+    const draft = { title: text(raw.mergedTitle).trim(), summary: text(raw.mergedSummary).trim() }
+    return { action: raw.action === 'KEEP_LEFT' || raw.action === 'KEEP_RIGHT' || raw.action === 'KEEP_BOTH' ? raw.action : 'REVIEW',
+      confidence: typeof raw.confidence === 'number' && Number.isFinite(raw.confidence) ? raw.confidence : 0,
+      reason: text(raw.reason).slice(0, 500),
+      ...(draft.title && draft.title.length <= 200 && draft.summary && draft.summary.length <= 12_000 ? { draft } : {}) }
   }
 
   readonly externalMemoryDecider: ExternalMemoryDecider = async (context) => {
@@ -1127,8 +1152,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
       lastResponse = responseForError
       try {
         // Complete JSON cannot establish that a truncated batch was finished.
-        if (isGraph && finish.kind === 'max-tokens') {
-          throw new ModelJsonResponseError('StrataGate Graph output token limit reached', { response: responseForError })
+        if ((isGraph || kind === 'eventDuplicateDecider') && finish.kind === 'max-tokens') {
+          throw new ModelJsonResponseError('StrataGate ' + (isGraph ? 'Graph' : 'duplicate review') + ' output token limit reached', { response: responseForError })
         }
         const expectedTool = STRUCTURED_TOOLS[kind].name
         let parsed: unknown
@@ -1201,7 +1226,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
           throw new ModelJsonResponseError(`StrataGate ${expectedTool} arguments were invalid: ${error instanceof Error ? error.message : String(error)}`,
             { cause: error, response: responseForError })
         }
-        if (kind !== 'profileMaintenance' && kind !== 'topicProjector' && kind !== 'dreamingStep') {
+        if (kind !== 'profileMaintenance' && kind !== 'topicProjector' && kind !== 'dreamingStep' && kind !== 'eventDuplicateDecider') {
           this.successfulResponses.push({
             id: `model_response_${crypto.randomUUID()}`,
             kind,

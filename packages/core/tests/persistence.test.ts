@@ -138,7 +138,7 @@ describe('SQLite persistence', () => {
     }
     const after = new Database(filename, { readonly: true });
     expect(after.prepare('SELECT COUNT(*) AS n FROM event_metadata').get()).toEqual({ n: 0 });
-    expect(after.pragma('user_version', { simple: true })).toBe(12);
+    expect(after.pragma('user_version', { simple: true })).toBe(13);
     after.close();
   });
   it('loads legacy Event columns and snapshots without exposing retired fields', async () => {
@@ -214,17 +214,17 @@ describe('SQLite persistence', () => {
     expect(ephemeral.storageRevision).toBe(0);
   });
 
-  it('creates schema version twelve and rejects a newer database schema', async () => {
+  it('creates schema version thirteen and rejects a newer database schema', async () => {
     const initializedFilename = await databasePath();
     const initialized = new SqliteStorage({ filename: initializedFilename });
     await initialized.close();
     const initializedDatabase = new Database(initializedFilename, { readonly: true });
-    expect(initializedDatabase.pragma('user_version', { simple: true })).toBe(12);
+    expect(initializedDatabase.pragma('user_version', { simple: true })).toBe(13);
     initializedDatabase.close();
 
     const newerFilename = await databasePath();
     const newerDatabase = new Database(newerFilename);
-    newerDatabase.pragma('user_version = 13');
+    newerDatabase.pragma('user_version = 14');
     newerDatabase.close();
     expect(() => new SqliteStorage({ filename: newerFilename })).toThrow('newer than supported');
   });
@@ -372,7 +372,7 @@ describe('SQLite persistence', () => {
 
     const storage = new SqliteStorage({ filename });
     const loaded = (await storage.load(options.namespace))!.snapshot;
-    expect(loaded.schemaVersion).toBe(12);
+    expect(loaded.schemaVersion).toBe(13);
     expect(loaded.events.find(({ id }) => id === 'normal')?.formedTurn).toBe(1);
     expect(loaded.events.find(({ id }) => id === 'external')).not.toHaveProperty('formedTurn');
     expect(loaded.events.find(({ id }) => id === 'missing')).not.toHaveProperty('formedTurn');
@@ -388,7 +388,7 @@ describe('SQLite persistence', () => {
     expect((await reopened.load(options.namespace))!.snapshot).toEqual(loaded);
     await reopened.close();
     const migrated = new Database(filename, { readonly: true });
-    expect(migrated.pragma('user_version', { simple: true })).toBe(12);
+    expect(migrated.pragma('user_version', { simple: true })).toBe(13);
     expect(migrated.prepare('SELECT formed_turn FROM events WHERE id = ?').pluck().get('normal')).toBe(1);
     expect(migrated.prepare('SELECT formed_turn FROM events WHERE id = ?').pluck().get('external')).toBeNull();
     migrated.close();
@@ -417,7 +417,7 @@ describe('SQLite persistence', () => {
 
     const storage = new SqliteStorage({ filename });
     const loaded = await storage.load('legacy:v6');
-    expect(loaded?.snapshot.schemaVersion).toBe(12);
+    expect(loaded?.snapshot.schemaVersion).toBe(13);
     expect(loaded?.snapshot.blocks[0]?.lastLiftedBy).toBeNull();
     await storage.close();
 
@@ -452,7 +452,7 @@ describe('SQLite persistence', () => {
 
     const storage = new SqliteStorage({ filename });
     const loaded = await storage.load('legacy:v8');
-    expect(loaded?.snapshot).toMatchObject({ schemaVersion: 12, summaryJobs: [], externalMemoryImportJobs: [] });
+    expect(loaded?.snapshot).toMatchObject({ schemaVersion: 13, summaryJobs: [], externalMemoryImportJobs: [] });
     expect(loaded?.snapshot.blocks[0]?.processingStatus).toBe('ready');
     expect(loaded?.snapshot.extractionJobs[0]?.nextRetryAt).toBeNull();
     await storage.close();
@@ -763,7 +763,7 @@ describe('SQLite persistence', () => {
     const loaded = await storage.load('legacy:user');
     expect(loaded?.revision).toBe(7);
     expect(loaded?.snapshot).toMatchObject({
-      schemaVersion: 12,
+      schemaVersion: 13,
       blockDecayLambda: 0.3,
       elements: [],
       elementProjectionJobs: [],
@@ -775,7 +775,7 @@ describe('SQLite persistence', () => {
     await storage.close();
 
     const migrated = new Database(filename, { readonly: true });
-    expect(migrated.pragma('user_version', { simple: true })).toBe(12);
+    expect(migrated.pragma('user_version', { simple: true })).toBe(13);
     expect((migrated.pragma('table_info(usage_receipts)') as Array<{ name: string }>)
       .map(({ name }) => name)).toContain('element_ids_json');
     expect((migrated.pragma('table_info(usage_receipts)') as Array<{ name: string }>)
@@ -864,7 +864,7 @@ describe('SQLite persistence', () => {
 
     const storage = new SqliteStorage({ filename });
     const loaded = await storage.load('legacy:v4');
-    expect(loaded?.snapshot.schemaVersion).toBe(12);
+    expect(loaded?.snapshot.schemaVersion).toBe(13);
     expect(loaded?.snapshot.blockDecayLambda).toBe(0.3);
     await storage.close();
 
@@ -911,7 +911,7 @@ describe('SQLite persistence', () => {
 
     const storage = new SqliteStorage({ filename });
     const loaded = await storage.load('legacy:v5');
-    expect(loaded?.snapshot).toMatchObject({ schemaVersion: 12, blockDecayLambda: 0.3 });
+    expect(loaded?.snapshot).toMatchObject({ schemaVersion: 13, blockDecayLambda: 0.3 });
     expect(loaded?.snapshot.blocks.map(({ id, pointerAnchorBlockPosition }) =>
       [id, pointerAnchorBlockPosition])).toEqual([
       ['a1', 1],

@@ -127,6 +127,8 @@ export interface EventCardInput {
 
 export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> {
   id: string;
+  /** Archived source cards contributing facts/provenance to this consolidated card. */
+  mergedFromEventIds?: string[];
   /** Conversation turn where this Event entered its long-term-memory lifecycle. */
   formedTurn?: number;
   tags: string[];

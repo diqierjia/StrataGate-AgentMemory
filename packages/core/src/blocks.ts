@@ -70,7 +70,12 @@ export function blockLevelLabel(level: BlockLevel): string {
   ][level] ?? 'unknown';
 }
 
-function roleLabel(role: RawMessage['role']): string {
+function roleLabel(message: RawMessage, raw = false): string {
+  const { role } = message;
+  // Older synthetic provenance stored agent-authored facts with role=user.
+  // Label their origin when rendering, keeping the stored source intact.
+  if (role === 'user' && message.threadId?.startsWith('agent-memory:')) return 'Recorded';
+  if (raw) return role;
   if (role === 'user') return 'User';
   if (role === 'assistant') return 'Assistant';
   if (role === 'tool') return 'Tool';
@@ -282,7 +287,7 @@ export function formatReadableTranscript(messages: readonly RawMessage[]): strin
     .flatMap((message) => {
       const text = message.content.trim();
       const inline = message.role === 'tool' ? summarizeToolJson(text) ?? text : text;
-      const lines = inline ? [`${roleLabel(message.role)}: ${inline}`] : [];
+      const lines = inline ? [`${roleLabel(message)}: ${inline}`] : [];
       lines.push(...(message.toolCalls ?? []).map(summarizeToolTrace));
       return lines;
     })
@@ -296,7 +301,7 @@ function renderRawToolTrace(trace: ToolTrace): string {
 export function formatRawTranscript(messages: readonly RawMessage[]): string {
   return messages
     .flatMap((message) => [
-      `${message.role}: ${message.content}`,
+      `${roleLabel(message, true)}: ${message.content}`,
       ...(message.toolCalls ?? []).map(renderRawToolTrace),
     ])
     .join('\n\n');
@@ -338,7 +343,7 @@ export function condenseTranscript(messages: readonly RawMessage[]): string {
         }
         return REPEATED_PASTE_MARKER;
       });
-      return rendered.length > 0 ? [`${roleLabel(message.role)}: ${rendered.join('\n\n')}`] : [];
+      return rendered.length > 0 ? [`${roleLabel(message)}: ${rendered.join('\n\n')}`] : [];
     })
     .join('\n\n');
 }

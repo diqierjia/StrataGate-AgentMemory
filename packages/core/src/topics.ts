@@ -550,7 +550,12 @@ export class MemoryTopicDirectory {
     return this.hasPendingWithVersions(events, versions, now, mode);
   }
 
+  private dreamingReservesDirectory(): boolean {
+    return !!this.state.dreaming && ['running', 'pausing', 'paused'].includes(this.state.dreaming.status);
+  }
+
   private hasPendingWithVersions(events: readonly EventCard[], versions: ReadonlyMap<string, string>, now: number, mode: TopicProjectionMode): boolean {
+    if (this.dreamingReservesDirectory()) return false;
     const running = this.state.jobs.find((job) => job.status === 'running');
     if (running) return Date.parse(running.leaseUntil ?? running.updatedAt) <= now
       || !jobInputsCurrent(running, versions);
@@ -580,6 +585,9 @@ export class MemoryTopicDirectory {
   }
 
   claim(events: readonly EventCard[], now: string, mode: TopicProjectionMode = 'all'): TopicProjectionContext | null {
+    // Durable namespace-level arbitration, also checked inside the commit so
+    // another process cannot claim work after the user starts Dreaming.
+    if (this.dreamingReservesDirectory()) return null;
     if (this.state.bootstrap?.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION) {
       throw new Error('Topic Bootstrap must be initialized at writer open before claiming work.');
     }
@@ -713,6 +721,9 @@ export class MemoryTopicDirectory {
     const job = this.requireJob(id);
     if (job.status === 'completed') return { topicIds: [...job.topicIds] };
     if (job.status !== 'running' || !job.context) throw new Error(`Topic projection ${id} is not running`);
+    if (this.dreamingReservesDirectory() && !this.state.dreaming?.waitingForProjection) {
+      throw new TopicProjectionError('source-changed', 'Dreaming owns the directory; late projection result rejected.');
+    }
     if (Date.parse(job.leaseUntil ?? job.updatedAt) <= Date.parse(now)) throw new TopicProjectionError('source-changed', 'Topic projection lease expired; stale result rejected.');
     const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
     const versions = sourceVersions(sources);

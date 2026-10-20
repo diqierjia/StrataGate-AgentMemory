@@ -6,6 +6,7 @@ import type {
   ElementProjector,
   EventCardInput,
   EventExtractor,
+  EventDuplicateDecider,
   ExtractionContext,
   MemoryCriticality,
   MemoryElementType,
@@ -13,7 +14,7 @@ import type {
   MemoryBlock,
   RawMessage,
 } from '@diqier/stratagate'
-import { buildMemoryDerivationMessages } from '@diqier/stratagate'
+import { buildMemoryDerivationMessages, EVENT_DUPLICATE_REVIEW_RULES, validEventMergeDraft } from '@diqier/stratagate'
 import type { ModelConfig, WorkBuddyModelConfig } from './config.js'
 
 const ELEMENT_TYPES = new Set<MemoryElementType>(['person', 'project', 'organization', 'tool', 'place'])
@@ -52,6 +53,13 @@ const ELEMENT_SCHEMA = {
     changes: { type: 'array', items: { type: 'object' } },
   },
   required: ['reason', 'changes'],
+} as const
+
+const DUPLICATE_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: { action: { type: 'string', enum: ['KEEP_LEFT', 'KEEP_RIGHT', 'KEEP_BOTH', 'REVIEW'] },
+    confidence: { type: 'number' }, reason: { type: 'string' }, mergedTitle: { type: 'string' }, mergedSummary: { type: 'string' } },
+  required: ['action', 'confidence', 'reason'],
 } as const
 
 function object(value: unknown): Record<string, unknown> {
@@ -130,9 +138,18 @@ export interface ModelCallbacks {
   summarizer?: BlockSummarizer
   extractor?: EventExtractor
   elementProjector?: ElementProjector
+  eventDuplicateDecider?: EventDuplicateDecider
 }
 
 abstract class StructuredModelBridge {
+  readonly eventDuplicateDecider: EventDuplicateDecider = async context => {
+    const raw = object(await this.callJson(EVENT_DUPLICATE_REVIEW_RULES
+      + '\nReturn JSON only with action, confidence, reason; include mergedTitle and mergedSummary when merging.', context, DUPLICATE_SCHEMA))
+    const draft = { title: text(raw.mergedTitle), summary: text(raw.mergedSummary) }
+    return { action: raw.action === 'KEEP_LEFT' || raw.action === 'KEEP_RIGHT' || raw.action === 'KEEP_BOTH' ? raw.action : 'REVIEW',
+      confidence: typeof raw.confidence === 'number' && Number.isFinite(raw.confidence) ? raw.confidence : 0,
+      reason: text(raw.reason).slice(0, 500), ...(validEventMergeDraft(draft) ? { draft } : {}) }
+  }
   readonly summarizer: BlockSummarizer = async (messages) => {
     const raw = object(await this.callJson(
       'You compress agent conversations into durable memory blocks. Read the supplied provenance-preserving derivation messages. Return JSON only with l0Title, l0Tags, l1Summary, l2Keypoints, shouldExtract. Preserve decisions, constraints, preferences, outcomes, and unresolved work. Tool code and oversized tool payloads may be marked compacted; use the retained tool names, evidence summaries, and excerpts without inventing omitted details. shouldExtract is true only when durable events or facts exist.',
@@ -257,6 +274,7 @@ export class OpenAICompatibleModelBridge extends StructuredModelBridge {
     }
     const body = object(await response.json())
     const choices = Array.isArray(body.choices) ? body.choices : []
+    if (object(choices[0]).finish_reason === 'length') throw new Error('StrataGate model response was truncated')
     const message = object(object(choices[0]).message)
     const content = message.content
     if (typeof content !== 'string') throw new Error('StrataGate model response did not contain text content')
@@ -368,5 +386,6 @@ export function modelCallbacks(workBuddy?: WorkBuddyModelConfig, external?: Mode
     summarizer: (messages) => attempt((bridge) => bridge.summarizer(messages)),
     extractor: (context) => attempt((bridge) => bridge.extractor(context)),
     elementProjector: (context) => attempt((bridge) => bridge.projector(context)),
+    eventDuplicateDecider: (context) => attempt((bridge) => bridge.eventDuplicateDecider(context)),
   }
 }

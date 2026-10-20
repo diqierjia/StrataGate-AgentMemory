@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   BLOCK_DECAY_LAMBDA,
   DEFAULT_BLOCK_TURN_SIZE,
@@ -8,6 +9,7 @@ import {
   normalizeBlockLevel,
 } from './blocks.js';
 import { applyElementChanges, elementViewAt } from './elements.js';
+import { EVENT_DUPLICATE_AUTO_CONFIDENCE, eventDuplicateCompatible, eventDuplicateMergeCompatible, eventDuplicateStructuralCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, eventDuplicateSimilarity, isExactEventDuplicate, validEventMergeDraft, type EventMergeDraft, type EventDuplicatePair, type EventDuplicateDecider } from './event-duplicates.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
 import { externalMemoryJsonExtractor, parseExternalMemoryExport } from './external-memory.js';
 import { GRAPH_PROVENANCE_LIMIT, applyGraphProjection, boundEffectiveGraphNodeView, effectiveGraphNodeView, graphTimeline } from './graph.js';
@@ -101,6 +103,7 @@ export interface StrataGateOptions {
   blockDecayLambda?: number;
   summarizer?: BlockSummarizer;
   extractor?: EventExtractor;
+  eventDuplicateDecider?: EventDuplicateDecider;
   elementProjector?: ElementProjector;
   /** Prevents creation of legacy Element projection jobs for graph-native hosts. */
   disableElementProjection?: boolean;
@@ -224,7 +227,6 @@ const EXTERNAL_MEMORY_AUTO_APPLY_CONFIDENCE = 0.85;
 function externalMemoryFingerprint(value: Pick<ExternalMemoryCandidate, 'title' | 'summary'>): string {
   return `${normalizeSearchText(value.title)}\u0000${normalizeSearchText(value.summary)}`;
 }
-const AGENT_EVENT_NEAR_DUPLICATE = 0.85;
 const AGENT_EVENT_AMBIGUOUS = 0.35;
 const AGENT_EVENT_MIN_SHARED_TOKENS = 2;
 /** Cap on real conversation messages cited as agent-event provenance. */
@@ -302,11 +304,36 @@ function restrictExtractionRelations(temporal: EventTemporal, allowedIds: Readon
   return result;
 }
 
+type DuplicateUndoCollection = 'events' | 'agentEvents' | 'elementProjectionJobs' | 'graphProjectionJobs';
+export interface DuplicateReviewUndo {
+  version: 1;
+  changes: Array<{ collection: DuplicateUndoCollection; id: string; before: unknown; after: unknown }>;
+  derivedFingerprint: string;
+  affectedEventIds: string[];
+  projectionFingerprint: string;
+  topicBefore: StrataGateSnapshot['memoryTopicState'];
+  topicAfter: StrataGateSnapshot['memoryTopicState'];
+}
+
+const undoJson = (value: unknown): string => JSON.stringify(value ?? null, (_key, item) =>
+  item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+const undoHash = (value: unknown): string => createHash('sha256').update(undoJson(value)).digest('hex');
+function duplicateUndoProjections(snapshot: StrataGateSnapshot, ids: string[]): string {
+  return undoHash([snapshot.elementProjectionJobs, snapshot.graphProjectionJobs].map(jobs => jobs
+    .filter(job => job.sourceEventIds.some(id => ids.includes(id))).sort((a, b) => a.id.localeCompare(b.id))));
+}
+function duplicateUndoDerived(snapshot: StrataGateSnapshot, ids: string[]): string {
+  return undoHash([snapshot.elements, snapshot.graphNodes, snapshot.graphEdges].map(values => values
+    .filter(value => value.sourceEventIds.some(id => ids.includes(id))).sort((a, b) => a.id.localeCompare(b.id))));
+}
+
 export class StrataGate {
   private blockTurnSizeValue: number;
   private blockDecayLambdaValue: number;
   private readonly summarizer: BlockSummarizer | undefined;
   private readonly extractor: EventExtractor | undefined;
+  private readonly eventDuplicateDecider: EventDuplicateDecider | undefined;
   private readonly elementProjector: ElementProjector | undefined;
   private readonly disableElementProjection: boolean;
   private readonly graphProjector: GraphProjector | undefined;
@@ -352,6 +379,7 @@ export class StrataGate {
     this.blockDecayLambdaValue = blockDecayLambda;
     this.summarizer = options.summarizer;
     this.extractor = options.extractor;
+    this.eventDuplicateDecider = options.eventDuplicateDecider;
     this.elementProjector = options.elementProjector;
     this.disableElementProjection = options.disableElementProjection ?? false;
     this.graphProjector = options.graphProjector;
@@ -382,6 +410,7 @@ export class StrataGate {
         ...(options.blockDecayLambda !== undefined ? { blockDecayLambda: options.blockDecayLambda } : {}),
         ...(options.summarizer ? { summarizer: options.summarizer } : {}),
         ...(options.extractor ? { extractor: options.extractor } : {}),
+        ...(options.eventDuplicateDecider ? { eventDuplicateDecider: options.eventDuplicateDecider } : {}),
         ...(options.elementProjector ? { elementProjector: options.elementProjector } : {}),
         ...(options.disableElementProjection !== undefined ? { disableElementProjection: options.disableElementProjection } : {}),
         ...(options.graphProjector ? { graphProjector: options.graphProjector } : {}),
@@ -430,6 +459,7 @@ export class StrataGate {
     else if (options.blockDecayLambda !== undefined) memoryOptions.blockDecayLambda = options.blockDecayLambda;
     if (options.summarizer) memoryOptions.summarizer = options.summarizer;
     if (options.extractor) memoryOptions.extractor = options.extractor;
+    if (options.eventDuplicateDecider) memoryOptions.eventDuplicateDecider = options.eventDuplicateDecider;
     if (options.elementProjector) memoryOptions.elementProjector = options.elementProjector;
     if (options.disableElementProjection !== undefined) memoryOptions.disableElementProjection = options.disableElementProjection;
     if (options.graphProjector) memoryOptions.graphProjector = options.graphProjector;
@@ -789,6 +819,18 @@ export class StrataGate {
   }
 
   async dreaming(command: import('./dreaming.js').DreamingCommand): Promise<import('./dreaming.js').DreamingRun> {
+    if (command.kind === 'prepare') {
+      // Waiting polls observe other connections and lease-only projection heartbeats.
+      // The existing runner heartbeat renews Dreaming; a no-op poll need not save it.
+      await this.reloadFromStorage();
+      const state = this.topicDirectory.snapshot();
+      const run = state.dreaming;
+      const now = this.now().getTime();
+      if (run?.id === command.id && run.owner === command.owner && run.epoch === command.epoch
+        && run.status === 'running' && run.leaseUntil && Date.parse(run.leaseUntil) > now
+        && run.waitingForProjection && state.jobs.some(job => job.status === 'running'
+          && Date.parse(job.leaseUntil ?? job.updatedAt) > now)) return run;
+    }
     return this.commitMutation(() => this.topicDirectory.dreaming(command, this.listAllEvents(), toUtc8Iso(this.now())));
   }
 
@@ -1367,6 +1409,10 @@ export class StrataGate {
       const source = this.blocks[sourceIndex]!;
       const sourceMessageIds = new Set(source.l5Raw.map(({ id }) => id));
       const importedEventIds = new Set(this.events.filter((event) => event.sourceBlockId === id).map(({ id }) => id));
+      if (this.listAllEvents().some(event => event.mergedFromEventIds?.length
+        && (importedEventIds.has(event.id) || event.sourceMessageIds.some(messageId => sourceMessageIds.has(messageId))))) {
+        throw new Error('该导入已参与记忆合并，不能通过整批撤销删除合并后的来源');
+      }
       const restoredEventIds = new Set<string>();
       const now = toUtc8Iso(this.now());
 
@@ -1977,6 +2023,9 @@ export class StrataGate {
   async forgetEvent(id: string): Promise<void> {
     await this.commitMutation(() => {
       const event = this.requireEvent(id);
+      if (this.listAllEvents().some(card => card.id !== event.id && card.mergedFromEventIds?.includes(event.id))) {
+        throw new Error('该原卡已参与记忆合并，请操作合并后的主卡');
+      }
       event.status = 'forgotten';
       event.updatedAt = toUtc8Iso(this.now());
     });
@@ -1985,9 +2034,203 @@ export class StrataGate {
   async restoreEvent(id: string): Promise<void> {
     await this.commitMutation(() => {
       const event = this.requireEvent(id);
+      if (this.listAllEvents().some(card => card.id !== event.id && card.mergedFromEventIds?.includes(event.id))) {
+        throw new Error('该原卡已参与记忆合并，不能独立恢复；请操作合并后的主卡');
+      }
       event.status = 'active';
       event.updatedAt = toUtc8Iso(this.now());
     });
+  }
+
+  /** Apply a reviewed pair atomically. Archive the redundant card, retaining its provenance. */
+  async archiveDuplicateEvent(pair: EventDuplicatePair, keepId: string): Promise<boolean> {
+    return this.commitMutation(() => this.archiveDuplicateEventInMemory(pair, keepId));
+  }
+
+  /** Consolidate evidence and redirect live references in the same durable transaction. */
+  async mergeDuplicateEvents(pair: EventDuplicatePair, keepId: string): Promise<boolean> {
+    return this.commitMutation(() => this.archiveDuplicateEventInMemory(pair, keepId, true, true));
+  }
+
+  /** Explicit human choice: retain one searchable fact without blending contradictory evidence. */
+  async selectDuplicateEvent(pair: EventDuplicatePair, keepId: string): Promise<boolean> {
+    return this.commitMutation(() => this.selectDuplicateEventInMemory(pair, keepId));
+  }
+
+  /** The server journals the inverse before the core commit, so a crash cannot lose undo evidence. */
+  async reviewDuplicateEvents(pair: EventDuplicatePair, keepId: string, mode: 'merge' | 'select',
+    prepareUndo: (undo: DuplicateReviewUndo) => void, draft?: EventMergeDraft, origin: 'automatic' | 'manual' = 'automatic'): Promise<boolean> {
+    if (draft !== undefined && !validEventMergeDraft(draft)) throw new TypeError('Invalid merged memory draft');
+    return this.commitMutation(() => {
+      const before = this.exportSnapshot();
+      const ok = mode === 'select' ? this.selectDuplicateEventInMemory(pair, keepId)
+        : this.archiveDuplicateEventInMemory(pair, keepId, true, true, draft, origin === 'manual');
+      if (!ok) return false;
+      this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
+      const after = this.exportSnapshot();
+      const changes: DuplicateReviewUndo['changes'] = [];
+      for (const collection of ['events', 'agentEvents', 'elementProjectionJobs', 'graphProjectionJobs'] as const) {
+        const old = new Map<string, unknown>(before[collection].map(value => [value.id, value]));
+        const current = new Map<string, unknown>(after[collection].map(value => [value.id, value]));
+        for (const id of new Set([...old.keys(), ...current.keys()])) {
+          if (undoJson(old.get(id)) !== undoJson(current.get(id))) changes.push({ collection, id, before: old.get(id) ?? null, after: current.get(id) ?? null });
+        }
+      }
+      if (!changes.length) return false; // Replayed choices must not replace the original inverse.
+      const affectedEventIds = changes.filter(change => change.collection === 'events' || change.collection === 'agentEvents').map(change => change.id);
+      try {
+        prepareUndo({ version: 1, changes, affectedEventIds,
+          derivedFingerprint: duplicateUndoDerived(after, affectedEventIds),
+          projectionFingerprint: duplicateUndoProjections(after, affectedEventIds), topicBefore: before.memoryTopicState, topicAfter: after.memoryTopicState });
+      } catch (error) { this.restoreSnapshot(before); throw error; }
+      return true;
+    });
+  }
+
+  /** Restore only this operation's changed records. Unrelated writes and original evidence survive. */
+  async undoDuplicateReview(undo: DuplicateReviewUndo): Promise<boolean> {
+    return this.commitMutation(() => {
+      const current = this.exportSnapshot();
+      // Already restored after an interrupted journal checkpoint is safe to acknowledge again.
+      if (undo.changes.every(change => undoJson(current[change.collection].find(value => value.id === change.id)) === undoJson(change.before))) return true;
+      if (undo.version !== 1 || undo.changes.some(change => undoJson(current[change.collection].find(value => value.id === change.id)) !== undoJson(change.after))
+        || undo.derivedFingerprint !== duplicateUndoDerived(current, undo.affectedEventIds)
+        || undoJson(current.memoryTopicState) !== undoJson(undo.topicAfter)
+        || undo.projectionFingerprint !== duplicateUndoProjections(current, undo.affectedEventIds)) {
+        throw new Error('处理后记忆已被编辑、采用或后台投影已更新，无法安全撤销；新数据已保留。');
+      }
+      for (const change of undo.changes) {
+        if (change.collection === 'events' || change.collection === 'agentEvents') {
+          const cards = this[change.collection];
+          const index = cards.findIndex(card => card.id === change.id);
+          if (index >= 0) cards.splice(index, 1, ...(change.before ? [structuredClone(change.before) as EventCard] : []));
+          else if (change.before) cards.push(structuredClone(change.before) as EventCard);
+        } else {
+          const jobs = this[change.collection] as Map<string, unknown>;
+          jobs.delete(change.id);
+          if (change.before) jobs.set(change.id, structuredClone(change.before));
+        }
+      }
+      this.topicDirectory.restore(undo.topicBefore);
+      return true;
+    });
+  }
+
+  private selectDuplicateEventInMemory(pair: EventDuplicatePair, keepId: string): boolean {
+      if (keepId !== pair.leftId && keepId !== pair.rightId) throw new TypeError('Keeper must belong to the reviewed pair');
+      const left = this.requireEvent(pair.leftId); const right = this.requireEvent(pair.rightId);
+      const kept = keepId === left.id ? left : right; const archived = kept === left ? right : left;
+      if (archived.status === 'archived' && archived.supersededBy === kept.id && kept.status === 'active') {
+        return !kept.mergedFromEventIds?.includes(archived.id);
+      }
+      if (![left, right].every(card => card.status === 'active' || card.status === 'superseded')
+        || archived.weight.pinned || eventDuplicateFingerprint(left) !== pair.leftFingerprint
+        || eventDuplicateFingerprint(right) !== pair.rightFingerprint
+        || this.listAllEvents().some(card => card.id !== archived.id && card.mergedFromEventIds?.includes(archived.id))) return false;
+      // Keep originals, receipts and historical relation targets intact. This is a choice, not a merge.
+      kept.status = 'active';
+      kept.supersededBy = null;
+      archived.status = 'archived';
+      // Archiving removes it from current retrieval; it does not revise an existing version chain.
+      archived.supersededBy ??= kept.id;
+      kept.updatedAt = archived.updatedAt = toUtc8Iso(this.now());
+      // Contents and historical relation targets are unchanged; status-aware views use the new revision.
+      // As with restore/forget, this choice must not enqueue fresh model work.
+      return true;
+  }
+
+  /** Mutation queue must already be held; extraction saves its new card and old-card archive together. */
+  private archiveDuplicateEventInMemory(pair: EventDuplicatePair, keepId: string, queueProjections = true, consolidate = false, draft?: EventMergeDraft, manual = false): boolean {
+    if (keepId !== pair.leftId && keepId !== pair.rightId) throw new TypeError('Keeper must belong to the reviewed pair');
+    const left = this.requireEvent(pair.leftId); const right = this.requireEvent(pair.rightId);
+    const kept = keepId === left.id ? left : right; const duplicate = kept === left ? right : left;
+    // A crash after the core commit but before the maintenance checkpoint is harmless.
+    if (duplicate.status === 'archived' && (duplicate.supersededBy === kept.id
+      || consolidate && kept.mergedFromEventIds?.includes(duplicate.id))) return true;
+    // A confirmed manual draft may describe chronology. Preserve its original links
+    // rather than applying automatic duplicate-collapse rules or redirecting them.
+    const preserveHistory = manual && consolidate && !!draft;
+    if ((preserveHistory ? !!eventDuplicateManualMergeBlockReason(kept, duplicate) : left.status !== 'active' || right.status !== 'active') || duplicate.weight.pinned
+      || eventDuplicateFingerprint(left) !== pair.leftFingerprint || eventDuplicateFingerprint(right) !== pair.rightFingerprint
+      || !(consolidate ? draft ? eventDuplicateStructuralCompatible(left, right) : eventDuplicateMergeCompatible(left, right) : eventDuplicateCompatible(left, right))) return false;
+    if (preserveHistory && this.listAllEvents().some(card => card.id !== duplicate.id && card.mergedFromEventIds?.includes(duplicate.id))) return false;
+    const changedIds = [kept.id];
+    if (consolidate) {
+      const all = this.listAllEvents().filter(event => event.status !== 'archived' && event.status !== 'forgotten');
+      // Collapsing either end of an existing chronology path would create a cycle or erase a progression.
+      const edges = new Map<string, string[]>();
+      const edge = (a: string, b: string) => edges.set(a, [...(edges.get(a) ?? []), b]);
+      for (const event of all) {
+        if (event.temporal.sameEventId) edge(event.temporal.sameEventId, event.id);
+        for (const id of event.temporal.beforeEventIds ?? []) edge(event.id, id);
+        for (const id of [...event.temporal.afterEventIds ?? [], ...event.temporal.supersedesEventIds ?? []]) edge(id, event.id);
+      }
+      const reaches = (start: string, target: string) => {
+        const seen = new Set<string>(); const pending = [...edges.get(start) ?? []];
+        while (pending.length) { const id = pending.pop()!; if (id === target) return true;
+          if (!seen.has(id)) { seen.add(id); pending.push(...edges.get(id) ?? []); } }
+        return false;
+      };
+      if (!preserveHistory && (reaches(left.id, right.id) || reaches(right.id, left.id)
+        || left.temporal.sameEventId === right.id || right.temporal.sameEventId === left.id
+        || left.temporal.conflictsWithEventIds?.includes(right.id) || right.temporal.conflictsWithEventIds?.includes(left.id))) return false;
+      const union = (a: readonly string[] = [], b: readonly string[] = []) => [...new Set([...a, ...b])];
+      const secondaryText = kept.title !== duplicate.title && !duplicate.summary.includes(duplicate.title)
+        ? `${duplicate.title}\n${duplicate.summary}` : duplicate.summary;
+      kept.summary = draft ? draft.summary.trim() : union([kept.summary], [secondaryText]).join('\n\n');
+      if (draft) kept.title = draft.title.trim();
+      kept.quotes = union(kept.quotes, duplicate.quotes);
+      kept.tags = union(kept.tags, duplicate.tags);
+      kept.sourceMessageIds = union(kept.sourceMessageIds, duplicate.sourceMessageIds);
+      kept.mergedFromEventIds = union(kept.mergedFromEventIds, [duplicate.id, ...duplicate.mergedFromEventIds ?? []]);
+      const criticalities = ['routine', 'preference', 'identity', 'safety'] as const;
+      kept.criticality = criticalities[Math.max(criticalities.indexOf(kept.criticality), criticalities.indexOf(duplicate.criticality))]!;
+      const temporal = preserveHistory ? { ...kept.temporal } : { ...duplicate.temporal, ...kept.temporal };
+      for (const key of ['happenedStart', 'happenedEnd', 'status', 'eventType', 'precision', 'basis', 'originalText'] as const) {
+        const primary = kept.temporal[key]; const secondary = duplicate.temporal[key];
+        if (!preserveHistory && (!primary || primary === 'unknown' || primary === 'other') && secondary && secondary !== 'unknown' && secondary !== 'other') {
+          // Both fields share the same scalar key; compatibility has already rejected contradictory facts.
+          (temporal as Record<string, unknown>)[key] = secondary;
+        }
+      }
+      for (const key of ['participants', 'participantNodeIds', 'beforeEventIds', 'afterEventIds', 'supersedesEventIds', 'conflictsWithEventIds', 'relatedEventIds'] as const) {
+        if (preserveHistory && key !== 'participants' && key !== 'participantNodeIds') continue;
+        const values = union(kept.temporal[key], duplicate.temporal[key]);
+        if (values.length) temporal[key] = values;
+      }
+      kept.temporal = temporal;
+      // Archived originals and use receipts remain audit evidence. Only live Event relations are redirected.
+      for (const event of preserveHistory ? [] : all.filter(event => event.id !== duplicate.id)) {
+        const original = JSON.stringify(event.temporal);
+        if (event.temporal.sameEventId === duplicate.id) event.temporal.sameEventId = kept.id;
+        if (event.temporal.sameEventId === event.id) delete event.temporal.sameEventId;
+        for (const key of ['beforeEventIds', 'afterEventIds', 'supersedesEventIds', 'conflictsWithEventIds', 'relatedEventIds'] as const) {
+          if (event.temporal[key]) event.temporal[key] = union(event.temporal[key]!.map(id => id === duplicate.id ? kept.id : id)).filter(id => id !== event.id);
+        }
+        if (JSON.stringify(event.temporal) !== original) { event.updatedAt = toUtc8Iso(this.now()); changedIds.push(event.id); }
+      }
+    }
+    // Do not break another Event's explicit chronology/relationship anchor.
+    if (!consolidate && this.listAllEvents().some((event) => event.id !== duplicate.id && event.status !== 'forgotten' && event.status !== 'archived'
+      && (event.temporal.sameEventId === duplicate.id || ['beforeEventIds', 'afterEventIds', 'supersedesEventIds', 'conflictsWithEventIds', 'relatedEventIds']
+        .some((key) => (event.temporal[key as 'beforeEventIds'] ?? []).includes(duplicate.id))))) return false;
+    duplicate.status = 'archived';
+    if (!preserveHistory || !duplicate.supersededBy) duplicate.supersededBy = kept.id;
+    duplicate.updatedAt = toUtc8Iso(this.now());
+    // Preserve real adoption history without recording another use or replacing it with the current turn.
+    kept.weight.mentionCount = Math.max(kept.weight.mentionCount, duplicate.weight.mentionCount);
+    kept.weight.lastAdoptedTurn = Math.max(kept.weight.lastAdoptedTurn, duplicate.weight.lastAdoptedTurn);
+    kept.weight.floorWeight = Math.max(kept.weight.floorWeight, duplicate.weight.floorWeight);
+    kept.updatedAt = duplicate.updatedAt;
+    if (queueProjections) {
+      this.queueElementProjection([...new Set(changedIds)]);
+      this.queueGraphProjection([...new Set(changedIds)], 1_000);
+    } else if (consolidate && changedIds.some(id => id !== kept.id)) {
+      const references = [...new Set(changedIds.filter(id => id !== kept.id))];
+      this.queueElementProjection(references);
+      this.queueGraphProjection(references, 1_000);
+    }
+    return true;
   }
 
   async close(): Promise<void> {
@@ -2084,7 +2327,7 @@ export class StrataGate {
   /**
    * Record one agent-authored fact as a long-term Event in the isolated
    * agent-events pool, after a pre-write duplicate/conflict gate:
-   * exact and near duplicates reinforce the existing card instead of writing;
+   * normalized text-identical duplicates reinforce the existing active card;
    * ambiguous overlap gets one model adjudication reusing the external-memory
    * decision contract; clear-new facts write directly.
    *
@@ -2112,7 +2355,7 @@ export class StrataGate {
       const now = toUtc8Iso(options.importedAt ?? this.now());
       const candidate = agentEventCandidate(content, options.category, now, options.threadId?.trim() || undefined);
       const candidateTokens = searchTokens(`${candidate.title} ${candidate.summary}`);
-      const reinforced = this.scanAgentEventDuplicates(candidate, candidateTokens, now);
+      const reinforced = this.scanAgentEventDuplicates(candidate, now);
       if (reinforced) return { phase: 'done', result: reinforced };
 
       const query = `${candidate.title} ${candidate.summary}`.trim();
@@ -2155,8 +2398,7 @@ export class StrataGate {
     // write may have landed the same fact while the adjudication ran.
     return this.commitMutation(() => {
       const now = toUtc8Iso(this.now());
-      const candidateTokens = searchTokens(`${gate.candidate.title} ${gate.candidate.summary}`);
-      const reinforced = this.scanAgentEventDuplicates(gate.candidate, candidateTokens, now);
+      const reinforced = this.scanAgentEventDuplicates(gate.candidate, now);
       if (reinforced) return reinforced;
       if (!decision) {
         return this.writeAgentEvent(gate.candidate, 'CONFLICT_MARKED', 'decider-error', gate.ambiguous, {
@@ -2170,25 +2412,16 @@ export class StrataGate {
     });
   }
 
-  /** Exact-fingerprint and near-duplicate sweep over the merged live pool. */
+  /** Text equality is deterministic; token overlap only nominates semantic review candidates. */
   private scanAgentEventDuplicates(
     candidate: ExternalMemoryCandidate,
-    candidateTokens: readonly string[],
     now: string,
   ): AgentEventRecordResult | null {
     const live = this.listAllEvents()
-      .filter((event) => event.status !== 'forgotten' && event.status !== 'archived');
+      .filter((event) => event.status === 'active');
     const candidateFingerprint = externalMemoryFingerprint(candidate);
     const exact = live.find((event) => externalMemoryFingerprint(event) === candidateFingerprint);
     if (exact) return this.reinforceAgentEvent(exact, 'exact-duplicate', now);
-    let best: { event: EventCard; score: number } | null = null;
-    for (const event of live) {
-      const score = tokenContainment(candidateTokens, searchTokens(`${event.title} ${event.summary}`));
-      if (score > (best?.score ?? 0)) best = { event, score };
-    }
-    if (best && best.score >= AGENT_EVENT_NEAR_DUPLICATE) {
-      return this.reinforceAgentEvent(best.event, 'near-duplicate', now);
-    }
     return null;
   }
 
@@ -2220,10 +2453,15 @@ export class StrataGate {
       };
     }
     if ((requestedAction === 'MERGE' || requestedAction === 'SUPERSEDE')
-      && (existingEventIds.length === 0 || confidence < EXTERNAL_MEMORY_AUTO_APPLY_CONFIDENCE)) {
-      // Never silently supersede on a low-confidence or target-less decision:
-      // write non-destructively and mark the conflict instead.
-      return this.writeAgentEvent(mergedCandidate ?? gate.candidate, 'CONFLICT_MARKED', 'decider', existingEventIds, {
+      && (existingEventIds.length === 0 || confidence < EXTERNAL_MEMORY_AUTO_APPLY_CONFIDENCE
+        || existingEventIds.some((id) => this.findEvent(id)?.status !== 'active'))) {
+      // Historical cards remain semantic references, but only current active
+      // cards may be replaced. Check inside the final mutation: a target can
+      // change while the decider runs. Downgrade the whole decision rather
+      // than partially applying it or redirecting it to a successor.
+      // A downgraded decision must preserve the newly observed fact verbatim.
+      // The model's merged text may omit details that made the target unsafe.
+      return this.writeAgentEvent(gate.candidate, 'CONFLICT_MARKED', 'decider', existingEventIds, {
         now,
         matchedEventIds: gate.matchedEventIds,
         confidence,
@@ -2332,7 +2570,9 @@ export class StrataGate {
       criticality,
       temporal: {
         ...(candidate.temporal ?? {}),
-        ...(opts.supersedes ? { supersedesEventIds: [...targetIds] } : {}),
+        // Replacement links come only from the validated decision targets,
+        // never from relationship fields supplied in a merged candidate.
+        supersedesEventIds: opts.supersedes ? [...targetIds] : [],
         ...(opts.conflicts ? { conflictsWithEventIds: [...targetIds] } : {}),
       },
     };
@@ -3075,6 +3315,39 @@ export class StrataGate {
       throw new Error(reason);
     }
 
+    const duplicateReviews = new Map<EventCardInput, { id: string; fingerprint: string; action: 'KEEP_LEFT' | 'KEEP_RIGHT'; draft: EventMergeDraft }>();
+    if (this.eventDuplicateDecider && result.shouldExtract) {
+      await this.withDerivationLease('extraction', target.id, async () => {
+        const reviewedCandidateKeys = new Set<string>();
+        for (const candidate of result.events) {
+          const key = JSON.stringify(candidate);
+          if (reviewedCandidateKeys.has(key)) continue;
+          reviewedCandidateKeys.add(key);
+          const matches = this.listAllEvents().filter((existing) => existing.status === 'active'
+            && eventDuplicateStructuralCompatible(candidate, existing))
+            .map((event) => ({ event, similarity: eventDuplicateSimilarity(candidate, event) }))
+            .filter(({ similarity }) => similarity >= .8).sort((a, b) => b.similarity - a.similarity);
+          const match = matches[0]?.event;
+          if (!match) continue;
+          const existing = structuredClone(match);
+          const input = structuredClone({ left: { card: existing, messages: existing.sourceMessageIds.flatMap((id) => {
+            const message = this.rawMessageLookup.get(id)?.message ?? this.openTail.find((item) => item.id === id);
+            return message ? [message] : [];
+          }) }, right: { card: candidate, messages: target.l5Raw } });
+          // Preserve all facts when evidence exceeds the bounded adjudication input.
+          if (JSON.stringify(input).length > 16_000) continue;
+          try {
+            const decision = await this.eventDuplicateDecider!(input);
+            if ((decision.action === 'KEEP_LEFT' || decision.action === 'KEEP_RIGHT')
+              && Number.isFinite(decision.confidence) && decision.confidence >= EVENT_DUPLICATE_AUTO_CONFIDENCE && decision.confidence <= 1
+              && validEventMergeDraft(decision.draft)) {
+              duplicateReviews.set(candidate, { id: existing.id, fingerprint: eventDuplicateFingerprint(existing), action: decision.action, draft: decision.draft });
+            }
+          } catch { /* Adjudication failures never discard a new fact. */ }
+        }
+      });
+    }
+
     return this.commitMutation(() => {
       // A timeline Event can be forgotten/archived while the model is running.
       // Never let its later output revive or re-link that excluded memory.
@@ -3082,13 +3355,41 @@ export class StrataGate {
         const event = this.findEvent(id);
         return event?.status === 'active' || event?.status === 'superseded';
       }));
-      const extracted = result.shouldExtract
-        ? result.events.map((event) => this.addEventInMemory({
-          ...event,
-          sourceBlockId: target.id,
-          ...(event.temporal ? { temporal: restrictExtractionRelations(event.temporal, allowedIds) } : {}),
-        }))
-        : [];
+      const extracted: EventCard[] = [];
+      const seenCandidates = new Set<string>();
+      for (const event of result.shouldExtract ? result.events : []) {
+        const candidate = { ...event, sourceBlockId: target.id,
+          ...(event.temporal ? { temporal: restrictExtractionRelations(event.temporal, allowedIds) } : {}) };
+        const candidateKey = JSON.stringify(candidate);
+        if (seenCandidates.has(candidateKey)) continue;
+        seenCandidates.add(candidateKey);
+        const reviewed = duplicateReviews.get(event);
+        const existing = reviewed ? this.findEvent(reviewed.id) : undefined;
+        const validReview = reviewed && existing?.status === 'active' && eventDuplicateStructuralCompatible(candidate, existing)
+          && eventDuplicateFingerprint(existing) === reviewed.fingerprint ? reviewed : undefined;
+        if (validReview?.action === 'KEEP_LEFT') {
+          const added = this.addEventInMemory(candidate);
+          if (this.archiveDuplicateEventInMemory({ leftId: existing!.id, rightId: added.id,
+            leftFingerprint: validReview.fingerprint, rightFingerprint: eventDuplicateFingerprint(added),
+            exact: false, similarity: eventDuplicateSimilarity(candidate, existing!),
+          }, existing!.id, true, true, validReview.draft)) continue;
+          extracted.push(added);
+          continue;
+        }
+        // A valid KEEP_RIGHT explicitly selects the new source; an exact match cannot override it.
+        // Without that decision, re-check both pools and earlier cards in this output at commit.
+        if (validReview?.action !== 'KEEP_RIGHT'
+          && this.listAllEvents().some((current) => current.status === 'active' && current.sourceBlockId === target.id && isExactEventDuplicate(candidate, current))) continue;
+        const added = this.addEventInMemory(candidate);
+        extracted.push(added);
+        if (validReview?.action === 'KEEP_RIGHT') {
+          // Shared guards preserve a pinned/changed/history-anchor old card. The new card stays saved either way.
+          this.archiveDuplicateEventInMemory({ leftId: validReview.id, rightId: added.id,
+            leftFingerprint: validReview.fingerprint, rightFingerprint: eventDuplicateFingerprint(added),
+            exact: false, similarity: eventDuplicateSimilarity(candidate, existing!),
+          }, added.id, false, true, validReview.draft);
+        }
+      }
       if (extracted.length > 0) {
         const ids = extracted.map(({ id }) => id);
         this.queueElementProjection(ids);
@@ -3308,8 +3609,29 @@ export class StrataGate {
         continue;
       }
       if (!blockIds.has(event.sourceBlockId)) throw new Error(`Unknown event source block in snapshot: ${event.sourceBlockId}`);
+      const mergedSources = new Set<string>();
+      for (const id of event.mergedFromEventIds ?? []) {
+        const source = this.findEvent(id);
+        if (!source || source.id === event.id || source.status !== 'archived'
+          || !eventDuplicateStructuralCompatible(event, source)) throw new Error(`Invalid merged source for Event ${event.id}`);
+        // Provenance and version succession are independent: a human-reviewed source
+        // may retain its original successor. Validate the explicit provenance graph,
+        // not a supersededBy chain that would overwrite that historical relationship.
+        const seen = new Set<string>(); const pending = [source];
+        while (pending.length) {
+          const current = pending.pop()!;
+          if (current.id === event.id) throw new Error(`Cyclic merged source for Event ${event.id}`);
+          if (seen.has(current.id)) continue;
+          seen.add(current.id);
+          for (const sourceId of current.mergedFromEventIds ?? []) {
+            const ancestor = this.findEvent(sourceId);
+            if (ancestor) pending.push(ancestor);
+          }
+        }
+        for (const messageId of source.sourceMessageIds) mergedSources.add(messageId);
+      }
       for (const messageId of event.sourceMessageIds) {
-        if (messageBlockIds.get(messageId) !== event.sourceBlockId) {
+        if (!messageBlockIds.has(messageId) || messageBlockIds.get(messageId) !== event.sourceBlockId && !mergedSources.has(messageId)) {
           throw new Error(`Event ${event.id} references a message outside source block ${event.sourceBlockId}`);
         }
       }
