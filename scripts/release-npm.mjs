@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { spawn, execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, openSync, closeSync, unlinkSync } from 'node:fs'
-import { resolve, join, dirname, delimiter } from 'node:path'
+import { resolve, join, dirname, delimiter, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -10,6 +10,7 @@ const registry = 'https://registry.npmjs.org/'
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
 const hash = (bytes, algorithm = 'sha256', encoding = 'hex') => createHash(algorithm).update(bytes).digest(encoding)
 const json = path => JSON.parse(readFileSync(path, 'utf8'))
+const readArtifactFile = (artifact, path) => Buffer.from(execFileSync('tar', ['-xOf', artifact, `package/${path}`], { maxBuffer: 64 * 1024 * 1024 }))
 const save = (path, value) => {
   writeFileSync(path + '.tmp', JSON.stringify(value, null, 2) + '\n')
   renameSync(path + '.tmp', path)
@@ -22,6 +23,19 @@ export function inspectArtifact(artifact, expectedSha256) {
   const manifest = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/package.json'], { encoding: 'utf8', maxBuffer: 1024 * 1024 }))
   assert.equal(manifest.name, 'stratagate-dsh')
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/, '仅接受正式三段版本；请先完成正式包校验')
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  for (const readme of ['README.md', 'README.zh-CN.md']) {
+    assert.deepEqual(readArtifactFile(artifact, readme), readFileSync(join(root, readme)), `${readme} 与仓库当前版本不一致；请从已审查源码重新打包`)
+    const links = [...readArtifactFile(artifact, readme).toString('utf8')
+      .matchAll(/(?:\[[^\]]*\]\(([^)]+)\)|(?:src|href)="([^"]+)")/g)].map(match => match[1] ?? match[2])
+      .filter(link => !/^(?:https?:|mailto:|#|\/)/.test(link))
+      .map(link => link.split('#')[0].split('?')[0])
+    for (const link of links) {
+      const path = posix.normalize(link)
+      assert(!path.startsWith('../'), `${readme} 包含包外链接：${link}`)
+      readArtifactFile(artifact, path)
+    }
+  }
   return { name: manifest.name, version: manifest.version, sha256: hash(bytes), shasum: hash(bytes, 'sha1'), integrity: 'sha512-' + hash(bytes, 'sha512', 'base64') }
 }
 

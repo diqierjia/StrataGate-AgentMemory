@@ -25,7 +25,13 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.zh-CN.md",
     "docs",
+    "benchmarks/locomo-conv26-r8-final.json",
+    "packages/core/examples/basic.ts",
+    "packages/core/src/blocks.ts",
+    "packages/core/src/weights.ts",
     "screenshots.json",
     "CHANGELOG.md",
     "LICENSE"

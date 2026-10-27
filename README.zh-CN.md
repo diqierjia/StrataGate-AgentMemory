@@ -11,8 +11,8 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 <p align="center">
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD" alt="npm 累计下载量" /></a>
-  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 近 30 天下载量" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-08-16%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD&amp;color=blue" alt="npm 累计下载量（截至 2026-10-26）" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-09-27%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 2026-09-27 至 2026-10-26 下载量" /></a>
 </p>
 
 [English](README.md) · [DeepSeek Harness 插件说明](docs/DSH.zh-CN.md) · [架构说明](docs/ARCHITECTURE.md) · [完整评测](docs/EVALUATION.md)
@@ -23,20 +23,12 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 
 ---
 
-<div align="center">
+## 社区
 
-<h3 align="center">社区</h3>
+可在 [dshfind](https://dshfind.com) 浏览本插件及其他 DeepSeek Harness 插件。
 
-<p align="center">
-  <a href="https://dshfind.com">在 dshfind 浏览 DeepSeek Harness 插件</a>
-</p>
-
-<p align="center">
-  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome DSH Plugin" /></a>
-  <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E6%AC%A2%E8%BF%8E%E8%B4%A1%E7%8C%AE-brightgreen.svg" alt="欢迎贡献" /></a>
-</p>
-
-</div>
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![欢迎贡献](https://img.shields.io/badge/%E6%AC%A2%E8%BF%8E%E8%B4%A1%E7%8C%AE-brightgreen.svg)](CONTRIBUTING.zh-CN.md)
 
 ---
 
@@ -82,7 +74,7 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 dsh plugin --profile web add stratagate-dsh
 ```
 
-支持整个 DSH `0.2.0` 版本族：全部 Alpha、Beta、RC 和正式版（`>=0.2.0-0 <0.2.1-0`），同时保留此前支持的宿主版本。同属 `0.2.0` 的新版本无需因版本声明而等待插件更新。
+支持的 DSH 版本为 `0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0`，覆盖完整的 `0.2.x` 版本族及其预发布版。关键宿主接口验证完成前，不支持 DSH `0.3.x`。
 
 重启该 profile，之后照常使用 DSH 即可。StrataGate 会自动记录主 Agent 已完成的对话，在后台生成可搜索的记忆，并在 **DSH 设置 → StrataGate-AgentMemory** 中提供记忆界面。
 
@@ -128,7 +120,7 @@ DSH_HOME/stratagate/memory.db
 
 近期讨论通常需要保留完整细节，较早的对话则可以先以简短形式留在上下文中。StrataGate 为同一段对话保存多种详细程度的视图，并随着后续对话积累，逐渐减少旧对话默认呈现的内容。
 
-![图 2：StrataGate 短期记忆——L0–L5 分层视图、展示衰减与按需展开](docs/assets/41fc676096d0a13337a1c03aaf8f499b.png)
+![图 2：StrataGate 短期记忆——L0–L5 分层视图、展示衰减与按需展开](docs/assets/stratagate-short-term-memory-layers.png)
 
 **同一段对话，保存为六种详细程度。**
 
@@ -311,7 +303,7 @@ Block 的展示变化由指数衰减控制：
 
 长期记忆也会随对话推进而衰减。这里变化的是 Event 的权重，它参与后续召回和排序；与短期 Block 不同，Event 不会因此逐级切换 L0–L5 展示层。
 
-![图 4：StrataGate 长期记忆权重——自然衰减、仅检索不强化与采用后强化](docs/assets/cecc9d191a4b9bf22a479623e2ebdc1d.png)
+![图 4：StrataGate 长期记忆权重——自然衰减、仅检索不强化与采用后强化](docs/assets/stratagate-long-term-memory-weight.png)
 
 未被用于答案的 Event 权重随对话轮次逐渐降低，可能影响后续召回的排序，但历史记录仍然保留。
 

@@ -199,11 +199,32 @@ test('CLI rejects a changed artifact before npm; a live lock blocks concurrent r
   const f = fixture(t)
   mkdirSync(join(f.evidence, 'package'))
   writeFileSync(join(f.evidence, 'package/package.json'), JSON.stringify({ name: identity.name, version: identity.version }))
+  for (const readme of ['README.md', 'README.zh-CN.md']) {
+    const source = readFileSync(fileURLToPath(new URL(`../${readme}`, import.meta.url)))
+    writeFileSync(join(f.evidence, 'package', readme), source)
+    for (const link of [...source.toString('utf8').matchAll(/(?:\[[^\]]*\]\(([^)]+)\)|(?:src|href)="([^"]+)")/g)].map(match => match[1] ?? match[2])
+      .filter(link => !/^(?:https?:|mailto:|#|\/)/.test(link)).map(link => link.split('#')[0].split('?')[0])) {
+      mkdirSync(join(f.evidence, 'package', link, '..'), { recursive: true })
+      writeFileSync(join(f.evidence, 'package', link), readFileSync(fileURLToPath(new URL(`../${link}`, import.meta.url))))
+    }
+  }
+  writeFileSync(join(f.evidence, 'package', 'extra.txt'), 'package-only file')
   const artifact = join(f.evidence, 'reviewed.tgz')
   execFileSync('tar', ['-czf', artifact, '-C', f.evidence, 'package'])
   const sha256 = digest(readFileSync(artifact))
   assert.equal(inspectArtifact(artifact, sha256).version, identity.version)
   assert.throws(() => inspectArtifact(artifact, '0'.repeat(64)), /包与已审查/)
+  const missingAssetArtifact = join(f.evidence, 'missing-asset.tgz')
+  const missingAssetRoot = join(f.evidence, 'missing-asset')
+  mkdirSync(missingAssetRoot, { recursive: true })
+  execFileSync('cp', ['-R', join(f.evidence, 'package'), join(missingAssetRoot, 'package')])
+  rmSync(join(missingAssetRoot, 'package', 'docs/assets/stratagate-avatar.png'))
+  execFileSync('tar', ['-czf', missingAssetArtifact, '-C', missingAssetRoot, 'package'])
+  assert.throws(() => inspectArtifact(missingAssetArtifact, digest(readFileSync(missingAssetArtifact))), /tar.*Not found|Command failed/)
+  writeFileSync(join(f.evidence, 'package', 'README.md'), 'stale readme')
+  const staleArtifact = join(f.evidence, 'stale.tgz')
+  execFileSync('tar', ['-czf', staleArtifact, '-C', f.evidence, 'package'])
+  assert.throws(() => inspectArtifact(staleArtifact, digest(readFileSync(staleArtifact))), /README\.md 与仓库当前版本不一致/)
   writeFileSync(join(f.evidence, 'npm-release.lock'), JSON.stringify({ pid: process.pid }))
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/release-npm.mjs', import.meta.url)),
     '--artifact', artifact, '--sha256', sha256, '--evidence', f.evidence], { encoding: 'utf8' })

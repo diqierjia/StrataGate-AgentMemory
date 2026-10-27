@@ -6,6 +6,7 @@
 
 - 用户已验收候选并明确授权正式发布；本脚本不会代替验收、源码审查或相关测试。
 - 正式源码已固定，版本和锁文件一致，正式 `.tgz` 已构建、校验并记录 SHA-256。不得用候选版本代替正式版本，也不重新打包覆盖原文件。
+- 正式包内 `README.md` 和 `README.zh-CN.md` 必须与已审查源码字节一致；本地图片和文档链接必须存在。`status` 和 `stage` 共用这一检查，避免 npm 展示旧 README。
 - 使用满足项目 engines 的 Node，及支持 `npm stage publish/list/view/download/approve` 的 npm CLI。
 - 复用现有 npm 登录。只有登录确实不可用时才要求用户登录；发布认证与账号登录是两件事。
 

@@ -6,7 +6,7 @@ Thank you for helping improve StrataGate. Contributions of code, tests, document
 
 ## Before you start
 
-- Search the [existing issues](https://github.com/diqierjia/StrataGate-AgentMemory/issues) before opening a new one.
+- Search the [existing Gitee issues](https://gitee.com/diqier4123/StrataGate-AgentMemory/issues) before opening a new one.
 - For a bug, include the relevant integration, Node.js version, reproduction steps, expected behavior, and actual behavior.
 - For a substantial feature or architectural change, open an issue first so the approach and scope can be discussed before implementation.
 - Never include private conversations, credentials, API keys, or other sensitive data in issues, tests, fixtures, or pull requests. Report security issues according to [`SECURITY.md`](SECURITY.md).
@@ -29,15 +29,15 @@ Small, focused changes are welcome. A pull request does not need to introduce a 
 
 ## Development setup
 
-StrataGate is an npm workspace monorepo. Use Node.js `22.19.0` or a newer 22.x release, or Node.js 24 and above. Both Node.js 22 and 24 are tested in CI.
+StrataGate is an npm workspace monorepo. Use Node.js `22.19.0` or a newer 22.x release, or Node.js 24 and above. The project runs the local checks below while GitHub CI remains unavailable.
 
 ```bash
-git clone https://github.com/diqierjia/StrataGate-AgentMemory.git
+git clone https://gitee.com/diqier4123/StrataGate-AgentMemory.git
 cd StrataGate-AgentMemory
 npm ci
 ```
 
-Run the same main checks used by CI:
+Run the main local checks:
 
 ```bash
 npm run check

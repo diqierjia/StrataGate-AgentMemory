@@ -11,8 +11,8 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent convers
 <p align="center">
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=total%20downloads" alt="Total npm downloads" /></a>
-  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=last%2030%20days&amp;color=brightgreen" alt="npm downloads in the last 30 days" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-08-16%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=total%20downloads&amp;color=blue" alt="Total npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-09-27%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=last%2030%20days&amp;color=brightgreen" alt="npm downloads from 2026-09-27 to 2026-10-26" /></a>
 </p>
 
 [中文说明](README.zh-CN.md) · [DeepSeek Harness guide](docs/DSH.md) · [Architecture](docs/ARCHITECTURE.md) · [Full evaluation](docs/EVALUATION.md)
@@ -23,20 +23,12 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent convers
 
 ---
 
-<div align="center">
+## Community
 
-<h3 align="center">Community</h3>
+Browse this plugin and other DeepSeek Harness plugins on [dshfind](https://dshfind.com).
 
-<p align="center">
-  <a href="https://dshfind.com">Browse DeepSeek Harness plugins on dshfind</a>
-</p>
-
-<p align="center">
-  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome DSH Plugin" /></a>
-  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/contributions-welcome-brightgreen.svg" alt="Contributions welcome" /></a>
-</p>
-
-</div>
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![Contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
@@ -82,7 +74,7 @@ If DeepSeek Harness is already installed, add StrataGate to the profile you use:
 dsh plugin --profile web add stratagate-dsh
 ```
 
-DSH compatibility includes the complete `0.2.0` version family: all Alpha, Beta, RC, and stable releases (`>=0.2.0-0 <0.2.1-0`), alongside the previously supported hosts. A new `0.2.0` prerelease does not require a plugin update just to declare its version.
+DSH compatibility is `0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0`. This includes the complete `0.2.x` line and its prereleases. DSH `0.3.x` is not supported until its host interfaces have been verified.
 
 Restart that profile, then keep using DSH normally. StrataGate will capture completed main-agent turns, build searchable memory in the background, and expose its Memory UI under **DSH Settings → StrataGate-AgentMemory**.
 
