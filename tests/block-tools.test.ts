@@ -76,7 +76,7 @@ describe('block tools through the real DSH output boundary', () => {
         pages.push(page)
         expect(page).toMatchObject({ scope: 'session', total: 25, blockCount: 25, offset, limit: 12, emptyReason: null })
         expect(page.evidenceRefs).toEqual(page.results.map(({ id, level }) => `block:${id}:level:${level}`))
-        for (const row of page.results) expect(Object.keys(row).sort()).toEqual(['id', 'level', 'title', 'turnRange'])
+        for (const row of page.results) expect(Object.keys(row).sort()).toEqual(['id', 'level', 'targetLevel', 'title', 'turnRange'])
         expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(12_000)
         expect(JSON.stringify(page)).not.toContain('large-source-body')
         offset = page.nextOffset ?? 0

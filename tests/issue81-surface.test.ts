@@ -5,7 +5,7 @@ import { createAssistantMessage, createToolResultMessage, createUserMessage } fr
 import { Session, type SessionSeq } from '@deepseek-ai/dsh-session'
 import { createSessionFormatCatalogWithChildren, sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
 import { releasedV3SessionFormatCodec } from '@deepseek-ai/dsh-session-format-v3-to-v4'
-import { StrataGate, estimateTokens, type BlockContextEntry, type MemoryBlock } from '@diqier/stratagate'
+import { StrataGate, estimateTokens, renderBlock, type BlockContextEntry, type MemoryBlock } from '@diqier/stratagate'
 import { describe, expect, it, vi } from 'vitest'
 import type { DshModelBridge } from '../src/llm.js'
 import { buildDshMessageSource } from '../src/dsh-compatibility.js'
@@ -72,10 +72,10 @@ function appendTurn(session: Session, user: string, assistant: string, toolResul
   return undefined
 }
 
-function replace(runtime: StrataGateRuntime, session: Session, block: MemoryBlock, context: BlockContextEntry): boolean {
+async function replace(runtime: StrataGateRuntime, memory: StrataGate, session: Session, block: MemoryBlock, context: BlockContextEntry): Promise<boolean> {
   return (runtime as unknown as { replaceSealedSurface: (
-    session: Session, block: MemoryBlock, context: BlockContextEntry, endTurn: number,
-  ) => boolean }).replaceSealedSurface(session, block, context, 1)
+    session: Session, memory: StrataGate, block: MemoryBlock, context: BlockContextEntry, endTurn: number,
+  ) => Promise<boolean> }).replaceSealedSurface(session, memory, block, context, 1)
 }
 
 function turnEndAt(session: Session): string {
@@ -83,6 +83,241 @@ function turnEndAt(session: Session): string {
   if (!ended) throw new Error('Expected completed DSH turn')
   return new Date(ended.time).toISOString()
 }
+
+async function queuedSurfaceFixture(flush = vi.fn(async (_session: Session) => {}), initialLevel: 0 | 1 | 2 = 0) {
+  const directory = await mkdtemp(join(tmpdir(), 'stratagate-queued-surface-'))
+  const database = join(directory, 'memory.db')
+  const session = Session.create('queued-surface' as never)
+  const user = 'Source detail that must return after expansion. '.repeat(60)
+  const assistant = 'Original answer with supporting evidence. '.repeat(60)
+  appendTurn(session, user, assistant)
+  const plugin = runtime(database, models, flush)
+  const namespace = plugin.namespaceFor(session)
+  const memory = await StrataGate.open({
+    database, namespace, blockTurnSize: 1, summarizer: models.summarizer, extractor: models.extractor,
+  })
+  await memory.appendTurn({ user, assistant, threadId: String(session.id), createdAt: turnEndAt(session) })
+  const block = memory.listBlocks()[0]!
+  const context = memory.getBlockContext(String(session.id))[0]!
+  expect(await replace(plugin, memory, session, block, {
+    ...context, level: initialLevel, content: renderBlock(block, initialLevel),
+  })).toBe(true)
+  const internals = plugin as unknown as {
+    pendingSurfaceSync: Map<string, { namespace: string; blockId: string; reason?: 'user-expansion' }>
+    spaces: Map<string, Promise<StrataGate>>
+    knownSessions: Map<string, WeakRef<Session>>
+    syncPendingRetrySurface(session: Session, memory: StrataGate): Promise<void>
+    queueSurfaceSync(namespace: string, blockId: string, reason?: 'user-expansion'): void
+  }
+  internals.spaces.set(namespace, Promise.resolve(memory))
+  const key = `${namespace}\u0000${block.id}`
+  const sync = () => internals.syncPendingRetrySurface(session, memory)
+  const queue = () => internals.pendingSurfaceSync.set(key, { namespace, blockId: block.id, reason: 'user-expansion' })
+  const dispose = async () => {
+    await plugin.close()
+    await memory.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+  return { plugin, memory, session, block, namespace, internals, key, sync, queue, flush, dispose, user, database }
+}
+
+describe('deferred Block surface synchronization', () => {
+  it.each([0, 1, 2] as const)('replaces an existing L%s checkpoint with a larger L5 for a queued user expansion, without duplication', async (initialLevel) => {
+    const f = await queuedSurfaceFixture(undefined, initialLevel)
+    try {
+      await f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(initialLevel)
+      const originalRaw = structuredClone(f.memory.listBlocks()[0]!.l5Raw)
+      const historyCount = f.session.snapshotEvents().length
+      const previousTokens = estimateTokens(JSON.stringify(f.session.deriveMessages()))
+      await f.sync()
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(5)
+      expect(f.session.deriveMessages()).toHaveLength(1)
+      expect(JSON.stringify(f.session.deriveMessages())).toContain('Level: L5')
+      expect(JSON.stringify(f.session.deriveMessages())).toContain(f.user)
+      expect(estimateTokens(JSON.stringify(f.session.deriveMessages()))).toBeGreaterThan(previousTokens)
+      expect(f.memory.listBlocks()[0]!.l5Raw).toEqual(originalRaw)
+      expect(f.session.snapshotEvents().length).toBe(historyCount + 1)
+      expect(f.flush).toHaveBeenCalledWith(f.session)
+      await f.sync()
+      expect(f.session.snapshotEvents().length).toBe(historyCount + 1)
+    } finally { await f.dispose() }
+  })
+
+  it.each([3, 5])('reports the actual updated L%s when the target session is already loaded', async (level) => {
+    const f = await queuedSurfaceFixture()
+    try {
+      f.internals.knownSessions.set(String(f.session.id), new WeakRef(f.session))
+      expect(await f.plugin.adminExpandBlock(f.namespace, f.block.id, `L${level}`)).toMatchObject({ level, surfaceLevel: level })
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(JSON.stringify(f.session.deriveMessages())).toContain(`Level: L${level}`)
+    } finally { await f.dispose() }
+  })
+
+  it('keeps ordinary sealing retries idempotent when a checkpoint already exists', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      const before = f.session.seq
+      f.internals.pendingSurfaceSync.set(f.key, { namespace: f.namespace, blockId: f.block.id })
+      await f.sync()
+      expect(f.session.seq).toBe(before)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(0)
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(f.flush).not.toHaveBeenCalled()
+    } finally { await f.dispose() }
+  })
+
+  it('preserves an expansion when background sealing schedules the same block', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      await f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')
+      f.internals.queueSurfaceSync(f.namespace, f.block.id)
+      expect(f.internals.pendingSurfaceSync.get(f.key)?.reason).toBe('user-expansion')
+      await f.sync()
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(5)
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+    } finally { await f.dispose() }
+  })
+
+  it('also expands original messages when no Block checkpoint has been written yet', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      const rawSession = Session.create(f.session.id, f.session.snapshotEvents().slice(0, -1), f.session.header)
+      expect(rawSession.deriveMessages()).toHaveLength(2)
+      await f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')
+      await f.internals.syncPendingRetrySurface(rawSession, f.memory)
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(rawSession.deriveMessages()).toHaveLength(1)
+      expect(JSON.stringify(rawSession.deriveMessages())).toContain('Level: L5')
+      expect(JSON.stringify(rawSession.deriveMessages())).toContain(f.user)
+    } finally { await f.dispose() }
+  })
+
+  it('defers a cold namespace expansion until its existing conversation is loaded', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      f.internals.spaces.delete(f.namespace)
+      await f.memory.close()
+      expect(await f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')).toMatchObject({ level: 5, surfaceLevel: 0 })
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
+      const before = f.session.seq
+      await f.plugin.buildAutoContext(f.session)
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(JSON.stringify(f.session.deriveMessages())).toContain('Level: L5')
+      expect(f.session.seq).toBe(before + 1)
+    } finally { await f.dispose() }
+  })
+
+  it('recovers an unapplied user expansion after the runtime restarts', async () => {
+    const f = await queuedSurfaceFixture()
+    let restarted: StrataGateRuntime | undefined
+    try {
+      await f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')
+      await f.plugin.close()
+      restarted = runtime(f.database)
+      const before = f.session.seq
+      await restarted.buildAutoContext(f.session)
+      expect(JSON.stringify(f.session.deriveMessages())).toContain('Level: L5')
+      expect(f.session.seq).toBe(before + 1)
+    } finally {
+      await restarted?.close()
+      await f.dispose()
+    }
+  })
+
+  it('keeps an Agent expansion in tool evidence without raising the conversation checkpoint', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      const before = f.session.seq
+      const result = await f.plugin.expandBlock(f.session, f.block.id, 'L5')
+      expect(result).toMatchObject({ results: { level: 5, content: expect.stringContaining(f.user) } })
+      await f.plugin.buildAutoContext(f.session)
+      expect(f.session.seq).toBe(before)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(0)
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+    } finally { await f.dispose() }
+  })
+
+  it.each([undefined, 'user-expansion'] as const)('retains a %s request when its source surface cannot be found', async (reason) => {
+    const f = await queuedSurfaceFixture()
+    try {
+      await f.memory.expandBlock(f.block.id, 'L5', 'user')
+      f.internals.queueSurfaceSync(f.namespace, f.block.id, reason)
+      const unloaded = Session.create(f.session.id)
+      await f.internals.syncPendingRetrySurface(unloaded, f.memory)
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
+      expect(unloaded.deriveMessages()).toHaveLength(0)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(0)
+    } finally { await f.dispose() }
+  })
+
+  it('retains an expansion that exceeds capacity and completes it when capacity is available', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      f.internals.knownSessions.set(String(f.session.id), new WeakRef(f.session))
+      const capacity = vi.spyOn(f.session, 'requestContext').mockReturnValue({ contextWindow: 100 } as never)
+      const before = f.session.seq
+      await expect(f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')).rejects.toThrow('无法将 Block')
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(0)
+      expect(f.session.seq).toBe(before)
+      capacity.mockRestore()
+      await f.sync()
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(5)
+    } finally { vi.restoreAllMocks(); await f.dispose() }
+  })
+
+  it('does not lose a request when flushing the native session fails', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      await f.memory.expandBlock(f.block.id, 'L5', 'user')
+      f.queue()
+      f.flush.mockRejectedValueOnce(new Error('session save failed'))
+      await expect(f.sync()).rejects.toThrow('session save failed')
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
+      const afterReplacement = f.session.seq
+      await f.sync()
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(f.session.seq).toBe(afterReplacement)
+      expect(f.flush).toHaveBeenCalledTimes(2)
+    } finally { await f.dispose() }
+  })
+
+  it('keeps requests for a different conversation in the same namespace', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      await f.memory.expandBlock(f.block.id, 'L5', 'user')
+      f.queue()
+      const other = Session.create('other-conversation' as never)
+      vi.spyOn(f.plugin, 'namespaceFor').mockReturnValue(f.namespace)
+      await f.internals.syncPendingRetrySurface(other, f.memory)
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
+      expect(other.deriveMessages()).toHaveLength(0)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(0)
+    } finally { vi.restoreAllMocks(); await f.dispose() }
+  })
+
+  it('waits for host compaction to finish before replacing a checkpoint', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      await f.memory.expandBlock(f.block.id, 'L5', 'user')
+      f.queue()
+      const append = f.session.append.bind(f.session) as (...args: unknown[]) => unknown
+      append('compaction/start', { compactionId: 'queued-compaction', turn: null })
+      const before = f.session.seq
+      await f.sync()
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
+      expect(f.session.seq).toBe(before)
+      append('compaction/end', { compactionId: 'queued-compaction', turn: null, error: 'cancelled' })
+      await f.sync()
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(5)
+    } finally { await f.dispose() }
+  })
+})
 
 describe('Issue #81 surface ownership and size', () => {
   it.each(['0.1.7-rc.1', '0.2.0-alpha.1', '0.2.0-beta.1', '0.2.0-rc.2', '0.2.0'])('encodes a new DSH %s checkpoint with a producer-owned source', (version) => {
@@ -115,7 +350,7 @@ describe('Issue #81 surface ownership and size', () => {
     try {
       await memory.appendTurn({ user, assistant: 'The answer to that detail. '.repeat(100), threadId: String(session.id), createdAt: turnEndAt(session) })
       const block = memory.listBlocks()[0]!
-      expect(replace(plugin, session, block, memory.getBlockContext(String(session.id))[0]!)).toBe(true)
+      expect(await replace(plugin, memory, session, block, memory.getBlockContext(String(session.id))[0]!)).toBe(true)
       expect(session.deriveMessages()[0]?.source).toMatchObject({ kind: 'plugin:stratagate-memory' })
 
       const rows = [
@@ -255,7 +490,7 @@ describe('Issue #81 surface ownership and size', () => {
       })))
       expect(l5).toBeLessThan(before * 0.9)
       expect(l5).toBeGreaterThan(4_000)
-      expect(replace(plugin, session, block, context)).toBe(true)
+      expect(await replace(plugin, memory, session, block, context)).toBe(true)
       const after = JSON.stringify(session.deriveMessages())
       expect(after).not.toContain('Level: L5')
       expect(estimateTokens(after)).toBeLessThanOrEqual(4_000)
@@ -301,13 +536,13 @@ describe('Issue #81 surface ownership and size', () => {
         },
       }, { surfaceOp: { op: 'replace', startSeq: toolSeq, endSeq: toolSeq }, sourceEventSeqs: [toolSeq] })
       const before = estimateTokens(JSON.stringify(session.deriveMessages()))
-      expect(replace(plugin, session, block, context)).toBe(true)
+      expect(await replace(plugin, memory, session, block, context)).toBe(true)
       const checkpoint = session.eventAt(session.surface.nodes[0]!)!
       expect(checkpoint.sourceEventSeqs).toContain(pruned.seq)
       expect(session.deriveMessages()).toHaveLength(1)
       const after = estimateTokens(JSON.stringify(session.deriveMessages()))
-      expect(after).toBeLessThan(before * 0.9)
-      expect(JSON.stringify(session.deriveMessages())).not.toContain('FULL TOOL RESULT')
+      expect(after).toBeLessThanOrEqual(before)
+      expect(JSON.stringify(session.deriveMessages())).not.toContain(largeResult)
       expect(JSON.stringify(session.deriveMessages())).not.toContain('Level: L5')
       expect(block.l5Raw[1]?.toolCalls?.[0]?.result).toBe(largeResult)
       await memory.close()
@@ -340,7 +575,7 @@ describe('Issue #81 surface ownership and size', () => {
       const oldNodes = [...session.surface.nodes]
       const append = session.append.bind(session) as (...args: unknown[]) => unknown
       append('compaction/start', { compactionId: 'test-compact', turn: null })
-      expect(replace(plugin, session, block, context)).toBe(false)
+      expect(await replace(plugin, memory, session, block, context)).toBe(false)
       expect(session.surface.nodes).toEqual(oldNodes)
       append('compaction/summary', {
         compactionId: 'test-compact', summary: [{ type: 'text', text: 'Host summary' }],
@@ -355,7 +590,7 @@ describe('Issue #81 surface ownership and size', () => {
         sourceEventSeqs: oldNodes,
       })
       append('compaction/end', { compactionId: 'test-compact', turn: null })
-      expect(replace(plugin, session, block, context)).toBe(false)
+      expect(await replace(plugin, memory, session, block, context)).toBe(false)
       expect(session.deriveMessages()).toHaveLength(1)
       expect(JSON.stringify(session.deriveMessages())).not.toContain('[StrataGate historical conversation block]')
       expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
@@ -403,9 +638,9 @@ describe('Issue #81 surface ownership and size', () => {
       })
       append('compaction/end', { compactionId: 'partial-compact', turn: null })
       const before = [...session.surface.nodes]
-      expect((plugin as unknown as { replaceSealedSurface: (
-        session: Session, block: MemoryBlock, context: BlockContextEntry, endTurn: number,
-      ) => boolean }).replaceSealedSurface(session, block, context, 2)).toBe(false)
+      await expect((plugin as unknown as { replaceSealedSurface: (
+        session: Session, memory: StrataGate, block: MemoryBlock, context: BlockContextEntry, endTurn: number,
+      ) => Promise<boolean> }).replaceSealedSurface(session, memory, block, context, 2)).resolves.toBe(false)
       expect(session.surface.nodes).toEqual(before)
       expect(JSON.stringify(session.deriveMessages())).toContain('Host first-turn summary')
       expect(JSON.stringify(session.deriveMessages())).toContain(second)
@@ -530,9 +765,9 @@ describe('Issue #81 surface ownership and size', () => {
       const after = JSON.stringify(session.deriveMessages())
       expect(session.deriveMessages()).toHaveLength(1)
       expect(after).toContain('[StrataGate historical conversation block]')
-      expect(after).not.toContain('FULL TOOL RESULT')
-      expect(after).not.toContain('Level: L5')
-      expect(estimateTokens(after)).toBeLessThan(prunedTokens * 0.9)
+      expect(after).not.toContain(fullResult)
+      expect(after).toContain('Level: L4')
+      expect(estimateTokens(after)).toBeLessThanOrEqual(prunedTokens)
       const checkpoint = session.eventAt(session.surface.nodes[0]!)!
       expect(checkpoint.sourceEventSeqs).toContain(pruned.seq)
       const surfaceAfterRetry = [...session.surface.nodes]
@@ -548,7 +783,7 @@ describe('Issue #81 surface ownership and size', () => {
     }
   })
 
-  it('keeps a ready Block in memory when every visible level is too large', async () => {
+  it('creates an L5 checkpoint when the equal-size surface is allowed', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-issue81-skip-'))
     const database = join(directory, 'memory.db')
     const session = Session.create('issue81-skip' as never)
@@ -565,8 +800,9 @@ describe('Issue #81 surface ownership and size', () => {
     try {
       await memory.appendTurn({ user: 'hi', assistant: 'done', threadId: String(session.id), createdAt: turnEndAt(session) })
       const before = [...session.surface.nodes]
-      expect(replace(plugin, session, memory.listBlocks()[0]!, memory.getBlockContext(String(session.id))[0]!)).toBe(false)
-      expect(session.surface.nodes).toEqual(before)
+      expect(await replace(plugin, memory, session, memory.listBlocks()[0]!, memory.getBlockContext(String(session.id))[0]!)).toBe(true)
+      expect(session.surface.nodes).not.toEqual(before)
+      expect(JSON.stringify(session.deriveMessages())).toContain('Level: L5')
       expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
     } finally {
       await plugin.close()
@@ -592,7 +828,7 @@ describe('Issue #81 surface ownership and size', () => {
         createdAt: new Date(Date.parse(turnEndAt(session)) - 60_000).toISOString(),
       })
       const before = [...session.surface.nodes]
-      expect(replace(plugin, session, memory.listBlocks()[0]!, memory.getBlockContext(String(session.id))[0]!)).toBe(false)
+      expect(await replace(plugin, memory, session, memory.listBlocks()[0]!, memory.getBlockContext(String(session.id))[0]!)).toBe(false)
       expect(session.surface.nodes).toEqual(before)
     } finally {
       await plugin.close()
@@ -601,7 +837,7 @@ describe('Issue #81 surface ownership and size', () => {
     }
   })
 
-  it('lets decay shrink a checkpoint and keeps user expansion available without surface inflation', async () => {
+  it('lets decay shrink a checkpoint and restores its detail on explicit user expansion', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-issue81-decay-'))
     const database = join(directory, 'memory.db')
     let session = Session.create('issue81-decay' as never)
@@ -645,16 +881,17 @@ describe('Issue #81 surface ownership and size', () => {
       expect(decayed[0]!.level).toBeLessThan(5)
       const sync = (plugin as unknown as { syncDecayedBlockSurface: (
         session: Session, memory: StrataGate, contexts: BlockContextEntry[],
-      ) => boolean }).syncDecayedBlockSurface.bind(plugin)
-      expect(sync(session, memory, decayed)).toBe(true)
+      ) => Promise<boolean> }).syncDecayedBlockSurface.bind(plugin)
+      expect(await sync(session, memory, decayed)).toBe(true)
       expect(JSON.stringify(session.deriveMessages())).toContain('[StrataGate historical conversation block]')
       const afterDecay = estimateTokens(JSON.stringify(session.deriveMessages()))
       expect(afterDecay).toBeLessThan(beforeDecay * 0.9)
       await memory.expandBlock(block.id, 'L5', 'user')
       const expanded = memory.getBlockContext(String(session.id))
       expect(expanded[0]!.level).toBe(5)
-      expect(sync(session, memory, expanded)).toBe(false)
-      expect(estimateTokens(JSON.stringify(session.deriveMessages()))).toBe(afterDecay)
+      expect(await sync(session, memory, expanded)).toBe(true)
+      expect(memory.listBlocks()[0]?.surfaceCurrentLevel).toBe(5)
+      expect(estimateTokens(JSON.stringify(session.deriveMessages()))).toBeGreaterThan(afterDecay)
       expect(memory.listBlocks()[0]?.l5Raw[0]?.content).toBe(user)
     } finally {
       await plugin.close()

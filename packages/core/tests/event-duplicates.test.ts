@@ -120,7 +120,7 @@ describe('automatic Event duplicate gate and full-pool scan', () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-duplicates-'));
     const database = join(directory, 'memory.db');
     let memory = await StrataGate.open({ database, namespace: 'test', blockTurnSize: 1,
-      graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) });
+      graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) });
     try {
       const a = await seed(memory); const b = await seed(memory);
       const [pair] = await scanEventDuplicates(memory.listEvents());

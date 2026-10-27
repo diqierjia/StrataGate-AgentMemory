@@ -33,7 +33,7 @@ describe('Graph projection batches', () => {
     const memory = StrataGate.inMemory({
       blockTurnSize: 1, disableElementProjection: true, summarizer,
       extractor: async ({ target }) => ({ shouldExtract: true, reason: 'events', events: inputs(target) }),
-      graphProjector: async context => { called.push(context.events.length); return projection(context); },
+      graphEnabled: true, graphProjector: async context => { called.push(context.events.length); return projection(context); },
     });
     await memory.appendTurn({ user: 'source', assistant: 'stored' });
     expect([...called, ...await drain(memory)]).toEqual([8, 8, 1]);
@@ -46,7 +46,7 @@ describe('Graph projection batches', () => {
   });
 
   it('also splits a large external-memory import', async () => {
-    const memory = StrataGate.inMemory({ disableElementProjection: true, graphProjector: async context => projection(context) });
+    const memory = StrataGate.inMemory({ disableElementProjection: true, graphEnabled: true, graphProjector: async context => projection(context) });
     const imported = await memory.importExternalMemory({
       text: 'external source',
       extractor: async () => ({ candidates: Array.from({ length: 17 }, (_, index) => ({
@@ -65,7 +65,7 @@ describe('Graph projection batches', () => {
     let now = new Date('2026-10-16T00:00:00Z');
     const storage = new SqliteStorage({ filename: ':memory:' });
     const options = { storage, namespace: 'graph:legacy-batch', blockTurnSize: 1, disableElementProjection: true,
-      now: () => now, summarizer, graphProjector: async (context: GraphProjectionContext) => projection(context) };
+      now: () => now, summarizer, graphEnabled: true, graphProjector: async (context: GraphProjectionContext) => projection(context) };
     try {
       const memory = await StrataGate.openWithStorage(options);
       await memory.appendTurn({ user: 'source', assistant: 'stored' });
@@ -108,8 +108,9 @@ describe('Graph projection batches', () => {
       expect(await exhausted.claimNextGraphProjection()).toBeNull();
       expect(exhausted.listGraphProjectionJobs()).toHaveLength(1);
       await exhausted.retryGraphProjection(terminal.id);
-      expect(exhausted.listGraphProjectionJobs().map(job => job.sourceEventIds.length)).toEqual([8, 8, 1]);
-      expect(exhausted.listGraphProjectionJobs().map(job => job.attempts)).toEqual([1, 0, 0]);
+      expect(exhausted.listGraphProjectionJobs().map(job => job.sourceEventIds.length)).toEqual([17, 8, 8, 1]);
+      expect(exhausted.listGraphProjectionJobs().map(job => job.attempts)).toEqual([3, 1, 0, 0]);
+      expect(exhausted.listGraphProjectionJobs().filter(job => job.status === 'pending')).toHaveLength(2);
     } finally {
       await storage.close();
     }

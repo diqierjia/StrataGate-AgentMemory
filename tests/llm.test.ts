@@ -81,6 +81,26 @@ describe('Graph canonical-name provenance compatibility (#113)', () => {
   })
   const response = (nodes: unknown[]) => ({ reason: 'projected', nodes, edges: [] })
 
+  it('checks revocation again before internal format retries and before the first provider call', async () => {
+    const { bridge, session, calls } = modelBridge([{ text: 'invalid JSON' }, { tool: response([]) }])
+    let revoked = false
+    const guard = () => { if (revoked) throw new Error('Graph claim revoked') }
+    calls.mockImplementation(() => { revoked = true })
+    await expect(bridge.run(session, () => bridge.graphProjector({ ...context, assertActive: guard }))).rejects.toThrow('revoked')
+    expect(calls).toHaveBeenCalledTimes(1)
+    await expect(bridge.run(session, () => bridge.graphProjector({ ...context, assertActive: guard }))).rejects.toThrow('revoked')
+    expect(calls).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards valid late Graph responses before retaining successful model output', async () => {
+    const { bridge, session, calls } = modelBridge([{ tool: response([]) }])
+    let revoked = false
+    calls.mockImplementation(() => { revoked = true })
+    await expect(bridge.run(session, () => bridge.graphProjector({ ...context, assertActive: () => { if (revoked) throw new Error('Graph claim revoked') } }))).rejects.toThrow('revoked')
+    expect(calls).toHaveBeenCalledTimes(1)
+    expect(bridge.takeSuccessfulResponses()).toEqual([])
+  })
+
   it.each(['tool', 'text'] as const)('rejects schema-valid truncated %s output without completing the job or bypassing backoff', async (format) => {
     const tool = response([node([event.id])])
     const truncated = { ...(format === 'tool' ? { tool } : { text: JSON.stringify(tool) }), finish: 'max-tokens' as const }
@@ -89,7 +109,7 @@ describe('Graph canonical-name provenance compatibility (#113)', () => {
     const memory = StrataGate.inMemory({
       blockTurnSize: 1, disableElementProjection: true, now: () => now,
       summarizer: async () => ({ l0Title: 'seed', l0Tags: [], l1Summary: 'seed', l2Keypoints: [], shouldExtract: false }),
-      graphProjector: batch => bridge.run(session, () => bridge.graphProjector(batch)),
+      graphEnabled: true, graphProjector: batch => bridge.run(session, () => bridge.graphProjector(batch)),
     })
     await memory.appendTurn({ user: 'StrataGate uses SQLite.', assistant: 'stored' })
     const block = memory.listBlocks()[0]!
@@ -127,7 +147,7 @@ describe('Graph canonical-name provenance compatibility (#113)', () => {
     const memory = StrataGate.inMemory({
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'seed', l0Tags: [], l1Summary: 'seed', l2Keypoints: [], shouldExtract: false }),
-      graphProjector: (batch) => bridge.run(session, () => bridge.graphProjector(batch)),
+      graphEnabled: true, graphProjector: (batch) => bridge.run(session, () => bridge.graphProjector(batch)),
     })
     await memory.appendTurn({ user: 'StrataGate uses SQLite.', assistant: 'stored' })
     const block = memory.listBlocks()[0]!

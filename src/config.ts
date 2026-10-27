@@ -22,6 +22,7 @@ export interface Config {
   showStrataGateStatus?: boolean
   showShortTermStatus?: boolean
   showRetrievalStatus?: boolean
+  showSidebarEntry?: boolean
 }
 
 export interface ResolvedConfig {
@@ -43,6 +44,7 @@ export interface ResolvedConfig {
   showStrataGateStatus?: boolean
   showShortTermStatus?: boolean
   showRetrievalStatus?: boolean
+  showSidebarEntry?: boolean
 }
 
 export interface StructuredReasoningEffortSettings {
@@ -50,6 +52,7 @@ export interface StructuredReasoningEffortSettings {
   showStrataGateStatus: boolean
   showShortTermStatus: boolean
   showRetrievalStatus: boolean
+  showSidebarEntry: boolean
 }
 
 export const StructuredReasoningEffortSettings: z<StructuredReasoningEffortSettings> = z.object({
@@ -62,6 +65,9 @@ export const StructuredReasoningEffortSettings: z<StructuredReasoningEffortSetti
   showShortTermStatus: z.boolean().default(true)
     .description('显示短期记忆块状态')
     .comment('控制短期记忆块进度、Block 封存与整理状态的聊天内提示；后台处理不受影响。'),
+  showSidebarEntry: z.boolean().default(false)
+    .description('在左侧栏显示 StrataGate')
+    .comment('仅控制左侧栏入口；关闭后仍可从设置打开，记忆、检索和后台处理不受影响。'),
   showRetrievalStatus: z.boolean().default(true)
     .description('显示记忆检索状态')
     .comment('控制检索次数、返回数量和记忆采用信息的聊天内提示；检索与采用不受影响。'),
@@ -98,6 +104,7 @@ export const Config = z.object({
   showStrataGateStatus: volatileIfSupported(z.boolean().default(true)),
   showShortTermStatus: volatileIfSupported(z.boolean().default(true)),
   showRetrievalStatus: volatileIfSupported(z.boolean().default(true)),
+  showSidebarEntry: volatileIfSupported(z.boolean().default(false)),
 })
 
 export function liveConfigValue<T>(value: T): T {
@@ -139,5 +146,6 @@ export function resolveConfig(config: Config): ResolvedConfig {
     showStrataGateStatus: liveConfigValue(config.showStrataGateStatus) ?? true,
     showShortTermStatus: liveConfigValue(config.showShortTermStatus) ?? true,
     showRetrievalStatus: liveConfigValue(config.showRetrievalStatus) ?? true,
+    showSidebarEntry: liveConfigValue(config.showSidebarEntry) ?? false,
   }
 }

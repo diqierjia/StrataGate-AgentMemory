@@ -14,6 +14,7 @@ import {
   type ExtractionJob,
   type BlockSummaryJob,
   type GraphProjectionJob,
+  type GraphRuntimePolicy,
   type IngestionReceipt,
   type LoadedStrataGateState,
   type LoadedDerivationLeases,
@@ -52,6 +53,7 @@ export interface SqliteStorageOptions {
   filename: string;
   readonly?: boolean;
   timeoutMs?: number;
+  graphPolicy?: (namespace: string) => GraphRuntimePolicy;
 }
 
 export interface NamespaceRevision {
@@ -65,6 +67,9 @@ interface SpaceRow {
   current_turn: number;
   block_turn_size: number;
   block_decay_lambda: number;
+  graph_enabled?: number;
+  graph_epoch?: number;
+  graph_approved_event_ids_json?: string;
 }
 
 interface MessageRow {
@@ -93,6 +98,7 @@ interface BlockRow {
   l3_condensed: string;
   l4_readable: string;
   pointer_current_level: number;
+  surface_current_level?: number;
   pointer_anchor_level: number;
   pointer_anchor_block_position: number;
   last_lifted_at: string | null;
@@ -285,6 +291,9 @@ CREATE TABLE IF NOT EXISTS memory_spaces (
   current_turn INTEGER NOT NULL,
   block_turn_size INTEGER NOT NULL,
   block_decay_lambda REAL NOT NULL,
+  graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1)),
+  graph_epoch INTEGER NOT NULL DEFAULT 0,
+  graph_approved_event_ids_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 ) STRICT;
@@ -305,6 +314,7 @@ CREATE TABLE IF NOT EXISTS blocks (
   l3_condensed TEXT NOT NULL,
   l4_readable TEXT NOT NULL,
   pointer_current_level INTEGER NOT NULL,
+  surface_current_level INTEGER NOT NULL DEFAULT 5,
   pointer_anchor_level INTEGER NOT NULL,
   pointer_anchor_block_position INTEGER NOT NULL,
   last_lifted_at TEXT,
@@ -599,6 +609,11 @@ CREATE TABLE IF NOT EXISTS raw_message_fts_state (
   backfill_complete INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS stratagate_graph_policy_migrations (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  completed_at TEXT NOT NULL
+) STRICT;
 `;
 
 const RAW_MESSAGE_FTS_SCHEMA = `
@@ -670,6 +685,7 @@ function encodedRawSearchTokens(content: string): string {
 }
 
 export class SqliteStorage implements StorageAdapter {
+  private readonly graphPolicy: ((namespace: string) => GraphRuntimePolicy) | undefined;
   private static readonly workListeners = new Map<string, Set<() => void>>();
   private readonly filename: string;
   readonly readonly: boolean;
@@ -678,6 +694,7 @@ export class SqliteStorage implements StorageAdapter {
   private closed = false;
 
   constructor(options: SqliteStorageOptions) {
+    this.graphPolicy = options.graphPolicy;
     if (!options.filename.trim()) throw new TypeError('SQLite filename must not be empty');
     this.readonly = options.readonly ?? false;
     this.filename = options.filename === ':memory:' ? ':memory:' : resolve(options.filename);
@@ -705,12 +722,13 @@ export class SqliteStorage implements StorageAdapter {
   async load(namespace: string): Promise<LoadedStrataGateState | null> {
     this.assertOpen();
     const key = nonEmptyNamespace(namespace);
+    const hasGraphEnabled = this.hasColumn('memory_spaces', 'graph_enabled');
     const space = this.database.prepare(`
-      SELECT schema_version, revision, current_turn, block_turn_size, block_decay_lambda
+      SELECT schema_version, revision, current_turn, block_turn_size, block_decay_lambda${hasGraphEnabled ? ', graph_enabled, graph_epoch' : ''}${this.hasColumn('memory_spaces', 'graph_approved_event_ids_json') ? ', graph_approved_event_ids_json' : ''}
       FROM memory_spaces WHERE namespace = ?
     `).get(key) as SpaceRow | undefined;
     if (!space) return null;
-    if (space.schema_version !== STRATAGATE_STORAGE_SCHEMA_VERSION && !(this.readonly && space.schema_version === 12)) {
+    if (space.schema_version !== STRATAGATE_STORAGE_SCHEMA_VERSION && !(this.readonly && [12, 13].includes(space.schema_version))) {
       throw new Error(`Unsupported stored StrataGate schema: ${space.schema_version}`);
     }
 
@@ -759,6 +777,7 @@ export class SqliteStorage implements StorageAdapter {
       l4Readable: row.l4_readable,
       l5Raw: messagesByBlock.get(row.id) ?? [],
       pointerCurrentLevel: row.pointer_current_level as BlockLevel,
+      surfaceCurrentLevel: (row.surface_current_level ?? row.pointer_current_level) as BlockLevel,
       pointerAnchorLevel: row.pointer_anchor_level as BlockLevel,
       pointerAnchorBlockPosition: row.pointer_anchor_block_position,
       lastLiftedAt: row.last_lifted_at,
@@ -977,10 +996,13 @@ export class SqliteStorage implements StorageAdapter {
       .get(key) as { state_json: string } | undefined : undefined;
 
     const snapshot: StrataGateSnapshot = {
-      schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION,
+      schemaVersion: space.schema_version as StrataGateSnapshot['schemaVersion'],
       currentTurn: space.current_turn,
       blockTurnSize: space.block_turn_size,
       blockDecayLambda: space.block_decay_lambda,
+      graphEnabled: Boolean(space.graph_enabled),
+      graphEpoch: space.graph_epoch ?? 0,
+      graphBackfillEventIds: parseJson<string[]>(space.graph_approved_event_ids_json ?? '[]', 'memory_spaces.graph_approved_event_ids_json'),
       openTail,
       blocks,
       summaryJobs,
@@ -1007,6 +1029,7 @@ export class SqliteStorage implements StorageAdapter {
     expectedRevision: number,
     rawMessageIndexDelta?: RawMessageIndexDelta,
     leaseGuards?: readonly DerivationLeaseGuard[],
+    graphEpoch?: number,
   ): Promise<number> {
     this.assertOpen();
     assertValidSnapshot(snapshot);
@@ -1014,7 +1037,23 @@ export class SqliteStorage implements StorageAdapter {
       throw new TypeError('expectedRevision must be a non-negative integer');
     }
     const key = nonEmptyNamespace(namespace);
-    const revision = this.immediateTransaction(() => this.persistSnapshot(key, snapshot, expectedRevision, rawMessageIndexDelta, leaseGuards));
+    const revision = this.immediateTransaction(() => {
+      // Event ingestion must still commit if the user disables Graph while it
+      // is awaiting extraction. Suppress only newly queued Graph work.
+      const storedPolicy = this.database.prepare('SELECT graph_enabled, graph_epoch FROM memory_spaces WHERE namespace = ?').get(key) as SpaceRow | undefined;
+      const policy = this.graphPolicy?.(key) ?? { enabled: storedPolicy ? Boolean(storedPolicy.graph_enabled) : snapshot.graphEnabled === true, paused: false, epoch: storedPolicy?.graph_epoch ?? snapshot.graphEpoch ?? 0 };
+      if (graphEpoch !== undefined) {
+        if (!policy.enabled || policy.paused || policy.epoch !== graphEpoch) {
+          throw new StorageConflictError(key, expectedRevision, expectedRevision);
+        }
+      } else if ((!policy.enabled || policy.paused) && snapshot.graphProjectionJobs.length
+        && (this.graphPolicy || snapshot.graphEpoch === storedPolicy?.graph_epoch)) {
+        const row = this.database.prepare('SELECT jobs_json FROM graph_state WHERE namespace = ?').get(key) as { jobs_json: string } | undefined;
+        const retained = new Set((JSON.parse(row?.jobs_json ?? '[]') as GraphProjectionJob[]).map(job => job.id));
+        snapshot.graphProjectionJobs = snapshot.graphProjectionJobs.filter(job => retained.has(job.id));
+      }
+      return this.persistSnapshot(key, snapshot, expectedRevision, rawMessageIndexDelta, leaseGuards);
+    });
     for (const listener of SqliteStorage.workListeners.get(this.filename) ?? []) {
       // Notification follows COMMIT and can never roll back or reject a durable save.
       try { listener(); } catch { /* observers do not own storage */ }
@@ -1208,7 +1247,7 @@ export class SqliteStorage implements StorageAdapter {
     if (current) {
       this.database.prepare(`
         UPDATE memory_spaces
-        SET schema_version = ?, revision = ?, current_turn = ?, block_turn_size = ?, block_decay_lambda = ?, updated_at = ?
+        SET schema_version = ?, revision = ?, current_turn = ?, block_turn_size = ?, block_decay_lambda = ?, graph_enabled = ?, graph_epoch = ?, graph_approved_event_ids_json = ?, updated_at = ?
         WHERE namespace = ?
       `).run(
         snapshot.schemaVersion,
@@ -1216,14 +1255,17 @@ export class SqliteStorage implements StorageAdapter {
         snapshot.currentTurn,
         snapshot.blockTurnSize,
         snapshot.blockDecayLambda,
+        snapshot.graphEnabled === true ? 1 : 0,
+        snapshot.graphEpoch ?? 0,
+        JSON.stringify(snapshot.graphBackfillEventIds ?? []),
         updatedAt,
         namespace,
       );
     } else {
       this.database.prepare(`
         INSERT INTO memory_spaces (
-          namespace, schema_version, revision, current_turn, block_turn_size, block_decay_lambda, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          namespace, schema_version, revision, current_turn, block_turn_size, block_decay_lambda, graph_enabled, graph_epoch, graph_approved_event_ids_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         namespace,
         snapshot.schemaVersion,
@@ -1231,6 +1273,9 @@ export class SqliteStorage implements StorageAdapter {
         snapshot.currentTurn,
         snapshot.blockTurnSize,
         snapshot.blockDecayLambda,
+        snapshot.graphEnabled === true ? 1 : 0,
+        snapshot.graphEpoch ?? 0,
+        JSON.stringify(snapshot.graphBackfillEventIds ?? []),
         updatedAt,
         updatedAt,
       );
@@ -1240,9 +1285,9 @@ export class SqliteStorage implements StorageAdapter {
       INSERT INTO blocks (
         namespace, id, thread_id, sequence, start_turn, end_turn, created_at, should_extract,
         l0_title, l0_tags_json, l1_summary, l2_keypoints_json, l3_condensed, l4_readable,
-        pointer_current_level, pointer_anchor_level, pointer_anchor_block_position, last_lifted_at, last_lifted_by,
+        pointer_current_level, surface_current_level, pointer_anchor_level, pointer_anchor_block_position, last_lifted_at, last_lifted_by,
         processing_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (namespace, id) DO UPDATE SET
         thread_id = excluded.thread_id,
         sequence = excluded.sequence,
@@ -1257,6 +1302,7 @@ export class SqliteStorage implements StorageAdapter {
         l3_condensed = excluded.l3_condensed,
         l4_readable = excluded.l4_readable,
         pointer_current_level = excluded.pointer_current_level,
+        surface_current_level = excluded.surface_current_level,
         pointer_anchor_level = excluded.pointer_anchor_level,
         pointer_anchor_block_position = excluded.pointer_anchor_block_position,
         last_lifted_at = excluded.last_lifted_at,
@@ -1280,6 +1326,7 @@ export class SqliteStorage implements StorageAdapter {
         block.l3Condensed,
         block.l4Readable,
         block.pointerCurrentLevel,
+        block.surfaceCurrentLevel ?? block.pointerCurrentLevel,
         block.pointerAnchorLevel,
         block.pointerAnchorBlockPosition,
         block.lastLiftedAt,
@@ -1695,6 +1742,7 @@ export class SqliteStorage implements StorageAdapter {
     for (const message of snapshot.openTail) if (message.role === 'user') tails.set(message.threadId, (tails.get(message.threadId) ?? 0) + 1);
     this.writeBackgroundWorkTimes(namespace, backgroundWorkTimes({
       ...snapshot, sealableTail: [...tails.values()].some((count) => count >= snapshot.blockTurnSize),
+      ...this.graphSchedulingPolicy(namespace),
     }));
     return nextRevision;
   }
@@ -1795,6 +1843,11 @@ export class SqliteStorage implements StorageAdapter {
         const jobs = row?.jobs_json ? parseJson<Array<GraphProjectionJob | MemoryTopicState['jobs'][number]>>(row.jobs_json, `${kind}.jobs`) : [];
         const job = jobs.find((job) => job.id === id);
         if (!job || job.status !== 'running' || job.attempts !== attempts || job.updatedAt !== claimedAt || !(Date.parse(job.leaseUntil ?? '') > now)) return null;
+        if (kind === 'graph') {
+          const row = this.database.prepare('SELECT graph_enabled, graph_epoch FROM memory_spaces WHERE namespace = ?').get(namespace) as SpaceRow | undefined;
+          const policy = this.graphPolicy?.(namespace) ?? { enabled: Boolean(row?.graph_enabled), paused: false, epoch: row?.graph_epoch ?? 0 };
+          if (!policy.enabled || policy.paused || ('claimEpoch' in job && job.claimEpoch !== undefined && job.claimEpoch !== policy.epoch)) return null;
+        }
         job.leaseUntil = until;
         const update = kind === 'graph' ? 'UPDATE graph_state SET jobs_json = ? WHERE namespace = ?'
           : "UPDATE memory_topic_state SET state_json = json_set(state_json, '$.jobs', json(?)) WHERE namespace = ?";
@@ -1922,6 +1975,7 @@ export class SqliteStorage implements StorageAdapter {
         const agentEvents = await this.loadSchedulingEvents(namespace, 'agent_events');
         if (this.closed) return false;
         const times = backgroundWorkTimes({
+          ...this.graphSchedulingPolicy(namespace),
           blocks: blocks.map((block) => ({ id: block.id, processingStatus: block.processing_status,
             ...(block.should_extract === null ? {} : { shouldExtract: Boolean(block.should_extract) }) })),
           summaryJobs: mapJobs('block_summary_jobs'),
@@ -1949,6 +2003,15 @@ export class SqliteStorage implements StorageAdapter {
       if (this.closed) return false;
     }
     return Boolean(this.database.prepare('SELECT 1 FROM background_work_dirty WHERE rebuild_after <= ? LIMIT 1').get(Date.now()));
+  }
+
+  private graphSchedulingPolicy(namespace: string): { graphEnabled: boolean; graphEpoch?: number; graphBackfillEventIds?: readonly string[] } {
+    const policy = this.graphPolicy?.(namespace);
+    if (policy) return { graphEnabled: policy.enabled && !policy.paused, graphEpoch: policy.epoch,
+      ...(policy.backfillEventIds ? { graphBackfillEventIds: policy.backfillEventIds } : {}) };
+    const row = this.database.prepare('SELECT graph_enabled, graph_epoch, graph_approved_event_ids_json FROM memory_spaces WHERE namespace = ?').get(namespace) as SpaceRow | undefined;
+    return { graphEnabled: Boolean(row?.graph_enabled), graphEpoch: row?.graph_epoch ?? 0,
+      graphBackfillEventIds: parseJson<string[]>(row?.graph_approved_event_ids_json ?? '[]', 'memory_spaces.graph_approved_event_ids_json') };
   }
 
   private async loadSchedulingEvents(namespace: string, table: 'events' | 'agent_events'): Promise<EventCard[]> {
@@ -2059,6 +2122,11 @@ export class SqliteStorage implements StorageAdapter {
         if (!spaceColumns.some(({ name }) => name === 'block_decay_lambda')) {
           this.database.exec('ALTER TABLE memory_spaces ADD COLUMN block_decay_lambda REAL NOT NULL DEFAULT 0.3');
         }
+        if (!spaceColumns.some(({ name }) => name === 'graph_enabled')) {
+          this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1))');
+        }
+        if (!spaceColumns.some(({ name }) => name === 'graph_epoch')) this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_epoch INTEGER NOT NULL DEFAULT 0');
+        if (!spaceColumns.some(({ name }) => name === 'graph_approved_event_ids_json')) this.database.exec("ALTER TABLE memory_spaces ADD COLUMN graph_approved_event_ids_json TEXT NOT NULL DEFAULT '[]'");
         const blockColumns = this.database.prepare("PRAGMA table_info('blocks')").all() as unknown as Array<{ name: string }>;
         if (!blockColumns.some(({ name }) => name === 'thread_id')) {
           this.database.exec('ALTER TABLE blocks ADD COLUMN thread_id TEXT');
@@ -2080,6 +2148,10 @@ export class SqliteStorage implements StorageAdapter {
         }
         if (!blockColumns.some(({ name }) => name === 'processing_status')) {
           this.database.exec("ALTER TABLE blocks ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'ready' CHECK (processing_status IN ('pending', 'ready'))");
+        }
+        if (!blockColumns.some(({ name }) => name === 'surface_current_level')) {
+          this.database.exec('ALTER TABLE blocks ADD COLUMN surface_current_level INTEGER NOT NULL DEFAULT 5');
+          this.database.exec('UPDATE blocks SET surface_current_level = pointer_current_level');
         }
         const eventColumns = this.database.prepare("PRAGMA table_info('events')").all() as unknown as Array<{ name: string }>;
         if (!eventColumns.some(({ name }) => name === 'formed_turn')) {
@@ -2112,6 +2184,31 @@ export class SqliteStorage implements StorageAdapter {
         this.database.exec(THREAD_INDEXES);
         this.rebuildLegacyElementSourceForeignKeys();
         this.enableRawSearchFts();
+        this.database.prepare("INSERT INTO stratagate_graph_policy_migrations (id, completed_at) VALUES (1, ?) ON CONFLICT (id) DO NOTHING").run(nowUtc8());
+        // Match normalizeSnapshot's ready-clock -> sealed-clock cutover. Keep
+        // elapsed decay unchanged, including explicitly lifted anchors. This
+        // runs once, in the same transaction as both schema-version markers.
+        this.database.exec(`
+          WITH pending_counts AS MATERIALIZED (
+            SELECT namespace, thread_id, COUNT(*) AS count FROM blocks
+            WHERE processing_status = 'pending' GROUP BY namespace, thread_id
+          )
+          UPDATE blocks AS target
+          SET pointer_anchor_block_position = pointer_anchor_block_position + (
+            SELECT pending.count FROM pending_counts AS pending
+            WHERE pending.namespace = target.namespace
+              AND pending.thread_id IS target.thread_id
+          )
+          WHERE target.processing_status = 'ready'
+            AND EXISTS (
+              SELECT 1 FROM pending_counts AS pending
+              WHERE pending.namespace = target.namespace AND pending.thread_id IS target.thread_id
+            )
+            AND EXISTS (
+              SELECT 1 FROM memory_spaces AS space
+              WHERE space.namespace = target.namespace AND space.schema_version < 14
+            )
+        `);
         this.database.prepare('UPDATE memory_spaces SET schema_version = ? WHERE schema_version < ?')
           .run(STRATAGATE_STORAGE_SCHEMA_VERSION, STRATAGATE_STORAGE_SCHEMA_VERSION);
         this.database.exec(`PRAGMA user_version = ${STRATAGATE_STORAGE_SCHEMA_VERSION}`);
@@ -2119,6 +2216,16 @@ export class SqliteStorage implements StorageAdapter {
     } else if (version === STRATAGATE_STORAGE_SCHEMA_VERSION) {
       this.immediateTransaction(() => {
         this.database.exec(SCHEMA);
+        if (!this.hasColumn('memory_spaces', 'graph_enabled')) {
+          this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1))');
+        }
+        if (!this.hasColumn('memory_spaces', 'graph_epoch')) this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_epoch INTEGER NOT NULL DEFAULT 0');
+        if (!this.hasColumn('memory_spaces', 'graph_approved_event_ids_json')) this.database.exec("ALTER TABLE memory_spaces ADD COLUMN graph_approved_event_ids_json TEXT NOT NULL DEFAULT '[]'");
+        if (!this.hasColumn('blocks', 'surface_current_level')) {
+          this.database.exec('ALTER TABLE blocks ADD COLUMN surface_current_level INTEGER NOT NULL DEFAULT 5');
+          this.database.exec('UPDATE blocks SET surface_current_level = pointer_current_level');
+        }
+        this.database.prepare("INSERT INTO stratagate_graph_policy_migrations (id, completed_at) VALUES (1, ?) ON CONFLICT (id) DO NOTHING").run(nowUtc8());
         this.database.exec(THREAD_INDEXES);
         this.rebuildLegacyElementSourceForeignKeys();
         this.enableRawSearchFts();
@@ -2138,6 +2245,10 @@ export class SqliteStorage implements StorageAdapter {
       this.database.exec("DELETE FROM persistent_profile_maintenance_baseline WHERE NOT EXISTS (SELECT 1 FROM persistent_profile WHERE value <> '')");
     });
     this.assertSchemaVersion();
+  }
+
+  private hasColumn(table: string, column: string): boolean {
+    return (this.database.prepare(`PRAGMA table_info('${table}')`).all() as unknown as Array<{ name: string }>).some(row => row.name === column);
   }
 
   /**
@@ -2347,7 +2458,7 @@ export class SqliteStorage implements StorageAdapter {
 
   private assertSchemaVersion(): void {
     const version = this.userVersion();
-    if (version !== STRATAGATE_STORAGE_SCHEMA_VERSION && !(this.readonly && version === 12)) {
+    if (version !== STRATAGATE_STORAGE_SCHEMA_VERSION && !(this.readonly && [12, 13].includes(version))) {
       throw new Error(`Unsupported SQLite schema version: ${version}`);
     }
   }

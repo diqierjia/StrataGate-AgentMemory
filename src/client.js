@@ -20,6 +20,9 @@ window.__ModuleLoader__.load({
     const FEEDBACK_AI_PROMPT = '请根据当前会话中 StrataGate 插件的故障、使用疑问或改进建议整理反馈。只用已知事实，不要猜测，未知留空，去除凭据。调用 feedback_prepare 保存本地草稿；新问题传 new_draft=true。诊断由程序自动补充。给我“打开反馈草稿”的链接，我会检查后手动发邮件。'
     const FEEDBACK_SETTINGS_ID = 'stratagate-memory'
     const FEEDBACK_VIEW_ID = 'feedback'
+    const MEMORY_PANEL_ID = 'stratagate-memory'
+    const SIDEBAR_PROMPT_STORAGE_KEY = 'stratagate-dsh.sidebar-prompt.v1'
+    const SIDEBAR_PROMPT_STYLES = `.sg-sidebar-panel-icon{display:block;flex-shrink:0}.sg-sidebar-placement-prompt{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;max-width:100%;font-size:11px;line-height:1.5;color:var(--sg-muted)}.sg-sidebar-placement-text{min-width:0}.sg-memory .sg-sidebar-placement-action{padding:0;border:0;background:transparent;color:var(--sg-accent);font-size:11px;line-height:1.5;cursor:pointer;white-space:nowrap}.sg-sidebar-placement-action:hover{text-decoration:underline}.sg-memory .sg-sidebar-placement-close{display:inline-grid;place-items:center;width:20px;height:20px;flex:none;padding:0;border:0;border-radius:4px;background:transparent;color:var(--sg-muted);font-size:15px;line-height:1;cursor:pointer}.sg-sidebar-placement-close:hover{background:var(--sg-soft);color:var(--sg-text)}`
     let pendingFeedbackNavigation = null
     const feedbackNavigationListeners = new Set()
 
@@ -353,9 +356,9 @@ window.__ModuleLoader__.load({
       .sg-topic-chapter{padding:22px 0 20px;border-bottom:1px solid var(--sg-border)}.sg-topic-chapter-header{display:grid;grid-template-columns:44px minmax(0,1fr);gap:8px}.sg-topic-chapter-number{padding-top:2px;color:color-mix(in srgb,var(--sg-muted) 75%,var(--sg-page));font-size:27px;font-weight:450;line-height:1.35;font-variant-numeric:tabular-nums}.sg-topic-chapter-copy{min-width:0}.sg-topic-chapter-copy h2{margin:0;font-size:17px;font-weight:720;line-height:1.5}.sg-topic-chapter-toggle,.sg-topic-section-toggle,.sg-topic-overview-toggle{display:flex;align-items:baseline;gap:10px;width:100%;min-width:0;padding:0;border:0;background:transparent;text-align:left;cursor:pointer}.sg-topic-chapter-label{flex:0 0 auto;color:var(--sg-muted);font-size:12px;font-weight:560}.sg-topic-chapter-title{min-width:0;overflow-wrap:anywhere;text-wrap:pretty}.sg-directory-chevron{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:0 0 auto;margin-left:auto;color:var(--sg-muted);font-size:18px;line-height:1;transform-origin:center;transition:transform var(--sg-medium) var(--sg-ease)}[aria-expanded="true"]>.sg-directory-chevron{transform:rotate(90deg)}.sg-topic-description{max-width:72ch;margin:4px 0 0;color:var(--sg-muted);font-size:12px;line-height:1.65;overflow-wrap:anywhere}.sg-topic-sections{padding:12px 0 0 52px}.sg-topic-section{margin:0}.sg-topic-section-heading{margin:0;font-size:13px;font-weight:620}.sg-topic-section-toggle{align-items:center;min-height:36px;padding:7px 8px;border-radius:5px}.sg-topic-section-toggle:hover,.sg-topic-overview-toggle:hover,.sg-topic-event:hover{background:var(--sg-soft)}.sg-directory-number{flex:0 0 auto;min-width:3.3em;color:var(--sg-muted);font-size:12px;font-weight:500;font-variant-numeric:tabular-nums}.sg-topic-section-body{margin:2px 0 8px 17px;padding:0 0 2px 16px;border-left:1px solid var(--sg-border)}.sg-topic-overview{margin-bottom:3px}.sg-topic-overview-heading{margin:0;font-size:12px;font-weight:620}.sg-topic-overview-toggle{align-items:center;min-height:33px;padding:6px 8px;border-radius:5px}.sg-topic-overview-text{max-width:72ch;margin:1px 0 10px;padding:0 8px 0 calc(3.3em + 18px);color:var(--sg-muted);font-size:13px;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere}
       .sg-topic-event{display:flex;align-items:center;gap:10px;width:100%;min-width:0;min-height:33px;padding:6px 8px;border:0;border-radius:5px;background:transparent;text-align:left;cursor:pointer}.sg-topic-event-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.sg-topic-event-arrow{flex:0 0 auto;color:var(--sg-muted);font-size:12px;opacity:0;transition:opacity var(--sg-fast) var(--sg-ease)}.sg-topic-event:hover .sg-topic-event-arrow,.sg-topic-event:focus-visible .sg-topic-event-arrow{opacity:1}.sg-topic-show-all{display:block;margin:5px 0 3px;padding:5px 8px;border:0;border-radius:5px;background:transparent;color:var(--sg-accent)!important;font-size:11px!important;cursor:pointer}.sg-topic-show-all:hover{background:var(--sg-soft)}.sg-topic-other-events{margin:7px 8px 0;color:var(--sg-muted);font-size:12px}.sg-topic-other-events>summary{padding:5px 0;cursor:pointer}.sg-topic-no-overview{margin:4px 8px;color:var(--sg-muted);font-size:12px}
       .sg-directory-fold{display:grid;grid-template-rows:0fr;opacity:0;visibility:hidden;transition:grid-template-rows var(--sg-medium) var(--sg-ease),opacity var(--sg-medium) var(--sg-ease),visibility 0s var(--sg-medium)}.sg-directory-fold.open{grid-template-rows:1fr;opacity:1;visibility:visible;transition-delay:0s}.sg-directory-fold-inner{min-height:0;overflow:hidden}.sg-directory-fold:not(.open){pointer-events:none}.sg-topic-bootstrap{margin:14px 0 1px;padding:9px 0 9px 12px;border-left:2px solid var(--sg-accent);transition:border-color var(--sg-medium) var(--sg-ease),background-color var(--sg-medium) var(--sg-ease)}.sg-topic-bootstrap.attention{border-color:var(--sg-warn)}.sg-topic-bootstrap-line{display:flex;align-items:center;gap:8px;min-width:0;font-size:12px;font-variant-numeric:tabular-nums}.sg-topic-bootstrap-line>span:nth-child(2){flex:1}.sg-topic-warning{color:var(--sg-warn)}.sg-topic-bootstrap-copy{margin:3px 0 0 22px;color:var(--sg-muted);font-size:11px;line-height:1.6}.sg-topic-status-details{flex:0 0 auto;padding:2px 4px;border:0;border-radius:4px;background:transparent;color:var(--sg-accent)!important;font-size:11px!important;cursor:pointer}.sg-topic-status-details:hover{background:var(--sg-soft)}.sg-topic-failures{padding:9px 0 0 22px;color:var(--sg-muted);font-size:12px}.sg-topic-failure{padding:7px 0;border-top:1px solid var(--sg-border)}.sg-topic-failure>p{margin:0 0 3px}.sg-topic-failure-technical{margin:4px 8px;font-size:11px}.sg-topic-failure-technical summary{cursor:pointer}.sg-topic-failure-technical p{white-space:pre-wrap;overflow-wrap:anywhere}
-      .sg-topic-pending{padding:20px 0 0}.sg-topic-pending-heading{display:flex;align-items:baseline;gap:10px}.sg-topic-pending-heading h2{margin:0;font-size:13px;font-weight:650}.sg-topic-pending-heading span{color:var(--sg-muted);font-size:11px}.sg-topic-pending>p{margin:4px 0 8px;color:var(--sg-muted);font-size:12px}.sg-topic-pending-mark{width:12px;color:var(--sg-muted);text-align:center}.sg-topic-empty{padding:27px 0;color:var(--sg-muted);font-size:13px}.sg-topic-empty h3{margin:0 0 4px;color:var(--sg-text);font-size:14px;font-weight:650}.sg-topic-empty p{margin:0}.sg-long-tabs{max-width:100%;flex-wrap:wrap}.sg-long-tabs button{padding-inline:16px}
+      .sg-topic-pending{padding:20px 0 0}.sg-topic-pending-heading{display:flex;align-items:baseline;gap:10px}.sg-topic-pending-heading h2{margin:0;font-size:13px;font-weight:650}.sg-topic-pending-heading span{color:var(--sg-muted);font-size:11px}.sg-topic-pending>p{margin:4px 0 8px;color:var(--sg-muted);font-size:12px}.sg-topic-pending-mark{width:12px;color:var(--sg-muted);text-align:center}.sg-topic-empty{padding:27px 0;color:var(--sg-muted);font-size:13px}.sg-topic-empty h3{margin:0 0 4px;color:var(--sg-text);font-size:14px;font-weight:650}.sg-topic-empty p{margin:0}.sg-long-tabs{max-width:100%;flex-wrap:wrap}.sg-long-tabs>button{padding-inline:16px}
       .sg-topic-pending-heading{margin:0}.sg-topic-pending-toggle{display:flex;align-items:center;gap:10px;width:100%;min-width:0;padding:6px 2px;border:0;border-radius:5px;background:transparent;text-align:left;cursor:pointer}.sg-topic-pending-toggle:hover{background:var(--sg-soft)}.sg-topic-pending-toggle>span:first-child{color:var(--sg-text);font-size:13px;font-weight:650}.sg-topic-pending .sg-directory-fold-inner>p{margin:4px 2px 8px;color:var(--sg-muted);font-size:12px}.sg-topic-read-status,.sg-topic-read-error{margin:5px 8px;color:var(--sg-muted);font-size:11px;line-height:1.6}.sg-topic-read-error{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.sg-topic-read-error button{padding:3px 5px;border:0;border-radius:4px;background:transparent;color:var(--sg-accent);font-size:11px;cursor:pointer}.sg-topic-read-error button:hover{background:var(--sg-soft)}.sg-topic-show-all:disabled{color:var(--sg-muted)!important;cursor:wait;opacity:.6}
-      @media(max-width:650px){.sg-topic-chapter-header{grid-template-columns:34px minmax(0,1fr);gap:6px}.sg-topic-chapter-number{font-size:22px}.sg-topic-chapter-copy h2{font-size:15px}.sg-topic-chapter-toggle{flex-wrap:wrap;column-gap:8px;row-gap:0}.sg-topic-chapter-title{flex:1 1 calc(100% - 80px)}.sg-topic-sections{padding-left:23px}.sg-topic-section-body{margin-left:9px;padding-left:8px}.sg-topic-overview-text{padding-left:8px}.sg-topic-bootstrap-line{flex-wrap:wrap}.sg-topic-bootstrap-line>span:nth-child(2){flex-basis:calc(100% - 35px)}.sg-topic-status-details{margin-left:18px}.sg-long-tabs button{padding:7px 12px;font-size:12px}}
+      @media(max-width:650px){.sg-topic-chapter-header{grid-template-columns:34px minmax(0,1fr);gap:6px}.sg-topic-chapter-number{font-size:22px}.sg-topic-chapter-copy h2{font-size:15px}.sg-topic-chapter-toggle{flex-wrap:wrap;column-gap:8px;row-gap:0}.sg-topic-chapter-title{flex:1 1 calc(100% - 80px)}.sg-topic-sections{padding-left:23px}.sg-topic-section-body{margin-left:9px;padding-left:8px}.sg-topic-overview-text{padding-left:8px}.sg-topic-bootstrap-line{flex-wrap:wrap}.sg-topic-bootstrap-line>span:nth-child(2){flex-basis:calc(100% - 35px)}.sg-topic-status-details{margin-left:18px}.sg-long-tabs>button{padding:7px 12px;font-size:12px}}
       .sg-topic-directory{min-width:0;container-name:sg-topic-directory;container-type:inline-size}.sg-topic-section-toggle>span:nth-child(2),.sg-topic-overview-toggle>span:nth-child(2){min-width:0}
       @container sg-topic-directory (max-width:320px){.sg-topic-chapter-header{grid-template-columns:26px minmax(0,1fr);gap:4px}.sg-topic-chapter-number{font-size:19px}.sg-topic-chapter-copy h2{font-size:14px}.sg-topic-chapter-toggle{display:grid;grid-template-columns:minmax(0,1fr) 18px;gap:0 4px}.sg-topic-chapter-label{grid-column:1;font-size:11px}.sg-topic-chapter-title{grid-column:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sg-topic-chapter-toggle>.sg-directory-chevron{grid-column:2;grid-row:2}.sg-topic-sections{padding-left:12px}.sg-topic-section-toggle,.sg-topic-overview-toggle{gap:5px;padding:6px 2px}.sg-topic-section-toggle>span:nth-child(2){flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.sg-topic-section-body{margin-left:0;padding-left:4px}.sg-directory-number{min-width:2.7em;font-size:11px;white-space:nowrap}.sg-topic-overview-text{padding:0 2px;font-size:12px}.sg-topic-event{gap:5px;padding:6px 2px}.sg-topic-event-title{font-size:11px}.sg-topic-description{font-size:11px}.sg-topic-show-all{margin-left:0;padding-left:2px;padding-right:2px;max-width:100%}.sg-topic-failures{padding-left:2px}.sg-topic-bootstrap-copy{margin-left:2px}}
       @container sg-topic-directory (max-width:180px){.sg-topic-chapter-header{grid-template-columns:minmax(0,1fr)}.sg-topic-chapter-number{display:none}.sg-topic-sections{padding-left:0}.sg-topic-section-body{padding-left:0;border-left:0}.sg-topic-section-toggle,.sg-topic-overview-toggle{gap:3px;padding-inline:0;font-size:11px}.sg-directory-number{min-width:0;font-size:10px}.sg-topic-event{gap:3px;padding-inline:0}.sg-topic-event-arrow,.sg-directory-chevron{display:none}.sg-topic-bootstrap{padding-left:5px}.sg-topic-other-events{margin-inline:0}}
@@ -407,25 +410,25 @@ window.__ModuleLoader__.load({
       .sg-backbar{display:flex;align-items:center;min-height:35px;margin:-4px 0 13px}.sg-back{display:inline-flex;align-items:center;gap:6px;margin-left:-7px;padding:6px 7px;border-radius:6px;font-weight:650}.sg-detail-header{padding-bottom:16px;border-bottom:1px solid var(--sg-border)}.sg-detail-section{padding:18px 0;border-bottom:1px solid var(--sg-border)}.sg-detail-section:last-child{border-bottom:0}.sg-section-title{margin:0 0 11px;font-size:14px;font-weight:730}.sg-prose{margin:0;white-space:pre-wrap}.sg-facts{margin:0;padding-left:20px}.sg-facts li+li{margin-top:7px}.sg-related-list{display:flex;flex-direction:column}.sg-related{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border:0;border-bottom:1px solid var(--sg-border);background:transparent;text-align:left}.sg-related-button,.sg-related:where(button){cursor:pointer}.sg-related:last-child{border-bottom:0}.sg-related-name{color:var(--sg-accent)}.sg-related-time{flex:0 0 auto;color:var(--sg-muted);font-size:12px}
       .sg-weight-header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.sg-weight-header .sg-section-title,.sg-long-detail .sg-weight-header h3{margin:0}.sg-weight-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-bottom:10px}.sg-weight-metric{min-width:0;padding:8px 9px;border-radius:7px;background:var(--sg-soft)}.sg-weight-metric span{display:block;color:var(--sg-muted);font-size:10px}.sg-weight-metric strong{display:block;margin-top:2px;font-size:14px;font-weight:740;font-variant-numeric:tabular-nums;white-space:nowrap}.sg-weight-chart{position:relative;padding:8px 8px 4px;border:1px solid var(--sg-border);border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 72%,transparent)}.sg-weight-chart svg{display:block;width:100%;height:auto;min-height:156px}.sg-weight-grid{stroke:var(--sg-border);stroke-width:1}.sg-weight-axis-label{fill:var(--sg-muted);font-size:9px}.sg-weight-line{fill:none;stroke:var(--sg-accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}.sg-weight-node{fill:var(--sg-page);stroke:var(--sg-accent);stroke-width:2}.sg-weight-node.adoption{fill:var(--sg-accent);stroke:var(--sg-page);stroke-width:2.5}.sg-weight-node.current{fill:var(--sg-text);stroke:var(--sg-page);stroke-width:2}.sg-weight-node-label{fill:var(--sg-text);font-size:9px;font-weight:680}.sg-weight-note{margin:7px 0 0;color:var(--sg-muted);font-size:10px;line-height:1.5}.sg-weight-retrieval{margin-top:6px;color:var(--sg-muted);font-size:10px}.sg-weight-help{margin-top:10px;border-top:1px solid var(--sg-border)}.sg-weight-help summary{padding:9px 2px 2px;color:var(--sg-muted);font-size:11px;font-weight:650;cursor:pointer}.sg-weight-help[open] summary{color:var(--sg-text)}.sg-weight-help-body{padding:8px 0 2px}.sg-weight-help-copy{margin:0 0 7px;color:var(--sg-muted);font-size:11px;line-height:1.58}.sg-weight-demo{padding:8px;border-radius:8px;background:var(--sg-soft)}.sg-weight-demo-label{display:block;margin-bottom:4px;color:var(--sg-muted);font-size:9px}.sg-weight-demo svg{display:block;width:100%;height:76px}.sg-weight-demo path{fill:none;stroke:var(--sg-accent);stroke-width:2}.sg-weight-demo circle{fill:var(--sg-accent)}
       .sg-source-label{display:flex;align-items:center;gap:8px}.sg-source-icon{color:var(--sg-muted)}.sg-tech{margin-top:13px}.sg-tech summary{color:var(--sg-muted);font-size:12px;cursor:pointer}.sg-tech-body{margin-top:10px;padding:11px;border-radius:7px;background:var(--sg-soft);font-size:12px}.sg-tech-row{display:grid;grid-template-columns:88px minmax(0,1fr);gap:9px;padding:3px 0}.sg-code{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.sg-raw-message{padding-top:10px;margin-top:10px;border-top:1px solid var(--sg-border)}
-      .sg-result-count{margin:0 0 9px;color:var(--sg-muted);font-size:12px}.sg-result-event{padding:8px 0;border-bottom:1px solid var(--sg-border)}.sg-result-event:last-child{border-bottom:0}.sg-pipeline{display:flex;flex-direction:column}.sg-stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:9px 0;border-bottom:1px solid var(--sg-border)}.sg-stage:last-child{border-bottom:0}.sg-stage-value{font-size:12px}.sg-stage-value.done{color:var(--sg-good)}.sg-stage-value.processing{color:var(--sg-accent)}.sg-stage-value.failed{color:var(--sg-danger)}.sg-stage-value.waiting{color:var(--sg-muted)}.sg-lambda-control{display:flex;align-items:center;justify-content:flex-end;gap:7px}.sg-number-input,.sg-effort-select{padding:4px 5px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface)}.sg-number-input{width:82px;text-align:right}.sg-effort-button{padding:4px 6px;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer;font-size:12px}.sg-effort-button:hover{background:var(--sg-soft);color:var(--sg-accent)}.sg-setting-switch{position:relative;width:38px;height:22px;padding:0;border:1px solid var(--sg-border);border-radius:999px;background:var(--sg-soft);cursor:pointer}.sg-setting-switch:before{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--sg-muted);transition:transform var(--sg-fast) var(--sg-ease),background-color var(--sg-fast) var(--sg-ease)}.sg-setting-switch[aria-checked="true"]{border-color:var(--sg-accent);background:var(--sg-accent)}.sg-setting-switch[aria-checked="true"]:before{background:#fff;transform:translateX(16px)}.sg-setting-switch:disabled{cursor:not-allowed;opacity:.5}.sg-setting-note{margin:7px 0 11px;color:var(--sg-muted);font-size:12px}.sg-display-settings{display:grid;gap:2px}.sg-display-setting{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:14px;padding:13px 0;border-bottom:1px solid var(--sg-border)}.sg-display-setting.child{padding-left:18px}.sg-display-setting-copy{display:grid;gap:4px}.sg-display-setting-title{font-size:13px;font-weight:680}.sg-display-setting-description{max-width:62ch;color:var(--sg-muted);font-size:11px;line-height:1.5}.sg-display-disabled{opacity:.58}.sg-settings-group{margin-top:24px;padding-top:18px;border-top:1px solid var(--sg-border)}.sg-settings-group:first-of-type{margin-top:0;padding-top:0;border-top:0}.sg-settings-group-title{margin:0;font-size:15px;letter-spacing:-.01em}.sg-settings-group-copy{margin:4px 0 11px;color:var(--sg-muted);font-size:12px}.sg-settings-panel{padding:2px 13px 12px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-storage-card{padding:13px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-storage-label{display:block;margin-bottom:6px;font-size:13px;font-weight:700}.sg-storage-path{display:block;width:100%;padding:9px 10px;border-radius:7px;background:var(--sg-soft);color:var(--sg-text);font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sg-storage-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}.sg-storage-button{padding:6px 9px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);cursor:pointer;font-size:12px;font-weight:650}.sg-storage-button:hover{border-color:color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));color:var(--sg-accent);transform:translateY(-1px)}.sg-storage-button:disabled{cursor:not-allowed;opacity:.5}.sg-storage-feedback{min-height:18px;margin:7px 0 -3px;color:var(--sg-good);font-size:12px}.sg-storage-feedback.failed{color:var(--sg-danger)}.sg-settings-menu{margin-top:10px}.sg-setting-suggestion{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;margin:4px 0 10px;border-radius:7px;background:var(--sg-soft);font-size:12px}.sg-save-button{align-self:flex-end;padding:7px 12px;margin-top:12px;border:0;border-radius:6px;background:var(--sg-accent);color:white;cursor:pointer}.sg-save-button:disabled{opacity:.5;cursor:not-allowed}.sg-safe-note{padding:11px 12px;margin-bottom:12px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-weight:650}.sg-error-note{margin:8px 0 0;color:var(--sg-muted);font-size:12px}.sg-job-list{display:grid;gap:10px}.sg-job{padding:12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface)}.sg-job-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.sg-job-title{margin:0;font-size:14px}.sg-job-meta{display:grid;grid-template-columns:112px minmax(0,1fr);gap:5px 10px;margin:11px 0;color:var(--sg-muted);font-size:12px}.sg-job-meta dd,.sg-job-meta dt{min-width:0;margin:0}.sg-job-meta dd{color:var(--sg-text);overflow-wrap:anywhere}.sg-job-error{max-height:150px;margin:9px 0;padding:9px;overflow:auto;border-radius:6px;background:var(--sg-danger-soft);color:var(--sg-danger)}.sg-job-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}.sg-job-actions .sg-save-button{margin-top:0}.sg-status-feedback{margin:9px 0 0;color:var(--sg-muted);font-size:12px}.sg-status-feedback.failed{color:var(--sg-danger)}
-      .sg-process-summary{padding:12px 13px;margin-bottom:14px;border-radius:8px;background:var(--sg-good-soft);color:var(--sg-good)}.sg-process-summary strong{display:block;font-size:13px}.sg-process-summary span{display:block;margin-top:2px;font-size:12px}.sg-process-groups{display:grid;gap:14px}.sg-process-group{overflow:hidden;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-surface)}.sg-process-group-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-soft) 65%,transparent)}.sg-process-group-title{margin:0;font-size:14px;font-weight:730}.sg-process-group-count{color:var(--sg-muted);font-size:11px}.sg-process-card{padding:13px}.sg-process-card+.sg-process-card{border-top:1px solid var(--sg-border)}.sg-process-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-process-range{font-weight:700}.sg-process-state{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:680}.sg-process-state.processing{color:var(--sg-accent)}.sg-process-state.waiting{color:var(--sg-muted)}.sg-process-state.failed{color:var(--sg-warn)}.sg-process-stages{display:grid;gap:7px;margin-top:12px}.sg-process-stage{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;color:var(--sg-muted);font-size:12px}.sg-process-stage-name{color:var(--sg-text)}.sg-process-stage-state.done{color:var(--sg-good)}.sg-process-stage-state.processing{color:var(--sg-accent)}.sg-process-stage-state.failed{color:var(--sg-danger)}.sg-process-stage-state.waiting,.sg-process-stage-state.skipped{color:var(--sg-muted)}.sg-process-tech{margin-top:12px;padding-top:9px;border-top:1px solid var(--sg-border)}.sg-process-tech>summary{color:var(--sg-muted);font-size:11px;cursor:pointer}.sg-process-job{padding:10px 0}.sg-process-job+.sg-process-job{border-top:1px solid var(--sg-border)}.sg-process-job-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}.sg-process-job-meta{margin-top:5px;color:var(--sg-muted);font-size:11px}.sg-process-job .sg-job-error{font-size:11px}.sg-process-job-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px}.sg-process-job-actions .sg-save-button{margin:0}.sg-process-footer{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:15px}.sg-process-footer .sg-quiet-button{padding:7px 9px;border-radius:6px;color:var(--sg-accent)}.sg-process-footer .sg-status-feedback{margin:0}
+      .sg-result-count{margin:0 0 9px;color:var(--sg-muted);font-size:12px}.sg-result-event{padding:8px 0;border-bottom:1px solid var(--sg-border)}.sg-result-event:last-child{border-bottom:0}.sg-pipeline{display:flex;flex-direction:column}.sg-stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:9px 0;border-bottom:1px solid var(--sg-border)}.sg-stage:last-child{border-bottom:0}.sg-stage-value{font-size:12px}.sg-stage-value.done{color:var(--sg-good)}.sg-stage-value.processing{color:var(--sg-accent)}.sg-stage-value.failed{color:var(--sg-danger)}.sg-stage-value.waiting{color:var(--sg-muted)}.sg-lambda-control{display:flex;align-items:center;justify-content:flex-end;gap:7px}.sg-number-input,.sg-effort-select{padding:4px 5px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface)}.sg-number-input{width:82px;text-align:right}.sg-effort-button{padding:4px 6px;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer;font-size:12px}.sg-effort-button:hover{background:var(--sg-soft);color:var(--sg-accent)}.sg-setting-switch{position:relative;width:38px;height:22px;padding:0;border:1px solid color-mix(in srgb,var(--sg-muted) 58%,var(--sg-border));border-radius:999px;background:color-mix(in srgb,var(--sg-muted) 18%,var(--sg-surface));cursor:pointer;box-shadow:inset 0 1px 2px color-mix(in srgb,var(--sg-text) 12%,transparent)}.sg-setting-switch:before{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--sg-muted);box-shadow:0 1px 2px color-mix(in srgb,var(--sg-text) 22%,transparent);transition:transform var(--sg-fast) var(--sg-ease),background-color var(--sg-fast) var(--sg-ease)}.sg-setting-switch[aria-checked="true"]{border-color:var(--sg-accent);background:var(--sg-accent);box-shadow:none}.sg-setting-switch[aria-checked="true"]:before{background:#fff;transform:translateX(16px)}.sg-setting-switch:disabled{cursor:not-allowed;opacity:.5}.sg-setting-note{margin:7px 0 11px;color:var(--sg-muted);font-size:12px}.sg-display-settings{display:grid;gap:2px}.sg-display-setting{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:14px;padding:13px 0;border-bottom:1px solid var(--sg-border)}.sg-display-setting.child{padding-left:18px}.sg-display-setting-copy{display:grid;gap:4px}.sg-display-setting-title{font-size:13px;font-weight:680}.sg-display-setting-description{max-width:62ch;color:var(--sg-muted);font-size:11px;line-height:1.5}.sg-display-disabled{opacity:.58}.sg-settings-group{margin-top:24px;padding-top:18px;border-top:1px solid var(--sg-border)}.sg-settings-group:first-of-type{margin-top:0;padding-top:0;border-top:0}.sg-settings-group-title{margin:0;font-size:15px;letter-spacing:-.01em}.sg-settings-group-copy{margin:4px 0 11px;color:var(--sg-muted);font-size:12px}.sg-settings-panel{padding:2px 13px 12px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-storage-card{padding:13px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-storage-label{display:block;margin-bottom:6px;font-size:13px;font-weight:700}.sg-storage-path{display:block;width:100%;padding:9px 10px;border-radius:7px;background:var(--sg-soft);color:var(--sg-text);font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sg-storage-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}.sg-storage-button{padding:6px 9px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);cursor:pointer;font-size:12px;font-weight:650}.sg-storage-button:hover{border-color:color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));color:var(--sg-accent);transform:translateY(-1px)}.sg-storage-button:disabled{cursor:not-allowed;opacity:.5}.sg-storage-feedback{min-height:18px;margin:7px 0 -3px;color:var(--sg-good);font-size:12px}.sg-storage-feedback.failed{color:var(--sg-danger)}.sg-settings-menu{margin-top:10px}.sg-setting-suggestion{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;margin:4px 0 10px;border-radius:7px;background:var(--sg-soft);font-size:12px}.sg-save-button{align-self:flex-end;padding:7px 12px;margin-top:12px;border:0;border-radius:6px;background:var(--sg-accent);color:white;cursor:pointer}.sg-save-button:disabled{opacity:.5;cursor:not-allowed}.sg-safe-note{padding:11px 12px;margin-bottom:12px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-weight:650}.sg-error-note{margin:8px 0 0;color:var(--sg-muted);font-size:12px}.sg-job-list{display:grid;gap:10px}.sg-job{padding:12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface)}.sg-job-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.sg-job-title{margin:0;font-size:14px}.sg-job-meta{display:grid;grid-template-columns:112px minmax(0,1fr);gap:5px 10px;margin:11px 0;color:var(--sg-muted);font-size:12px}.sg-job-meta dd,.sg-job-meta dt{min-width:0;margin:0}.sg-job-meta dd{color:var(--sg-text);overflow-wrap:anywhere}.sg-job-error{max-height:150px;margin:9px 0;padding:9px;overflow:auto;border-radius:6px;background:var(--sg-danger-soft);color:var(--sg-danger)}.sg-job-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}.sg-job-actions .sg-save-button{margin-top:0}.sg-status-feedback{margin:9px 0 0;color:var(--sg-muted);font-size:12px}.sg-status-feedback.failed{color:var(--sg-danger)}
+      .sg-process-summary{padding:12px 13px;margin-bottom:14px;border-radius:8px;background:var(--sg-soft);color:var(--sg-text)}.sg-process-summary strong{display:block;font-size:13px}.sg-process-summary span{display:block;margin-top:2px;font-size:12px}.sg-process-groups{display:grid;gap:14px}.sg-process-group{overflow:hidden;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-surface)}.sg-process-group-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-soft) 65%,transparent)}.sg-process-group-title{margin:0;font-size:14px;font-weight:730}.sg-process-group-count{color:var(--sg-muted);font-size:11px}.sg-process-card{padding:13px}.sg-process-card+.sg-process-card{border-top:1px solid var(--sg-border)}.sg-process-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-process-range{font-weight:700}.sg-process-state{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:680}.sg-process-state.processing{color:var(--sg-accent)}.sg-process-state.waiting{color:var(--sg-muted)}.sg-process-state.failed{color:var(--sg-warn)}.sg-process-stages{display:grid;gap:7px;margin-top:12px}.sg-process-stage{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;color:var(--sg-muted);font-size:12px}.sg-process-stage-name{color:var(--sg-text)}.sg-process-stage-state.done{color:var(--sg-good)}.sg-process-stage-state.processing{color:var(--sg-accent)}.sg-process-stage-state.failed{color:var(--sg-danger)}.sg-process-stage-state.waiting,.sg-process-stage-state.skipped{color:var(--sg-muted)}.sg-process-tech{margin-top:12px;padding-top:9px;border-top:1px solid var(--sg-border)}.sg-process-tech>summary{color:var(--sg-muted);font-size:11px;cursor:pointer}.sg-process-job{padding:10px 0}.sg-process-job+.sg-process-job{border-top:1px solid var(--sg-border)}.sg-process-job-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}.sg-process-job-meta{margin-top:5px;color:var(--sg-muted);font-size:11px}.sg-process-job .sg-job-error{font-size:11px}.sg-process-job-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px}.sg-process-job-actions .sg-save-button{margin:0}.sg-process-footer{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:15px}.sg-process-footer .sg-quiet-button{padding:7px 9px;border-radius:6px;color:var(--sg-accent)}.sg-process-footer .sg-status-feedback{margin:0}
       .sg-process-notice{padding:12px 13px;margin:0 0 14px;border:1px solid color-mix(in srgb,var(--sg-warn) 30%,var(--sg-border));border-radius:8px;background:var(--sg-warn-soft)}.sg-process-notice strong{display:block;color:var(--sg-text);font-size:13px}.sg-process-notice span{display:block;margin-top:3px;color:var(--sg-muted);font-size:12px}.sg-process-unavailable{padding:24px 14px;text-align:center;color:var(--sg-muted)}.sg-process-unavailable strong{display:block;color:var(--sg-text);font-size:14px}.sg-process-unavailable span{display:block;margin-top:5px;font-size:12px}
       .sg-menu{display:grid;gap:7px}.sg-menu-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:11px;width:100%;padding:12px;border:1px solid transparent;border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 48%,transparent);text-align:left;cursor:pointer}.sg-menu-row:hover{border-color:color-mix(in srgb,var(--sg-accent) 22%,var(--sg-border));background:color-mix(in srgb,var(--sg-accent) 6%,var(--sg-surface));transform:translateY(-1px);box-shadow:0 8px 20px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-menu-row:hover .sg-menu-title,.sg-menu-row:hover .sg-chevron{color:var(--sg-accent)}.sg-menu-icon{width:32px;height:32px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--sg-accent) 14%,var(--sg-border));border-radius:8px;background:var(--sg-soft);color:var(--sg-muted);font-weight:700}.sg-menu-title{font-weight:700}.sg-menu-subtitle{color:var(--sg-muted);font-size:12px}.sg-counts{display:flex;gap:22px;padding:5px 0 18px;border-bottom:1px solid var(--sg-border)}.sg-count-value{font-size:22px;font-weight:760;letter-spacing:-.03em}.sg-count-label{color:var(--sg-muted);font-size:12px}.sg-structured-group{padding-top:17px}.sg-raw-group{padding:12px 0;border-bottom:1px solid var(--sg-border)}.sg-raw-group summary{cursor:pointer;font-weight:680}.sg-raw-json{max-height:360px;padding:11px;margin:10px 0 0;overflow:auto;border-radius:7px;background:var(--sg-soft)}
       .sg-import-card{padding:15px;border:1px solid color-mix(in srgb,var(--sg-accent) 22%,var(--sg-border));border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 72%,transparent);box-shadow:0 8px 24px color-mix(in srgb,var(--sg-text) 5%,transparent)}.sg-import-card textarea{width:100%;min-height:270px;padding:11px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page);resize:vertical;outline:0;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.sg-import-card textarea:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-import-actions{display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap}.sg-import-button{padding:8px 13px;border:1px solid var(--sg-accent);border-radius:7px;background:var(--sg-accent);color:#fff;cursor:pointer;font-weight:680}.sg-import-button:disabled{cursor:wait;opacity:.6}.sg-import-hint{margin:8px 0 0;color:var(--sg-muted);font-size:12px}.sg-import-result{margin-top:12px;padding:10px 11px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-size:12px}.sg-import-error{margin-top:12px;padding:10px 11px;border-radius:7px;background:var(--sg-danger-soft);color:var(--sg-danger);font-size:12px}
-      .sg-import-overlay{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.52);backdrop-filter:blur(2px);animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-import-dialog{width:min(720px,calc(100vw - 28px));max-height:calc(100vh - 36px);overflow:auto;padding:14px;border:1px solid color-mix(in srgb,var(--sg-border) 90%,#fff 10%);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.42)}.sg-import-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}.sg-import-dialog-title{margin:0;font-size:18px;font-weight:760}.sg-import-step{padding:12px;margin-top:10px;border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 78%,transparent)}.sg-import-step-head{display:flex;align-items:center;gap:9px;margin-bottom:9px}.sg-import-step-num{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--sg-text);color:var(--sg-page);font-weight:760}.sg-import-step-title{font-weight:720}.sg-import-prompt{max-height:185px;padding:10px;overflow:auto;border-radius:7px;background:var(--sg-page);color:var(--sg-muted);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.sg-import-dialog .sg-import-card{padding:0;border:0;box-shadow:none;background:transparent}.sg-import-dialog .sg-import-card textarea{min-height:165px;background:var(--sg-page)}.sg-import-dialog-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}.sg-import-cancel{padding:8px 18px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;cursor:pointer}.sg-import-dialog .sg-import-button{padding:8px 18px}.sg-import-copy{margin-left:auto;padding:6px 11px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);cursor:pointer;font-size:12px}.sg-import-copy:hover{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-import-loading{color:var(--sg-muted);font-size:12px}.sg-import-preview{display:grid;gap:8px;margin-top:10px}.sg-import-preview-item{padding:10px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page)}.sg-import-preview-title{font-weight:700}.sg-import-preview-meta{display:flex;gap:8px;margin-top:5px;color:var(--sg-muted);font-size:12px}.sg-import-preview-reason{margin-top:5px;font-size:12px}.sg-import-review{display:flex;gap:7px;align-items:flex-start;margin-top:8px;color:var(--sg-warn);font-size:12px}
+      .sg-import-overlay{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.52);backdrop-filter:blur(2px);animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-import-dialog{width:min(720px,calc(100vw - 28px));max-height:calc(100vh - 36px);overflow:auto;padding:14px;border:1px solid color-mix(in srgb,var(--sg-border) 90%,#fff 10%);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.42)}.sg-import-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}.sg-import-dialog-title{margin:0;font-size:18px;font-weight:760}.sg-import-step{padding:12px;margin-top:10px;border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 78%,transparent)}.sg-import-step-head{display:flex;align-items:center;gap:9px;margin-bottom:9px}.sg-import-step-num{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--sg-text);color:var(--sg-page);font-weight:760}.sg-import-step-title{font-weight:720}.sg-import-prompt{max-height:185px;padding:10px;overflow:auto;border-radius:7px;background:var(--sg-page);color:var(--sg-muted);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.sg-import-dialog .sg-import-card{padding:0;border:0;box-shadow:none;background:transparent}.sg-import-dialog .sg-import-card textarea{min-height:165px;background:var(--sg-page)}.sg-import-dialog-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}.sg-import-cancel{padding:8px 18px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;cursor:pointer}.sg-import-dialog .sg-import-button{padding:8px 18px}.sg-import-copy{margin-left:auto;padding:6px 11px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);cursor:pointer;font-size:12px}.sg-import-copy:hover{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-import-loading{color:var(--sg-muted);font-size:12px}.sg-import-preview{display:grid;gap:8px;margin-top:10px}.sg-import-preview-item{padding:10px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page)}.sg-import-preview-content{margin-top:7px;padding:8px;border-radius:6px;background:var(--sg-surface);font-size:12px;line-height:1.55}.sg-import-preview-content strong{display:block;margin-bottom:3px}.sg-import-preview-title{font-weight:700}.sg-import-preview-meta{display:flex;gap:8px;margin-top:5px;color:var(--sg-muted);font-size:12px}.sg-import-preview-reason{margin-top:5px;font-size:12px}.sg-import-review{display:flex;gap:7px;align-items:flex-start;margin-top:8px;color:var(--sg-warn);font-size:12px}
       .sg-audit{padding:14px 0;border-bottom:1px solid var(--sg-border)}.sg-audit summary{cursor:pointer}.sg-audit-body{margin-top:10px}.sg-audit-evidence{margin-top:9px}.sg-star{padding:14px 0;margin-top:14px;border-top:1px solid var(--sg-border)}.sg-star-actions{display:flex;gap:10px;align-items:center;margin-top:8px}.sg-link{color:var(--sg-accent);text-decoration:none}.sg-quiet-button{padding:5px 7px;border-radius:5px;color:var(--sg-muted);font-size:12px}.sg-pagination{display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 0;color:var(--sg-muted);font-size:12px}.sg-page-button{padding:6px 10px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);cursor:pointer}.sg-page-button:hover:not(:disabled){border-color:var(--sg-accent);color:var(--sg-accent)}.sg-page-button:disabled{cursor:not-allowed;opacity:.45}.sg-page-error{color:var(--sg-danger)}
       .sg-decay-overview{padding:15px 16px 13px;margin-bottom:12px;border:1px solid color-mix(in srgb,var(--sg-accent) 20%,var(--sg-border));border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--sg-surface) 88%,transparent),color-mix(in srgb,var(--sg-accent) 4%,var(--sg-surface)));box-shadow:0 8px 24px color-mix(in srgb,var(--sg-text) 5%,transparent)}.sg-decay-title{margin:0;font-size:14px;font-weight:740;letter-spacing:-.012em}.sg-decay-copy{margin:3px 0 12px;color:var(--sg-muted);font-size:12px}.sg-distribution{display:flex;align-items:stretch;gap:4px;min-width:0;overflow-x:auto;padding:2px 0 3px}.sg-level-chip{display:grid;place-items:center;min-width:39px;height:38px;padding:0 10px;border:1px solid color-mix(in srgb,var(--sg-accent) 36%,var(--sg-border));border-radius:7px;font-weight:740;white-space:nowrap;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--sg-surface) 55%,transparent)}.sg-level-chip:hover{transform:translateY(-2px)}.sg-level-chip[data-level="0"],.sg-level-badge[data-level="0"],.sg-layer-item.current[data-level="0"]{background:var(--sg-level-0)}.sg-level-chip[data-level="1"],.sg-level-badge[data-level="1"],.sg-layer-item.current[data-level="1"]{background:var(--sg-level-1)}.sg-level-chip[data-level="2"],.sg-level-badge[data-level="2"],.sg-layer-item.current[data-level="2"]{background:var(--sg-level-2)}.sg-level-chip[data-level="3"],.sg-level-badge[data-level="3"],.sg-layer-item.current[data-level="3"]{background:var(--sg-level-3)}.sg-level-chip[data-level="4"],.sg-level-badge[data-level="4"],.sg-layer-item.current[data-level="4"]{background:var(--sg-level-4)}.sg-level-chip[data-level="5"],.sg-level-badge[data-level="5"],.sg-layer-item.current[data-level="5"]{background:var(--sg-level-5)}.sg-open-chip{min-width:116px;border-style:dashed;background:transparent;color:var(--sg-text);font-weight:650;box-shadow:none}.sg-time-direction{display:flex;align-items:center;gap:9px;margin-top:9px;color:var(--sg-muted);font-size:11px}.sg-time-line{height:1px;flex:1;background:linear-gradient(90deg,var(--sg-border),var(--sg-accent))}.sg-overview-meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;color:var(--sg-muted);font-size:12px}
-      .sg-block-list{position:relative;border:1px solid var(--sg-border);border-radius:12px;background:color-mix(in srgb,var(--sg-surface) 56%,transparent);overflow:hidden}.sg-block-header,.sg-block-toggle{display:grid;grid-template-columns:88px 98px minmax(128px,1fr) 116px 24px;align-items:center;gap:8px;width:100%;min-width:0}.sg-block-header{padding:9px 12px;border-bottom:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-soft) 48%,transparent);color:var(--sg-muted);font-size:11px}.sg-block-unit+.sg-block-unit{border-top:1px solid var(--sg-border)}.sg-block-toggle{padding:11px 12px;border:0;background:transparent;text-align:left;cursor:pointer}.sg-block-toggle:hover,.sg-block-toggle[aria-expanded="true"]{background:color-mix(in srgb,var(--sg-accent) 6%,transparent)}.sg-block-toggle:hover .sg-row-chevron{color:var(--sg-accent);transform:translateX(2px)}.sg-block-toggle[aria-expanded="true"] .sg-row-chevron{color:var(--sg-accent);transform:rotate(180deg)}.sg-level-cell{display:flex;align-items:center;gap:6px;min-width:0}.sg-level-badge{display:inline-grid;place-items:center;min-width:38px;height:25px;padding:0 8px;border:1px solid color-mix(in srgb,var(--sg-accent) 42%,var(--sg-border));border-radius:6px;font-weight:740}.sg-lifted{padding:1px 5px;border:1px solid var(--sg-border);border-radius:5px;color:var(--sg-muted);font-size:10px;white-space:nowrap}.sg-block-name{font-weight:690}.sg-block-distance,.sg-block-turn{color:var(--sg-muted);font-size:12px}.sg-row-chevron{color:var(--sg-muted);font-size:17px;text-align:right;transition:color var(--sg-fast) var(--sg-ease),transform var(--sg-medium) var(--sg-ease)}.sg-open-row{cursor:default}.sg-open-row:hover{background:transparent}.sg-open-badge{display:inline-flex;align-items:center;height:25px;padding:0 8px;border:1px dashed var(--sg-muted);border-radius:6px;white-space:nowrap}.sg-block-expanded{padding:0 10px 11px;transform-origin:top;animation:sg-expand var(--sg-medium) var(--sg-ease) both}.sg-layer-panel{padding:11px;border:1px solid var(--sg-border);border-radius:9px;background:color-mix(in srgb,var(--sg-page) 82%,var(--sg-surface));box-shadow:inset 0 1px 0 color-mix(in srgb,var(--sg-surface) 70%,transparent)}.sg-layer-heading{display:flex;justify-content:space-between;gap:10px;margin-bottom:8px}.sg-layer-heading strong{font-size:13px}.sg-layer-heading span{color:var(--sg-muted);font-size:11px}.sg-layer-stack{display:flex;flex-direction:column;gap:5px}.sg-layer-hover{position:relative}.sg-layer-hover:after{content:"";position:absolute;left:100%;top:0;width:12px;height:100%}.sg-layer-item{position:relative;display:grid;grid-template-columns:39px minmax(0,1fr) 30px;align-items:stretch;min-height:39px;border:1px solid var(--sg-border);border-radius:7px;background:color-mix(in srgb,var(--sg-soft) 55%,transparent);color:var(--sg-muted)}.sg-layer-item:hover{border-color:color-mix(in srgb,var(--sg-accent) 34%,var(--sg-border));transform:translateX(2px)}.sg-layer-item.current{border-color:color-mix(in srgb,var(--sg-accent) 72%,var(--sg-border));color:var(--sg-text);box-shadow:inset 2px 0 0 var(--sg-accent)}.sg-layer-label{display:grid;place-items:center;border-right:1px solid var(--sg-border);font-weight:720;color:inherit}.sg-layer-preview{padding:8px 10px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px}.sg-layer-more{width:30px;border:0;border-left:1px solid transparent;border-radius:0 6px 6px 0;background:transparent;color:inherit;cursor:pointer;font-weight:800;letter-spacing:1px}.sg-layer-more:hover,.sg-layer-more[aria-expanded="true"]{background:color-mix(in srgb,var(--sg-accent) 14%,transparent)}.sg-layer-menu{position:absolute;right:3px;top:34px;z-index:14;min-width:132px;padding:4px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-surface);box-shadow:var(--sg-shadow);animation:sg-pop var(--sg-fast) var(--sg-ease) both}.sg-layer-menu button{width:100%;padding:7px 9px;border:0;border-radius:5px;background:transparent;text-align:left;cursor:pointer;white-space:nowrap}.sg-layer-menu button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-accent)}.sg-layer-menu button:disabled{cursor:not-allowed;opacity:.45}.sg-layer-popover{position:absolute;left:calc(100% + 11px);top:-7px;z-index:12;width:min(360px,46vw);max-height:340px;padding:12px;overflow:auto;border:1px solid color-mix(in srgb,var(--sg-accent) 32%,var(--sg-border));border-radius:10px;background:var(--sg-surface);box-shadow:var(--sg-shadow);visibility:hidden;opacity:0;transform:translateX(-4px);transition:opacity var(--sg-fast) var(--sg-ease),transform var(--sg-fast) var(--sg-ease),visibility var(--sg-fast)}.sg-layer-hover:hover .sg-layer-popover,.sg-layer-item:focus-visible + .sg-layer-popover{visibility:visible;opacity:1;transform:translateX(0)}.sg-layer-popover strong{display:block;margin-bottom:7px}.sg-layer-full{margin:0;white-space:pre-wrap;font:12px/1.55 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif}.sg-inline-error{padding:7px 9px;margin-bottom:7px;border-radius:6px;background:var(--sg-danger-soft);color:var(--sg-danger);font-size:12px}
+      .sg-block-list{position:relative;border:1px solid var(--sg-border);border-radius:12px;background:color-mix(in srgb,var(--sg-surface) 56%,transparent);overflow:hidden}.sg-block-header,.sg-block-toggle{display:grid;grid-template-columns:88px 98px minmax(128px,1fr) 116px 24px;align-items:center;gap:8px;width:100%;min-width:0}.sg-block-header{padding:9px 12px;border-bottom:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-soft) 48%,transparent);color:var(--sg-muted);font-size:11px}.sg-block-unit+.sg-block-unit{border-top:1px solid var(--sg-border)}.sg-block-toggle{padding:11px 12px;border:0;background:transparent;text-align:left;cursor:pointer}.sg-block-toggle:hover,.sg-block-toggle[aria-expanded="true"]{background:color-mix(in srgb,var(--sg-accent) 6%,transparent)}.sg-block-toggle:hover .sg-row-chevron{color:var(--sg-accent);transform:translateX(2px)}.sg-block-toggle[aria-expanded="true"] .sg-row-chevron{color:var(--sg-accent);transform:rotate(180deg)}.sg-level-cell{display:flex;align-items:center;gap:6px;min-width:0}.sg-level-badge{display:inline-grid;place-items:center;min-width:38px;height:25px;padding:0 8px;border:1px solid color-mix(in srgb,var(--sg-accent) 42%,var(--sg-border));border-radius:6px;font-weight:740}.sg-lifted{padding:1px 5px;border:1px solid var(--sg-border);border-radius:5px;color:var(--sg-muted);font-size:10px;white-space:nowrap}.sg-block-name{font-weight:690}.sg-block-distance,.sg-block-turn{color:var(--sg-muted);font-size:12px}.sg-row-chevron{color:var(--sg-muted);font-size:17px;text-align:right;transition:color var(--sg-fast) var(--sg-ease),transform var(--sg-medium) var(--sg-ease)}.sg-open-row{cursor:default}.sg-open-row:hover{background:transparent}.sg-open-badge{display:inline-flex;align-items:center;height:25px;padding:0 8px;border:1px dashed var(--sg-muted);border-radius:6px;white-space:nowrap}.sg-block-expanded{padding:0 10px 11px;transform-origin:top;animation:sg-expand var(--sg-medium) var(--sg-ease) both}.sg-layer-panel{padding:11px;border:1px solid var(--sg-border);border-radius:9px;background:color-mix(in srgb,var(--sg-page) 82%,var(--sg-surface));box-shadow:inset 0 1px 0 color-mix(in srgb,var(--sg-surface) 70%,transparent)}.sg-layer-heading{display:flex;justify-content:space-between;gap:10px;margin-bottom:8px}.sg-layer-heading strong{font-size:13px}.sg-layer-heading span{color:var(--sg-muted);font-size:11px}.sg-layer-stack{display:flex;flex-direction:column;gap:5px}.sg-layer-hover{position:relative}.sg-layer-hover:has(.sg-layer-menu){z-index:15}.sg-layer-item:has(.sg-layer-menu){transform:none}.sg-layer-hover:after{content:"";position:absolute;left:100%;top:0;width:12px;height:100%}.sg-layer-item{position:relative;display:grid;grid-template-columns:39px minmax(0,1fr) 30px;align-items:stretch;min-height:39px;border:1px solid var(--sg-border);border-radius:7px;background:color-mix(in srgb,var(--sg-soft) 55%,transparent);color:var(--sg-muted)}.sg-layer-item:hover{border-color:color-mix(in srgb,var(--sg-accent) 34%,var(--sg-border));transform:translateX(2px)}.sg-layer-item.current{border-color:color-mix(in srgb,var(--sg-accent) 72%,var(--sg-border));color:var(--sg-text);box-shadow:inset 2px 0 0 var(--sg-accent)}.sg-layer-label{display:grid;place-items:center;border-right:1px solid var(--sg-border);font-weight:720;color:inherit}.sg-layer-preview{padding:8px 10px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px}.sg-layer-more{width:30px;border:0;border-left:1px solid transparent;border-radius:0 6px 6px 0;background:transparent;color:inherit;cursor:pointer;font-weight:800;letter-spacing:1px}.sg-layer-more:hover,.sg-layer-more[aria-expanded="true"]{background:color-mix(in srgb,var(--sg-accent) 14%,transparent)}.sg-layer-menu{position:absolute;right:3px;top:34px;z-index:14;min-width:132px;padding:4px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-surface);box-shadow:var(--sg-shadow);animation:sg-pop var(--sg-fast) var(--sg-ease) both}.sg-layer-menu button{width:100%;padding:7px 9px;border:0;border-radius:5px;background:transparent;text-align:left;cursor:pointer;white-space:nowrap}.sg-layer-menu button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-accent)}.sg-layer-menu button:disabled{cursor:not-allowed;opacity:.45}.sg-layer-popover{position:absolute;left:calc(100% + 11px);top:-7px;z-index:12;width:min(360px,46vw);max-height:340px;padding:12px;overflow:auto;border:1px solid color-mix(in srgb,var(--sg-accent) 32%,var(--sg-border));border-radius:10px;background:var(--sg-surface);box-shadow:var(--sg-shadow);visibility:hidden;opacity:0;transform:translateX(-4px);transition:opacity var(--sg-fast) var(--sg-ease),transform var(--sg-fast) var(--sg-ease),visibility var(--sg-fast)}.sg-layer-hover:hover .sg-layer-popover,.sg-layer-item:focus-visible + .sg-layer-popover{visibility:visible;opacity:1;transform:translateX(0)}.sg-layer-popover strong{display:block;margin-bottom:7px}.sg-layer-full{margin:0;white-space:pre-wrap;font:12px/1.55 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif}.sg-inline-error{padding:7px 9px;margin-bottom:7px;border-radius:6px;background:var(--sg-danger-soft);color:var(--sg-danger);font-size:12px}
       .sg-loading{padding:32px 0}.sg-skeleton{position:relative;height:12px;margin:10px 0;overflow:hidden;border-radius:5px;background:var(--sg-soft)}.sg-skeleton:after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 15%,color-mix(in srgb,var(--sg-surface) 80%,transparent) 48%,transparent 82%);transform:translateX(-110%);animation:sg-shimmer 1.35s ease-in-out infinite}.sg-skeleton:nth-child(2){width:72%}.sg-empty{padding:40px 16px;text-align:center;color:var(--sg-muted)}.sg-empty strong{display:block;margin-bottom:5px;color:var(--sg-text);font-size:14px}.sg-error{padding:13px;margin-bottom:16px;border:1px solid color-mix(in srgb,var(--sg-danger) 28%,var(--sg-border));border-radius:9px;background:var(--sg-danger-soft);animation:sg-pop var(--sg-medium) var(--sg-ease) both}.sg-error-title{font-weight:700;color:var(--sg-danger)}.sg-error details{margin-top:7px;font-size:12px}
       .sg-muted{color:var(--sg-muted);font-size:12px}
-      .sg-long-tabs{display:flex;gap:4px;width:max-content;margin:0 0 14px;padding:4px;border:1px solid var(--sg-border);border-radius:999px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-long-tabs button{padding:7px 19px;border:0;border-radius:999px;background:transparent;color:var(--sg-muted);cursor:pointer}.sg-long-tabs button.active{background:var(--sg-soft);color:var(--sg-accent)}
+      .sg-long-tabs{position:relative;z-index:30;display:flex;gap:4px;width:max-content;margin:0 0 14px;padding:4px;border:1px solid var(--sg-border);border-radius:999px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-long-tabs>button{padding:7px 19px;border:0;border-radius:999px;background:transparent;color:var(--sg-muted);cursor:pointer}.sg-long-tabs>button.active{background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-menu{position:relative;z-index:31;display:inline-flex;align-items:center}.sg-long-tabs .sg-graph-menu-trigger{display:grid;place-items:center;align-self:center;flex:none;box-sizing:border-box;width:32px;height:32px;min-width:32px;min-height:32px;padding:0;border:0;border-radius:999px;background:transparent;color:var(--sg-muted);font-size:22px;line-height:1;cursor:pointer}.sg-graph-menu-trigger svg{display:block;width:16px;height:16px;flex:none}.sg-graph-menu-trigger:hover,.sg-graph-menu-trigger[aria-expanded=true]{background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-menu-popover{position:absolute;z-index:32;left:50%;right:auto;top:calc(100% + 8px);width:min(300px,calc(100vw - 32px));padding:10px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-page);box-shadow:var(--sg-shadow);text-align:left;transform:translateX(-50%)}
       .sg-migration{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px;margin:0 0 10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--sg-accent) 28%,var(--sg-border));border-radius:8px;background:color-mix(in srgb,var(--sg-accent) 7%,transparent);font-size:12px}.sg-migration small{color:var(--sg-muted)}
       .sg-long-explorer{position:relative}.sg-long-explorer.fullscreen{position:fixed;inset:12px;z-index:2147482000;display:flex;flex-direction:column;max-width:none;padding:18px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.48)}.sg-long-explorer.fullscreen .sg-long-layout{flex:1;height:auto;min-height:0}.sg-long-explorer.fullscreen .sg-long-tabs{flex:0 0 auto}.sg-long-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}.sg-long-toolbar .sg-search{flex:1 1 14rem;min-width:min(100%,14rem);margin:0}.sg-long-toolbar .sg-toolbar-button{flex-shrink:0}.sg-toolbar-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:39px;padding:0 13px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);cursor:pointer;white-space:nowrap}.sg-toolbar-button:hover,.sg-toolbar-button[aria-expanded="true"]{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-toolbar-count{margin:0 0 8px;color:var(--sg-muted);font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.sg-long-layout{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(280px,.9fr);height:min(680px,calc(100vh - 320px));min-height:480px;border:1px solid var(--sg-border);border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--sg-page) 74%,transparent)}.sg-summary-layout{grid-template-columns:minmax(0,1fr)}
       .sg-filterbar{display:flex;gap:7px;margin:0 0 8px;padding:8px;border:1px solid var(--sg-border);border-radius:7px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent);flex-wrap:wrap}.sg-filterbar select{min-width:112px;padding:6px 25px 6px 8px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);color:var(--sg-text);font-size:11px}.sg-active-filter-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--sg-accent);color:white;font-size:10px}
       .sg-graph-canvas{position:relative;min-width:0;overflow:hidden;background-image:radial-gradient(circle at center,color-mix(in srgb,var(--sg-accent) 6%,transparent),transparent 62%)}.sg-cytoscape{position:absolute;inset:0 0 38px;min-height:0}.sg-graph-zoom{position:absolute;z-index:7;top:12px;right:12px;display:grid;grid-template-columns:30px minmax(86px,124px) 30px;align-items:center;gap:5px;padding:5px;border:1px solid color-mix(in srgb,var(--sg-accent) 20%,var(--sg-border));border-radius:7px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 6px 18px color-mix(in srgb,var(--sg-text) 10%,transparent);backdrop-filter:blur(8px)}.sg-graph-zoom button{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--sg-text);font-size:20px;line-height:1;cursor:pointer}.sg-graph-zoom button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-zoom button:disabled{cursor:default;opacity:.35}.sg-graph-zoom input{width:100%;min-width:0;height:18px;margin:0;accent-color:var(--sg-accent);cursor:pointer}.sg-graph-legend{position:absolute;z-index:5;left:14px;bottom:10px;display:flex;gap:14px;flex-wrap:wrap;color:var(--sg-muted);font-size:11px}.sg-graph-legend span{display:flex;align-items:center;gap:5px}.sg-graph-legend i{width:9px;height:9px;border-radius:50%}.sg-node-bubble{position:absolute;z-index:8;width:min(310px,42%);padding:12px;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 14px 34px rgba(0,0,0,.3);transform:translate(35px,-50%)}.sg-node-bubble.flip{transform:translate(calc(-100% - 35px),-50%)}.sg-node-bubble h3{margin:0;font-size:14px}.sg-node-bubble-head,.sg-node-bubble-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}.sg-node-bubble-state{margin:7px 0;color:var(--sg-muted);font-size:11px}.sg-node-bubble ul{margin:7px 0;padding-left:17px;font-size:11px;line-height:1.55}.sg-node-bubble-foot{padding-top:8px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11px}.sg-node-bubble button{border:0;background:transparent;color:var(--sg-accent);cursor:pointer;font-weight:680}.sg-node-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.sg-node-tag{padding:2px 7px;border-radius:999px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:11px}.sg-graph-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
       .sg-long-detail{min-width:0;padding:16px;overflow:auto;border-left:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-surface) 70%,transparent)}.sg-placeholder-detail{display:grid;place-items:center;color:var(--sg-muted);text-align:center}.sg-long-detail h2{margin:0;font-size:17px}.sg-long-detail section{padding:13px 0;border-top:1px solid var(--sg-border)}.sg-long-detail section:first-of-type{margin-top:13px}.sg-long-detail h3{margin:0 0 8px;font-size:13px}.sg-long-detail ul{margin:0;padding-left:18px;font-size:12px;line-height:1.65}.sg-detail-copy{margin:0;color:var(--sg-muted);font-size:12px;line-height:1.65;white-space:pre-wrap}.sg-node-head{display:flex;align-items:center;gap:10px}.sg-node-avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;color:white;font-size:20px}.sg-status-dot{color:var(--sg-good);font-size:12px}.sg-relation-row{display:grid;grid-template-columns:68px 1fr auto;gap:7px;padding:7px 0;border-bottom:1px solid color-mix(in srgb,var(--sg-border) 65%,transparent);font-size:12px}.sg-relation-row span,.sg-relation-row small{color:var(--sg-muted)}.sg-support-event{display:flex;align-items:center;justify-content:space-between;width:100%;margin:5px 0;padding:9px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;color:var(--sg-text);text-align:left;cursor:pointer}.sg-support-event:hover{border-color:var(--sg-accent)}
       .sg-timeline-layout{grid-template-columns:minmax(420px,1.35fr) minmax(320px,.9fr)}.sg-timeline{position:relative;padding:10px 20px 18px;overflow:auto}.sg-time-group{position:relative}.sg-time-group>h3{margin:7px 0 8px;padding-left:17px;font-size:13px}.sg-time-group:before{content:"";position:absolute;left:5px;top:30px;bottom:-12px;width:1px;background:var(--sg-border)}.sg-timeline-card{position:relative;display:grid;grid-template-columns:112px minmax(0,1fr) auto;gap:12px;width:100%;margin:0 0 8px;padding:12px 14px;border:1px solid var(--sg-border);border-radius:8px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent);color:var(--sg-text);text-align:left;cursor:pointer}.sg-timeline-card:hover,.sg-timeline-card.selected{border-color:var(--sg-accent);background:color-mix(in srgb,var(--sg-accent) 7%,var(--sg-surface))}.sg-timeline-dot{position:absolute;left:-19px;top:17px;width:9px;height:9px;border:2px solid var(--sg-accent);border-radius:50%;background:var(--sg-page)}.sg-event-clock{font-size:11px;white-space:normal}.sg-event-clock small{display:block;margin-top:3px;color:var(--sg-muted);line-height:1.35}.sg-event-title-row{display:flex;align-items:center;gap:7px;min-width:0}.sg-event-title-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sg-event-main p{margin:5px 0 7px;color:var(--sg-muted);font-size:12px;line-height:1.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.sg-type-badge{display:inline-flex;align-items:center;width:max-content;padding:2px 7px;border:1px solid color-mix(in srgb,var(--sg-accent) 30%,var(--sg-border));border-radius:5px;background:color-mix(in srgb,var(--sg-accent) 10%,transparent);color:var(--sg-accent);font-size:10px}.sg-event-status{display:inline-flex;width:max-content;height:max-content;padding:3px 8px;border:1px solid var(--sg-border);border-radius:999px;color:var(--sg-muted);font-size:10px;white-space:nowrap}.sg-event-status.occurred{border-color:color-mix(in srgb,var(--sg-good) 40%,var(--sg-border));background:var(--sg-good-soft);color:var(--sg-good)}.sg-event-status.planned,.sg-event-status.ongoing{border-color:color-mix(in srgb,var(--sg-accent) 35%,var(--sg-border));color:var(--sg-accent)}.sg-event-status.cancelled{color:var(--sg-danger)}.sg-event-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:7px}.sg-event-popover{position:fixed;z-index:2147483000;width:min(380px,calc(100vw - 24px));max-height:min(72vh,620px);overflow:auto;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));border-radius:10px;background:var(--sg-page);box-shadow:0 18px 50px rgba(0,0,0,.38)}.sg-event-popover .sg-long-detail{border:0;background:transparent}.sg-popover-close{position:absolute;right:8px;top:8px;z-index:2;width:27px;height:27px;border:0;border-radius:6px;background:var(--sg-soft);cursor:pointer}.sg-time-grid{display:grid;grid-template-columns:92px 1fr;margin:0;border:1px solid var(--sg-border);border-radius:7px;overflow:hidden;font-size:11px}.sg-time-grid dt,.sg-time-grid dd{margin:0;padding:7px 8px;border-bottom:1px solid var(--sg-border)}.sg-time-grid dt{color:var(--sg-muted);background:var(--sg-soft)}.sg-time-grid dt:nth-last-of-type(1),.sg-time-grid dd:nth-last-of-type(1){border-bottom:0}.sg-entity-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--sg-border);border-radius:999px;background:transparent;color:var(--sg-text);font-size:11px;cursor:pointer}.sg-evidence-row{display:flex;justify-content:space-between;gap:8px;padding:6px 0;color:var(--sg-muted);font-size:11px}.sg-evidence-row code{max-width:180px;overflow:hidden;text-overflow:ellipsis}.sg-source-button{width:100%;padding:9px;border:1px solid color-mix(in srgb,var(--sg-accent) 42%,var(--sg-border));border-radius:7px;background:transparent;color:var(--sg-accent);cursor:pointer}
-      .sg-view{min-width:0;animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-long-tabs{border-radius:10px}.sg-long-tabs button{border-radius:7px}.sg-long-tabs button:hover{color:var(--sg-text)}.sg-long-tabs button.active{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sg-accent) 16%,var(--sg-border))}.sg-toolbar-button:hover,.sg-source-button:hover,.sg-primary-link:hover{transform:translateY(-1px);box-shadow:0 7px 18px color-mix(in srgb,var(--sg-accent) 14%,transparent)}.sg-long-layout{border-radius:12px;box-shadow:0 10px 28px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-long-explorer.fullscreen{animation:sg-fullscreen-in var(--sg-medium) var(--sg-ease) both}.sg-node-bubble{animation:sg-fade var(--sg-medium) var(--sg-ease) both;box-shadow:var(--sg-shadow)}.sg-event-popover{animation:sg-pop var(--sg-medium) var(--sg-ease) both;box-shadow:var(--sg-shadow)}.sg-long-detail{animation:sg-panel-in var(--sg-medium) var(--sg-ease) both}.sg-timeline-card:hover{transform:translateX(2px);box-shadow:0 7px 18px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-timeline-card.selected{box-shadow:inset 3px 0 0 var(--sg-accent)}.sg-support-event:hover,.sg-entity-pill:hover{transform:translateY(-1px);background:color-mix(in srgb,var(--sg-accent) 5%,transparent)}
+      .sg-view{min-width:0;animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-long-tabs{border-radius:10px}.sg-long-tabs>button{border-radius:7px}.sg-long-tabs>button:hover{color:var(--sg-text)}.sg-long-tabs>button.active{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sg-accent) 16%,var(--sg-border))}.sg-toolbar-button:hover,.sg-source-button:hover,.sg-primary-link:hover{transform:translateY(-1px);box-shadow:0 7px 18px color-mix(in srgb,var(--sg-accent) 14%,transparent)}.sg-long-layout{border-radius:12px;box-shadow:0 10px 28px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-long-explorer.fullscreen{animation:sg-fullscreen-in var(--sg-medium) var(--sg-ease) both}.sg-node-bubble{animation:sg-fade var(--sg-medium) var(--sg-ease) both;box-shadow:var(--sg-shadow)}.sg-event-popover{animation:sg-pop var(--sg-medium) var(--sg-ease) both;box-shadow:var(--sg-shadow)}.sg-long-detail{animation:sg-panel-in var(--sg-medium) var(--sg-ease) both}.sg-timeline-card:hover{transform:translateX(2px);box-shadow:0 7px 18px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-timeline-card.selected{box-shadow:inset 3px 0 0 var(--sg-accent)}.sg-support-event:hover,.sg-entity-pill:hover{transform:translateY(-1px);background:color-mix(in srgb,var(--sg-accent) 5%,transparent)}
       @keyframes sg-view-in{from{opacity:0}to{opacity:1}}
       @keyframes sg-expand{from{opacity:0;transform:translateY(-5px) scale(.992)}to{opacity:1;transform:translateY(0) scale(1)}}
       @keyframes sg-pop{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -450,7 +453,9 @@ window.__ModuleLoader__.load({
       .sg-profile-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-profile-sync{color:var(--sg-muted);font-size:11px;white-space:nowrap}.sg-profile-sync:before{content:'●';margin-right:5px;color:var(--sg-good)}.sg-profile-sync.pending:before{color:var(--sg-accent)}.sg-profile-sync.failed:before{color:var(--sg-danger)}
       .sg-profile-group{margin-top:19px;padding:14px 16px 3px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-profile-group h3{margin:0 0 4px;font-size:14px}.sg-profile-row{border-bottom:1px solid var(--sg-border)}.sg-profile-row:last-child{border-bottom:0}.sg-profile-summary{display:grid;grid-template-columns:minmax(170px,1fr) minmax(0,2fr) auto;align-items:center;gap:14px;min-height:51px}.sg-profile-label{font-size:13px;font-weight:650}.sg-profile-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sg-muted);font-size:13px}.sg-profile-value.empty{opacity:.66}.sg-profile-action{padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--sg-accent)!important;cursor:pointer;font-size:12px!important}.sg-profile-action:hover{background:var(--sg-accent-soft)}.sg-profile-editor{padding:0 0 14px}.sg-profile-editor :is(input,textarea){width:100%;padding:9px 10px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);outline:0}.sg-profile-editor textarea{min-height:104px;resize:vertical;font:inherit}.sg-profile-editor :is(input,textarea):focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-profile-editor-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px}.sg-profile-count{color:var(--sg-muted);font-size:11px}.sg-profile-actions{display:flex;align-items:center;gap:6px}.sg-profile-actions .sg-save-button{margin-top:0}.sg-profile-conflict{margin:8px 0 0;color:var(--sg-warn);font-size:12px}.sg-profile-error{margin:8px 0 0;color:var(--sg-danger);font-size:12px}
       .sg-profile-action:disabled{opacity:.45;cursor:default}.sg-profile-action:disabled:hover{background:transparent}
-      @media(max-width:560px){.sg-profile-summary{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px}.sg-profile-group{padding:11px 12px 2px}.sg-profile-label,.sg-profile-value{font-size:12px}}
+      .sg-profile-content{display:flex;align-items:center;min-width:0}.sg-profile-saved{flex-shrink:0;margin-left:8px;color:var(--sg-good);font-size:12px;white-space:nowrap}.sg-profile-save-feedback{margin:5px 0 0;color:var(--sg-warn);font-size:12px;line-height:1.5}.sg-profile-save-feedback p{margin:0}.sg-profile-save-feedback p+p{margin-top:3px}
+      .sg-profile-summary.editing{align-items:start;padding:8px 0}.sg-profile-summary.editing>.sg-profile-label{padding-top:8px}.sg-profile-summary.editing>.sg-profile-action{visibility:hidden}.sg-profile-content .sg-profile-value{border:0;padding:0;background:transparent;text-align:left;font-family:inherit;cursor:text}.sg-profile-content .sg-profile-value:disabled{cursor:default}.sg-profile-editor{min-width:0;padding:0}.sg-profile-editor-foot{margin-top:5px}.sg-profile-actions .sg-save-button{padding:6px 10px;font-size:12px}
+      @media(max-width:560px){.sg-profile-summary{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px}.sg-profile-summary.editing{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}.sg-profile-summary.editing>.sg-profile-action{display:none}.sg-profile-editor-foot{flex-wrap:wrap;gap:4px}.sg-profile-editor-foot .sg-profile-actions{margin-left:auto}.sg-profile-group{padding:11px 12px 2px}.sg-profile-label,.sg-profile-value{font-size:12px}}
       ${eventDetailCss}
       ${topicDirectoryCss}
     `
@@ -989,7 +994,7 @@ window.__ModuleLoader__.load({
       const data = payload?.data
       const blocks = shortTermBlocks(data)
       if (blocks.some((block) => block.processingStatus === 'pending'
-        && (block.summaryJob?.status !== 'failed' || block.summaryJob?.nextRetryAt))) return true
+        && !summaryUnavailable(block))) return true
       const match = /^(\d+):idle$/.exec(signal)
       if (!match || !data) return false
       const turn = Number(match[1])
@@ -1082,7 +1087,7 @@ window.__ModuleLoader__.load({
       const block = shortTermBlocks(data).find((item) => Array.isArray(item.turnRange) && Number(item.turnRange[1]) === Number(turn))
       if (block) {
         if (block.processingStatus === 'ready') return { kind: 'block', block }
-        const failed = block.summaryJob?.status === 'failed' && !block.summaryJob?.nextRetryAt
+        const failed = summaryUnavailable(block)
         return { kind: failed ? 'failed' : 'processing', block, current: block.turnRange[1] - block.turnRange[0] + 1, capacity: data.blockTurnSize || 6 }
       }
       const open = data?.openBlock
@@ -1200,8 +1205,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'sg-stm-line', role: 'status' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
       if (display.kind === 'processing') return h('div', { className: 'sg-stm', 'data-testid': 'stratagate-short-term-processing' },
         h('div', { className: 'sg-stm-line processing', role: 'status', 'aria-live': 'polite' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
-      if (display.kind === 'failed') return h('div', { className: 'sg-stm', 'data-testid': 'stratagate-short-term-failed' },
-        h('div', { className: 'sg-stm-line', role: 'status' }, rule(), h('span', { className: 'sg-stm-line-copy' }, shortTermDisplayLabel(display)), rule()))
+      if (display.kind === 'failed') return null
       const block = display.block
       return h('div', { className: 'sg-stm', 'data-testid': 'stratagate-short-term-block', 'data-block-id': block.id },
         h('div', { className: 'sg-stm-line' }, rule(),
@@ -1538,57 +1542,22 @@ window.__ModuleLoader__.load({
       return 'incomplete'
     }
 
-    function graphMigrationNotice(migration, state, failed = Number(migration.failed || 0)) {
+    // A missing snapshot is unknown, never evidence of completeness or a gap.
+    function graphMigrationNotice(migration) {
+      if (!migration) return ''
       const total = Number(migration.total)
       const projected = Number(migration.projected)
-      const trustedProgress = migration.total != null && migration.projected != null && Number.isSafeInteger(total) && total > 0
-        && Number.isSafeInteger(projected) && projected >= 0 && projected <= total
-      const graphProgress = trustedProgress ? projected + '/' + total + ' Events' : ''
-      const suffix = graphProgress ? ' · ' + graphProgress : ''
-      if (state === 'processing') return failed > 0 ? '知识图谱更新中' + suffix + '，' + failed + ' 批失败' : '正在更新知识图谱' + suffix
-      if (state === 'failed') return failed > 0 ? '知识图谱有 ' + failed + ' 批更新失败' + (graphProgress ? ' · 已完成 ' + graphProgress : '') : '知识图谱更新失败' + suffix
-      if (state === 'incomplete') return '知识图谱更新未完成' + suffix
-      return ''
+      const uncovered = migration.total != null && migration.projected != null
+        && Number.isSafeInteger(total) && total > 0 && Number.isSafeInteger(projected)
+        && projected >= 0 && projected < total
+      return uncovered || Number(migration.processing) > 0 || Number(migration.failed) > 0
+        ? '当前图谱尚未更新完整。' : ''
     }
 
-    function MemoryStatusAlert({ overview, onOpen }) {
-      const status = taskStatus(overview)
-      const migration = overview?.graphMigration || {}
-      const alerts = []
-      const add = (key, title, copy, kind, stage) => alerts.push({ key, title, copy, kind, stage })
-      if (status.blockSummary.processing > 0) {
-        add('summary-processing', '正在压缩 ' + status.blockSummary.processing + ' 个短期记忆块', '后台压缩仍在继续。', 'processing', 'summary')
-      }
-      if (status.blockSummary.terminalFailed > 0) {
-        add('summary-failed', status.blockSummary.terminalFailed + ' 个短期记忆块压缩失败', '可查看详情并手动重试。', 'attention', 'summary')
-      }
-      if (status.eventExtraction.processing > 0) {
-        add('extraction-processing', status.eventExtraction.processing > 1 ? '正在提取 ' + status.eventExtraction.processing + ' 个长期记忆' : '正在提取长期记忆', '后台提取仍在继续。', 'processing', 'extraction')
-      }
-      if (status.eventExtraction.terminalFailed > 0) {
-        add('extraction-failed', status.eventExtraction.terminalFailed + ' 个长期记忆提取失败', '可查看详情并手动重试。', 'attention', 'extraction')
-      }
-      const graphState = graphMigrationState(overview, status)
-      const graphFailed = Math.max(Number(status.graphProjection.terminalFailed || 0), Number(migration.failed || 0))
-      const graphNotice = graphMigrationNotice(migration, graphState, graphFailed)
-      if (graphState === 'processing') {
-        add('graph-processing', graphNotice, '后台图谱投影仍在继续。', 'processing', 'graph')
-      } else if (graphState === 'failed') {
-        add('graph-failed', graphNotice, '可查看详情并手动重试。', 'attention', 'graph')
-      } else if (graphState === 'incomplete') {
-        add('graph-incomplete', graphNotice, '查看详情。', 'attention', 'graph')
-      }
-      if (!alerts.length) return null
-      return h('div', { className: 'sg-memory-alerts', 'aria-live': 'polite' }, alerts.map((alert) => h('button', {
-        key: alert.key,
-        type: 'button',
-        className: 'sg-memory-alert ' + alert.kind,
-        onClick: () => onOpen(alert.stage),
-        'aria-label': alert.title + '。' + alert.copy + '查看详情。',
-      },
-      h('span', { className: 'sg-memory-alert-mark', 'aria-hidden': 'true' }, alert.kind === 'attention' ? '⚠' : '↻'),
-      h('span', null, h('span', { className: 'sg-memory-alert-title' }, alert.title), h('span', { className: 'sg-memory-alert-copy' }, alert.copy)),
-      h('span', { className: 'sg-chevron', 'aria-hidden': 'true' }, '›'))))
+    function summaryUnavailable(block) {
+      const job = block?.summaryJob
+      return job?.state === 'terminal-failed' || (job?.status === 'failed' && !job.state
+        && !(Number(job.attempts || 0) < 3 && job.nextRetryAt && Number.isFinite(Date.parse(job.nextRetryAt))))
     }
 
     function SearchBox({ value, onChange, placeholder = '搜索记忆、人物、项目、概念…' }) {
@@ -2373,28 +2342,24 @@ window.__ModuleLoader__.load({
         current.error ? h('p', { role: 'alert' }, current.error) : null)
     }
 
-    function TopicBootstrapNotice({ bootstrap, namespace, revision, active, openEvent, onDirectoryChanged }) {
-      const [detailsOpen, setDetailsOpen] = React.useState(false)
-      if (!bootstrap || Number(bootstrap.total || 0) === 0) return null
-      const failures = Number(bootstrap.failedEvents || 0)
-      const working = bootstrap.status === 'pending' || bootstrap.status === 'running'
-      if (!working && !failures) return null
-      return h('aside', { className: 'sg-topic-bootstrap ' + (failures ? 'attention' : 'processing'), 'aria-label': '历史记忆整理状态' },
-        h('div', { className: 'sg-topic-bootstrap-line', role: 'status', 'aria-live': 'polite' }, h('span', { className: working ? 'sg-processing-icon' : 'sg-topic-warning', 'aria-hidden': 'true' }, working ? '↻' : '⚠'),
-          h('span', null, working ? '正在整理历史记忆 · ' + Number(bootstrap.completed || 0) + ' / ' + Number(bootstrap.total || 0) : '历史记忆部分完成 · ' + Number(bootstrap.completed || 0) + ' / ' + Number(bootstrap.total || 0)),
-          bootstrap.failures?.[0] ? h(TopicRetryButton, { key: bootstrap.failures[0].jobId, failure: bootstrap.failures[0], namespace, revision, onDirectoryChanged }) : null,
-          failures ? h('button', { type: 'button', className: 'sg-topic-status-details', 'aria-expanded': detailsOpen, 'aria-controls': 'sg-topic-bootstrap-details', onClick: () => setDetailsOpen((current) => !current) }, detailsOpen ? '收起详情' : '查看详情') : null),
-        h('p', { className: 'sg-topic-bootstrap-copy' }, working ? '不影响正常使用，未整理记忆仍可正常检索' : '原始记忆仍然保留，可正常检索'),
-        Number(bootstrap.sectionBackfill?.pendingRelations || 0) > 0 ? h('p', { className: 'sg-topic-bootstrap-copy' },
-          '仍有 ' + Number(bootstrap.sectionBackfill.pendingRelations) + ' 项小节归属待补齐'
-          + (Number(bootstrap.sectionBackfill.failedRelations || 0) > 0 ? '，其中 ' + Number(bootstrap.sectionBackfill.failedRelations) + ' 项需要重新整理' : '')) : null,
-        failures ? h('p', { className: 'sg-topic-bootstrap-copy' }, '展开详情可重新整理失败批次；提交后按历史额度排队。') : null,
-        failures ? h('p', { className: 'sg-topic-bootstrap-copy' }, failures + ' 条历史记忆暂未完成整理') : null,
-        h(DirectoryFold, { open: detailsOpen, id: 'sg-topic-bootstrap-details' }, h('div', { className: 'sg-topic-failures' },
-          (bootstrap.failures || []).map((failure, index) => h('div', { key: failure.jobId, className: 'sg-topic-failure' }, h('p', null, '自动整理已停止' + (failure.attempts ? ' · 已尝试 ' + failure.attempts + ' 次' : '')),
-            index > 0 ? h(TopicRetryButton, { failure, namespace, revision, onDirectoryChanged }) : null,
-            h(TopicEventList, { namespace, revision, topicId: 'pending', sectionKey: 'failure:' + failure.jobId, total: Number(failure.eventCount || 0), active: active && detailsOpen, openEvent, onDirectoryChanged }), failure.lastError ? h('details', { className: 'sg-topic-failure-technical' }, h('summary', null, '技术详情'), h('p', null, failure.lastError), failure.diagnostics ? h('pre', { className: 'sg-code' }, JSON.stringify(failure.diagnostics, null, 2)) : null) : null)),
-          !(bootstrap.failures || []).length ? h('p', null, '部分历史记忆暂未形成主题，请从下方待整理事件或事件时间线查看。') : null)))
+    function TopicBootstrapNotice({ directory }) {
+      if (!directory) return null
+      const bootstrap = directory.bootstrap
+      const working = bootstrap?.status === 'pending' || bootstrap?.status === 'running'
+      const total = bootstrap?.total
+      const completed = bootstrap?.completed
+      // Counts are distinct source Events whose current topic and section work
+      // is complete. Failed Events do not contribute to completed.
+      const counted = Number.isSafeInteger(total) && total > 0 && Number.isSafeInteger(completed)
+        && completed >= 0 && completed <= total
+      const incomplete = Number(directory.pending?.total) > 0
+        || (directory.topics || []).some((topic) => Number(topic.coverage?.unassignedEvents) > 0)
+        || Number(bootstrap?.sectionBackfill?.pendingRelations) > 0 || Number(bootstrap?.failedEvents) > 0
+      if ((!working || bootstrap?.total === 0) && !incomplete) return null
+      return h('aside', { className: 'sg-topic-bootstrap', 'aria-label': '历史记忆整理状态' },
+        h('p', { className: 'sg-muted' }, working
+          ? '历史记忆整理中' + (counted ? ' · 已处理 ' + completed + ' / ' + total + ' 条事件' : '')
+          : '部分记忆尚未归入主题或小节。'))
     }
 
     const DREAMING_STYLES = `.sg-dreaming{margin:0 0 20px;padding:14px 16px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-surface)}.sg-dreaming-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.sg-dreaming-animation{position:relative;width:48px;height:48px;flex:0 0 48px;color:var(--sg-accent)}.sg-dreaming-moon{display:block;font-size:43px;line-height:48px;animation:sg-dream-breathe 4s ease-in-out infinite}.sg-dreaming-star{position:absolute;right:0;top:1px;font-size:12px;animation:sg-dream-twinkle 3s ease-in-out infinite}.sg-dreaming-sleep{position:absolute;right:4px;bottom:1px;font-size:13px;animation:sg-dream-float 3s ease-in-out infinite}.sg-dreaming.resting .sg-dreaming-animation span{animation-play-state:paused}.sg-dreaming-copy{display:grid;gap:5px;flex:1;min-width:150px}.sg-dreaming-copy strong{font-size:14px;color:var(--sg-text)}.sg-dreaming-copy>span,.sg-dreaming p{font-size:12px;color:var(--sg-muted);line-height:1.6}.sg-dreaming-actions{display:flex;gap:8px;flex-wrap:wrap}.sg-dreaming button{padding:7px 12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-page);color:var(--sg-text);cursor:pointer}.sg-dreaming button:hover{border-color:var(--sg-accent)}.sg-dreaming button:disabled{opacity:.5;cursor:default}.sg-dreaming .sg-dreaming-stop{color:var(--sg-danger)}.sg-dreaming-progress{display:flex;align-items:center;gap:12px;margin-top:12px;color:var(--sg-muted);font-size:11px}.sg-dreaming-progress progress{width:100%;height:7px;accent-color:var(--sg-accent);flex:1;min-width:0}@keyframes sg-dream-breathe{50%{opacity:.6;transform:translateY(-2px)}}@keyframes sg-dream-twinkle{50%{opacity:.25;transform:scale(.7)}}@keyframes sg-dream-float{50%{opacity:.4;transform:translate(2px,-5px)}}@media(prefers-reduced-motion:reduce){.sg-dreaming-animation span{animation:none!important}}`
@@ -2525,14 +2490,15 @@ window.__ModuleLoader__.load({
           h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }),
           h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: topics.length > 0 && !blocked, onDirectoryChanged, onOpenDreamingSession })),
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
-        h('div', { hidden: blocked }, h(TopicBootstrapNotice, { bootstrap: directory?.bootstrap, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate }),
+        h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
           h('div', { ref: chaptersRef }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest }))),
           pendingTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' }, h('h2', { className: 'sg-topic-pending-heading' }, h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', null, '待整理'), h('span', null, pendingTotal + ' 条事件'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null))
     }
 
-    function LongTermPage({ events, eventPage, graph, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, onOpenDreamingSession, active = true }) {
+    function LongTermPage({ events, eventPage, graph, graphSettings = {}, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, onOpenDreamingSession, extractionGap = false, active = true, refresh }) {
+      const graphVisible = graphSettings.enabled === true || graphSettings.noticeSeen !== true
       const [mode, setMode] = React.useState('topics')
       const [selectedNodeId, setSelectedNodeId] = React.useState('')
       const [selectedEventId, setSelectedEventId] = React.useState('')
@@ -2542,6 +2508,8 @@ window.__ModuleLoader__.load({
       const [nodeTag, setNodeTag] = React.useState('')
       const [filtersOpen, setFiltersOpen] = React.useState(false)
       const [fullScreen, setFullScreen] = React.useState(false)
+      const [graphMenuOpen, setGraphMenuOpen] = React.useState(false)
+      const graphMenuRef = React.useRef(null)
       const debouncedQuery = useDebouncedValue(query)
       const timelineParams = mode === 'timeline' ? {
         timeline: 'true',
@@ -2557,7 +2525,7 @@ window.__ModuleLoader__.load({
       const nodeImportance = React.useMemo(() => graphNodeImportance(nodes, edges, project), [nodes, edges, project])
       const nodeTags = [...new Set(nodes.flatMap((node) => node.tags || []))].sort((left, right) => left.localeCompare(right))
       React.useEffect(() => {
-        if (!focusNodeId || !nodes.some((node) => node.id === focusNodeId)) return
+        if (!graphVisible || !focusNodeId || !nodes.some((node) => node.id === focusNodeId)) return
         setMode('graph')
         setNodeType('')
         setNodeTag('')
@@ -2566,7 +2534,7 @@ window.__ModuleLoader__.load({
         setSelectedNodeId(focusNodeId)
         setFullScreen(true)
         onFocusHandled?.()
-      }, [focusNodeId, nodes, nodeImportance, onFocusHandled])
+      }, [graphVisible, focusNodeId, nodes, nodeImportance, onFocusHandled])
       React.useEffect(() => {
         if (!fullScreen || !active) return undefined
         const previous = document.body.style.overflow
@@ -2580,6 +2548,16 @@ window.__ModuleLoader__.load({
         window.addEventListener('keydown', onKeyDown)
         return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', onKeyDown) }
       }, [fullScreen, active])
+      React.useEffect(() => {
+        if (!graphMenuOpen) return undefined
+        const onPointerDown = (event) => {
+          if (!graphMenuRef.current?.contains(event.target)) setGraphMenuOpen(false)
+        }
+        const onKeyDown = (event) => { if (event.key === 'Escape') setGraphMenuOpen(false) }
+        document.addEventListener('pointerdown', onPointerDown)
+        document.addEventListener('keydown', onKeyDown)
+        return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKeyDown) }
+      }, [graphMenuOpen])
       const visibleNodes = nodes.filter((node) => node.status !== 'archived').filter((node) => !nodeType || node.type === nodeType).filter((node) => !nodeTag || (node.tags || []).includes(nodeTag)).filter((node) => !normalized || JSON.stringify(node).toLocaleLowerCase().includes(normalized))
       const visibleGraphIds = new Set(visibleNodes.map((node) => node.id))
       const displayedGraphIds = new Set([...visibleNodes].sort((left, right) => (nodeImportance.get(right.id)?.score || 0) - (nodeImportance.get(left.id)?.score || 0)).slice(0, graphNodeLimit).map((node) => node.id))
@@ -2598,9 +2576,7 @@ window.__ModuleLoader__.load({
         setFiltersOpen(true)
         setFullScreen(true)
       }
-      const migration = graph.migration || { projected: pagedEvents.page.total, total: pagedEvents.page.total, state: 'complete', complete: true }
-      const migrationState = graphMigrationState({ graphMigration: migration, events: pagedEvents.page.total })
-      const migrationNotice = graphMigrationNotice(migration, migrationState)
+      const migrationNotice = graphMigrationNotice(graph.migration)
       const activeFilterCount = mode === 'graph' ? Number(Boolean(nodeType)) + Number(Boolean(nodeTag)) : Object.values(eventFilters).filter(Boolean).length
       const filterControls = mode === 'graph'
         ? h('div', { className: 'sg-filterbar' }, h('select', { value: nodeType, onChange: (event) => setNodeType(event.target.value), 'aria-label': '节点类型' }, h('option', { value: '' }, '全部节点类型'), Object.entries(NODE_META).map(([value, meta]) => h('option', { key: value, value }, meta[0]))), h('select', { value: nodeTag, onChange: (event) => setNodeTag(event.target.value), 'aria-label': '语义标签' }, h('option', { value: '' }, '全部语义标签'), nodeTags.map((tag) => h('option', { key: tag, value: tag }, tag))))
@@ -2609,11 +2585,16 @@ window.__ModuleLoader__.load({
           h('select', { value: eventFilters.node, onChange: (event) => setEventFilters({ ...eventFilters, node: event.target.value }), 'aria-label': '参与实体' }, h('option', { value: '' }, '全部实体'), nodes.map((node) => h('option', { key: node.id, value: node.id }, node.name))),
           h('select', { value: eventFilters.type, onChange: (event) => setEventFilters({ ...eventFilters, type: event.target.value }), 'aria-label': '事件类型' }, h('option', { value: '' }, '全部类型'), Object.entries(EVENT_TYPE_TEXT).map(([value, label]) => h('option', { key: value, value }, label))),
           h('select', { value: eventFilters.status, onChange: (event) => setEventFilters({ ...eventFilters, status: event.target.value }), 'aria-label': '事件状态' }, h('option', { value: '' }, '全部状态'), Object.entries(EVENT_STATUS_TEXT).map(([value, label]) => h('option', { key: value, value }, label))))
+      const longTabs = [['topics', '主题目录'], ...(graphVisible ? [['graph', '知识图谱']] : []), ['timeline', '事件时间线']]
+      const tabButton = ([id, label]) => h('button', { key: id, type: 'button', className: mode === id ? 'active' : '', 'aria-current': mode === id ? 'page' : undefined, 'aria-label': id === 'graph-add' ? '重新打开知识图谱' : label, onClick: () => { setMode(id === 'graph-add' ? 'graph' : id); setGraphMenuOpen(id === 'graph-add' || (id === 'graph' && graphSettings.enabled !== true && graphSettings.noticeSeen !== true)); if (id === 'topics') { setFullScreen(false); setFiltersOpen(false) } } }, label)
+      const graphMenu = h('div', { ref: graphMenuRef, className: 'sg-graph-menu' }, h('button', { type: 'button', className: 'sg-graph-menu-trigger', 'aria-label': '知识图谱设置', 'aria-expanded': graphMenuOpen, onClick: () => setGraphMenuOpen((value) => !value) }, h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' }, h('path', { d: 'M12 5v14M5 12h14', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' }))), graphMenuOpen ? h('div', { className: 'sg-graph-menu-popover' }, h('strong', { className: 'sg-graph-menu-title' }, '知识图谱'), h(GraphControlPanel, { state: graphSettings, refresh, page: true, onGraphHidden: () => { setGraphMenuOpen(false); setMode('topics') } })) : null)
+      const tabChildren = [...longTabs.map(tabButton), graphMenu]
       return h('section', { className: 'sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
-        h('nav', { className: 'sg-long-tabs', 'aria-label': '长期记忆视角' }, [['topics', '主题目录'], ['graph', '知识图谱'], ['timeline', '事件时间线']].map(([id, label]) => h('button', { key: id, type: 'button', className: mode === id ? 'active' : '', 'aria-current': mode === id ? 'page' : undefined, onClick: () => { setMode(id); if (id === 'topics') { setFullScreen(false); setFiltersOpen(false) } } }, label))),
+        h('nav', { className: 'sg-long-tabs', 'aria-label': '长期记忆视角' }, tabChildren),
         h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged, onOpenDreamingSession })),
         mode === 'topics' ? null : h(React.Fragment, null,
-        migrationNotice ? h('div', { className: 'sg-migration ' + (migrationState === 'processing' ? 'processing' : 'attention'), role: 'status' }, h('span', { className: 'sg-processing-icon', 'aria-hidden': 'true' }, migrationState === 'processing' ? '↻' : '⚠'), h('span', null, migrationNotice), h('small', null, migrationState === 'processing' ? '后台图谱投影仍在继续。' : migrationState === 'failed' ? '查看详情并手动重试。' : '查看详情。')) : null,
+        mode === 'graph' && migrationNotice ? h('p', { className: 'sg-muted' }, migrationNotice) : null,
+        mode === 'timeline' && extractionGap ? h('p', { className: 'sg-muted' }, '部分对话尚未形成长期记忆，暂不能通过长期记忆检索。') : null,
         h('div', { className: 'sg-long-toolbar' },
           h(SearchBox, { value: query, onChange: setQuery, placeholder: mode === 'graph' ? '搜索人物、项目、概念…' : '搜索事件…' }),
           h('button', { type: 'button', className: 'sg-toolbar-button', 'aria-expanded': filtersOpen ? 'true' : 'false', onClick: () => setFiltersOpen(!filtersOpen) }, '筛选 ▾', activeFilterCount ? h('span', { className: 'sg-active-filter-count' }, activeFilterCount) : null),
@@ -2622,7 +2603,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'sg-toolbar-count' }, resultCount),
         filtersOpen ? filterControls : null,
         mode === 'graph'
-          ? h('div', { className: 'sg-long-layout ' + (fullScreen ? '' : 'sg-summary-layout') },
+          ? h('div', { className: 'sg-long-layout ' + (fullScreen ? '' : 'sg-summary-layout'), 'aria-disabled': !graphSettings.enabled, inert: !graphSettings.enabled ? '' : undefined, style: !graphSettings.enabled ? { filter: 'grayscale(1)', opacity: 0.4, pointerEvents: 'none' } : undefined },
             h(GraphCanvas, { nodes: visibleNodes, edges, clusters, importance: nodeImportance, selectedId: selectedNodeId, onSelect: setSelectedNodeId, nodeLimit: graphNodeLimit, showSummary: !fullScreen, onViewDetails: openExplorer }),
             fullScreen ? h(NodeDetailPanel, { node: nodes.find((node) => node.id === selectedNodeId), nodes, edges, events, onEvent: selectEvent }) : null)
           : h(React.Fragment, null,
@@ -2733,6 +2714,48 @@ window.__ModuleLoader__.load({
       return ''
     }
 
+    function SummaryUnavailable({ namespace, block }) {
+      const [source, setSource] = React.useState(null)
+      const [readError, setReadError] = React.useState(null)
+      const [loading, setLoading] = React.useState(false)
+      const [open, setOpen] = React.useState(false)
+      const request = React.useRef(null)
+      React.useEffect(() => () => request.current?.abort(), [])
+      const openRaw = async () => {
+        if (request.current) return
+        if (source) { setOpen(true); return }
+        const controller = new AbortController()
+        request.current = controller
+        setLoading(true)
+        setReadError(null)
+        try {
+          const value = await api('sources', { namespace, blockId: block.id }, { signal: controller.signal })
+          if (controller.signal.aborted) return
+          if (value.namespace !== namespace || !Array.isArray(value.messages)) {
+            setReadError({ kind: 'temporary', text: '暂时无法读取这段对话的原文。' }); return
+          }
+          if (!value.messages.some((message) => String(message.content || '').trim())) {
+            setReadError({ kind: 'unavailable', text: '当前没有可读取的原文。' }); return
+          }
+          setSource(value)
+          setOpen(true)
+        } catch (reason) {
+          if (!controller.signal.aborted) setReadError({
+            kind: [401, 403, 404, 410].includes(reason?.status) ? 'unavailable' : 'temporary',
+            text: '暂时无法读取这段对话的原文。',
+          })
+        } finally {
+          if (request.current === controller) { request.current = null; if (!controller.signal.aborted) setLoading(false) }
+        }
+      }
+      const rawId = 'sg-summary-raw-' + block.id
+      return h('div', { className: 'sg-block-expanded sg-muted' },
+        h('p', null, '这段对话的摘要暂不可用。'),
+        (block.rawAvailable || source) && readError?.kind !== 'unavailable' ? h('button', { type: 'button', className: 'sg-quiet-button', disabled: loading, 'aria-expanded': open, 'aria-controls': rawId, onClick: open ? () => setOpen(false) : openRaw }, open ? '收起原始对话' : loading ? '正在读取…' : readError?.kind === 'temporary' ? '重新读取原文' : '查看原始对话') : null,
+        readError ? h('p', { role: 'status' }, readError.text) : null,
+        open && source ? h('div', { id: rawId, className: 'sg-summary-raw' }, source.messages.map((message) => h('div', { key: message.id, className: 'sg-raw-message' }, h('div', { className: 'sg-muted' }, message.role + ' · ' + formatTime(message.createdAt)), h('div', { className: 'sg-code' }, String(message.content || ''))))) : null)
+    }
+
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh }) {
       const pagedBlocks = usePagedMemory({ namespace, kind: 'blocks', initialItems: blocks, initialPage: blockPage, fallbackLimit: 40, extraParams: { threadId: activeThreadId } })
       const visible = [...pagedBlocks.items].sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || String(a.createdAt).localeCompare(String(b.createdAt)))
@@ -2803,6 +2826,7 @@ window.__ModuleLoader__.load({
               h('span', { className: 'sg-block-turn' }, turnRangeText(block.turnRange)),
               h('span', { className: 'sg-block-distance' }, block.distanceFromLatest === 0 ? '0（最新）' : block.distanceFromLatest + ' 个 Block'),
               h('span', { className: 'sg-row-chevron', 'aria-hidden': 'true' }, expandedId === block.id ? '⌃' : '›')),
+            summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
             expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, expandingLevel: expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
           h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-block-toggle sg-open-row' },
             h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-open-badge' }, '开放块')),
@@ -2858,7 +2882,7 @@ window.__ModuleLoader__.load({
       })
     }
 
-    function ProcessingStatus({ overview, blocks, conversations, namespace, serverVersion, onBack, backLabel = '返回', refresh, stage = 'summary' }) {
+    function ProcessingStatus({ overview, blocks, conversations, namespace, serverVersion, onBack, backLabel = '返回', refresh }) {
       const failures = overview.failedJobDetails || []
       const failedKeys = new Set(failures.map(statusJobKey))
       const terminalFailedKeys = new Set(failures
@@ -2871,6 +2895,7 @@ window.__ModuleLoader__.load({
       const [refreshing, setRefreshing] = React.useState(false)
       const [feedback, setFeedback] = React.useState({ kind: '', text: '' })
       const [retrying, setRetrying] = React.useState('')
+      const retryRequest = React.useRef(false)
       const [retryErrors, setRetryErrors] = React.useState({})
       const blockById = new Map(blocks.map((block) => [block.id, block]))
       const conversationById = new Map((conversations || []).map((conversation) => [conversation.id, conversation]))
@@ -2926,7 +2951,7 @@ window.__ModuleLoader__.load({
           const ids = Array.isArray(job.blockIds) && job.blockIds.length ? job.blockIds : job.id && !['graph-projection', 'topic-projection'].includes(job.kind) ? [job.id] : []
           details = ids.map((id) => blockById.get(id)).filter(Boolean).map((block) => ({
             id: block.id, sourceId: block.id, sequence: block.sequence, title: block.title || block.l0Title,
-            threadId: block.threadId, turnRange: block.turnRange, shouldExtract: block.shouldExtract,
+            threadId: block.threadId, turnRange: block.turnRange, shouldExtract: block.shouldExtract, rawAvailable: block.rawAvailable,
           }))
         }
         if (!details.length) details = [{ id: statusJobKey(job), sourceId: '', sequence: null, title: '', threadId: job.threadId || '', turnRange: job.turnRange, shouldExtract: null }]
@@ -2993,7 +3018,9 @@ window.__ModuleLoader__.load({
               ? { kind: 'waiting', mark: '○', label: '等待长期记忆提取' }
               : { kind: 'waiting', mark: '○', label: '等待图谱更新' }
         return [
-          ['保存原始对话', { kind: 'done', mark: '✓', label: '已完成' }],
+          ['原始对话', item.rawAvailable === true
+            ? { kind: 'done', mark: '✓', label: '当前可读取' }
+            : { kind: 'waiting', mark: '○', label: item.rawAvailable === false ? '当前无可读取原文' : '无法确认是否可读取' }],
           ['压缩短期记忆块', shortStage],
           ['提取长期记忆', extractionStage],
           ['更新知识图谱', graphStage],
@@ -3023,6 +3050,8 @@ window.__ModuleLoader__.load({
         }).finally(() => setRefreshing(false))
       }
       const retryJob = (job) => {
+        if (retryRequest.current) return
+        retryRequest.current = true
         const key = retryKey(job)
         setRetrying(key)
         setRetryErrors((current) => ({ ...current, [key]: '' }))
@@ -3036,7 +3065,7 @@ window.__ModuleLoader__.load({
             setFeedback({ kind: 'failed', text: '重试失败：' + message })
             try { await refresh({ propagateError: true }) } catch {}
           })
-          .finally(() => setRetrying(''))
+          .finally(() => { retryRequest.current = false; setRetrying('') })
       }
       const failedItems = items.filter((item) => item.jobs.some((job) => terminalFailedKeys.has(statusJobKey(job)))).length
       const activeItems = Math.max(0, items.length - failedItems)
@@ -3047,16 +3076,11 @@ window.__ModuleLoader__.load({
         ? groups.length + ' 个会话 · ' + (activeItems ? activeItems + ' 个正在整理' : '') + (activeItems && failedItems ? ' · ' : '') + (failedItems ? failedItems + ' 个需要重试' : '') + (unresolvedProcessingCount ? ' · 另有 ' + unresolvedProcessingCount + ' 个详情暂不可用' : '')
         : detailsUnavailable
           ? '仍有 ' + rawProcessingCount + ' 个后台任务正在整理'
-          : '本轮整理已经完成'
-      const detailTitle = stage === 'extraction'
-        ? '长期记忆提取详情'
-        : stage === 'graph'
-          ? '知识图谱提取详情'
-          : '短期记忆压缩详情'
+          : hasProcessingDetails ? '当前没有待处理或失败的任务' : '暂时无法确认后台任务状态'
       return h(React.Fragment, null,
         h(BackBar, { label: backLabel, onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, detailTitle), h('p', null, summary)),
-        h('div', { className: 'sg-process-summary' }, h('strong', null, '原始对话已保存，不会丢失'), h('span', null, '整理在后台进行，你可以继续使用。')),
+        h('div', { className: 'sg-intro' }, h('h2', null, '后台任务'), h('p', null, summary)),
+        h('div', { className: 'sg-process-summary' }, h('strong', null, '后台整理状态'), h('span', null, '已有记忆可继续查看；具体来源以实际可读取内容为准。')),
         detailsUnavailable ? h('div', { className: 'sg-process-notice', role: 'status' },
           h('strong', null, versionMismatch ? '前后端版本尚未同步' : '暂时无法读取完整任务详情'),
           h('span', null, versionMismatch
@@ -3082,19 +3106,38 @@ window.__ModuleLoader__.load({
                   failed && !job.nextRetryAt ? h('div', { className: 'sg-process-job-meta' }, '自动重试已停止') : null,
                   failed ? h('pre', { className: 'sg-job-error sg-code' }, job.lastErrorFull || job.lastError || '没有记录技术错误。') : null,
                   job.kind === 'topic-projection' && job.diagnostics ? h('pre', { className: 'sg-code' }, JSON.stringify(job.diagnostics, null, 2)) : null,
-                  failed ? h('div', { className: 'sg-process-job-actions' }, h('span', { className: 'sg-status-feedback failed', role: retryErrors[key] ? 'alert' : undefined }, retryErrors[key] || ''), h('button', { type: 'button', className: 'sg-save-button', disabled: busy, onClick: () => void retryJob(job) }, busy ? '正在处理…' : '重试此任务')) : null)
+                  job.kind === 'topic-projection' && overview.topicDirectoryReadError ? h('p', { className: 'sg-muted' }, '暂时无法读取目录状态，请重新检查状态。') : null,
+                  failed ? h('div', { className: 'sg-process-job-actions' }, h('span', { className: 'sg-status-feedback failed', role: retryErrors[key] ? 'alert' : undefined }, retryErrors[key] || ''), job.kind === 'topic-projection' ? h(TopicRetryButton, { failure: { jobId: job.id, eventCount: job.eventCount }, namespace, revision: overview.topicDirectoryRevision, onDirectoryChanged: () => refresh({ propagateError: true }) }) : h('button', { type: 'button', className: 'sg-save-button', disabled: Boolean(retrying), onClick: () => void retryJob(job) }, busy ? '正在处理…' : '重试此任务')) : null)
               })) : null
             )
           })
         ))) : detailsUnavailable
           ? h('div', { className: 'sg-process-unavailable' }, h('strong', null, '任务仍在整理，具体会话暂不可用'), h('span', null, '这不代表对话丢失；重启并加载同一版本后即可显示详情。'))
-          : h(Empty, { title: '本轮整理已完成', copy: '返回后，顶部状态条会自动消失。' }),
+          : h(Empty, { title: hasProcessingDetails ? '当前没有待处理或失败的任务' : '暂时无法读取任务详情', copy: '目录与图谱的覆盖情况请以对应页面为准。' }),
         h('div', { className: 'sg-process-footer' }, h('button', { type: 'button', className: 'sg-quiet-button', disabled: refreshing, onClick: () => void checkStatus() }, refreshing ? '正在读取…' : '↻ 重新检查状态'), h('span', { className: 'sg-muted' }, '只读取最新状态，不会触发模型调用。'), feedback.text ? h('span', { className: 'sg-status-feedback ' + feedback.kind, role: feedback.kind === 'failed' ? 'alert' : 'status' }, feedback.text) : null)
       )
     }
 
+    // These caches belong to this loaded browser page, never to durable storage.
+    const profilePageMemory = new Map()
+    const profileFieldDrafts = new Map()
+    const importDrafts = new Map()
+    const importRequests = new Map()
+    function usePageMemoryState(cache, key, initial) {
+      if (!cache.has(key)) cache.set(key, initial)
+      const [value, setValue] = React.useState(cache.get(key))
+      const update = (next) => {
+        const resolved = typeof next === 'function' ? next(cache.get(key)) : next
+        cache.set(key, resolved)
+        setValue(resolved)
+      }
+      return [value, update]
+    }
+
     function ImportPage({ namespace, onBack, refresh }) {
-      const [text, setText] = React.useState('')
+      const [draft, setDraft] = usePageMemoryState(importDrafts, namespace, { text: '' })
+      const text = draft.text
+      const setText = (value) => setDraft({ text: value })
       const [prompt, setPrompt] = React.useState('')
       const [promptLoading, setPromptLoading] = React.useState(true)
       const [copied, setCopied] = React.useState(false)
@@ -3104,29 +3147,44 @@ window.__ModuleLoader__.load({
       const [result, setResult] = React.useState(null)
       const [error, setError] = React.useState('')
       const [connectionError, setConnectionError] = React.useState('')
+      const [restoring, setRestoring] = React.useState(true)
+      const lifecycle = React.useRef(null)
       React.useEffect(() => {
         let active = true; let restoreTimer
-        api('import').then((value) => { if (active) setPrompt(String(value.prompt || '')) }).catch((reason) => { if (active) setError(String(reason?.message || reason)) }).finally(() => { if (active) setPromptLoading(false) })
-        const restore = () => api('import', { operation: 'status', namespace })
+        const controller = new AbortController()
+        lifecycle.current = controller
+        api('import', {}, { signal: controller.signal }).then((value) => { if (active) setPrompt(String(value.prompt || '')) }).catch((reason) => { if (active) setError(String(reason?.message || reason)) }).finally(() => { if (active) setPromptLoading(false) })
+        // A close can precede the create/commit response. Wait for that original
+        // request before consulting SQLite; never replay it while restoring text.
+        const restore = async () => {
+          await importRequests.get(namespace)?.catch(() => {})
+          if (!active) return
+          return api('import', { operation: 'status', namespace }, { signal: controller.signal })
           .then((value) => {
             if (!active) return
             setConnectionError('')
-            if (value?.jobId && value.status !== 'undone') { setJob(value); if (value.status === 'committed') setResult(value) }
+            setRestoring(false)
+            if (value?.jobId && !['undone', 'abandoned'].includes(value.status)) {
+              setJob(value)
+              if (value.status === 'committed') { setResult(value); clearCommittedDraft(value) }
+            }
           })
           .catch(() => {
             if (!active) return
             setConnectionError('连接暂时中断，正在自动重试…')
             restoreTimer = window.setTimeout(restore, 2500)
           })
+        }
         void restore()
         const onKeyDown = (event) => { if (event.key === 'Escape') onBack() }
         window.addEventListener('keydown', onKeyDown)
-        return () => { active = false; window.clearTimeout(restoreTimer); window.removeEventListener('keydown', onKeyDown) }
+        return () => { active = false; controller.abort(); lifecycle.current = null; window.clearTimeout(restoreTimer); window.removeEventListener('keydown', onKeyDown) }
       }, [])
       React.useEffect(() => {
         if (!job?.jobId || !['extracting', 'processing'].includes(job.status)) return undefined
         let active = true; let timer
-        const poll = () => api('import', { operation: 'status', namespace, jobId: job.jobId }).then((next) => {
+        const controller = new AbortController()
+        const poll = () => api('import', { operation: 'status', namespace, jobId: job.jobId }, { signal: controller.signal }).then((next) => {
           if (!active) return
           setConnectionError('')
           setJob(next)
@@ -3137,7 +3195,7 @@ window.__ModuleLoader__.load({
           timer = window.setTimeout(poll, 2500)
         })
         timer = window.setTimeout(poll, 600)
-        return () => { active = false; window.clearTimeout(timer) }
+        return () => { active = false; controller.abort(); window.clearTimeout(timer) }
       }, [job?.jobId, job?.status, namespace])
       const copyPrompt = () => {
         if (!prompt) return
@@ -3146,45 +3204,57 @@ window.__ModuleLoader__.load({
           : Promise.reject(new Error('当前浏览器不支持自动复制'))
         void copiedPromise.then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1600) }).catch((reason) => setError(String(reason?.message || reason)))
       }
+      const clearCommittedDraft = (next) => {
+        const current = importDrafts.get(namespace)
+        if (next.status === 'committed' && current?.jobId === next.jobId && current.text.trim() === next.text) setText('')
+      }
+      const mutate = (body, onResult, submission) => {
+        if (importRequests.has(namespace)) return
+        const controller = lifecycle.current
+        const valid = () => controller && lifecycle.current === controller && !controller.signal.aborted
+        setBusy(true); setError('')
+        const request = api('import', { namespace }, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, namespace }),
+        })
+        importRequests.set(namespace, request)
+        return request.then((next) => {
+          // Associate only the actual submitted draft, even if its dialog closed.
+          // Equal text pasted later is a new draft, not evidence of a saved write.
+          if (submission && importDrafts.get(namespace) === submission && next?.jobId) submission.jobId = next.jobId
+          if (valid()) return onResult(next)
+        })
+          .catch((reason) => { if (valid()) setError(String(reason?.message || reason)) })
+          .finally(() => {
+            if (importRequests.get(namespace) === request) importRequests.delete(namespace)
+            if (valid()) setBusy(false)
+          })
+      }
       const analyze = () => {
-        if (!text.trim() || busy) return
-        setBusy(true); setError(''); setResult(null); setJob(null); setChoices({})
-        return api('import', { namespace }, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ operation: 'preview', namespace, text }),
-        }).then(setJob).catch((reason) => setError(String(reason?.message || reason))).finally(() => setBusy(false))
+        if (!text.trim() || busy || restoring || (job && job.status !== 'failed')) return
+        setResult(null); setJob(null); setChoices({})
+        return mutate({ operation: 'preview', text }, setJob, draft)
       }
       const commit = () => {
         if (!job || busy) return
         const requestedChoices = (job.decisions || []).flatMap((decision, index) => decision.requiresConfirmation
           ? [{ index, action: choices[index] || decision.action || 'IGNORE' }]
           : [])
-        setBusy(true); setError('')
-        return api('import', { namespace }, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ operation: 'commit', namespace, jobId: job.jobId, choices: requestedChoices }),
-        }).then((next) => { setResult(next); setJob(next); return refresh() })
-          .catch((reason) => setError(String(reason?.message || reason))).finally(() => setBusy(false))
+        if (draft.text.trim() === job.text) draft.jobId = job.jobId
+        return mutate({ operation: 'commit', jobId: job.jobId, choices: requestedChoices }, (next) => { clearCommittedDraft(next); setResult(next); setJob(next); return refresh() })
       }
       const retry = () => {
         if (!job?.jobId || busy) return
-        setBusy(true); setError('')
-        return api('import', { namespace }, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ operation: 'retry', namespace, jobId: job.jobId }),
-        }).then(setJob).catch((reason) => setError(String(reason?.message || reason))).finally(() => setBusy(false))
+        return mutate({ operation: 'retry', jobId: job.jobId }, setJob)
+      }
+      const abandon = () => {
+        if (!job?.jobId || busy) return
+        return mutate({ operation: 'abandon', jobId: job.jobId }, () => { setJob(null); setText(''); setChoices({}) })
       }
       const undo = () => {
         if (!result?.sourceBlockId || busy) return
-        setBusy(true); setError('')
-        return api('import', { namespace }, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ operation: 'undo', namespace, sourceBlockId: result.sourceBlockId }),
-        }).then(() => { setResult(null); setJob(null); setText(''); return refresh() })
-          .catch((reason) => setError(String(reason?.message || reason))).finally(() => setBusy(false))
+        return mutate({ operation: 'undo', sourceBlockId: result.sourceBlockId }, () => { setResult(null); setJob(null); return refresh() })
       }
-      const reset = () => { setResult(null); setJob(null); setChoices({}); setText(''); setError('') }
+      const reset = () => { setResult(null); setJob(null); setChoices({}); setError('') }
       const actionLabel = { ADD: '新增', MERGE: '合并', SUPERSEDE: '取代旧记忆', CONFLICT: '保留并标记冲突', IGNORE: '忽略' }
       const running = job && ['extracting', 'processing'].includes(job.status)
       const reviewable = job && ['ready', 'awaiting_confirmation'].includes(job.status)
@@ -3198,7 +3268,8 @@ window.__ModuleLoader__.load({
             promptLoading ? h('div', { className: 'sg-import-loading' }, '正在加载提示词…') : h('div', { className: 'sg-import-prompt', tabIndex: '0' }, prompt || '提示词暂时无法读取。')),
           h('div', { className: 'sg-import-step' },
             h('div', { className: 'sg-import-step-head' }, h('span', { className: 'sg-import-step-num' }, '2'), h('span', { className: 'sg-import-step-title' }, '粘贴结果，先分析再导入')),
-            h('div', { className: 'sg-import-card' }, h('textarea', { value: text, disabled: busy || Boolean(job) || Boolean(result), onChange: (event) => setText(event.target.value), placeholder: '粘贴 JSON；格式不合格时会自动尝试恢复', 'aria-label': '外部 AI 记忆 JSON' }))),
+            h('div', { className: 'sg-import-card' }, h('textarea', { value: text, disabled: restoring || busy || Boolean(result) || (Boolean(job) && job.status !== 'failed'), onChange: (event) => setText(event.target.value), placeholder: '粘贴 JSON；格式不合格时会自动尝试恢复', 'aria-label': '外部 AI 记忆 JSON' })),
+            !job && !result ? h('div', { className: 'sg-import-hint' }, restoring ? '正在检查已有导入任务…' : '关闭后可继续编辑；草稿仅在当前浏览器页面保留，刷新后清空。') : null),
           running ? h('div', { className: 'sg-import-step' },
             h('div', { className: 'sg-import-step-head' }, h('span', { className: 'sg-import-step-num' }, '3'), h('span', { className: 'sg-import-step-title' }, job.status === 'extracting' ? '正在修复并提取候选记忆' : '正在检测重复与冲突')),
             h('div', { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': percent, style: { height: '9px', overflow: 'hidden', borderRadius: '999px', background: 'var(--sg-border)' } }, h('div', { style: { width: percent + '%', height: '100%', background: 'var(--sg-accent)', transition: 'width .25s ease' } })),
@@ -3208,6 +3279,9 @@ window.__ModuleLoader__.load({
             h('div', { className: 'sg-import-hint' }, emptyJob ? '没有发现可导入的长期记忆。' : job.recoveredFromInvalidJson ? '这些候选由兜底模型恢复，全部需要人工确认。' : '高置信度结果自动采用；低置信度结果请人工选择处理方式。'),
             h('div', { className: 'sg-import-preview' }, (job.decisions || []).map((decision, index) => h('div', { key: index, className: 'sg-import-preview-item' },
               h('div', { className: 'sg-import-preview-title' }, decision.candidate?.title || '未命名记忆'),
+              h('div', { className: 'sg-import-preview-content' }, h('strong', null, '新记忆：'), h('span', null, decision.candidate?.summary || '无内容'), decision.candidate?.narrative ? h('div', null, decision.candidate.narrative) : null),
+              decision.mergedCandidate ? h('div', { className: 'sg-import-preview-content' }, h('strong', null, '合并后：'), h('span', null, decision.mergedCandidate.title + '：' + decision.mergedCandidate.summary)) : null,
+              decision.existingEventIds?.length && decision.matches?.length ? h('div', { className: 'sg-import-preview-content' }, h('strong', null, '受影响的旧记忆：'), decision.matches.filter((match) => decision.existingEventIds.includes(match.event.id)).map((match) => h('div', { key: match.event.id }, match.event.title + '：' + match.event.summary))) : null,
               h('div', { className: 'sg-import-preview-meta' }, h('span', null, actionLabel[decision.action] || decision.action), h('span', null, '置信度 ' + Math.round(Number(decision.confidence || 0) * 100) + '%'), decision.existingEventIds?.length ? h('span', null, '关联 ' + decision.existingEventIds.length + ' 条') : null),
               decision.reason ? h('div', { className: 'sg-import-preview-reason' }, decision.reason) : null,
               decision.requiresConfirmation ? h('label', { className: 'sg-import-review' }, h('span', null, '人工选择'), h('select', { value: choices[index] || decision.action, onChange: (event) => setChoices((current) => ({ ...current, [index]: event.target.value })) },
@@ -3218,13 +3292,14 @@ window.__ModuleLoader__.load({
           error ? h('div', { className: 'sg-import-error' }, error) : null,
           result ? h('div', { className: 'sg-import-result' }, '导入完成：新增 ' + Number(result.importedCount || 0) + ' 条记忆。可立即撤销本批次。') : null,
           h('footer', { className: 'sg-import-dialog-foot' },
-            result ? h('button', { type: 'button', className: 'sg-import-cancel', disabled: busy, onClick: undo }, busy ? '正在撤销…' : '撤销本次导入') : h('button', { type: 'button', className: 'sg-import-cancel', onClick: onBack }, running ? '关闭，后台继续' : '取消'),
+            result ? h('button', { type: 'button', className: 'sg-import-cancel', disabled: busy, onClick: undo }, busy ? '正在撤销…' : '撤销本次导入') : h('button', { type: 'button', className: 'sg-import-cancel', onClick: onBack }, running ? '关闭，后台继续' : '关闭'),
+            !job && !result && text ? h('button', { type: 'button', className: 'sg-import-cancel', disabled: restoring || busy, onClick: () => { setText(''); setError('') } }, '放弃草稿') : null,
             result ? h('button', { type: 'button', className: 'sg-import-button', disabled: busy, onClick: reset }, '导入另一批')
-              : job?.status === 'failed' ? h('button', { type: 'button', className: 'sg-import-button', disabled: busy, onClick: retry }, busy ? '正在重试…' : '重试')
+              : job?.status === 'failed' ? h(React.Fragment, null, h('button', { type: 'button', className: 'sg-import-cancel', disabled: busy, onClick: () => { setJob(null); setChoices({}); setError('') } }, '修改后重新分析'), h('button', { type: 'button', className: 'sg-import-cancel', disabled: busy, onClick: abandon }, '放弃本次导入'), h('button', { type: 'button', className: 'sg-import-button', disabled: busy, onClick: retry }, busy ? '正在重试…' : '重试') )
                 : emptyJob ? h('button', { type: 'button', className: 'sg-import-button', onClick: reset }, '导入另一批')
                   : reviewable ? h('button', { type: 'button', className: 'sg-import-button', disabled: busy, onClick: commit }, busy ? '正在导入…' : '确认导入')
                     : running ? h('button', { type: 'button', className: 'sg-import-button', disabled: true }, '后台处理中')
-                      : h('button', { type: 'button', className: 'sg-import-button', disabled: busy || !text.trim(), onClick: analyze }, busy ? '正在创建任务…' : '分析并预览'))))
+                      : h('button', { type: 'button', className: 'sg-import-button', disabled: restoring || busy || !text.trim(), onClick: analyze }, busy ? '正在创建任务…' : '分析并预览'))))
     }
 
     function MoreHome({ setView }) {
@@ -3238,9 +3313,17 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null, h('div', { className: 'sg-intro' }, h('h2', null, '更多'), h('p', null, '设置、导入与支持')), h('div', { className: 'sg-menu' }, rows.map(([id, icon, title, subtitle]) => h('button', { key: id, className: 'sg-menu-row', onClick: () => setView({ name: id }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›')))))
     }
 
-    function DisplayPage({ onBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus }) {
+    function DisplayPage({ onBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry }) {
       const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
       const settingsWritable = pluginSettings?.writable === true
+      const [sidebarSaving, setSidebarSaving] = React.useState(false)
+      const [sidebarError, setSidebarError] = React.useState('')
+      const changeSidebar = async (visible) => {
+        setSidebarSaving(true); setSidebarError('')
+        try { if (!await setSidebarEntry?.(visible)) setSidebarError('未能保存侧栏设置，请重试。') }
+        catch { setSidebarError('未能保存侧栏设置，请检查连接后重试。') }
+        finally { setSidebarSaving(false) }
+      }
       const showStrataGateStatus = strataGateStatusVisible(pluginSettings)
       const showShortTermStatus = pluginSettings?.value?.showShortTermStatus !== false
       const showRetrievalStatus = pluginSettings?.value?.showRetrievalStatus !== false
@@ -3249,8 +3332,10 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', className: 'sg-setting-switch', role: 'switch', 'aria-checked': checked, 'aria-label': title, disabled: !settingsWritable || disabled, onClick: () => { if (onChange) void onChange(!checked) } }))
       return h(React.Fragment, null,
         h(BackBar, { label: '更多', onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, '界面与显示'), h('p', null, '控制 StrataGate 在聊天界面中显示的信息。设置对所有工作区生效。')),
+        h('div', { className: 'sg-intro' }, h('h2', null, '界面与显示'), h('p', null, '控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')),
         h('div', { className: 'sg-display-settings' },
+          setting({ title: '在左侧栏显示 StrataGate', description: '关闭后隐藏侧栏入口，仍可从设置打开；记忆、检索和后台处理不受影响。', checked: pluginSettings?.value?.showSidebarEntry === true, disabled: sidebarSaving || !setSidebarEntry, onChange: changeSidebar }),
+          sidebarError ? h('p', { role: 'alert', className: 'sg-error-note' }, sidebarError) : null,
           setting({ title: '显示 StrataGate 状态提示', description: '关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。', checked: showStrataGateStatus, onChange: setStrataGateStatus }),
           setting({ title: '短期记忆块', description: '显示 Block 进度、封存结果和正在整理短期记忆等状态。', checked: showShortTermStatus, disabled: !showStrataGateStatus, onChange: setShortTermStatus, child: true }),
           setting({ title: '记忆检索状态', description: '显示检索次数、返回数量，以及回答下方的记忆采用信息。', checked: showRetrievalStatus, disabled: !showStrataGateStatus, onChange: setRetrievalStatus, child: true })))
@@ -4254,35 +4339,72 @@ window.__ModuleLoader__.load({
     }
 
     function ProfilePage() {
-      const [profile, setProfile] = React.useState(null)
-      const [editing, setEditing] = React.useState(null)
+      const [profile, setProfile] = usePageMemoryState(profilePageMemory, 'profile', null)
+      const [editing, updateEditing] = usePageMemoryState(profilePageMemory, 'editing', null)
+      const setEditing = (update) => {
+        const previous = profilePageMemory.get('editing')
+        const next = typeof update === 'function' ? update(previous) : update
+        if (next) profileFieldDrafts.set(next.field, next)
+        else if (previous) profileFieldDrafts.delete(previous.field)
+        updateEditing(next)
+      }
       const [saving, setSaving] = React.useState(false)
       const [syncStatus, setSyncStatus] = React.useState('同步中…')
       const [error, setError] = React.useState('')
-      const [conflict, setConflict] = React.useState(false)
+      const [conflicts, setConflicts] = usePageMemoryState(profilePageMemory, 'conflicts', {})
+      const conflict = Boolean(conflicts[editing?.field])
+      const setConflict = (value, field = profilePageMemory.get('editing')?.field) => {
+        if (field) setConflicts((current) => ({ ...current, [field]: value }))
+      }
+      const [saveResults, setSaveResults] = usePageMemoryState(profilePageMemory, 'saveResults', {})
+      const [reading, setReading] = React.useState(false)
+      const session = React.useRef(0)
+      const action = React.useRef(null)
+      const actionTimeout = React.useRef(null)
+      const readController = React.useRef(null)
+      const savedTimers = React.useRef(new Map())
       const requestVersion = React.useRef(0)
       const refreshRef = React.useRef(null)
+      const clearSavedTimer = (field) => {
+        window.clearTimeout(savedTimers.current.get(field))
+        savedTimers.current.delete(field)
+      }
+      const showSaved = (submission) => {
+        clearSavedTimer(submission.field)
+        setSaveResults((current) => ({ ...current, [submission.field]: { kind: 'saved', submission, flash: true } }))
+        const timer = window.setTimeout(() => {
+          if (savedTimers.current.get(submission.field) !== timer) return
+          savedTimers.current.delete(submission.field)
+          setSaveResults((current) => current[submission.field]?.submission === submission ? { ...current, [submission.field]: { ...current[submission.field], flash: false } } : current)
+        }, 2000)
+        savedTimers.current.set(submission.field, timer)
+      }
       React.useEffect(() => {
         let active = true
         let timer = null
         let controller = null
-        const stopRequest = () => { if (controller) controller.abort(); controller = null }
-        const check = () => {
+        const stopRequest = () => { if (controller) controller.abort(); controller = null; readController.current = null }
+        const check = ({ valid = () => true, onResult } = {}) => {
           if (!active || document.hidden) return
           if (timer !== null) window.clearTimeout(timer)
           timer = null
+          stopRequest()
+          if (action.current) { timer = window.setTimeout(check, 5000); return }
           const version = ++requestVersion.current
           const requestController = new AbortController()
           controller = requestController
-          void api('profile', {}, { method: 'GET', signal: requestController.signal }).then((latest) => {
-            if (!active || document.hidden || version !== requestVersion.current) return
+          readController.current = requestController
+          return api('profile', {}, { method: 'GET', signal: requestController.signal }).then((latest) => {
+            if (!active || document.hidden || version !== requestVersion.current || !valid()) return
+            if (!profileFieldNames.every((field) => typeof latest?.[field] === 'string') || !latest?._revisions) throw new Error('画像读取响应不完整')
             setProfile((current) => sameProfile(current, latest) ? current : latest)
             setSyncStatus('已同步')
             setError('')
+            onResult?.(latest)
           }).catch((reason) => {
-            if (active && version === requestVersion.current && reason?.name !== 'AbortError') { setSyncStatus('同步失败'); setError(String(reason?.message || reason)) }
+            if (active && version === requestVersion.current && valid() && reason?.name !== 'AbortError') { setSyncStatus('同步失败'); setError(String(reason?.message || reason)) }
           }).finally(() => {
-            if (controller === requestController) controller = null
+            if (controller === requestController) { controller = null; readController.current = null }
             if (active && !document.hidden && version === requestVersion.current) timer = window.setTimeout(check, 5000)
           })
         }
@@ -4295,29 +4417,92 @@ window.__ModuleLoader__.load({
         }
         document.addEventListener('visibilitychange', onVisibilityChange)
         check()
-        return () => { active = false; ++requestVersion.current; refreshRef.current = null; if (timer !== null) window.clearTimeout(timer); stopRequest(); document.removeEventListener('visibilitychange', onVisibilityChange) }
+        return () => {
+          const submission = action.current?.submission
+          if (submission && !profilePageMemory.get('saveResults')?.[submission.field]) setSaveResults((current) => ({ ...current, [submission.field]: { kind: 'unknown', submission } }))
+          active = false; ++session.current; ++requestVersion.current; refreshRef.current = null
+          if (timer !== null) window.clearTimeout(timer)
+          stopRequest(); action.current?.abort(); action.current = null
+          window.clearTimeout(actionTimeout.current); actionTimeout.current = null
+          savedTimers.current.forEach((id) => window.clearTimeout(id)); savedTimers.current.clear()
+          setSaveResults((current) => Object.fromEntries(Object.entries(current).map(([field, result]) => [field, result.kind === 'saved' ? { ...result, flash: false } : result])))
+          document.removeEventListener('visibilitychange', onVisibilityChange)
+        }
       }, [])
-      const beginEdit = (field) => { setEditing({ field, draft: profile[field] || '', baseValue: profile[field] || '', baseRevision: profile._revisions?.[field] || 0 }); setConflict(false); setError('') }
+      const resetEdit = (field) => {
+        ++session.current; ++requestVersion.current; readController.current?.abort()
+        setReading(false)
+        if (field) {
+          setConflict(false, field)
+          clearSavedTimer(field)
+          setSaveResults((current) => { const next = { ...current }; delete next[field]; return next })
+        }
+        refreshRef.current?.()
+      }
+      const beginEdit = (field) => { resetEdit(profileFieldDrafts.has(field) ? undefined : field); setEditing(profileFieldDrafts.get(field) || { field, draft: profile[field] || '', baseValue: profile[field] || '', baseRevision: profile._revisions?.[field] || 0 }) }
       const reloadField = () => {
-        ++requestVersion.current
-        void api('profile', {}, { method: 'GET' }).then((latest) => {
-          setProfile((current) => sameProfile(current, latest) ? current : latest)
-          setEditing((current) => current ? { ...current, draft: latest[current.field] || '', baseValue: latest[current.field] || '', baseRevision: latest._revisions?.[current.field] || 0 } : null)
+        if (!editing || saving || reading) return
+        const id = session.current
+        setReading(true)
+        refreshRef.current?.({ valid: () => session.current === id, onResult: (latest) => {
+          setEditing((current) => current ? { ...current, draft: latest[current.field], baseValue: latest[current.field], baseRevision: latest._revisions[current.field] } : null)
           setConflict(false)
-          setError('')
-        }).catch((reason) => setError(String(reason?.message || reason)))
-          .finally(() => refreshRef.current?.())
+          setSaveResults((current) => { const next = { ...current }; delete next[editing.field]; return next })
+        } })?.finally(() => { if (session.current === id) setReading(false) })
       }
       const save = () => {
-        if (!editing || saving) return
+        if (!editing || action.current || saving || reading || saveResults[editing.field]?.kind === 'unknown') return
         if (conflict || profile[editing.field] !== editing.baseValue || profile._revisions?.[editing.field] !== editing.baseRevision) { setConflict(true); return }
+        const submission = { ...editing }
+        const id = session.current
+        const controller = new AbortController()
+        controller.submission = submission
+        action.current = controller
+        const valid = () => session.current === id && action.current === controller
         setSaving(true)
-        setError('')
+        setSaveResults((current) => { const next = { ...current }; delete next[submission.field]; return next })
         ++requestVersion.current
-        void api('profile', {}, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field: editing.field, value: editing.draft, expectedValue: editing.baseValue, expectedRevision: editing.baseRevision }) })
-          .then((result) => { setProfile((current) => sameProfile(current, result.snapshot) ? current : result.snapshot); setEditing(null); setConflict(false) })
-          .catch((reason) => { if (String(reason?.message || reason).includes('刚刚在其他位置更新')) setConflict(true); else setError(String(reason?.message || reason)) })
-          .finally(() => { setSaving(false); refreshRef.current?.() })
+        readController.current?.abort()
+        const timeout = window.setTimeout(() => controller.abort(), 15000)
+        actionTimeout.current = timeout
+        void api('profile', {}, { method: 'PATCH', signal: controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ field: submission.field, value: submission.draft, expectedValue: submission.baseValue, expectedRevision: submission.baseRevision }) })
+          .then((result) => {
+            if (!valid()) return
+            if (!profileFieldNames.every((field) => typeof result?.snapshot?.[field] === 'string') || !Number.isSafeInteger(result.snapshot?._revisions?.[submission.field])) throw new Error('画像保存响应不完整')
+            setProfile(result.snapshot); setEditing(null); setConflict(false, submission.field); showSaved(submission)
+          })
+          .catch((reason) => {
+            if (!valid()) return
+            const message = String(reason?.message || reason)
+            if (reason?.status === 409 || message.includes('刚刚在其他位置更新')) { setConflict(true); return }
+            // A transport failure (including a gateway timeout) may follow a committed write.
+            const unknown = !reason?.status || [408, 502, 504].includes(reason.status)
+            const invalid = [400, 413, 422].includes(reason?.status)
+            const maximum = profileGroups.flatMap(([, fields]) => fields).find(([field]) => field === submission.field)?.[2]
+            const detail = /Persistent Profile exceeds/.test(message) ? '画像总字符数不能超过 6000，请缩短内容。'
+              : /exceeds \d+ characters/.test(message) ? '此字段不能超过 ' + maximum + ' 个字符，请缩短内容。' : message
+            setSaveResults((current) => ({ ...current, [submission.field]: { kind: unknown ? 'unknown' : invalid ? 'invalid' : 'failed', submission, detail } }))
+          })
+          .finally(() => {
+            window.clearTimeout(timeout)
+            if (actionTimeout.current === timeout) actionTimeout.current = null
+            if (valid()) { action.current = null; setSaving(false); refreshRef.current?.() }
+          })
+      }
+      const checkSave = (result) => {
+        if (reading || action.current) return
+        const id = session.current
+        const { submission } = result
+        setReading(true)
+        refreshRef.current?.({ valid: () => session.current === id, onResult: (latest) => {
+          // Revisions are global audit IDs, not consecutive counters for each field.
+          // Confirm the submitted content is persisted; retain any newer local draft.
+          if (latest[submission.field] === submission.draft && Number.isSafeInteger(latest._revisions[submission.field]) && latest._revisions[submission.field] > submission.baseRevision) {
+            showSaved(submission)
+            setEditing((current) => current?.field === submission.field ? current.draft === submission.draft ? null : { ...current, baseValue: latest[submission.field], baseRevision: latest._revisions[submission.field] } : current)
+            setConflict(false, submission.field)
+          }
+        } })?.finally(() => { if (session.current === id) setReading(false) })
       }
       const total = profile ? profileFieldNames.reduce((sum, field) => sum + Array.from(profile[field] || '').length, 0) : 0
       return h(React.Fragment, null,
@@ -4327,24 +4512,96 @@ window.__ModuleLoader__.load({
           h('p', { className: 'sg-settings-group-copy' }, '总字符 ' + total + ' / 6000'),
           profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
             h('h3', null, title),
-            fields.filter(([field]) => field !== 'homeCity' || profile.homeCity || editing?.field === 'homeCity').map(([field, label, maximum]) => {
+            fields.filter(([field]) => field !== 'homeCity' || profile.homeCity || profileFieldDrafts.has(field)).map(([field, label, maximum]) => {
               const value = profile[field] || ''
               const isEditing = editing?.field === field
               const changedElsewhere = isEditing && (value !== editing.baseValue || profile._revisions?.[field] !== editing.baseRevision)
               const draftLength = isEditing ? Array.from(editing.draft).length : 0
               const nextTotal = total - Array.from(value).length + draftLength
-              return h('div', { key: field, className: 'sg-profile-row' },
-                h('div', { className: 'sg-profile-summary' }, h('span', { className: 'sg-profile-label' }, label), h('span', { className: 'sg-profile-value ' + (value ? '' : 'empty'), title: value || undefined }, value || '未设置'), h('button', { type: 'button', className: 'sg-profile-action', onClick: () => beginEdit(field), disabled: saving || Boolean(editing) }, value ? '编辑' : '添加')),
-                isEditing ? h('div', { className: 'sg-profile-editor' },
+              const result = saveResults[field]
+              const savedReadError = result?.kind === 'saved' && Boolean(error)
+              const savedFeedback = result?.kind === 'saved' && result.flash ? h('span', { className: 'sg-profile-saved', role: 'status' }, isEditing && editing.draft !== result.submission.draft ? '上次提交已保存' : '已保存') : null
+              const editor = isEditing ? h('div', { className: 'sg-profile-editor' },
                   field === 'userPreferredName' || field === 'assistantPreferredName' || field === 'preferredLanguage' || field === 'reasoningLanguage' || field === 'defaultLocation' || field === 'homeCity' || field === 'currentCity'
-                    ? h('input', { id: 'sg-profile-' + field, 'aria-label': label, value: editing.draft, onChange: (event) => setEditing((current) => ({ ...current, draft: event.target.value })) })
-                    : h('textarea', { id: 'sg-profile-' + field, 'aria-label': label, value: editing.draft, onChange: (event) => setEditing((current) => ({ ...current, draft: event.target.value })) }),
-                  changedElsewhere || conflict ? h('p', { className: 'sg-profile-conflict', role: 'alert' }, '该项刚刚在其他位置更新。', h('button', { type: 'button', className: 'sg-profile-action', onClick: reloadField }, '载入最新内容')) : null,
-                  h('div', { className: 'sg-profile-editor-foot' }, h('span', { className: 'sg-profile-count' }, draftLength + ' / ' + maximum), h('div', { className: 'sg-profile-actions' }, h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving, onClick: () => { setEditing(null); setConflict(false); setError('') } }, '取消'), h('button', { type: 'button', className: 'sg-save-button', disabled: saving || draftLength > maximum || nextTotal > 6000 || editing.draft === editing.baseValue || changedElsewhere || conflict, onClick: save }, saving ? '保存中…' : '保存')))) : null)
+                    ? h('input', { id: 'sg-profile-' + field, 'aria-label': label, autoFocus: true, disabled: saving, value: editing.draft, onChange: (event) => setEditing((current) => ({ ...current, draft: event.target.value })) })
+                    : h('textarea', { id: 'sg-profile-' + field, 'aria-label': label, autoFocus: true, disabled: saving, value: editing.draft, onChange: (event) => setEditing((current) => ({ ...current, draft: event.target.value })) }),
+                  changedElsewhere || conflict ? h('p', { className: 'sg-profile-conflict', role: 'alert' }, '该项刚刚在其他位置更新。', h('button', { type: 'button', className: 'sg-profile-action', disabled: saving || reading, onClick: reloadField }, '放弃草稿并载入最新内容')) : null,
+                  result && ['failed', 'invalid', 'unknown'].includes(result.kind) ? h('div', { className: 'sg-profile-save-feedback', role: 'alert' },
+                    h('p', null, result.kind === 'unknown' ? '暂时无法确认是否已保存，输入内容已保留。' : '修改未保存，输入内容已保留。'),
+                    result.kind === 'unknown' ? h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => checkSave(result) }, reading ? '检查中…' : '检查保存结果')
+                      : result.kind === 'invalid' ? h('p', null, result.detail) : null) : null,
+                  h('div', { className: 'sg-profile-editor-foot' }, h('span', { className: 'sg-profile-count' }, draftLength + ' / ' + maximum, draftLength > maximum ? '，请缩短至 ' + maximum + ' 个字符以内。' : nextTotal > 6000 ? '，画像总字符数不能超过 6000。' : '', savedFeedback), h('div', { className: 'sg-profile-actions' }, h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving, onClick: () => { resetEdit(field); setEditing(null) } }, '取消编辑'), h('button', { type: 'button', className: 'sg-save-button', disabled: saving || reading || result?.kind === 'unknown' || draftLength > maximum || nextTotal > 6000 || editing.draft === editing.baseValue || changedElsewhere || conflict, onClick: save }, saving ? '保存中…' : result?.kind === 'failed' ? '重新保存' : '保存')))) : null
+              return h('div', { key: field, className: 'sg-profile-row' },
+                h('div', { className: 'sg-profile-summary' + (isEditing ? ' editing' : '') },
+                  h('span', { className: 'sg-profile-label' }, label),
+                  editor || h('span', { className: 'sg-profile-content' }, h('button', { type: 'button', className: 'sg-profile-value ' + (value ? '' : 'empty'), title: value || undefined, 'aria-label': label + '，点击编辑', disabled: saving, onClick: () => beginEdit(field) }, profileFieldDrafts.has(field) ? '继续编辑草稿' : value || '未设置'), savedFeedback),
+                  h('button', { type: 'button', className: 'sg-profile-action', onClick: () => beginEdit(field), disabled: saving, 'aria-hidden': isEditing || undefined }, !isEditing && profileFieldDrafts.has(field) ? '继续编辑' : value ? '编辑' : '添加')),
+                savedReadError ? h('p', { className: 'sg-profile-save-feedback', role: 'status' }, h('span', null, '修改已保存，暂时无法读取最新内容。'), h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => refreshRef.current?.() }, '重新读取')) : null)
             })))) : h('p', null, '正在读取常驻画像…'))
     }
 
-    function SettingsPage({ selected, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort }) {
+    const GRAPH_EXPLANATION = '由于知识图谱功能与事件记录和主题目录有部分重复，还需要额外消耗token维护实体关系，将会默认关闭知识图谱功能，已经生成的图谱数据会保留。'
+    const GRAPH_USAGE_HINT = '提示：如需使用，可以在长期记忆页面点击“＋”，打开知识图谱，功能可以正常使用。'
+    const GRAPH_CONTROL_STYLES = `.sg-graph-no-reminder{display:inline-flex;align-items:center;min-height:30px;padding:5px 8px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);color:var(--sg-muted);cursor:pointer}.sg-graph-no-reminder:hover{border-color:var(--sg-accent);color:var(--sg-accent);background:var(--sg-soft)}.sg-graph-no-reminder:disabled{cursor:not-allowed;opacity:.5}.sg-graph-notice-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid var(--sg-border);border-bottom:1px solid var(--sg-border)}.sg-graph-notice-toggle>span{font-size:13px;font-weight:650}.sg-graph-menu{position:relative;z-index:31;display:inline-flex;align-items:center}.sg-long-tabs .sg-graph-menu-trigger{display:grid;place-items:center;align-self:center;flex:none;box-sizing:border-box;width:32px;height:32px;min-width:32px;min-height:32px;padding:0;border:0;border-radius:999px;background:transparent;color:var(--sg-muted);font-size:22px;line-height:1;cursor:pointer}.sg-graph-menu-trigger svg{display:block;width:16px;height:16px;flex:none}.sg-graph-menu-trigger:hover,.sg-graph-menu-trigger[aria-expanded=true]{background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-menu-popover{position:absolute;z-index:32;left:50%;right:auto;top:calc(100% + 8px);width:min(300px,calc(100vw - 32px));padding:10px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-page);box-shadow:var(--sg-shadow);text-align:left;transform:translateX(-50%)}.sg-graph-menu-popover:before{content:'知识图谱';display:block;padding:0 2px 8px;color:var(--sg-text);font-size:13px;font-weight:650;line-height:1.4}.sg-graph-menu-title{display:none}.sg-graph-menu-popover .sg-storage-card{padding:0;border:0;background:transparent}.sg-graph-menu-popover .sg-setting-note{font-size:11px;line-height:1.5}.sg-graph-dialog-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-graph-dialog-heading h3{margin:0}.sg-graph-dialog-control{display:flex;align-items:center;gap:7px;color:var(--sg-muted);font-size:12px}`
+
+    function GraphControlPanel({ state = {}, refresh, page = false, onGraphHidden }) {
+      const shouldShowNotice = page && state.enabled !== true && state.noticeSeen !== true
+      const [notice, setNotice] = React.useState(shouldShowNotice)
+      const [preview, setPreview] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState('')
+      const [hideExplanation, setHideExplanation] = React.useState(false)
+      const dialogRef = React.useRef(null)
+      React.useEffect(() => { setNotice(page && state.enabled !== true && state.noticeSeen !== true) }, [page, state.enabled, state.noticeSeen])
+      React.useEffect(() => {
+        if (!notice && !preview) return
+        const previous = document.activeElement
+        dialogRef.current?.querySelector('button')?.focus()
+        return () => { if (previous?.isConnected) previous.focus?.() }
+      }, [notice, preview])
+      const control = async (action, token) => {
+        setBusy(true); setError('')
+        try {
+          const result = await api('graph/control', { action, ...(token ? { token } : {}) }, { method: 'POST' })
+          if (action === 'preview') {
+            if (result.pending > 0) setPreview(result)
+            else { await api('graph/control', { action: 'enable', token: result.token }, { method: 'POST' }); await refresh?.() }
+          } else { setPreview(null); if (action === 'notice') { setNotice(false); setHideExplanation(true); onGraphHidden?.() }; await refresh?.() }
+        } catch (reason) { setError(String(reason?.message || reason)) }
+        finally { setBusy(false) }
+      }
+      const showExplanation = !page || (state.noticeSeen !== true && !hideExplanation)
+      return h(React.Fragment, null, h('style', null, GRAPH_CONTROL_STYLES), h('aside', { className: 'sg-storage-card sg-graph-control' + (page ? ' sg-graph-page-control' : ''), 'aria-label': page ? '知识图谱开关' : undefined },
+        h('div', { className: 'sg-stage' }, h('span', null, page ? null : '启用知识图谱'), h('span', { className: 'sg-graph-toggle' }, h('span', { className: 'sg-stage-value ' + (state.enabled === true ? 'processing' : 'waiting') }, state.enabled === true ? (state.paused ? '已暂停' : '已开启') : '已关闭'), h('button', { type: 'button', role: 'switch', 'aria-label': '启用知识图谱', 'aria-checked': state.enabled === true, disabled: busy, className: 'sg-setting-switch', onClick: () => void control(state.enabled ? 'disable' : 'preview') }))),
+        showExplanation ? h(React.Fragment, null, h('p', { className: 'sg-setting-note' }, GRAPH_EXPLANATION), h('p', { className: 'sg-setting-note' }, GRAPH_USAGE_HINT)) : null,
+        page && showExplanation ? h('button', { type: 'button', className: 'sg-quiet-button sg-graph-no-reminder', disabled: busy, onClick: () => void control('notice') }, '不再提醒') : null,
+        !page ? h('p', { className: 'sg-setting-note' }, '图谱开关与任务操作单独保存，无需点击“保存全局设置”。') : null,
+        !page && state.enabled ? h('button', { type: 'button', className: 'sg-storage-button', disabled: busy, onClick: () => void control(state.paused ? 'preview' : 'pause') }, state.paused ? '统计并继续图谱任务' : '暂停图谱任务') : null,
+        error ? h('p', { role: 'alert', className: 'sg-error-note' }, error) : null,
+        notice || preview ? h('div', { className: 'sg-import-overlay' }, h('section', { ref: dialogRef, role: 'dialog', 'aria-modal': 'true', 'aria-label': notice ? '知识图谱默认关闭说明' : '确认恢复知识图谱', className: 'sg-import-dialog', onKeyDown: (event) => {
+          if (event.key === 'Escape' && preview && !notice && !busy) { event.preventDefault(); setPreview(null) }
+          if (event.key === 'Tab') {
+            const buttons = [...dialogRef.current.querySelectorAll('button:not(:disabled)')]
+            if (!buttons.length) { event.preventDefault(); return }
+            const first = buttons[0], last = buttons.at(-1)
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+          }
+        } },
+          h('div', { className: 'sg-graph-dialog-heading' }, h('h3', null, notice ? '知识图谱默认关闭' : '确认恢复知识图谱'), notice ? h('span', { className: 'sg-graph-dialog-control' }, h('span', null, '开启'), h('button', { type: 'button', role: 'switch', 'aria-label': '启用知识图谱', 'aria-checked': state.enabled === true, disabled: busy, className: 'sg-setting-switch', onClick: () => void control('preview') })) : null),
+          h('p', null, GRAPH_EXPLANATION), h('p', null, GRAPH_USAGE_HINT),
+          preview && !notice ? h('p', null, '当前有 ' + preview.pending + ' 条待处理事件，约 ' + preview.batches + ' 个批次。确认后仅补建这份清单，沿用现有租约、并发和重试限额；可随时暂停。') : null,
+          notice && !preview ? h('button', { type: 'button', className: 'sg-graph-no-reminder', disabled: busy, onClick: () => void control('notice') }, '暂时关闭') : !notice && preview ? h(React.Fragment, null,
+            h('button', { type: 'button', disabled: busy, onClick: () => setPreview(null) }, '取消'),
+            h('button', { type: 'button', disabled: busy, onClick: () => void control('enable', preview.token) }, '确认开启并分批处理')) : null,
+          !notice && !preview ? h('button', { type: 'button', className: 'sg-graph-no-reminder', disabled: busy, onClick: () => void control('notice') }, '暂时关闭') : null)) : null))
+    }
+
+    function GraphSettingsPanel({ state = {}, refresh }) {
+      return h(GraphControlPanel, { state, refresh })
+    }
+
+    function SettingsPage({ selected, graphSettings, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       const [agentWeight, setAgentWeight] = React.useState(String(selected.agentMemoryRetrievalWeight ?? 1))
@@ -4368,7 +4625,7 @@ window.__ModuleLoader__.load({
       const effortMode = pluginSettings?.value?.structuredReasoningEffort || 'auto'
       const effortOverridden = pluginSettings?.user?.structuredReasoningEffort !== undefined
       const settingsWritable = pluginSettings?.writable === true
-      const rows = [['Schema', 'v' + selected.schemaVersion], ['提取模型', '由 DSH 当前模型配置提供'], ['项目空间', selected.workspaceName || '当前工作区'], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
+      const workspaceRows = [['Schema', 'v' + selected.schemaVersion], ['工作区', selected.workspaceName || '当前工作区'], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
       const runtimeDiagnostics = [
         ['duplicates', '⇄', '重复记忆整理', '查看保留原因、合并候选与重新扫描'],
         ['system', '✓', '系统状态', '处理概览与最近整理时间'],
@@ -4400,15 +4657,10 @@ window.__ModuleLoader__.load({
         h(BackBar, { label: '更多', onBack }),
         h('div', { className: 'sg-intro' }, h('h2', null, '高级设置'), h('p', null, '记忆配置、数据管理与运行诊断。')),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-memory-settings-title' },
-          h('h3', { id: 'sg-memory-settings-title', className: 'sg-settings-group-title' }, '记忆配置'),
-          h('p', { className: 'sg-settings-group-copy' }, 'Schema、模型与项目配置'),
+          h('h3', { id: 'sg-memory-settings-title', className: 'sg-settings-group-title' }, 'StrataGate 安装级设置'),
+          h('p', { className: 'sg-settings-group-copy' }, '适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。设置保存在当前记忆数据库中，不会自动同步到其他设备或安装。'),
+          h(GraphSettingsPanel, { state: graphSettings, refresh }),
           h('div', { className: 'sg-settings-panel sg-pipeline' },
-            h('div', { className: 'sg-stage' }, h('span', null, '结构化推理档位'), h('span', { className: 'sg-lambda-control' },
-              h('select', { className: 'sg-effort-select', value: effortMode, disabled: !settingsWritable, onChange: (event) => { if (setEffort) void setEffort(event.target.value) }, 'aria-label': '结构化推理档位策略' },
-                h('option', { value: 'auto' }, 'auto（自动）'),
-                h('option', { value: 'force-off' }, 'force-off（强制关闭）')),
-              effortOverridden ? h('button', { type: 'button', className: 'sg-effort-button', onClick: () => { if (resetEffort) void resetEffort() } }, '恢复默认') : h('span', { className: 'sg-stage-value waiting' }, '默认'))),
-            h('p', { className: 'sg-setting-note' }, 'auto：仅在模型明确支持 off 时使用；force-off：优先使用 off，能力检查失败或模型不支持时安全降级，并对同一模型只告警一次。'),
             h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
             h('p', { className: 'sg-setting-note' }, '1 轮是一次用户提问和 AI 完整回复。轮数越小，Block 生成越频繁，也会让相同长度的对话衰减得更快；已有 Block 不会重新切分，尚未封存的内容按新阈值继续处理。'),
             h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: (event) => setLambda(event.target.value), 'aria-label': 'Block 衰减系数 λ' }))),
@@ -4416,11 +4668,29 @@ window.__ModuleLoader__.load({
             showSuggestion ? h('div', { className: 'sg-setting-suggestion' }, h('span', null, '为保持按对话轮数计算的遗忘速度，建议 λ 调整为 ' + suggestedLambda.toFixed(2) + '。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setLambda(String(Number(suggestedLambda.toFixed(2)))) }, '采用建议值')) : null,
             h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', max: '5', step: '0.05', value: agentWeight, onChange: (event) => setAgentWeight(event.target.value), 'aria-label': '主动记忆检索占比' }))),
             h('p', { className: 'sg-setting-note' }, 'agent 主动记录与对话派生记忆分别独立排序后按此权重融合：1 为平权，0 为不浮现 agent 记录，更大值提升 agent 记录的排序权重。'),
-            rows.map(([label, value]) => h('div', { key: label, className: 'sg-stage' }, h('span', null, label), h('span', { className: label === '内部空间 ID' ? 'sg-stage-value sg-code' : 'sg-stage-value' }, String(value)))),
-            h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : changed ? '保存设置' : '已保存'))),
+            h('p', { className: 'sg-setting-note' }, '保存以上三项参数后，将应用于当前安装中的所有已有工作区，也作为新工作区的默认设置。'),
+            h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : changed ? '保存全局设置' : '全局设置已保存'))),
+        h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-host-settings-title' },
+          h('h3', { id: 'sg-host-settings-title', className: 'sg-settings-group-title' }, '宿主配置'),
+          h('p', { className: 'sg-settings-group-copy' }, '由当前 DSH profile 管理；模型路由可能随实际处理的会话变化。'),
+          h('div', { className: 'sg-settings-panel sg-pipeline' },
+            h('div', { className: 'sg-stage' }, h('span', null, '记忆处理模型'), h('span', { className: 'sg-stage-value' }, '由宿主模型路由提供')),
+            h('p', { className: 'sg-setting-note' }, '优先使用 StrataGate 的 provider/model 配置；未指定时使用会话最近一次请求的路由，再回退到 DSH 默认模型。'),
+            h('div', { className: 'sg-stage' }, h('span', null, '结构化推理档位'), h('span', { className: 'sg-lambda-control' },
+              h('select', { className: 'sg-effort-select', value: effortMode, disabled: !settingsWritable, onChange: (event) => { if (setEffort) void setEffort(event.target.value) }, 'aria-label': '结构化推理档位策略' },
+                h('option', { value: 'auto' }, 'auto（自动）'),
+                h('option', { value: 'force-off' }, 'force-off（强制关闭）')),
+              effortOverridden ? h('button', { type: 'button', className: 'sg-effort-button', onClick: () => { if (resetEffort) void resetEffort() } }, '恢复默认') : h('span', { className: 'sg-stage-value waiting' }, '默认'))),
+            h('p', { className: 'sg-setting-note' }, 'auto：仅在模型明确支持 off 时使用；force-off：优先使用 off，能力检查失败或模型不支持时安全降级，并对同一模型只告警一次。'),
+            h('p', { className: 'sg-setting-note' }, '推理档位由当前 DSH profile 的所有工作区共享，修改后由宿主立即保存，对后续记忆处理调用生效，无需点击“保存全局设置”。'))),
+        h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-workspace-settings-title' },
+          h('h3', { id: 'sg-workspace-settings-title', className: 'sg-settings-group-title' }, '当前工作区信息'),
+          h('p', { className: 'sg-settings-group-copy' }, '当前选中工作区的记忆数据 Schema 与处理轮次；随顶部工作区选择器切换。'),
+          h('div', { className: 'sg-settings-panel sg-pipeline' },
+            workspaceRows.map(([label, value]) => h('div', { key: label, className: 'sg-stage' }, h('span', null, label), h('span', { className: label === '内部空间 ID' ? 'sg-stage-value sg-code' : 'sg-stage-value' }, String(value)))))),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-storage-title' },
           h('h3', { id: 'sg-storage-title', className: 'sg-settings-group-title' }, '数据与存储'),
-          h('p', { className: 'sg-settings-group-copy' }, '数据目录与原始数据'),
+          h('p', { className: 'sg-settings-group-copy' }, '数据目录属于当前安装；原始数据查看当前选中的工作区。'),
           h('div', { className: 'sg-storage-card' },
             h('span', { className: 'sg-storage-label' }, '数据存储位置'),
             h('span', { className: 'sg-storage-path', title: dataDirectory || undefined }, dataDirectory || '当前使用内存存储，没有本地数据目录'),
@@ -4430,13 +4700,13 @@ window.__ModuleLoader__.load({
             h('p', { className: 'sg-storage-feedback ' + directoryFeedback.kind, role: directoryFeedback.kind === 'failed' ? 'alert' : 'status', 'aria-live': 'polite' }, directoryFeedback.text)),
           menu([['raw', '{}', '查看原始数据', 'Block、Event、Graph 与模型响应']])),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-diagnostics-title' },
-          h('h3', { id: 'sg-diagnostics-title', className: 'sg-settings-group-title' }, '运行与诊断'),
-          h('p', { className: 'sg-settings-group-copy' }, '系统状态、使用记录与后台任务'),
+          h('h3', { id: 'sg-diagnostics-title', className: 'sg-settings-group-title' }, '当前工作区运行与诊断'),
+          h('p', { className: 'sg-settings-group-copy' }, '当前选中工作区的系统状态、使用记录与后台任务；随顶部工作区选择器切换。'),
           menu(runtimeDiagnostics))
       )
     }
 
-    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, onOpenDreamingSession }) {
+    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar }) {
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -4457,6 +4727,9 @@ window.__ModuleLoader__.load({
       const [savingSettings, setSavingSettings] = React.useState(false)
       const [pollFast, setPollFast] = React.useState(false)
       const dashboardRequestRef = React.useRef(null)
+      const sourceRequestRef = React.useRef(null)
+      const namespaceRef = React.useRef(namespace)
+      namespaceRef.current = namespace
       const dashboardEtagsRef = React.useRef(new Map())
       const loadedNamespaceRef = React.useRef('')
       const feedbackDeepLinkRef = React.useRef(readFeedbackNavigationState(navigationState) || readFeedbackDeepLink())
@@ -4546,7 +4819,7 @@ window.__ModuleLoader__.load({
           if (readFeedbackDeepLink()) consumeFeedbackDeepLink()
         }
         void loadDashboard(graphLink?.namespace || feedbackLink?.namespace || '')
-        return () => dashboardRequestRef.current?.abort()
+        return () => { dashboardRequestRef.current?.abort(); sourceRequestRef.current?.abort() }
       }, [loadDashboard])
       React.useEffect(() => {
         const graphLink = navigationState !== feedbackNavigationStateRef.current ? readGraphNodeNavigationState(navigationState) : null
@@ -4630,11 +4903,24 @@ window.__ModuleLoader__.load({
         conversations.push(memory)
       }
       conversations.sort((left, right) => left.id === '__legacy__' ? 1 : right.id === '__legacy__' ? -1 : 0)
-      const goSection = (next) => { directoryScrollRef.current = null; setSection(next); setView({ name: 'root' }); setSource(null) }
+      const clearSource = () => { sourceRequestRef.current?.abort(); sourceRequestRef.current = null; setSource(null) }
+      const goSection = (next) => { directoryScrollRef.current = null; setSection(next); setView({ name: 'root' }); clearSource() }
       const sourceParams = (kind, item) => kind === 'event' ? { eventId: item.id } : kind === 'element' ? { elementId: item.id } : { blockId: item.id }
       const loadSource = (kind, item) => {
-        setSource(null)
-        void api('sources', { namespace, ...sourceParams(kind, item) }).then(setSource).catch(reportError)
+        clearSource()
+        const controller = new AbortController()
+        sourceRequestRef.current = controller
+        const requestedNamespace = namespace
+        const requestedId = String(item?.id || '')
+        void api('sources', { namespace, ...sourceParams(kind, item) }, { signal: controller.signal }).then((value) => {
+          if (sourceRequestRef.current !== controller || controller.signal.aborted || namespaceRef.current !== requestedNamespace) return
+          const returnedId = value?.event?.id || value?.element?.id || value?.block?.id || value?.id
+          const returnedIds = Array.isArray(value?.events) ? value.events.map((entry) => String(entry?.id || '')) : []
+          if ((returnedId && String(returnedId) !== requestedId) || (returnedIds.length && !returnedIds.includes(requestedId))) return
+          setSource(value)
+        }).catch((reason) => {
+          if (reason?.name !== 'AbortError' && sourceRequestRef.current === controller) reportError(reason)
+        })
       }
       const openWithSource = (kind, item) => {
         setView((current) => ({ name: kind, item, back: current })); loadSource(kind, item)
@@ -4670,14 +4956,14 @@ window.__ModuleLoader__.load({
         setSection('long')
         setQuery('')
         setView({ name: 'root' })
-        setSource(null)
+        clearSource()
         setGraphFocusNodeId(nodeId)
       }
       const goBack = () => {
         const previous = view.back || { name: 'root' }
         setView(previous)
         if (previous.item && ['event', 'block'].includes(previous.name)) loadSource(previous.name, previous.item)
-        else setSource(null)
+        else clearSource()
       }
       const backLabel = view.back?.name === 'duplicates' ? '重复记忆整理' : view.back?.name === 'block' ? '短期记忆' : view.back?.name === 'event' ? '长期记忆' : view.back?.name === 'structure' ? '记忆结构' : section === 'short' ? '短期记忆' : '长期记忆'
       const refresh = (options = {}) => loadDashboard(namespace, { threadId: conversationId, force: true, ...options })
@@ -4699,19 +4985,19 @@ window.__ModuleLoader__.load({
       let content = null
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
+      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，短期记忆和长期记忆会出现在这里。' })
       else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })
-      else if (view.name === 'status') content = h(ProcessingStatus, { overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, stage: view.stage, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
-      else if (view.name === 'import') content = h(ImportPage, { namespace, onBack: moreBack, refresh })
+      else if (view.name === 'status') content = h(ProcessingStatus, { key: namespace, overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
+      else if (view.name === 'import') content = h(ImportPage, { key: namespace, namespace, onBack: moreBack, refresh })
       else if (view.name === 'structure') content = h(StructurePage, { events: data.events, eventPage: data.pagination?.events, graph: data.graph, openEvent, namespace, onBack: moreBack })
       else if (view.name === 'duplicates') content = h(DuplicateReviewPage, { namespace, repair: selected?.duplicateRepair, onBack: moreBack, openEvent, refresh })
       else if (view.name === 'system') content = h(SystemPage, { selected, blocks: data.blocks, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多', refresh, onDuplicates: () => setView({ name: 'duplicates' }) })
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, auditPage: data.pagination?.audit, namespace, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
-      else if (view.name === 'display') content = h(DisplayPage, { onBack: moreBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus })
-      else if (view.name === 'settings') content = h(SettingsPage, { selected, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
+      else if (view.name === 'display') content = h(DisplayPage, { onBack: moreBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry })
+      else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
       else if (view.name === 'support') content = h(SupportPage, { key: namespace, namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
@@ -4722,20 +5008,72 @@ window.__ModuleLoader__.load({
           h('div', { className: 'sg-header-row sg-header-row-primary' },
             h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
               h('img', { className: 'sg-logo', src: MASCOT_DATA_URL, alt: 'StrataGate 吉祥物' }),
-              h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null))),
+              h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null), onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
             h('span', { className: 'sg-usage-count', 'aria-label': 'StrataGate 已在当前工作区中帮助使用记忆 ' + Number(selected?.memoryUseCount || 0) + ' 次。' }, h('strong', { className: 'sg-usage-number' }, Number(selected?.memoryUseCount || 0)), h('span', null, '次记忆采用'))),
           h('div', { className: 'sg-header-row sg-header-row-secondary' },
             h('div', { className: 'sg-project' }, h('span', { className: 'sg-project-label' }, '当前工作区：'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
             h(HeaderCommunityLinks))),
         h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
-        view.name === 'status' || view.name === 'duplicates' ? null : h(MemoryStatusAlert, { overview: error ? null : selected, onOpen: (stage) => setView({ name: 'status', stage }) }),
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
         h('section', { key: section, className: 'sg-view', 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
-          h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, active: view.name === 'root' })),
+          h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { graphSettings: overview.graphSettings, extractionGap: selected?.longTermExtractionGap === true, key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, refresh, active: view.name === 'root' })),
           view.name === 'root' ? null : content) : content),
         h('footer', { className: 'sg-footer' }, '发现问题？ ', h('button', { type: 'button', onClick: () => { setSection('more'); setView({ name: 'support' }); setSource(null) } }, '提交反馈')))
+    }
+
+    function MemoryPanel(props) {
+      return h('div', { className: 'sg-memory-panel', style: { flex: '1 1 0%', minHeight: 0, width: '100%', overflowY: 'auto', overflowX: 'hidden' } }, h(MemoryPage, props))
+    }
+
+    function readSidebarPromptState() {
+      try { return String(globalThis.localStorage?.getItem(SIDEBAR_PROMPT_STORAGE_KEY) || '') } catch { return '' }
+    }
+
+    function writeSidebarPromptState(value) {
+      try { globalThis.localStorage?.setItem(SIDEBAR_PROMPT_STORAGE_KEY, value) } catch {}
+    }
+
+    function StrataGatePanelIcon({ size = 20 }) {
+      return h('svg', {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+        strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': true, focusable: false, className: 'sg-sidebar-panel-icon',
+        style: { display: 'block', flexShrink: 0 },
+      },
+      h('path', { opacity: 0.28, strokeWidth: 1.4, d: 'M3 12V4a1 1 0 0 1 1-1h8' }),
+      h('path', { opacity: 0.55, d: 'M6 15V7a1 1 0 0 1 1-1h9' }),
+      h('rect', { x: 9, y: 9, width: 12, height: 13, rx: 1.8 }),
+      h('path', { d: 'M12 13h6M12 17h4' }))
+    }
+
+    function SidebarPlacementPrompt({ onChooseSidebar, usePluginSettings }) {
+      const settings = usePluginSettings ? usePluginSettings((state) => state) : null
+      const [visible, setVisible] = React.useState(() => readSidebarPromptState() !== 'dismissed')
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState('')
+      if (!visible || settings?.value?.showSidebarEntry === true || settings?.writable !== true) return null
+      const dismiss = () => {
+        writeSidebarPromptState('dismissed')
+        setVisible(false)
+      }
+      const chooseSidebar = async () => {
+        setBusy(true); setError('')
+        try {
+          if (!await onChooseSidebar?.()) { setError('未能保存，请重试。'); return }
+          writeSidebarPromptState('sidebar')
+          setVisible(false)
+        } catch { setError('未能保存，请检查连接后重试。') }
+        finally { setBusy(false) }
+      }
+      return h(React.Fragment, null,
+        h('style', null, SIDEBAR_PROMPT_STYLES),
+        h('span', { className: 'sg-sidebar-placement-prompt', role: 'region', 'aria-label': 'StrataGate 侧栏入口提示' },
+          h('span', { className: 'sg-sidebar-placement-text' }, '从左侧栏快速打开记忆'),
+          h('button', { type: 'button', className: 'sg-sidebar-placement-action', disabled: busy, onClick: () => void chooseSidebar() }, '放到左侧栏'),
+          h('button', { type: 'button', className: 'sg-sidebar-placement-close', 'aria-label': '关闭侧栏入口提示', title: '不再提醒', disabled: busy, onClick: dismiss }, '×'),
+          error ? h('span', { role: 'alert' }, error) : null))
     }
 
     let disposeFeedbackLinkNavigation = null
@@ -4748,6 +5086,14 @@ window.__ModuleLoader__.load({
       const pluginSettingsScope = configForms
         ? configForms.get('stratagate-memory')
         : settingsScope ? settingsScope.bind({ namespace: 'stratagate-memory' }) : null
+      const setSidebarEntry = async (visible) => {
+        if (!pluginSettingsScope || !await pluginSettingsScope.set('showSidebarEntry', visible)) return false
+        if (!visible) {
+          const layout = ctx.get('layout')
+          if (layout?.activePanelId === MEMORY_PANEL_ID) layout.selectPanel?.(null)
+        }
+        return true
+      }
       const warnCitationFailure = (part, error) => {
         if (typeof console === 'undefined' || typeof console.warn !== 'function') return
         try { console.warn('[StrataGate] ' + part + ' registration failed; memory settings remain available.', error) } catch {}
@@ -4764,13 +5110,58 @@ window.__ModuleLoader__.load({
           setStrataGateStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showStrataGateStatus', visible) : null,
           setShortTermStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showShortTermStatus', visible) : null,
           setRetrievalStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showRetrievalStatus', visible) : null,
+          setSidebarEntry: pluginSettingsScope ? setSidebarEntry : null,
         }),
-      }, (props) => h(FeedbackSettingsPage, { ...props, onOpenDreamingSession: sessionId => {
+      }, (props) => h(FeedbackSettingsPage, { ...props, onChooseSidebar: async () => {
+        const layout = ctx.get('layout')
+        if (typeof layout?.selectPanel !== 'function' || !await setSidebarEntry(true)) return false
+        layout.selectPanel(MEMORY_PANEL_ID)
+        props.close?.()
+        return true
+      }, onOpenDreamingSession: sessionId => {
         const navigation = ctx.get('uiWorkspace')
         if (typeof navigation?.openSession !== 'function') throw new Error('当前 DSH 未提供会话导航，请升级宿主后重试')
         navigation.openSession(sessionId)
         props.close?.()
       } })))
+      const memoryPanelInject = () => ({
+        ...(pluginSettingsScope ? { hooks: { pluginSettings: pluginSettingsScope } } : {}),
+        setEffort: pluginSettingsScope ? (mode) => pluginSettingsScope.set('structuredReasoningEffort', mode) : null,
+        resetEffort: pluginSettingsScope ? () => pluginSettingsScope.unset('structuredReasoningEffort') : null,
+        setStrataGateStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showStrataGateStatus', visible) : null,
+        setShortTermStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showShortTermStatus', visible) : null,
+        setRetrievalStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showRetrievalStatus', visible) : null,
+        setSidebarEntry: pluginSettingsScope ? setSidebarEntry : null,
+        onOpenDreamingSession: sessionId => {
+          const navigation = ctx.get('uiWorkspace')
+          if (typeof navigation?.openSession !== 'function') throw new Error('当前 DSH 未提供会话导航，请升级宿主后重试')
+          navigation.openSession(sessionId)
+        },
+      })
+      try {
+        slots.inject('main', () => slots.register({
+          name: 'main',
+          key: MEMORY_PANEL_ID,
+          order: 20,
+          inject: memoryPanelInject,
+        }, MemoryPanel))
+        slots.inject('sidebar.panellist', () => {
+          let removeEntry = null
+          const syncSidebar = () => {
+            const snapshot = pluginSettingsScope?.getSnapshot?.()
+            if (snapshot?.status === 'loading') return
+            const visible = snapshot?.value?.showSidebarEntry === true
+            if (visible && !removeEntry) {
+              removeEntry = slots.register({ name: 'sidebar.panellist', id: MEMORY_PANEL_ID, order: 20, label: () => 'StrataGate 记忆' }, StrataGatePanelIcon) || (() => {})
+            } else if (!visible && removeEntry) { removeEntry(); removeEntry = null }
+          }
+          const unsubscribe = pluginSettingsScope?.subscribe?.(syncSidebar)
+          syncSidebar()
+          return () => { unsubscribe?.(); removeEntry?.(); removeEntry = null }
+        })
+      } catch (error) {
+        warnCitationFailure('sidebar entry', error)
+      }
       try {
         const uiConversation = ctx.get('uiConversation')
         if (uiConversation) {

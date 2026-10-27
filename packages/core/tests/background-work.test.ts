@@ -246,7 +246,7 @@ describe('rebuildable SQLite background schedule', () => {
     const database = await filename(); let clock = Date.now();
     const namespace = `restart:${kind}`;
     const seed = await StrataGate.open({ database, namespace, blockTurnSize: 1, summarizer: summary,
-      graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }), now: () => new Date(clock) });
+      graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }), now: () => new Date(clock) });
     const block = (await seed.appendTurn({ user: 'source', assistant: 'saved' })).sealedBlock!;
     if (kind === 'graph') await seed.addEvent({ title: 'Durable event', summary: 'A project choice.', sourceBlockId: block.id,
       sourceMessageIds: [block.l5Raw[0]!.id] });
@@ -267,7 +267,7 @@ describe('rebuildable SQLite background schedule', () => {
     const resumed = await StrataGate.open({ database, namespace, blockTurnSize: 1, now: () => new Date(clock),
       summarizer: kind === 'summary' ? failing : summary,
       ...(kind === 'extraction' ? { extractor: failing } : {}),
-      ...(kind === 'graph' ? { graphProjector: failing } : {}) });
+      ...(kind === 'graph' ? { graphEnabled: true, graphProjector: failing } : {}) });
     try {
       if (kind === 'graph') clock += 30_000; // existing Graph interruption recovery backoff
       await resumed.resumePendingWork();
@@ -287,7 +287,7 @@ describe('rebuildable SQLite background schedule', () => {
   it.each(['summary', 'extraction', 'graph', 'topic'] as const)('refreshes cached %s leases renewed by another OS process at the same revision, allowing other work', async (kind) => {
     const database = await filename(); const namespace = 'cached-lease'; let clock = Date.now();
     const seed = await StrataGate.open({ database, namespace, blockTurnSize: 1, summarizer: summary, now: () => new Date(clock),
-      ...(kind === 'graph' ? { graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) } : {}) });
+      ...(kind === 'graph' ? { graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) } : {}) });
     const first = (await seed.appendTurn({ user: 'owned by A', assistant: 'stored', threadId: 'owner' })).sealedBlock!;
     if (kind === 'graph' || kind === 'topic') await seed.addEvent({ title: 'decision', summary: 'durable',
       sourceBlockId: first.id, sourceMessageIds: [first.l5Raw[0]!.id] });
@@ -380,7 +380,7 @@ describe('rebuildable SQLite background schedule', () => {
   it.each(['summary', 'extraction', 'graph'] as const)('merges %s heartbeats on unrelated saves and fences stale recovery and completion', async (kind) => {
     const database = await filename(); const namespace = 'heartbeat-fence'; const clock = Date.now();
     const seed = await StrataGate.open({ database, namespace, blockTurnSize: 1, summarizer: summary,
-      ...(kind === 'graph' ? { graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) } : {}) });
+      ...(kind === 'graph' ? { graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) } : {}) });
     const block = (await seed.appendTurn({ user: 'source', assistant: 'stored' })).sealedBlock!;
     if (kind === 'graph') await seed.addEvent({ title: 'decision', summary: 'durable', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] });
     const initial = seed.exportSnapshot();
@@ -445,8 +445,8 @@ describe('rebuildable SQLite background schedule', () => {
     const model = vi.fn(() => new Promise<never>((resolve) => { finish = resolve; }));
     const first = await StrataGate.open({ database, namespace, blockTurnSize: 1, now: () => new Date(clock),
       summarizer: kind === 'summary' ? model : async () => ({ ...(await summary()), shouldExtract: kind === 'extraction' }),
-      ...(kind === 'extraction' ? { extractor: model } : {}), ...(kind === 'graph' ? { graphProjector: model } : {}),
-      ...(kind === 'topic' ? { graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) } : {}) });
+      ...(kind === 'extraction' ? { extractor: model } : {}), ...(kind === 'graph' ? { graphEnabled: true, graphProjector: model } : {}),
+      ...(kind === 'topic' ? { graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) } : {}) });
     const result = await first.appendTurn({ user: 'one source', assistant: 'stored' }, { deferDerivation: kind === 'summary' || kind === 'extraction' });
     if (kind === 'graph' || kind === 'topic') await first.addEvent({ title: 'decision', summary: 'durable', sourceBlockId: result.sealedBlock!.id,
       sourceMessageIds: [result.sealedBlock!.l5Raw[0]!.id] });
@@ -486,7 +486,7 @@ describe('rebuildable SQLite background schedule', () => {
         (async()=> { const { StrataGate } = await import(${JSON.stringify(storeUrl)}); let calls=0;
           const model=async()=>{calls++; throw Error('duplicate model call')};
           const memory=await StrataGate.open({database:${JSON.stringify(database)},namespace:${JSON.stringify(namespace)},
-            blockTurnSize:1,now:()=>new Date(${clock}),summarizer:model,extractor:model,graphProjector:model});
+            blockTurnSize:1,now:()=>new Date(${clock}),summarizer:model,extractor:model,graphEnabled: true, graphProjector:model});
           await memory.resumePendingWork();
           ${kind === 'topic' ? 'if(await memory.claimNextTopicProjection()) calls++;' : ''}
           await memory.close(); console.log(JSON.stringify({calls}));
@@ -515,7 +515,7 @@ describe('rebuildable SQLite background schedule', () => {
   it('claims Graph and Topic atomically across simultaneous connections without losing the loser\'s work', async () => {
     const database = await filename();
     const options = { database, namespace: 'race', blockTurnSize: 1, summarizer: summary,
-      graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) };
+      graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) };
     const first = await StrataGate.open(options);
     const block = (await first.appendTurn({ user: 'source', assistant: 'saved' })).sealedBlock!;
     await first.addEvent({ title: 'Decision', summary: 'A lasting decision.', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] });
@@ -540,7 +540,7 @@ describe('rebuildable SQLite background schedule', () => {
   it('allows only one Graph/Topic claimant across two OS processes and keeps the other queued Graph task', async () => {
     const database = await filename();
     const seed = await StrataGate.open({ database, namespace: 'process-race', blockTurnSize: 1, summarizer: summary,
-      graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) });
+      graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) });
     const block = (await seed.appendTurn({ user: 'source', assistant: 'saved' })).sealedBlock!;
     for (const title of ['First decision', 'Second decision']) await seed.addEvent({ title, summary: 'A durable project decision.',
       sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] });
@@ -569,7 +569,7 @@ describe('rebuildable SQLite background schedule', () => {
       (async () => {
         const { StrataGate } = await import(process.argv[2]);
         const memory = await StrataGate.open({ database: process.argv[1], namespace: 'process-race', blockTurnSize: 1,
-          graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) });
+          graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }) });
         process.stdout.write('ready\\n');
         await new Promise(resolve => process.stdin.once('data', resolve));
         let result;
@@ -700,7 +700,7 @@ describe('rebuildable SQLite background schedule', () => {
   it('indexes a dynamic Topic failure at its durable retry time and resumes it after restart', async () => {
     const database = await filename(); let clock = Date.now();
     const options = { database, namespace: 'topic-retry', blockTurnSize: 1, summarizer: summary,
-      graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }), now: () => new Date(clock) };
+      graphEnabled: true, graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }), now: () => new Date(clock) };
     const memory = await StrataGate.open(options);
     const block = (await memory.appendTurn({ user: 'source', assistant: 'saved' })).sealedBlock!;
     await memory.addEvent({ title: 'A decision', summary: 'A durable decision.', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] });

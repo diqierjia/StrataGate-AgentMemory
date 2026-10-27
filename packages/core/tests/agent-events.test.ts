@@ -38,7 +38,7 @@ describe('StrataGate.recordAgentEvent', () => {
     now: (): Date => new Date('2026-09-23T08:00:00Z'),
     idFactory: ids(),
     summarizer: nonExtractingSummarizer,
-    graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+    graphEnabled: true, graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
   })
 
   const seedPassiveEvent = async (memory: StrataGate): Promise<string> => {
@@ -397,7 +397,7 @@ describe('StrataGate.recordAgentEvent', () => {
       now: (): Date => new Date('2026-09-23T08:00:00Z'),
       idFactory: ids(),
       summarizer: nonExtractingSummarizer,
-      graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+      graphEnabled: true, graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
     })
     await memory.appendTurn(
       { user: '记住：我偏好用 pnpm。', assistant: '好的，我记下了。', threadId: 'session-thread' },
@@ -542,7 +542,7 @@ describe('agent event persistence', () => {
     const options = {
       database: join(directory, 'memory.db'), namespace: 'agent:history', blockTurnSize: 1,
       summarizer: nonExtractingSummarizer,
-      graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+      graphEnabled: true, graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
     }
     try {
       const memory = await StrataGate.open(options)
@@ -575,7 +575,7 @@ describe('agent event persistence', () => {
         now: (): Date => new Date('2026-09-23T08:00:00Z'),
         idFactory: ids(),
         summarizer: nonExtractingSummarizer,
-        graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+        graphEnabled: true, graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
       }
       const first = await StrataGate.open(options)
       const recorded = await first.recordAgentEvent({
@@ -615,7 +615,7 @@ describe('agent event persistence', () => {
         now: (): Date => new Date('2026-09-23T08:00:00Z'),
         idFactory: ids(),
         summarizer: nonExtractingSummarizer,
-        graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+        graphEnabled: true, graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
       }
       const first = await StrataGate.open(options)
       await first.appendTurn({ user: '星河项目由李明负责', assistant: '已记录。' }, { deferDerivation: true })
@@ -643,7 +643,7 @@ describe('agent event persistence', () => {
 
       const storage = new SqliteStorage({ filename: database })
       const loaded = await storage.load(options.namespace)
-      expect(loaded?.snapshot.schemaVersion).toBe(13)
+      expect(loaded?.snapshot.schemaVersion).toBe(14)
       expect(loaded?.snapshot.agentEvents).toEqual([])
       expect(loaded?.snapshot.events).toEqual(before.events)
       await storage.close()
@@ -673,7 +673,7 @@ describe('agent event persistence', () => {
         now: (): Date => new Date('2026-09-23T08:00:00Z'),
         idFactory: ids(),
         summarizer: nonExtractingSummarizer,
-        graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+        graphEnabled: true, graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
       }
       const memory = await StrataGate.open(options)
       const recorded = await memory.recordAgentEvent({

@@ -1,8 +1,45 @@
-import type { BlockLevel, RawMessage, ToolTrace } from './types.js';
+import type { BlockLevel, MemoryBlock, RawMessage, ToolTrace } from './types.js';
 
 export const DEFAULT_BLOCK_TURN_SIZE = 12;
 export const BLOCK_MAX_LEVEL = 5;
 export const BLOCK_DECAY_LAMBDA = 0.3;
+
+export interface BlockPosition {
+  blockPosition: number;
+  latestBlockPosition: number;
+}
+
+/** Sealed order is independent of derivation status and isolated per thread. */
+export function buildBlockTimeline(
+  blocks: readonly Pick<MemoryBlock, 'id' | 'threadId' | 'sequence'>[],
+): Map<string, BlockPosition> {
+  const threads = new Map<string | undefined, typeof blocks[number][]>();
+  for (const block of blocks) {
+    const thread = threads.get(block.threadId) ?? [];
+    thread.push(block);
+    threads.set(block.threadId, thread);
+  }
+  const positions = new Map<string, BlockPosition>();
+  for (const thread of threads.values()) {
+    thread.sort((a, b) => a.sequence - b.sequence);
+    thread.forEach((block, index) => positions.set(block.id, {
+      blockPosition: index + 1,
+      latestBlockPosition: thread.length,
+    }));
+  }
+  return positions;
+}
+
+export function getBlockDecayView(
+  block: Pick<MemoryBlock, 'pointerAnchorLevel' | 'pointerAnchorBlockPosition'>,
+  position: BlockPosition,
+  lambda = BLOCK_DECAY_LAMBDA,
+): { age: number; level: BlockLevel } {
+  return {
+    age: Math.max(0, position.latestBlockPosition - position.blockPosition),
+    level: getDecayedBlockLevel(block.pointerAnchorLevel, block.pointerAnchorBlockPosition, position.latestBlockPosition, lambda),
+  };
+}
 
 const FILLER_ONLY = new Set([
   'ok', 'okay', 'got it', 'thanks', 'thank you', 'yes', 'correct', 'sure',

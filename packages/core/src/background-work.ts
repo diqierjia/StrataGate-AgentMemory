@@ -1,13 +1,16 @@
 import { MemoryTopicDirectory, MEMORY_TOPIC_PROJECTOR_VERSION, TOPIC_RECOVERY_VERSION, type MemoryTopicState } from './topics.js';
-import { DERIVATION_MAX_ATTEMPTS, KNOWLEDGE_GRAPH_PROJECTOR_VERSION, graphProjectionNeedsRecovery,
+import { DERIVATION_MAX_ATTEMPTS, KNOWLEDGE_GRAPH_PROJECTOR_VERSION, graphProjectionNeedsRecovery, graphProjectionSourceIds,
   type BlockSummaryJob, type ExtractionJob, type GraphProjectionJob } from './storage.js';
 import type { EventCard } from './types.js';
 
 // A persisted derived index must be rebuilt when its eligibility rules change.
-export const BACKGROUND_WORK_INDEX_VERSION = JSON.stringify([1, KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
+export const BACKGROUND_WORK_INDEX_VERSION = JSON.stringify([3, KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
   MEMORY_TOPIC_PROJECTOR_VERSION, TOPIC_RECOVERY_VERSION]);
 
 export interface BackgroundWorkInput {
+  graphEnabled?: boolean;
+  graphEpoch?: number;
+  graphBackfillEventIds?: readonly string[];
   blocks: Array<{ id: string; processingStatus: string; shouldExtract?: boolean }>;
   summaryJobs: readonly BlockSummaryJob[];
   extractionJobs: readonly ExtractionJob[];
@@ -43,10 +46,22 @@ export function backgroundWorkTimes(input: BackgroundWorkInput, now = Date.now()
     } else if (summary) { const time = jobWake(summary); if (time !== null) due.push(time); }
   }
   const events = [...input.events, ...input.agentEvents];
+  const eventById = new Map(events.map((event) => [event.id, event]));
+  const approved = new Set(input.graphBackfillEventIds ?? []);
+  const graphJobCanRun = (job: GraphProjectionJob): boolean =>
+    graphProjectionSourceIds(job, eventById, input.graphEpoch ?? 0, approved).length > 0;
   const covered = new Set(input.graphProjectionJobs.filter((job) => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
     .flatMap((job) => job.sourceEventIds));
-  if (events.some((event) => event.status !== 'forgotten' && event.status !== 'archived' && !covered.has(event.id))) due.push(0);
-  for (const job of input.graphProjectionJobs) {
+  if (input.graphEnabled && events.some((event) => input.graphBackfillEventIds?.includes(event.id) && event.status !== 'forgotten' && event.status !== 'archived' && !covered.has(event.id))) due.push(0);
+  for (const job of input.graphEnabled ? input.graphProjectionJobs : []) {
+    // Retire spent stale leases even when their sources are no longer approved.
+    // This is bookkeeping only and must never schedule another model attempt.
+    if (job.attempts >= DERIVATION_MAX_ATTEMPTS && (job.status === 'pending' || job.status === 'running'
+      && job.claimEpoch !== undefined && job.claimEpoch !== (input.graphEpoch ?? 0))) { due.push(0); continue; }
+    if (!graphJobCanRun(job)) continue;
+    if (job.lastError === 'Graph claim revoked') continue;
+    if (input.graphEpoch !== undefined && job.claimEpoch !== undefined && job.claimEpoch !== input.graphEpoch
+      && job.status !== 'completed' && job.attempts < DERIVATION_MAX_ATTEMPTS) due.push(0);
     const time = jobWake(job);
     if (time !== null) due.push(time);
     if (graphProjectionNeedsRecovery(job, events)) due.push(0);

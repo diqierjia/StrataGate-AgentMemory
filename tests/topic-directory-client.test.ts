@@ -467,7 +467,7 @@ describe('Topic Directory client interactions', () => {
       if (request === 4) return Promise.resolve({ ok: true, status: 304, headers: { get: () => 'etag-B' } })
       return new Promise((resolve) => pending.push({ signal: options.signal, resolve, options }))
     })
-    client.seedHooks({ 0: overview, 1: namespace, 5: 'long', 8: oldData, 11: false, 18: { current: namespace } })
+    client.seedHooks({ 0: overview, 1: namespace, 5: 'long', 8: oldData, 11: false, 20: { current: namespace } })
     const props = { useWorkspaces: (select: any) => select({ items: [] }), useSessions: (select: any) => select({ byId: {} }) }
     client.render(client.MemoryPage, props)
     await client.flush()
@@ -746,13 +746,13 @@ describe('Topic Directory client interactions', () => {
     const overview = { namespaces: [{ namespace: oldNamespace }, { namespace }] }
     const props = { useWorkspaces: (select: any) => select({ items: [] }), useSessions: (select: any) => select({ byId: {} }) }
     // These are MemoryPage's ordinary state/ref slots, before any effects run.
-    client.seedHooks({ 0: overview, 1: namespace, 5: 'long', 8: data, 11: false, 18: { current: oldNamespace } })
+    client.seedHooks({ 0: overview, 1: namespace, 5: 'long', 8: data, 11: false, 20: { current: oldNamespace } })
     let tree = client.render(client.MemoryPage, props)
     expect(find(tree, (node) => node.visible && node.props['data-testid'] === 'stratagate-topic-directory')).toHaveLength(0)
     expect(find(tree, (node) => node.visible && node.props.className === 'sg-skeleton')).not.toHaveLength(0)
     const newDirectory = fixture()
     newDirectory.topics[0]!.title = '新工作区主题'
-    client.seedHooks({ 0: overview, 1: namespace, 5: 'long', 8: { ...data, topicDirectory: newDirectory }, 11: false, 18: { current: namespace } })
+    client.seedHooks({ 0: overview, 1: namespace, 5: 'long', 8: { ...data, topicDirectory: newDirectory }, 11: false, 20: { current: namespace } })
     tree = client.render(client.MemoryPage, props)
     expect(find(tree, (node) => node.visible && node.props['data-testid'] === 'stratagate-topic-directory')).toHaveLength(1)
     expect(buttons(tree, '第一章新工作区主题›')).toHaveLength(1)
@@ -762,19 +762,19 @@ describe('Topic Directory client interactions', () => {
     const client = clientRenderer(true)
     const props = { events: [], eventPage: { total: 0, offset: 0, limit: 40 }, graph: { nodes: [{ id: 'node-1', name: '记忆架构', type: 'concept', status: 'active', sourceEventIds: [] }], edges: [], clusters: [] }, project: '当前工作区', query: '', setQuery: vi.fn(), openEvent: vi.fn(), namespace: 'dsh:project:test', topicDirectory: fixture(), focusNodeId: 'node-1', onFocusHandled: vi.fn() }
     props.onFocusHandled.mockImplementation(() => { props.focusNodeId = '' })
-    client.render(client.LongTermPage, props)
-    let tree = client.render(client.LongTermPage, props)
+    client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
+    let tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '知识图谱')[0]!.props['aria-current']).toBe('page')
     expect(props.onFocusHandled).toHaveBeenCalledTimes(1)
     buttons(tree, '主题目录')[0]!.props.onClick()
-    tree = client.render(client.LongTermPage, props)
+    tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     props.graph.nodes = [...props.graph.nodes]
-    tree = client.render(client.LongTermPage, props)
+    tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '主题目录')[0]!.props['aria-current']).toBe('page')
     expect(props.onFocusHandled).toHaveBeenCalledTimes(1)
     props.focusNodeId = 'node-1'
-    client.render(client.LongTermPage, props)
-    tree = client.render(client.LongTermPage, props)
+    client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
+    tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '知识图谱')[0]!.props['aria-current']).toBe('page')
     expect(props.onFocusHandled).toHaveBeenCalledTimes(2)
   })
@@ -782,22 +782,24 @@ describe('Topic Directory client interactions', () => {
   it('defaults LongTermPage to the directory while preserving graph and timeline navigation', () => {
     const client = clientRenderer()
     const props = { events: [], eventPage: { total: 0, offset: 0, limit: 40 }, graph: { nodes: [], edges: [], clusters: [] }, project: '当前工作区', query: '', setQuery: vi.fn(), openEvent: vi.fn(), namespace: 'dsh:project:test', topicDirectory: fixture() }
-    let tree = client.render(client.LongTermPage, props)
+    let tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     const nav = find(tree, (node) => node.props['aria-label'] === '长期记忆视角')[0]!
-    expect(buttons(nav).map(({ text }) => text)).toEqual(['主题目录', '知识图谱', '事件时间线'])
+    expect(buttons(nav).filter((node) => node.props.className !== 'sg-graph-menu-trigger').map(({ text }) => text))
+      .toEqual(['主题目录', '知识图谱', '事件时间线'])
+    expect(buttons(nav).filter((node) => node.props['aria-label'] === '知识图谱设置')).toHaveLength(1)
     expect(buttons(nav, '主题目录')[0]!.props['aria-current']).toBe('page')
     expect(find(tree, (node) => node.visible && node.props.className === 'sg-long-toolbar')).toHaveLength(0)
     buttons(tree, '1.1发展脉络›')[0]!.props.onClick()
     buttons(tree, '知识图谱')[0]!.props.onClick()
-    tree = client.render(client.LongTermPage, props)
+    tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '知识图谱')[0]!.props['aria-current']).toBe('page')
     expect(find(tree, (node) => node.visible && node.props.className === 'sg-long-toolbar')).toHaveLength(1)
     buttons(tree, '事件时间线')[0]!.props.onClick()
-    tree = client.render(client.LongTermPage, props)
+    tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '事件时间线')[0]!.props['aria-current']).toBe('page')
     expect(buttons(tree, '下一页')).toHaveLength(1)
     buttons(tree, '主题目录')[0]!.props.onClick()
-    tree = client.render(client.LongTermPage, props)
+    tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '1.1发展脉络›')[0]!.props['aria-expanded']).toBe(true)
   })
 
@@ -807,8 +809,8 @@ describe('Topic Directory client interactions', () => {
     const graphView = (nodes: any[], edges: any[], query = '') => {
       const client = clientRenderer()
       const props = { events: [], eventPage: { total: 0, offset: 0, limit: 40 }, graph: { nodes, edges, clusters: [] }, project: '当前工作区', query, setQuery: vi.fn(), openEvent: vi.fn(), namespace: 'dsh:project:test', topicDirectory: fixture() }
-      buttons(client.render(client.LongTermPage, props), '知识图谱')[0]!.props.onClick()
-      const render = () => client.render(client.LongTermPage, props)
+      buttons(client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } }), '知识图谱')[0]!.props.onClick()
+      const render = () => client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
       const count = () => find(render(), (item) => item.props.className === 'sg-toolbar-count')[0]!.text
       return { render, count }
     }
@@ -962,8 +964,8 @@ describe('Topic Directory client interactions', () => {
     const directory = fixture()
     directory.bootstrap = { ...directory.bootstrap, status, total: 61, completed: 24 }
     const tree = client.render(client.TopicDirectory, { directory, openEvent: vi.fn() })
-    expect(tree.text).toContain('正在整理历史记忆 · 24 / 61')
-    expect(tree.text).toContain('不影响正常使用，未整理记忆仍可正常检索')
+    expect(tree.text).toContain('历史记忆整理中 · 已处理 24 / 61 条事件')
+    expect(tree.text).not.toMatch(/原始记忆仍然保留|重新整理这/)
   })
 
   it.each(['running', 'failed'])('shows outstanding chapter relations and retry warnings for %s', (status) => {
@@ -973,10 +975,9 @@ describe('Topic Directory client interactions', () => {
       failures: [{ jobId: 'failed-a', eventCount: 1, attempts: 3 }],
     } as any;
     const tree = client.render(client.TopicDirectory, { directory, openEvent: vi.fn() });
-    expect(tree.text).toContain('仍有 ' + (status === 'running' ? 2 : 1) + ' 项小节归属待补齐，其中 1 项需要重新整理');
-    expect(tree.text).toContain('1 条历史记忆暂未完成整理');
-    expect(tree.text).not.toContain('整理完成');
-    expect(buttons(tree, '重新整理这 1 条')).toHaveLength(1);
+    expect(tree.text).toContain(status === 'running' ? '历史记忆整理中 · 已处理 0 / 1 条事件' : '部分记忆尚未归入主题或小节。');
+    expect(tree.text).not.toMatch(/失败批次|重新整理这|尝试.*次|整理完成/);
+    expect(buttons(tree, '重新整理这 1 条')).toHaveLength(0);
   });
 
   it.each(['pending', 'running', 'failed', 'completed'])('shows truthful 74/86 recovery progress for %s', (status) => {
@@ -986,38 +987,25 @@ describe('Topic Directory client interactions', () => {
       failures: failed ? [{ jobId: 'failed-recovery', eventCount: 12, attempts: 3, lastError: 'validation-failed: overview.text is empty' }] : [] } as any;
     const tree = client.render(client.TopicDirectory, { directory, openEvent: vi.fn() });
     if (failed) {
-      expect(tree.text).toContain('历史记忆部分完成 · 74 / 86');
-      expect(tree.text).toContain('12 条历史记忆暂未完成整理');
-      expect(buttons(tree, '重新整理这 12 条')).toHaveLength(1);
+      expect(tree.text).toContain('部分记忆尚未归入主题或小节。');
+      expect(tree.text).not.toContain('validation-failed');
+      expect(buttons(tree, '重新整理这 12 条')).toHaveLength(0);
     } else if (status === 'completed') {
-      expect(find(tree, (node) => String(node.props.className || '').startsWith('sg-topic-bootstrap '))).toHaveLength(0);
-    } else expect(tree.text).toContain('正在整理历史记忆 · 74 / 86');
+      expect(tree.text).toContain('部分记忆尚未归入主题或小节。');
+    } else expect(tree.text).toContain('历史记忆整理中 · 已处理 74 / 86 条事件');
   });
 
-  it('removes completed successful/empty bootstrap notices and loads failure titles only on inspection', async () => {
+  it('checks actual topic and section coverage even when no task is running', () => {
     const client = clientRenderer(true)
-    const props = { directory: fixture(), namespace: 'dsh:project:test', openEvent: vi.fn() }
-    expect(find(client.render(client.TopicDirectory, props), (node) => String(node.props.className || '').startsWith('sg-topic-bootstrap '))).toHaveLength(0)
-    props.directory.bootstrap = { ...props.directory.bootstrap, total: 0, completed: 0, status: 'pending' }
-    expect(find(client.render(client.TopicDirectory, props), (node) => String(node.props.className || '').startsWith('sg-topic-bootstrap '))).toHaveLength(0)
-    props.directory.bootstrap = { status: 'completed', total: 61, completed: 58, failedEvents: 3, failures: [{ jobId: 'failed-1', eventIds: ['event-22'], attempts: 3, lastError: 'validation-failed: every supplied batch Event must be assigned to a topic', diagnostics: { category: 'validation-failed', reason: 'every supplied batch Event must be assigned to a topic', eventCount: 3, requestedOutputTokens: 32768, maxOutputTokens: 32768, attempt: 3 } }] } as any
-    let tree = client.render(client.TopicDirectory, props)
-    expect(tree.text).toContain('3 条历史记忆暂未完成整理')
-    buttons(tree, '查看详情')[0]!.props.onClick()
-    tree = client.render(client.TopicDirectory, props)
-    await client.flush()
-    tree = client.render(client.TopicDirectory, props)
-    expect(find(tree, (node) => node.visible && node.props.className === 'sg-topic-failure')).toHaveLength(1)
-    expect(buttons(tree, '收起详情')).toHaveLength(1)
-    const diagnostics = find(tree, (node) => node.type === 'pre').map((node) => node.text).join('')
-    expect(diagnostics).toContain('maxOutputTokens')
-    expect(diagnostics).toContain('32768')
-    expect(diagnostics).not.toContain('Raw response')
-    const failureEvent = buttons(tree).find((node) => node.props['data-topic-event-id'] === 'event-22')!
-    failureEvent.props.onClick({ currentTarget: {} })
-    expect(props.openEvent).toHaveBeenCalledWith(eventFixture()[21]!, {})
-    expect(client.fetch).toHaveBeenCalledTimes(1)
-    expect(new URL(client.fetch.mock.calls[0]![0], 'http://localhost').searchParams.get('sectionKey')).toBe('failure:failed-1')
+    const directory = fixture()
+    const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn() }
+    expect(client.render(client.TopicDirectory, props).text).toContain('部分记忆尚未归入主题或小节。')
+    directory.pending.total = 0
+    directory.topics = []
+    expect(client.render(client.TopicDirectory, props).text).not.toContain('部分记忆尚未归入主题或小节。')
+    directory.bootstrap = { ...directory.bootstrap, sectionBackfill: { pendingRelations: 1, failedRelations: 1 } } as any
+    expect(client.render(client.TopicDirectory, props).text).toContain('部分记忆尚未归入主题或小节。')
+    expect(client.fetch).not.toHaveBeenCalled()
   })
 
   it('keeps zero/one/nine event overviews complete without inventing rows or show-all actions', async () => {

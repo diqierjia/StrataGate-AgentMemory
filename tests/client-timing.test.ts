@@ -157,6 +157,22 @@ describe.each(['legacy', 'flat'])('DSH answer-tail timing (%s)', (format) => {
 describe('DSH short-term Block timing', () => {
   afterEach(() => vi.useRealTimers())
 
+  it.each([false, true])('keeps automatic retries neutral and terminal failures out of conversation reminders (terminal=%s)', (terminal) => {
+    const { plugin } = loadClient('shortTermFeed, ShortTermMemoryTurnStatus')
+    const feed = plugin.__test.shortTermFeed('session-1')
+    feed.snapshot = { payload: { namespace: 'isolated', data: { blockTurnSize: 6, items: [{ id: 'block-1', turnRange: [1, 6],
+      processingStatus: 'pending', summaryJob: { status: 'failed', state: terminal ? 'terminal-failed' : 'retryable',
+        attempts: terminal ? 3 : 1, nextRetryAt: terminal ? null : '2026-10-22T00:00:00Z' } }] } } }
+    const tree = plugin.__test.ShortTermMemoryTurnStatus({ matched: { turn: 6 }, sessionId: 'session-1',
+      useSessions: (select: any) => select({ byId: {} }), useWorkspaces: (select: any) => select({ items: [] }),
+      useSession: (select: any) => select({ turnEnds: new Map([[6, {}]]), running: false }) })
+    if (terminal) expect(tree).toBeNull()
+    else {
+      expect(JSON.stringify(tree)).toContain('processing')
+      expect(JSON.stringify(tree)).not.toMatch(/失败|重试|暂不可用|已完成/)
+    }
+  })
+
   function blockFeed(responses: unknown[]) {
     vi.useFakeTimers()
     const fetch = vi.fn(async () => ({ ok: true, json: async () => responses.shift() }))

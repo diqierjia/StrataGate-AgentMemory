@@ -1,4 +1,29 @@
 import { DatabaseSync } from 'node:sqlite'
+import { existsSync } from 'node:fs'
+
+export interface GraphSettings {
+  enabled: boolean
+  paused: boolean
+  epoch: number
+  legacy: boolean
+  noticeSeen: boolean
+  everEnabled: boolean
+  approved: Record<string, string[]>
+}
+
+/** Browsing and tool discovery must not migrate an otherwise read-only database. */
+export function readGraphSettings(filename: string): GraphSettings {
+  const defaults: GraphSettings = { enabled: false, paused: false, epoch: 0, legacy: false, noticeSeen: false, everEnabled: false, approved: {} }
+  if (filename === ':memory:' || !existsSync(filename)) return defaults
+  const db = new DatabaseSync(filename, { readOnly: true, timeout: 5000 })
+  try {
+    const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map(row => row.name))
+    defaults.legacy = tables.has('memory_spaces') && Boolean(db.prepare('SELECT 1 FROM memory_spaces LIMIT 1').get())
+    if (!tables.has('stratagate_dsh_settings')) return defaults
+    const settings = new Map((db.prepare("SELECT key, value FROM stratagate_dsh_settings WHERE key IN ('graphEnabled', 'graphControl')").all() as { key: string; value: string }[]).map(row => [row.key, row.value]))
+    return { ...defaults, ...JSON.parse(settings.get('graphControl') ?? '{}'), enabled: settings.get('graphEnabled') === 'true' }
+  } finally { db.close() }
+}
 
 export const TOPIC_BOOTSTRAP_WINDOW_MS = 10 * 60_000
 export const TOPIC_BOOTSTRAP_WINDOW_CALLS = 2
@@ -42,8 +67,44 @@ export class DshMetadataStore {
   private readonly database: DatabaseSync
 
   constructor(filename: string) {
-    this.database = new DatabaseSync(filename)
+    this.database = new DatabaseSync(filename, { timeout: 5000 })
+    this.database.exec('PRAGMA busy_timeout = 5000')
     this.database.exec(METADATA_SCHEMA)
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      if (!this.settingValue('graphPolicyMigration')) {
+        const exists = this.database.prepare("SELECT 1 FROM sqlite_master WHERE name = 'memory_spaces'").get()
+        const legacy = Boolean(exists && this.database.prepare('SELECT 1 FROM memory_spaces LIMIT 1').get())
+        const enabled = this.settingValue('graphEnabled') === 'true'
+        if (this.settingValue('graphEnabled') === null) this.setSettingValue('graphEnabled', 'false')
+        if (this.settingValue('graphControl') === null) this.setSettingValue('graphControl', JSON.stringify({ paused: false, epoch: 0, legacy, noticeSeen: false, everEnabled: enabled, approved: {} }))
+        this.setSettingValue('graphPolicyMigration', '1')
+      }
+      this.database.exec('COMMIT')
+    } catch (error) { this.database.exec('ROLLBACK'); throw error }
+  }
+
+  private settingValue(key: string): string | null {
+    return (this.database.prepare('SELECT value FROM stratagate_dsh_settings WHERE key = ?').get(key) as { value: string } | undefined)?.value ?? null
+  }
+
+  graphSettings(): GraphSettings {
+    const control = JSON.parse(this.settingValue('graphControl') ?? '{}') as Omit<GraphSettings, 'enabled'>
+    return { ...control, enabled: this.settingValue('graphEnabled') === 'true' }
+  }
+
+  updateGraphSettings(expectedEpoch: number, update: Partial<GraphSettings>): GraphSettings {
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.graphSettings()
+      if (current.epoch !== expectedEpoch) throw new Error('Graph settings changed; refresh and confirm again')
+      const next = { ...current, ...update }
+      this.setSettingValue('graphEnabled', String(next.enabled))
+      const { enabled: _enabled, ...control } = next
+      this.setSettingValue('graphControl', JSON.stringify(control))
+      this.database.exec('COMMIT')
+      return next
+    } catch (error) { this.database.exec('ROLLBACK'); throw error }
   }
 
   /** Database-wide, durable reservation before any historical model attempt.

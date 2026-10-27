@@ -18,6 +18,14 @@
 
 ## 它是怎么设计的
 
+### 侧栏入口
+
+在 **设置 → StrataGate → 更多 → 界面与显示** 中，用“在左侧栏显示 StrataGate”开关显示或隐藏侧栏入口。新安装默认隐藏，在设置页提示添加；已有用户保存的开启或关闭选择会保留，重启后仍生效。隐藏入口不影响记忆、检索和后台处理，仍可从设置打开。入口隐藏时，设置页标题下会显示添加提醒；点击“×”后，当前浏览器不再提醒（清除浏览器数据后会重置）。入口已开启时不显示提醒。
+
+### 知识图谱可选，默认关闭
+
+新用户默认隐藏图谱页；存量用户升级后关闭处理、保留全部数据和灰色入口，首次进入记忆设置显示一次说明。在 **更多 → 高级设置 → 记忆配置** 开启时先统计待处理数量，确认后按有限清单分批恢复，可暂停和继续。事件卡、目录、普通检索、Profile 和 Dreaming 独立工作。旧版本不认识此开关，降级运行可能重新启用图谱处理。详见 [开关、迁移和兼容边界](knowledge-graph.md)。
+
 ### 目录 Dreaming（开发版）
 
 在长期记忆的目录页点击 **🌙 Dreaming**，由独立 Agent 分批整理已有章节、小节、Event 归属、总览与有来源的经验。运行时显示做梦动画和真实批次进度，可暂停、继续或终止。关闭设置页不取消任务；宿主重启后从目录页继续已保存的断点，已提交修改保留。
@@ -92,7 +100,8 @@ DSH_HOME/stratagate/memory.db
 - 默认不保存子 Agent 的对话轮次；同一项目中的子 Agent 仍然可以读取项目记忆。
 - 每个 DSH 对话轮次都有持久化的写入回执，因此重放或重试不会导致重复保存。
 - StrataGate 会执行 Block 摘要、Event 提取、版本化 Knowledge Graph 投影、搜索、Evidence Gate（证据门控）以及仅在使用后触发的强化。
-- Block 到达边界时，StrataGate 先持久化真实的 L3–L5，不修改 DSH surface。只有 L0–L2 校验通过且 Event 处理完成、Block 进入可衰减状态后，插件才使用原生 surface `replace`；待处理或失败的 Block 始终保留原始会话消息。后续衰减、手动提升或 λ 调整也只更新已就绪 checkpoint。尚未封存的 open tail 与完整工具调用/结果链继续作为 DSH 原生消息保留。
+- Block 到达边界时，StrataGate 先持久化真实的 L3–L5，不修改 DSH surface。只有 L0–L2 校验通过且 Event 处理完成、Block 进入可衰减状态后，插件才使用原生 surface `replace`；待处理或失败的 Block 始终保留原始会话消息。自动衰减或 λ 调整只在新层级不扩大的情况下更新已就绪 checkpoint；用户在面板明确要求展开时，会直接把当前会话里的 checkpoint 替换为所选层级（受上下文容量限制）。衰减目标层与原生 checkpoint 实际注入层分开记录：因此 L4 检查失败时仍注入 L5，之后 L2 检查通过时可以直接从 L5 跳到 L2。Block API 的 `currentLevel` 表示实际注入层，`targetLevel` 表示待处理的衰减目标。尚未封存的 open tail 与完整工具调用/结果链继续作为 DSH 原生消息保留。
+- 手动展开与压缩补建使用不同的同步待办：已有低层 checkpoint 不会阻止展开，展开也不要求新内容更小。目标会话未加载、会话整理中、容量不足或会话保存失败时，不会静默撤销待办；只有目标会话完成替换并保存后才移除展开待办。后台补建不会覆盖待处理的展开请求。
 - 每次主模型调用前，独立的常驻画像上下文无需检索就注入非空的全局字段。动态记忆上下文另注入最多 4 条项目级激活 Event 和 4 个 active Graph Node，不会把当前对话、open tail、已封 Block 或工具调用序列化进该上下文。
 
 激活查询由当前人类消息和当前会话 open tail 的最近两个 turn 组成。现有 BM25 搜索继续作为词面相关性门槛，只有 pinned 和 safety 记忆可以例外进入候选；现有记忆权重提供第二路排序，再由 RRF 融合相关性与权重排序。激活区固定使用约 900 tokens 的预算，不会随数据库增大而增长。
@@ -128,7 +137,7 @@ memory_record_use      memory_remember
 memory_profile_update
 ```
 
-`memory_get_blocks` 返回分页目录，每项仅含 `id`、`title`、`turnRange` 和当前 `level`；
+`memory_get_blocks` 返回分页目录，每项含 `id`、`title`、`turnRange`、实际注入的 `level`，以及目标层不同时的 `targetLevel`；
 正文通过 `memory_expand_block` 获取。支持 `offset/limit`，默认每页 12 项，限制在 1–20 项，
 返回 `total/offset/limit/nextOffset`，末页的 `nextOffset` 为 `null`。
 `blockCount` 表示分页前匹配的就绪块总数；offset 超出末页时返回空页，不误报范围内没有块。
@@ -141,6 +150,31 @@ memory_profile_update
 表示匹配的轮次存在但尚未封存。`memory_search_raw` 默认使用 namespace 范围，也接受同样的
 `scope` 过滤，`scope=session` 同样严格按 threadId 匹配。因此可以用 `memory_get_blocks(scope=namespace)` 或 `memory_expand_block`
 继续浏览 raw 命中的 `blockId`，不会再出现范围不明的空结果。
+
+三个搜索工具 `memory_search_events`、`memory_search_graph`、`memory_search_raw` 在原有
+`batchId/evidenceRefs/results` 之外增量返回 `retrievalStatus`，空结果附带 `retrievalHint`：
+
+| retrievalStatus | 含义 |
+| --- | --- |
+| `matched` | 本次返回了匹配结果；仍需评估其相关性与充分性。 |
+| `scope_empty` | 当前工具在所选范围内没有可搜索记录，不代表从未记录过。 |
+| `no_match` | 范围内有可搜索记录，但本次查询、条件或分页没有返回匹配。 |
+| `unknown` | 旧 Core 缺少范围探测能力等情况下无法可靠区分，不根据空结果猜测。 |
+
+`no_match` 的提示固定为：“本次检索未找到匹配，不能据此断言相关记忆不存在。”
+Agent 不得据空结果回答“没有这条记忆”或“你没说过”。Event 的范围以当前 namespace
+内可见的 active/superseded 事件池为准，agent 池权重为 0 时不计入；topic、事件类型、参与者、
+时间条件和 offset 不用于判定范围为空。Graph 使用与搜索一致的 Event 来源可见性，
+没有可检索来源或已隐藏的节点不计入。Raw 只统计所选 namespace/session 中已封存、
+含可搜索文本的消息，严格按消息 threadId 隔离；open tail 不属于 Raw 搜索范围。
+这些状态不披露其他范围的数据，也不表示其他工具的数据范围为空。
+
+检索及范围探测异常继续按原工具错误协议返回，不伪装成 `no_match` 或虚构索引状态。
+Raw 现有索引查询失败后仍可使用原文扫描完成搜索；若搜索本身失败则报告错误。
+自动激活沿用紧凑空标记 `(no memory selected for automatic context)`；无查询、未命中、
+当前会话排除和预算裁剪都可能产生空选集，所以不为其猜测搜索状态。
+常驻协议统一提醒空选集不证明记忆不存在，不每轮附加重复长提示。
+状态与提示仅为检索元数据，不创建证据 ref，也不能被采用或强化；空批次仍按原规则以 `[]` 结算。
 
 deprecated 的 `memory_search_elements` 已停止注册，请使用 `memory_search_graph`。
 旧 agent-memory 来源块的转录展示改为 `Recorded:`，原始消息记录保持不变。
@@ -167,7 +201,7 @@ ID、`blockId`、角色、轮次和有界摘录。`narrative`、`quotes`、来�
 - 手动展开 Block，以及分两步导入其他 AI 的记忆；
 - Usage Audit（使用审计）链路：从已记录的回答轮次出发，经由 Evidence Gate 的判断与选中的记忆，追溯到来源消息。
 
-界面不允许直接编辑、删除或批准 Event、图谱事实和来源消息。用户可以手动展开 Block、导入其他 AI 的记忆，以及在“高级设置”中修改每个 Block 包含的完整对话轮数或全局 Block 衰减系数 λ。修改轮数时，界面会解释两者关系并给出保持单位对话衰减速度的建议 λ，是否采用由用户决定。保存后设置立即应用到所有已有工作区，同时成为新工作区默认值，并在重启后保持；已封存 Block 不会重新切分。
+界面不允许直接编辑、删除或批准 Event、图谱事实和来源消息。用户可以手动展开 Block、导入其他 AI 的记忆，以及在“高级设置”的“StrataGate 安装级设置”中修改每个 Block 包含的完整对话轮数、Block 衰减系数 λ 和主动记忆检索占比。这三项适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置；保存到当前记忆数据库，不会自动跨设备或跨安装同步。修改轮数时，界面会解释两者关系并给出保持单位对话衰减速度的建议 λ，是否采用由用户决定。保存后设置立即应用到所有已有工作区，并在重启后保持；已封存 Block 不会重新切分。结构化推理档位属于当前 DSH profile 的宿主配置，由宿主立即保存并作用于后续记忆处理调用。Schema、工作区名称、内部空间 ID、处理轮次以及运行诊断随当前工作区选择器切换，仅描述当前工作区。
 
 顶部“常驻画像”页面默认显示十一项字段；旧常驻城市有值时额外保留一项编辑入口。页面按身份与语言、交互偏好、常用地址、关于用户、其他分组，默认紧凑显示；编辑时只展开一个字段。“默认回答语言”仅用于最终回复，“思考过程语言”仅用于宿主界面向用户展示的 reasoning/thinking 文本（若支持），两项互不推导；后者为空时不额外要求思考语言，也不控制隐藏的内部推理。页面可见时约每 5 秒读取最新画像，隐藏或离开时停止，并保留正在编辑的草稿。同一字段被其他来源修改时会提示冲突，保存不会覆盖新值。Settings 与 `memory_profile_update` 修改同一份安装级画像，跨会话、跨命名空间生效；保存后下一次模型调用立即看到新值，空字段不注入。存储结构有十二项字段，按 Unicode 码点计数，上限依次为 100、100、100、100、200、100、100、1000、1000、1500、1000、1200 字符，总预算 6000 字符；总容量 4800 字符触发后台整理。SQLite 会记录 Settings、工具及后台整理的每次变更、旧值和来源。后台整理在首次写入非空画像或上次成功整理满 24 小时后，或达到容量阈值时执行；只读取当前画像，只压缩表达，不新增事实，也不语义改写七个短字段。Event 提取和 Graph 投影都不会写入画像。
 
@@ -204,7 +238,7 @@ Topic Projection 优先将全部本批 Event 完整分配到章节和小节。�
 
 只有明确的 `finish=max-tokens` 才会二分失败批次，最多四层，单条批次最多尝试三次；每个历史子批次仍受共用 Bootstrap 额度约束，不裁剪 Event 证据。其他错误维持原有有限重试与退避。自动尝试耗尽后，可通过目录“重新整理这 N 条”（`POST /api/stratagate/topics/retry`，携带 namespace、jobId 和 expectedRevision），或 `POST /api/stratagate/jobs/retry?namespace=...&kind=topic-projection&jobId=...` 重新排队。两条路径均开启新 jobId 周期，检查来源版本并拒绝旧结果，状态在重启后保留。Recovery Version 2 复用现有持久化 writer 初始化机制，仅为命中概要校验、旧草稿要求、Provider 失败或原始 `invalid-output` 签名，且当前有效、仍有未完成工作的 Topic 终态失败任务自动开启一次新的最多三次任务尝试，仍消耗已有历史额度。无关 worker、超时及内容校验失败保留原尝试额度。已成功、来源过期及失效的历史记录不重跑；恢复标记与新任务一起提交，重启、刷新和重复初始化不再次清零。本轮再次失败后保留部分完成进度、错误详情和人工重试入口。只有当前应完成工作全部通过校验才返回 `completed`，仅剩终态失败时返回 `failed`。
 
-配置文件中的 `blockTurnSize` 和 `blockDecayLambda` 是初始后备值；一旦在“高级设置”中修改，持久化的界面值优先生效。λ 默认值为 `0.3`；数字越小，记忆遗忘越慢、消耗 token 越多，不建议大于 `0.4`。
+配置文件中的 `blockTurnSize`、`blockDecayLambda` 和 `agentMemoryRetrievalWeight` 是初始后备值；一旦在“高级设置”中修改，当前记忆数据库中的安装级值优先生效，并供所有工作区及新工作区使用。它们不会自动跨设备或跨安装同步。λ 默认值为 `0.3`；数字越小，记忆遗忘越慢、消耗 token 越多，不建议大于 `0.4`。
 
 `project` 会根据规范化后的会话工作目录生成稳定的命名空间；`session` 会隔离每个 DSH 会话；`global` 则让所有会话共享同一个命名空间。
 
@@ -234,7 +268,7 @@ Topic Projection 优先将全部本批 Event 完整分配到章节和小节。�
 
 DSH 核心包现在都是由宿主提供的可选 peer。若某个 profile 曾在本地安装这些 peer，升级后、启动前运行 `dsh plugin --profile <名称> exec stratagate-dsh-repair`。该命令只会把已知 DSH 运行时包移动到 profile 内的 `.stratagate-runtime-backups` 并写入恢复收据，不会删除包或触碰会话数据。启动时 bootstrap 还会把 StrataGate 自身的 DSH 导入定向到宿主维护的共享模块回退目录，再检查实际解析出的 DSH 核心族；未知宿主会立即给出明确错误并停止，而不是让正文区域空白。对于受支持的 DSH `0.1.5`、`0.1.6`、`0.1.7` 和 `0.2.0`，含已废弃 `stratagate/memory-citations` 事件的 v0 会话会先复制成经过校验的 v1 代际，再由宿主继续其迁移链；原始 v0 日志不会被修改，并写入 `stratagate-legacy-citations-v1.json` 记录源/目标哈希和恢复说明。
 
-DSH 0.1.7 和 0.2.0 将插件配置保存在 profile 中，并通过配置表单提供实时控制。StrataGate 聊天界面中的设置在 0.1.7 和 0.2.0 使用配置表单，在之前受支持的宿主上继续使用旧设置服务。调整结构化任务的推理力度后，后续记忆模型调用会直接使用新值，无需重启插件。
+DSH 0.1.7 和 0.2.0 将插件配置保存在当前 profile 中，并通过配置表单提供实时控制。StrataGate 聊天界面中的设置在 0.1.7 和 0.2.0 使用配置表单，在之前受支持的宿主上继续使用旧设置服务。结构化推理档位是当前 profile 的宿主配置，由该 profile 下的工作区共享；调整后，后续记忆模型调用会直接使用新值，无需重启插件。
 
 DSH 0.1.6 的官方 DeepSeek profile 默认可能启用 Session Log 请求元数据，因此宿主可能把原始 Session Event 放入 `dsh_session_log` 请求字段。该元数据不属于模型 messages、system prompt 或 tool schema，不能据此判断 StrataGate 压缩失效。StrataGate 不会修改这一 DSH 全局设置；需要关闭的用户应通过 DSH 配置设置 `session-log-deepseek.enabled=false`。
 

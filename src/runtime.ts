@@ -9,6 +9,8 @@ import { validateArgs } from '@deepseek-ai/dsh-tools'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import {
   DERIVATION_MAX_ATTEMPTS,
+  KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
+  type GraphRuntimePolicy,
   GRAPH_PROVENANCE_LIMIT,
   boundEffectiveGraphNodeView,
   effectiveGraphNodeView,
@@ -55,7 +57,7 @@ import type { ResolvedConfig } from './config.js'
 import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
-import { DshMetadataStore } from './metadata.js'
+import { DshMetadataStore, readGraphSettings, type GraphSettings } from './metadata.js'
 import { EventDuplicateMaintenance, sourceContext } from './event-duplicate-maintenance.js'
 import { eventDuplicateMergeCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, validEventMergeDraft, type EventDuplicatePair, type EventMergeDraft } from '@diqier/stratagate'
 import { DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
@@ -293,7 +295,7 @@ export class StrataGateRuntime {
   private readonly derivationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly derivationRuns = new Map<string, Promise<void>>()
   private readonly knownSessions = new Map<string, WeakRef<Session>>()
-  private readonly pendingSurfaceSync = new Map<string, { namespace: string; blockId: string }>()
+  private readonly pendingSurfaceSync = new Map<string, { namespace: string; blockId: string; reason?: 'user-expansion' }>()
   private readonly adminSnapshotCache = new Map<string, AdminSnapshotEntry>()
   private readonly externalImportRuns = new Map<string, Promise<void>>()
   private readonly dreamingRuns = new Map<string, Promise<void>>()
@@ -321,6 +323,70 @@ export class StrataGateRuntime {
   private blockTurnSize: number
   private blockDecayLambda: number
   private agentMemoryRetrievalWeight: number
+  private graphMetadata: DshMetadataStore | undefined
+  private readonly graphPreviews = new Map<string, { epoch: number; approved: Record<string, string[]>; count: number }>()
+
+  private graphStore(): DshMetadataStore {
+    if (!this.graphMetadata) {
+      this.profileStore()
+      this.graphMetadata = new DshMetadataStore(this.config.database)
+    }
+    return this.graphMetadata
+  }
+
+  private graphSettings(): GraphSettings { return this.graphMetadata?.graphSettings() ?? readGraphSettings(this.config.database) }
+
+  get graphEnabled(): boolean { return this.graphSettings().enabled }
+
+  onGraphAvailabilityChanged(listener: () => void): () => void {
+    this.graphListeners.add(listener)
+    return () => this.graphListeners.delete(listener)
+  }
+  private readonly graphListeners = new Set<() => void>()
+
+  private graphPolicyFor(namespace: string): GraphRuntimePolicy {
+    const state = this.graphSettings()
+    return { enabled: state.enabled, paused: state.paused, epoch: state.epoch, backfillEventIds: state.approved[namespace] ?? [] }
+  }
+
+  adminGraphSettings(): Omit<GraphSettings, 'approved'> {
+    const { approved: _approved, ...state } = this.graphSettings()
+    return state
+  }
+
+  async adminGraphControl(action: string, token?: string): Promise<unknown> {
+    const store = this.graphStore()
+    const state = store.graphSettings()
+    if (action === 'preview') {
+      const approved: Record<string, string[]> = {}
+      let count = 0
+      for (const { namespace, snapshot } of await this.adminSnapshotEntries()) {
+        const completed = new Set(snapshot.graphProjectionJobs.filter(job => job.status === 'completed' && job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION).flatMap(job => job.sourceEventIds))
+        approved[namespace] = [...snapshot.events, ...snapshot.agentEvents].filter(event => event.status !== 'forgotten' && event.status !== 'archived' && !completed.has(event.id)).map(event => event.id)
+        count += approved[namespace]!.length
+      }
+      const id = randomUUID()
+      this.graphPreviews.clear()
+      this.graphPreviews.set(id, { epoch: state.epoch, approved, count })
+      return { token: id, pending: count, batches: Object.values(approved).reduce((sum, ids) => sum + Math.ceil(ids.length / 8), 0), epoch: state.epoch }
+    }
+    if (action === 'notice') {
+      store.updateGraphSettings(state.epoch, { noticeSeen: true })
+    } else if (action === 'enable' || action === 'resume') {
+      const preview = token ? this.graphPreviews.get(token) : undefined
+      if (!preview || preview.epoch !== state.epoch) throw new Error('请先统计待处理数量并确认开启')
+      store.updateGraphSettings(state.epoch, { enabled: true, paused: false, epoch: state.epoch + 1, everEnabled: true, approved: preview.approved })
+      this.graphPreviews.delete(token!)
+    } else if (action === 'disable' || action === 'pause') {
+      store.updateGraphSettings(state.epoch, { enabled: action === 'pause' && state.enabled, paused: action === 'pause', epoch: state.epoch + 1 })
+      for (const timer of this.migrationTimers.values()) clearTimeout(timer)
+      this.migrationTimers.clear()
+    } else throw new Error('Invalid Graph control action')
+    this.profileStore().rebuildBackgroundWorkSchedule()
+    for (const listener of this.graphListeners) listener()
+    this.wakeBackgroundWorker()
+    return this.adminGraphSettings()
+  }
 
   constructor(
     private readonly config: ResolvedConfig,
@@ -600,7 +666,7 @@ export class StrataGateRuntime {
   }
 
   private profileStore(): SqliteStorage {
-    return this.profileStorage ??= new SqliteStorage({ filename: this.config.database })
+    return this.profileStorage ??= new SqliteStorage({ filename: this.config.database, graphPolicy: namespace => this.graphPolicyFor(namespace) })
   }
 
   updatePersistentProfileFromTool(field: string, value: string) {
@@ -620,6 +686,7 @@ export class StrataGateRuntime {
       try {
         await this.refreshExternalImportMemory(namespace, memory)
         const canProjectTopics = typeof this.models.topicProjector === 'function'
+        const graphPolicy = this.graphPolicyFor(namespace)
         const runnable = memory.hasSealableTail() || [
           ...memory.listSummaryJobs(),
           ...memory.listExtractionJobs(),
@@ -627,9 +694,11 @@ export class StrataGateRuntime {
           || job.status === 'pending'
           || (job.status === 'failed' && job.nextRetryAt !== null
             && Date.parse(job.nextRetryAt) <= Date.now()))
-          || memory.listGraphProjectionJobs().some((job) => graphProjectionCanRun(job))
+          || (graphPolicy.enabled && !graphPolicy.paused && (memory.listGraphProjectionJobs().some((job) => graphProjectionCanRun(job)
+            || (job.claimEpoch !== undefined && job.claimEpoch !== graphPolicy.epoch && job.status !== 'completed' && job.lastError !== 'Graph claim revoked' && job.attempts < DERIVATION_MAX_ATTEMPTS))
+          || memory.graphBackfillEventIds().some(id => graphPolicy.backfillEventIds?.includes(id))
           || memory.listGraphProjectionJobs().some((job) => job.status === 'running'
-            && (!job.leaseUntil || Date.parse(job.leaseUntil) <= Date.now()))
+            && (!job.leaseUntil || Date.parse(job.leaseUntil) <= Date.now()))))
           || memory.listBlocks().some((block) => block.processingStatus === 'pending'
             && memory.listSummaryJobs().some((job) => job.blockId === block.id && job.status === 'succeeded')
             && !memory.listExtractionJobs().some((job) => job.blockId === block.id))
@@ -677,10 +746,7 @@ export class StrataGateRuntime {
         const sessionsToSync = new Set<Session>()
         for (const block of resumed.readyBlocks) {
           if (!block.threadId) continue
-          this.pendingSurfaceSync.set(
-            `${namespace}\u0000${block.id}`,
-            { namespace, blockId: block.id },
-          )
+          this.queueSurfaceSync(namespace, block.id)
           const session = this.knownSessions.get(block.threadId)?.deref()
           if (session && this.namespaceFor(session) === namespace) sessionsToSync.add(session)
         }
@@ -870,14 +936,17 @@ export class StrataGateRuntime {
         },
       })),
       results.map(({ event, score }) => compactEvent(event, score)),
-      topicId !== undefined ? {
-        topicId,
-        totalSourceEvents,
-        offset,
-        nextOffset: results.length === Math.max(1, Math.min(20, searchOptions.limit ?? 6))
-          && (totalSourceEvents === null || offset + results.length < totalSourceEvents)
-          ? offset + results.length : null,
-      } : {},
+      {
+        ...searchStatus(results, () => memory.hasSearchableEvents?.({ agentMemoryWeight: this.agentMemoryRetrievalWeight })),
+        ...(topicId !== undefined ? {
+          topicId,
+          totalSourceEvents,
+          offset,
+          nextOffset: results.length === Math.max(1, Math.min(20, searchOptions.limit ?? 6))
+            && (totalSourceEvents === null || offset + results.length < totalSourceEvents)
+            ? offset + results.length : null,
+        } : {}),
+      },
     )
   }
 
@@ -983,7 +1052,10 @@ export class StrataGateRuntime {
         elementIds: [],
         citation: citation('block', result.blockId, blockTitles.get(result.blockId) ?? 'Block', `raw:${result.blockId}:${result.message.id}:${index}`, 'blockId'),
       },
-    })), results.map(compactRawHit), { scope, namespace: this.namespaceFor(session), threadId })
+    })), results.map(compactRawHit), {
+      scope, namespace: this.namespaceFor(session), threadId,
+      ...searchStatus(results, () => memory.hasSearchableRawMessages?.(scope === 'namespace' ? {} : { threadId })),
+    })
   }
 
   async blocks(session: Session, scope: BlockQueryScope = 'session', options: { offset?: number; limit?: number } = {}): Promise<unknown> {
@@ -998,8 +1070,10 @@ export class StrataGateRuntime {
     const offset = Math.max(0, Math.floor(Number.isFinite(options.offset) ? options.offset! : 0))
     const limit = Math.max(1, Math.min(20, Math.floor(Number.isFinite(options.limit) ? options.limit! : 12)))
     const blockTitles = new Map(memory.listBlocks().map((block) => [block.id, blockCitationTitle(block)]))
-    const results = matches.slice(offset, offset + limit).map(({ id, turnRange, level }) => ({
-      id, title: compactText(blockTitles.get(id) ?? 'Block', 240), turnRange, level,
+    const results = matches.slice(offset, offset + limit).map(({ id, turnRange, level, surfaceLevel }) => ({
+      id, title: compactText(blockTitles.get(id) ?? 'Block', 240), turnRange,
+      level: surfaceLevel ?? level,
+      targetLevel: level,
     }))
     const emptyReason: BlockEmptyReason | null = matches.length > 0
       ? null
@@ -1046,8 +1120,12 @@ export class StrataGateRuntime {
   }
 
   async expandElement(session: Session, id: string, at?: string): Promise<unknown> {
+    if (!this.graphEnabled) throw new Error('Knowledge Graph is disabled')
     await this.flush()
-    const result = (await this.space(session)).expandElement(id, at)
+    if (!this.graphEnabled) throw new Error('Knowledge Graph is disabled')
+    const memory = await this.space(session)
+    if (!this.graphEnabled) throw new Error('Knowledge Graph is disabled')
+    const result = memory.expandElement(id, at)
     return this.batch(session, [{
       ref: `element:${result.id}`,
       target: {
@@ -1242,7 +1320,7 @@ export class StrataGateRuntime {
     await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
     const threadId = String(session.id)
     const blockContexts = memory.getBlockContext(threadId)
-    if (this.syncDecayedBlockSurface(session, memory, blockContexts)) {
+    if (await this.syncDecayedBlockSurface(session, memory, blockContexts)) {
       await this.flushNativeSession(session)
     }
     const openTail = memory.listOpenTail(threadId)
@@ -1256,9 +1334,9 @@ export class StrataGateRuntime {
         })
       : []
     let graphResults: GraphNodeSearchResult[] = []
-    if (activationQuery && typeof memory.searchGraphNodes === 'function') {
+    if (this.graphEnabled && activationQuery && typeof memory.searchGraphNodes === 'function') {
       graphResults = await memory.searchGraphNodes(activationQuery, 12)
-    } else if (activationQuery) {
+    } else if (this.graphEnabled && activationQuery) {
       // Compatibility for an in-flight older core instance; new persistent
       // spaces always use Graph nodes and never create new Element cards.
       const legacy = activatedElements(memory, await memory.searchElements(activationQuery, { limit: 12 }))
@@ -1289,7 +1367,7 @@ export class StrataGateRuntime {
       .filter((result) => !(result.provenanceEventIds ?? result.node.sourceEventIds).some((id) => currentEventIds.has(id)))
       .slice(0, AUTO_ELEMENT_LIMIT)
 
-    return renderActivatedMemory(longTermEvents, graphResults)
+    return renderActivatedMemory(longTermEvents, this.graphEnabled ? graphResults : [])
   }
 
   /**
@@ -1297,12 +1375,13 @@ export class StrataGateRuntime {
    * events remain in the append-only log for transcript/evidence provenance,
    * while deriveMessages() sees only this compressed checkpoint.
    */
-  private replaceSealedSurface(
+  private async replaceSealedSurface(
     session: Session,
+    memory: StrataGate,
     block: MemoryBlock,
     context: BlockContextEntry,
     endTurn: number | null,
-  ): boolean {
+  ): Promise<boolean> {
     if (endTurn === null || hostCompactionActive(session)) return false
     const sourceEventSeqs = sealedSurfaceSeqs(session, endTurn, block)
     if (!sourceEventSeqs) return false
@@ -1318,11 +1397,12 @@ export class StrataGateRuntime {
       surfaceOp: dshReplaceSurfaceOp(start, end),
       sourceEventSeqs,
     })
+    await memory.setBlockSurfaceLevel(block.id, context.level)
     return true
   }
 
   /** Keep each native Block checkpoint synchronized with its current decay pointer. */
-  private syncDecayedBlockSurface(session: Session, memory: StrataGate, contexts: readonly BlockContextEntry[]): boolean {
+  private async syncDecayedBlockSurface(session: Session, memory: StrataGate, contexts: readonly BlockContextEntry[]): Promise<boolean> {
     if (hostCompactionActive(session)) return false
     const current = currentBlockSurfaceMessages(session)
     const blocks = new Map(memory.listBlocks().map((block) => [block.id, block]))
@@ -1331,16 +1411,30 @@ export class StrataGateRuntime {
     for (const context of contexts) {
       const node = current.get(context.id)
       if (!node) continue
-      const currentLevel = Number(node.text.match(/^Level: L([0-5]) /mu)?.[1] ?? -1)
+      const currentLevel = Number(node.text.match(/(?:^|\n)Block: [^|\n]+ \| Turns: \d+-\d+ \| Level: L([0-5])(?:\s|$)/mu)?.[1] ?? -1)
       const currentTokens = surfaceCheckpointTokens(node.text)
       const sourceTokens = originalCheckpointSourceTokens(session, node.seq)
       const violatesLimit = currentTokens > checkpointLimit
         || (sourceTokens !== null && !worthwhileSurfaceReduction(sourceTokens, currentTokens))
-      if (context.level >= currentLevel && currentLevel >= 0 && !violatesLimit) continue
       const block = blocks.get(context.id)
       if (!block) continue
-      // A user lift remains available through memory_expand_block. Surface
-      // repair never raises the detail level of an existing checkpoint.
+      if (currentLevel >= 0 && block.surfaceCurrentLevel !== currentLevel) {
+        await memory.setBlockSurfaceLevel(context.id, currentLevel as BlockLevel)
+      }
+      // An explicit user lift is different from decay recalculation: the user
+      // asked for the richer layer to be present in the live conversation.
+      // Replace the existing checkpoint even when that makes it larger. Agent
+      // evidence expansion remains turn-scoped and does not raise the surface.
+      const userLift = block.lastLiftedBy === 'user'
+        && currentLevel >= 0
+        && context.level > currentLevel
+      if (userLift) {
+        changed = await this.replaceExpandedSurface(session, memory, block, context) || changed
+        continue
+      }
+      if (context.level >= currentLevel && currentLevel >= 0 && !violatesLimit) continue
+      // Automatic surface repair never raises the detail level of an existing
+      // checkpoint; explicit user lifts are handled above.
       const highestLevel = currentLevel >= 0
         ? Math.min(context.level, currentLevel) as BlockLevel
         : context.level
@@ -1348,20 +1442,50 @@ export class StrataGateRuntime {
         node.text, context, block, highestLevel, sourceTokens, checkpointLimit,
       )
       if (!text) continue
-      if (node.text === text) continue
-      session.append('user/message', createUserMessage({
-        content: [{ type: 'text', text }],
-        source: dshMessageSource(),
-      }), {
-        surfaceOp: dshReplaceSurfaceOp(node.seq, node.seq),
-        sourceEventSeqs: [node.seq],
-      })
-      changed = true
+      if (node.text !== text) {
+        session.append('user/message', createUserMessage({
+          content: [{ type: 'text', text }],
+          source: dshMessageSource(),
+        }), {
+          surfaceOp: dshReplaceSurfaceOp(node.seq, node.seq),
+          sourceEventSeqs: [node.seq],
+        })
+        changed = true
+      }
+      await memory.setBlockSurfaceLevel(context.id, Number(text.match(/(?:^|\n)Block: [^|\n]+ \| Turns: \d+-\d+ \| Level: L([0-5])(?:\s|$)/mu)?.[1] ?? currentLevel) as BlockLevel)
     }
     return changed
   }
 
-  /** Finish native-surface replacement when an admin retry ran without the target session loaded. */
+  private queueSurfaceSync(namespace: string, blockId: string, reason?: 'user-expansion'): void {
+    const key = `${namespace}\u0000${blockId}`
+    // A sealing retry must not downgrade an outstanding explicit expansion.
+    if (!reason && this.pendingSurfaceSync.has(key)) return
+    this.pendingSurfaceSync.set(key, { namespace, blockId, ...(reason ? { reason } : {}) })
+  }
+
+  /** Apply an explicit user request without the automatic decay size-reduction gate. */
+  private async replaceExpandedSurface(session: Session, memory: StrataGate, block: MemoryBlock, context: BlockContextEntry): Promise<boolean> {
+    if (hostCompactionActive(session) || block.threadId !== String(session.id)) return false
+    const text = renderBlockSurfaceMessage(context)
+    if (surfaceCheckpointTokens(text) > surfaceCheckpointLimit(session)) return false
+    const node = currentBlockSurfaceMessages(session).get(block.id)
+    if (node?.text !== text) {
+      const endTurn = node ? null : dshTurnAtBlockEnd(session, block)
+      const seqs = node ? [node.seq] : endTurn === null ? null : sealedSurfaceSeqs(session, endTurn, block)
+      if (!seqs) return false
+      const start = seqs[0]
+      const end = seqs.at(-1)
+      if (start === undefined || end === undefined) return false
+      session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text }], source: dshMessageSource(),
+      }), { surfaceOp: dshReplaceSurfaceOp(start, end), sourceEventSeqs: seqs })
+    }
+    if (block.surfaceCurrentLevel !== context.level) await memory.setBlockSurfaceLevel(block.id, context.level)
+    return true
+  }
+
+  /** Finish deferred sealing or user expansion only after the target surface is applied. */
   private async syncPendingRetrySurface(session: Session, memory: StrataGate): Promise<void> {
     if (hostCompactionActive(session)) return
     const namespace = this.namespaceFor(session)
@@ -1372,22 +1496,29 @@ export class StrataGateRuntime {
     const contexts = new Map(memory.getBlockContext(threadId).map((context) => [context.id, context]))
     const existing = currentBlockSurfaceMessages(session)
     let changed = false
-    for (const [key, { blockId }] of pending) {
-      if (existing.has(blockId)) {
-        this.pendingSurfaceSync.delete(key)
-        continue
-      }
+    const completed: typeof pending = []
+    for (const [key, item] of pending) {
+      const { blockId } = item
       const block = memory.listBlocks().find((candidate) => candidate.id === blockId && candidate.threadId === threadId)
       const context = contexts.get(blockId)
       if (!block || block.processingStatus !== 'ready' || !context) continue
       try {
-        changed = this.replaceSealedSurface(session, block, context, dshTurnAtBlockEnd(session, block)) || changed
-        this.pendingSurfaceSync.delete(key)
+        if (item.reason === 'user-expansion') {
+          if (!await this.replaceExpandedSurface(session, memory, block, context)) continue
+          changed = true
+        } else if (!existing.has(blockId)) {
+          if (!await this.replaceSealedSurface(session, memory, block, context, dshTurnAtBlockEnd(session, block))) continue
+          changed = true
+        }
+        completed.push([key, item])
       } catch (error) {
         this.onIngestError(error)
       }
     }
     if (changed) await this.flushNativeSession(session)
+    for (const [key, item] of completed) {
+      if (this.pendingSurfaceSync.get(key) === item) this.pendingSurfaceSync.delete(key)
+    }
   }
 
   // Keep the ingestion error for callers that explicitly require a flushed run.
@@ -1442,6 +1573,7 @@ export class StrataGateRuntime {
     this.diagnostics.close()
     await Promise.all(settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.close()] : []))
     if (this.profileStorage) await this.profileStorage.close()
+    this.graphMetadata?.close()
     this.sessionsById.clear()
     if (flushError !== undefined) throw flushError
   }
@@ -1776,6 +1908,7 @@ export class StrataGateRuntime {
   private externalImportView(job: ExternalMemoryImportJob): Record<string, unknown> {
     return {
       jobId: job.id,
+      text: job.text,
       status: job.status,
       processedCount: job.processedCount,
       totalCount: job.totalCount,
@@ -1786,7 +1919,7 @@ export class StrataGateRuntime {
       importedCount: job.importedCount,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
-      decisions: job.decisions.map(({ matches: _matches, mergedCandidate: _mergedCandidate, ...decision }) => decision),
+      decisions: job.decisions,
       requiresConfirmationCount: job.decisions.filter(({ requiresConfirmation }) => requiresConfirmation).length,
     }
   }
@@ -2144,6 +2277,13 @@ export class StrataGateRuntime {
     throw lastConflict
   }
 
+  async adminAbandonExternalMemory(namespace: string, jobId: string): Promise<unknown> {
+    const key = namespace.trim()
+    if (!key) throw new TypeError('StrataGate admin namespace must not be empty')
+    const job = await this.retryExternalImportWrite(key, memory => memory.abandonExternalMemoryImportJob(jobId))
+    return this.externalImportView(job)
+  }
+
   async adminCommitExternalMemory(
     namespace: string,
     jobId: string,
@@ -2280,30 +2420,27 @@ export class StrataGateRuntime {
   }
 
   async adminExpandBlock(namespace: string, id: string, target: string | number): Promise<unknown> {
+    this.graphStore()
     const key = namespace.trim()
     if (!key) throw new TypeError('StrataGate admin namespace must not be empty')
     const update = this.settingsTail.catch(() => {}).then(async () => {
       await this.flush()
-      const active = this.spaces.get(key)
-      if (active) return (await active).expandBlock(id, target, 'user')
-      if (this.config.database === ':memory:' || !existsSync(this.config.database)) {
-        throw new Error(`Unknown StrataGate namespace: ${key}`)
-      }
-      const memory = await StrataGate.open({
-        database: this.config.database,
-        namespace: key,
-        blockTurnSize: this.blockTurnSize,
-        blockDecayLambda: this.blockDecayLambda,
-        summarizer: this.models.summarizer,
-        extractor: this.models.extractor,
-        ...(typeof this.models.eventDuplicateDecider === 'function' ? { eventDuplicateDecider: this.models.eventDuplicateDecider } : {}),
-        graphProjector: this.models.graphProjector,
-        disableElementProjection: true,
-      })
+      const { memory, owned } = await this.openAdminMemory(key)
       try {
-        return await memory.expandBlock(id, target, 'user')
+        const result = await memory.expandBlock(id, target, 'user')
+        if (result.threadId) {
+          this.queueSurfaceSync(key, id, 'user-expansion')
+        }
+        const session = result.threadId ? this.knownSessions.get(result.threadId)?.deref() : undefined
+        if (session && this.namespaceFor(session) === key) {
+          await this.syncPendingRetrySurface(session, memory)
+          if (this.pendingSurfaceSync.has(`${key}\u0000${id}`)) {
+            throw new Error(`无法将 Block ${id} 的当前会话上下文展开到 L${result.level}；目标内容超过当前上下文容量或会话正在整理`)
+          }
+        }
+        return { ...result, surfaceLevel: memory.listBlocks().find(({ id: blockId }) => blockId === id)?.surfaceCurrentLevel }
       } finally {
-        await memory.close()
+        if (owned) await memory.close()
       }
     })
     this.settingsTail = update.then(() => {}, () => {})
@@ -2311,6 +2448,7 @@ export class StrataGateRuntime {
   }
 
   async adminRetryJob(namespace: string, kind: 'block-summary' | 'event-extraction' | 'graph-projection' | 'topic-projection', id: string): Promise<unknown> {
+    if (kind === 'graph-projection' && (!this.graphEnabled || this.graphStore().graphSettings().paused)) throw new Error('Knowledge Graph processing is disabled or paused')
     const key = namespace.trim()
     const jobId = id.trim()
     if (!key) throw new TypeError('StrataGate admin namespace must not be empty')
@@ -2326,6 +2464,13 @@ export class StrataGateRuntime {
         await this.refreshExternalImportMemory(key, memory)
         const graphJob = kind === 'graph-projection'
           ? memory.listGraphProjectionJobs().find((candidate) => candidate.id === jobId)
+          : undefined
+        // Graph manual retry creates a fresh job ID so an old attempt can
+        // never write into the new budget. Keep the pre-retry IDs and resolve
+        // the newly created record after Core returns; the admin contract must
+        // report the completed replacement rather than the retained failure.
+        const graphJobIdsBeforeRetry = kind === 'graph-projection'
+          ? new Set(memory.listGraphProjectionJobs().map((candidate) => candidate.id))
           : undefined
         const blockId = kind === 'graph-projection'
           ? graphJob?.sourceEventIds.flatMap((eventId) => memory.listAllEvents().find(({ id: eventCandidateId }) => eventCandidateId === eventId)?.sourceBlockId ?? [])[0]
@@ -2349,19 +2494,22 @@ export class StrataGateRuntime {
         await this.persistSuccessfulResponses(memory)
         const currentBlock = blockId ? memory.listBlocks().find(({ id: candidateId }) => candidateId === blockId) : undefined
         if (kind !== 'graph-projection' && currentBlock?.processingStatus === 'ready' && currentBlock.threadId) {
-          this.pendingSurfaceSync.set(`${key}\u0000${currentBlock.id}`, { namespace: key, blockId: currentBlock.id })
+          this.queueSurfaceSync(key, currentBlock.id)
           if (session && this.namespaceFor(session) === key) await this.syncPendingRetrySurface(session, memory)
         }
         const job = kind === 'block-summary'
           ? memory.listSummaryJobs().find(({ blockId: candidateId }) => candidateId === jobId)
           : kind === 'event-extraction'
             ? memory.listExtractionJobs().find(({ blockId: candidateId }) => candidateId === jobId)
-            : memory.listGraphProjectionJobs().find(({ id: candidateId }) => candidateId === jobId)
+            : memory.listGraphProjectionJobs().find((candidate) =>
+              graphJobIdsBeforeRetry !== undefined && !graphJobIdsBeforeRetry.has(candidate.id))
+              ?? memory.listGraphProjectionJobs().find(({ id: candidateId }) => candidateId === jobId)
+        const effectiveJobId = kind === 'graph-projection' && job && 'id' in job ? job.id : jobId
         const succeeded = kind === 'graph-projection' ? job?.status === 'completed' : job?.status === 'succeeded' || job?.status === 'skipped'
         if (!succeeded) throw new Error(job?.lastError || `${kind} retry did not complete`)
         return {
           kind,
-          jobId,
+          jobId: effectiveJobId,
           blockId,
           status: job?.status,
           job: job ?? null,
@@ -2474,6 +2622,7 @@ export class StrataGateRuntime {
   }
 
   private async space(session: Session): Promise<StrataGate> {
+    this.graphStore()
     const namespace = this.namespaceFor(session)
     this.knownSessions.set(String(session.id), new WeakRef(session))
     this.rememberWorkspace(namespace, session.header.cwd)
@@ -2482,6 +2631,7 @@ export class StrataGateRuntime {
       opening = StrataGate.open({
         database: this.config.database,
         namespace,
+        graphPolicy: () => this.graphPolicyFor(namespace),
         blockTurnSize: this.blockTurnSize,
         blockDecayLambda: this.blockDecayLambda,
         summarizer: this.models.summarizer,
@@ -2494,7 +2644,7 @@ export class StrataGateRuntime {
           try {
             await memory.resumePendingWork({ deferDerivation: true, threadId: String(session.id) })
             const contexts = memory.getBlockContext(String(session.id))
-            if (this.syncDecayedBlockSurface(session, memory, contexts)) {
+            if (await this.syncDecayedBlockSurface(session, memory, contexts)) {
               await this.flushNativeSession(session)
             }
           } finally {
@@ -2519,8 +2669,11 @@ export class StrataGateRuntime {
   }
 
   async searchGraph(session: Session, query: string, limit = 8): Promise<unknown> {
+    if (!this.graphEnabled) throw new Error('Knowledge Graph is disabled')
     await this.flush()
-    const results = await (await this.space(session)).searchGraphNodes(query, limit)
+    const memory = await this.space(session)
+    const results = await memory.searchGraphNodes(query, limit)
+    if (!this.graphEnabled) throw new Error('Knowledge Graph is disabled')
     return this.batch(session, results.map(({ node, provenanceEventIds }) => ({
       ref: `graph-node:${node.id}`,
       target: {
@@ -2528,12 +2681,14 @@ export class StrataGateRuntime {
         elementIds: [],
         citation: citation('graph', node.id, node.name, `graph-node:${node.id}`, 'nodeId'),
       },
-    })), results.map(compactGraphNode))
+    })), results.map(compactGraphNode), searchStatus(results, () => memory.hasSearchableGraphNodes?.()))
   }
 
   async expandGraphNode(session: Session, id: string): Promise<unknown> {
+    if (!this.graphEnabled) throw new Error('Knowledge Graph is disabled')
     await this.flush()
     const memory = await this.space(session)
+    if (!this.graphEnabled) throw new Error('Knowledge Graph is disabled')
     const node = memory.listGraphNodes().find((candidate) => candidate.id === id)
     if (!node) throw new Error(`Unknown graph node: ${id}`)
     const view = effectiveGraphNodeView(node, memory.listGraphEdges(), memory.listAllEvents())
@@ -2607,14 +2762,12 @@ export class StrataGateRuntime {
             const context = contexts.find(({ id }) => id === block.id)
             if (!context) throw new Error(`Missing context for ready StrataGate block ${block.id}`)
             if (hostCompactionActive(session)) {
-              this.pendingSurfaceSync.set(`${this.namespaceFor(session)}\u0000${block.id}`, {
-                namespace: this.namespaceFor(session), blockId: block.id,
-              })
+              this.queueSurfaceSync(this.namespaceFor(session), block.id)
               continue
             }
-            changed = this.replaceSealedSurface(session, block, context, dshTurnAtBlockEnd(session, block)) || changed
+        changed = await this.replaceSealedSurface(session, memory, block, context, dshTurnAtBlockEnd(session, block)) || changed
           }
-          changed = this.syncDecayedBlockSurface(session, memory, contexts) || changed
+          changed = await this.syncDecayedBlockSurface(session, memory, contexts) || changed
           if (changed) await this.flushNativeSession(session)
         })
         .catch(async (error: unknown) => {
@@ -2638,6 +2791,7 @@ export class StrataGateRuntime {
   }
 
   private scheduleGraphMigration(session: Session, memory: StrataGate): void {
+    if (!this.graphEnabled || this.graphStore().graphSettings().paused) return
     const namespace = this.namespaceFor(session)
     if (this.closed || !this.models.isReady(session) || this.migrationTimers.has(namespace) || this.migrationRuns.has(namespace)) return
     if (typeof memory.listGraphProjectionJobs !== 'function') return
@@ -2693,6 +2847,7 @@ export class StrataGateRuntime {
     namespace: string,
     options: { derivation?: boolean } = {},
   ): Promise<{ memory: StrataGate; owned: boolean }> {
+    this.graphStore()
     const active = this.spaces.get(namespace)
     if (active) return { memory: await active, owned: false }
     if (this.config.database === ':memory:' || !existsSync(this.config.database)) {
@@ -2702,6 +2857,7 @@ export class StrataGateRuntime {
       memory: await StrataGate.open({
         database: this.config.database,
         namespace,
+        graphPolicy: () => this.graphPolicyFor(namespace),
         blockTurnSize: this.blockTurnSize,
         blockDecayLambda: this.blockDecayLambda,
         ...(options.derivation ? {
@@ -2949,8 +3105,6 @@ function hostCompactionActive(session: Session): boolean {
     && (lastSeed === undefined || lastBoundary.seq > lastSeed)
 }
 
-const SURFACE_MIN_SAVED_TOKENS = 32
-const SURFACE_MAX_REPLACEMENT_RATIO = 0.9
 // BasicCompaction's default recent tail is 16% of the routed context window
 // and its default summary cap is 8,192 tokens. An indivisible Block gets at
 // most a quarter of that tail and half of that summary cap. Use the latter
@@ -3000,8 +3154,10 @@ function originalCheckpointSourceTokens(session: Session, seq: SessionSeq): numb
 }
 
 function worthwhileSurfaceReduction(before: number, after: number): boolean {
-  return before - after >= SURFACE_MIN_SAVED_TOKENS
-    && after <= before * SURFACE_MAX_REPLACEMENT_RATIO
+  // A candidate may replace the current surface when it is no larger. The
+  // decay target is checked separately; a larger target must leave the
+  // current surface untouched rather than falling through to a later layer.
+  return after <= before
 }
 
 function selectCompressedBlockSurfaceText(
@@ -3013,17 +3169,30 @@ function selectCompressedBlockSurfaceText(
   checkpointLimit: number,
 ): string | null {
   const before = surfaceCheckpointTokens(currentText)
-  for (let level = highestLevel; level >= 0; level -= 1) {
-    const candidate = renderBlockSurfaceMessage({
+  const level = highestLevel as BlockLevel
+  const renderCandidate = (candidateLevel: BlockLevel): { text: string; tokens: number } => {
+    const text = renderBlockSurfaceMessage({
       ...context,
-      level: level as BlockLevel,
-      label: blockLevelLabel(level as BlockLevel),
-      content: level === context.level ? context.content : renderBlock(block, level as BlockLevel),
+      level: candidateLevel,
+      label: blockLevelLabel(candidateLevel),
+      content: candidateLevel === context.level ? context.content : renderBlock(block, candidateLevel),
     })
-    const tokens = surfaceCheckpointTokens(candidate)
-    if (tokens <= checkpointLimit
-      && worthwhileSurfaceReduction(before, tokens)
-      && (sourceTokens === null || worthwhileSurfaceReduction(sourceTokens, tokens))) return candidate
+    return { text, tokens: surfaceCheckpointTokens(text) }
+  }
+  const target = renderCandidate(level)
+  if (target.tokens <= checkpointLimit) {
+    if (worthwhileSurfaceReduction(before, target.tokens)
+      && (sourceTokens === null || worthwhileSurfaceReduction(sourceTokens, target.tokens))) return target.text
+    return null
+  }
+  // A target that exceeds the hard checkpoint ceiling may use a lower layer
+  // to fit the context budget. This is a capacity fallback, not a compression
+  // preference: a target that fits but expands the surface must remain put.
+  for (let candidateLevel = level - 1; candidateLevel >= 0; candidateLevel -= 1) {
+    const candidate = renderCandidate(candidateLevel as BlockLevel)
+    if (candidate.tokens > checkpointLimit) continue
+    if (worthwhileSurfaceReduction(before, candidate.tokens)
+      && (sourceTokens === null || worthwhileSurfaceReduction(sourceTokens, candidate.tokens))) return candidate.text
   }
   return null
 }
@@ -3042,15 +3211,31 @@ function selectCompressedBlockSurface(
   const checkpointLimit = surfaceCheckpointLimit(session)
   // Use the same token estimator for the visible replacement. The event JSON
   // wrapper is small, but count it on both sides for a conservative comparison.
-  for (let level = context.level; level >= 0; level -= 1) {
-    const candidate = renderBlockSurfaceMessage({
+  // Initial sealing must not silently skip the pointer's level and jump to a
+  // later summary layer just because that layer compresses more.
+  const level = context.level
+  const renderCandidate = (candidateLevel: BlockLevel): { text: string; tokens: number } => {
+    const text = renderBlockSurfaceMessage({
       ...context,
-      level: level as BlockLevel,
-      label: blockLevelLabel(level as BlockLevel),
-      content: level === context.level ? context.content : renderBlock(block, level as BlockLevel),
+      level: candidateLevel,
+      label: blockLevelLabel(candidateLevel),
+      content: candidateLevel === context.level ? context.content : renderBlock(block, candidateLevel),
     })
-    const tokens = surfaceCheckpointTokens(candidate)
-    if (tokens <= checkpointLimit && worthwhileSurfaceReduction(before, tokens)) return candidate
+    return { text, tokens: surfaceCheckpointTokens(text) }
+  }
+  const target = renderCandidate(level)
+  if (process.env.STRATAGATE_DEBUG_SURFACE === '1') console.error('initial-target', { level, targetTokens: target.tokens, checkpointLimit, before })
+  if (target.tokens <= checkpointLimit) {
+    // Initial sealing establishes the L5 checkpoint even when the host's
+    // wrapper makes it marginally larger than the raw source. No decay has
+    // happened yet, so this is not a lower-layer transition.
+    if (level === 5) return target.text
+    return worthwhileSurfaceReduction(before, target.tokens) ? target.text : null
+  }
+  for (let candidateLevel = level - 1; candidateLevel >= 0; candidateLevel -= 1) {
+    const candidate = renderCandidate(candidateLevel as BlockLevel)
+    if (candidate.tokens > checkpointLimit) continue
+    return worthwhileSurfaceReduction(before, candidate.tokens) ? candidate.text : null
   }
   return null
 }
@@ -3242,6 +3427,28 @@ function activatedElements(memory: StrataGate, relevance: readonly ElementSearch
   ]).map(({ item }) => item)
 }
 
+/** Availability is queried only for empty responses, never inferred from them.
+ * Older in-flight core instances may lack the query-independent scope probe.
+ * Probe/search failures intentionally propagate through the existing tool error protocol.
+ */
+function searchStatus(results: readonly unknown[], hasSearchableRecords: () => boolean | undefined): {
+  retrievalStatus: 'matched' | 'scope_empty' | 'no_match' | 'unknown'
+  retrievalHint?: string
+} {
+  if (results.length > 0) return { retrievalStatus: 'matched' }
+  const available = hasSearchableRecords()
+  if (available === false) return {
+    retrievalStatus: 'scope_empty',
+    retrievalHint: '当前搜索范围内没有可搜索记录；不能据此断言其他范围或从前未记录过。',
+  }
+  return {
+    retrievalStatus: available === true ? 'no_match' : 'unknown',
+    retrievalHint: available === true
+      ? '本次检索未找到匹配，不能据此断言相关记忆不存在。'
+      : '本次未返回匹配，无法可靠判断当前范围是否有可搜索记录；不能据此断言相关记忆不存在。',
+  }
+}
+
 function renderActivatedMemory(
   events: readonly EventCard[],
   graphResults: readonly GraphNodeSearchResult[],
@@ -3300,7 +3507,7 @@ function renderActivatedMemory(
     nodeCount += 1
   }
 
-  if (eventCount === 0 && nodeCount === 0) lines.push('(no activated memory)')
+  if (eventCount === 0 && nodeCount === 0) lines.push('(no memory selected for automatic context)')
   return lines.join('\n')
 }
 

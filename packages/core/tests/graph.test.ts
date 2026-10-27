@@ -11,7 +11,7 @@ import { normalizeSnapshot } from '../src/storage.js';
 
 describe('Event-backed knowledge graph', () => {
   it('uses one Event-authoritative current/historical view for facts, edge endpoints, and bounded provenance', async () => {
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'graph', l0Tags: [], l1Summary: 'graph', l2Keypoints: [], shouldExtract: false }),
     });
@@ -131,7 +131,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('fails safe for legacy metadata and filters field-level metadata provenance', async () => {
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'graph', l0Tags: [], l1Summary: 'graph', l2Keypoints: [], shouldExtract: false }),
     });
@@ -176,7 +176,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('keeps legacy metadata readable when all active and superseded sources fit evidence', async () => {
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'graph', l0Tags: [], l1Summary: 'graph', l2Keypoints: [], shouldExtract: false }),
     });
@@ -196,7 +196,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('marks trusted legacy metadata as not expanded when its legal sources exceed the evidence budget', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1 });
     await memory.appendTurn({ user: 'legacy metadata overflow', assistant: 'stored' });
     const block = memory.listBlocks()[0]!;
     const events = await Promise.all(Array.from({ length: GRAPH_PROVENANCE_LIMIT + 1 }, (_, index) => memory.addEvent({
@@ -213,7 +213,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('does not let a hidden legacy alias participate in entity merge', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1 });
     const events = [{ id: 'evt_hidden_alias', status: 'forgotten' as const }, { id: 'evt_new_entity', status: 'active' as const }];
     const nodes = memory.listGraphNodes() as GraphNode[];
     nodes.push({
@@ -235,7 +235,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('keeps canonical name provenance separate from an alias-based merge', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1 });
     const makeEvent = (id: string) => ({
       id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null }, createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
@@ -255,7 +255,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('does not merge through a proposal alias that lacks valid field provenance', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1 });
     const makeEvent = (id: string) => ({
       id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null }, createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
@@ -283,7 +283,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('does not fall back to node sources when metadata provenance is missing or mismatched', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1 });
     const makeEvent = (id: string) => ({
       id, title: id, summary: id, sourceBlockId: 'block', sourceMessageIds: [], tags: [], quotes: [], temporal: {}, scope: 'project' as const, criticality: 'routine' as const, status: 'active' as const, supersededBy: null,
       weight: { mentionCount: 1, lastAdoptedTurn: 0, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null }, createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
@@ -304,7 +304,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('classifies a metadata-only hit from the exact matched field provenance', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1 });
     await memory.appendTurn({ user: 'metadata history', assistant: 'stored' });
     const block = memory.listBlocks()[0]!;
     const current = await memory.addEvent({ id: 'evt_current_name', title: 'current', summary: 'Current canonical name.', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] });
@@ -322,7 +322,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('keeps key and value matching on the same fact record', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1 });
     await memory.appendTurn({ user: 'fact association', assistant: 'stored' });
     const block = memory.listBlocks()[0]!;
     const event = await memory.addEvent({ id: 'evt_fact_association', title: 'facts', summary: 'Company and location.', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] });
@@ -340,7 +340,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('reports missing canonical metadata provenance as a failed projection', async () => {
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       graphProjector: async ({ events }) => ({
         reason: 'custom projector omitted field provenance',
@@ -358,7 +358,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('records dropped alias and tag provenance as a completed projection warning', async () => {
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       graphProjector: async ({ events }) => ({
         reason: 'valid node with invalid optional metadata',
@@ -404,7 +404,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('does not expose claims whose provenance falls outside the evidence limit', async () => {
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'graph', l0Tags: [], l1Summary: 'graph', l2Keypoints: [], shouldExtract: false }),
     });
@@ -433,7 +433,7 @@ describe('Event-backed knowledge graph', () => {
   });
 
   it('returns current context for a historical Edge without changing its match type', async () => {
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'graph', l0Tags: [], l1Summary: 'graph', l2Keypoints: [], shouldExtract: false }),
     });
@@ -465,7 +465,7 @@ describe('Event-backed knowledge graph', () => {
 
   it('projects stable nodes and directed edges while keeping Event as source of truth', async () => {
     let sequence = 0;
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'event', l0Tags: [], l1Summary: 'event', l2Keypoints: [], shouldExtract: true }),
       idFactory: (prefix) => `${prefix}_${++sequence}`,
@@ -537,6 +537,7 @@ describe('Event-backed knowledge graph', () => {
     let now = new Date('2026-09-14T00:00:00.000Z');
     const storage = new SqliteStorage({ filename: ':memory:' });
     const options: PersistentStrataGateOptions = {
+      graphEnabled: true,
       storage,
       namespace: 'graph:test',
       blockTurnSize: 1,
@@ -574,7 +575,7 @@ describe('Event-backed knowledge graph', () => {
 
   it('bounds automatic retries and always serves pending Graph work before failed retries', async () => {
     let now = new Date('2026-09-14T00:00:00.000Z');
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       now: () => now,
       summarizer: async () => ({ l0Title: 'ready', l0Tags: [], l1Summary: 'ready', l2Keypoints: [], shouldExtract: false }),
@@ -624,7 +625,7 @@ describe('Event-backed knowledge graph', () => {
   it('manually retries only the selected failed Graph projection', async () => {
     let shouldFail = true;
     let calls = 0;
-    const memory = StrataGate.inMemory({
+    const memory = StrataGate.inMemory({ graphEnabled: true,
       blockTurnSize: 1,
       summarizer: async () => ({ l0Title: 'event', l0Tags: [], l1Summary: 'event', l2Keypoints: [], shouldExtract: true }),
       extractor: async ({ target }) => ({
@@ -651,6 +652,10 @@ describe('Event-backed knowledge graph', () => {
     expect(first).toEqual({ nodeIds: [], edgeIds: [] });
     expect(second).toEqual(first);
     expect(calls).toBe(2);
-    expect(memory.listGraphProjectionJobs()[0]).toMatchObject({ id: jobId, status: 'completed', attempts: 1, lastError: null });
+    const jobs = memory.listGraphProjectionJobs();
+    expect(jobs).toHaveLength(2);
+    expect(jobs.find(job => job.id === jobId)).toMatchObject({ id: jobId, status: 'failed', attempts: 1,
+      lastError: 'Graph projection manually retried.' });
+    expect(jobs.find(job => job.id !== jobId)).toMatchObject({ status: 'completed', attempts: 1, lastError: null });
   });
 });

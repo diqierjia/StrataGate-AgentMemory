@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   BLOCK_DECAY_LAMBDA,
   DEFAULT_BLOCK_TURN_SIZE,
   blockLevelLabel,
+  buildBlockTimeline,
   deterministicBlockLayers,
   formatRawTranscript,
-  getDecayedBlockLevel,
+  getBlockDecayView,
   normalizeBlockLevel,
 } from './blocks.js';
 import { applyElementChanges, elementViewAt } from './elements.js';
@@ -29,6 +30,7 @@ import {
   DERIVATION_MAX_ATTEMPTS,
   DERIVATION_LEASE_MS,
   graphProjectionNeedsRecovery,
+  graphProjectionSourceIds,
   StorageConflictError,
   cloneSnapshot,
   isSyntheticSourceThreadId,
@@ -38,6 +40,7 @@ import {
   type ExtractionJob,
   type BlockSummaryJob,
   type GraphProjectionJob,
+  type GraphRuntimePolicy,
   type IngestionReceipt,
   type SuccessfulModelResponse,
   type StorageAdapter,
@@ -101,6 +104,9 @@ import { MEMORY_TOPIC_PROJECTOR_VERSION, TOPIC_LEASE_MS, MemoryTopicDirectory, t
 export interface StrataGateOptions {
   blockTurnSize?: number;
   blockDecayLambda?: number;
+  graphEnabled?: boolean;
+  /** Installation-wide policy, synchronously read at every Graph boundary. */
+  graphPolicy?: () => GraphRuntimePolicy;
   summarizer?: BlockSummarizer;
   extractor?: EventExtractor;
   eventDuplicateDecider?: EventDuplicateDecider;
@@ -152,6 +158,8 @@ export interface BlockContextEntry {
   turnRange: [number, number];
   age: number;
   level: BlockLevel;
+  /** The persisted layer currently injected into the host surface, when known. */
+  surfaceLevel?: BlockLevel;
   label: string;
   content: string;
 }
@@ -331,6 +339,10 @@ function duplicateUndoDerived(snapshot: StrataGateSnapshot, ids: string[]): stri
 export class StrataGate {
   private blockTurnSizeValue: number;
   private blockDecayLambdaValue: number;
+  private graphEnabledValue: boolean;
+  private graphEpoch = 0;
+  private graphApprovedEventIds: string[] = [];
+  private readonly graphPolicy: (() => GraphRuntimePolicy) | undefined;
   private readonly summarizer: BlockSummarizer | undefined;
   private readonly extractor: EventExtractor | undefined;
   private readonly eventDuplicateDecider: EventDuplicateDecider | undefined;
@@ -377,6 +389,8 @@ export class StrataGate {
       throw new TypeError('blockDecayLambda must be a non-negative finite number');
     }
     this.blockDecayLambdaValue = blockDecayLambda;
+    this.graphEnabledValue = options.graphEnabled === true;
+    this.graphPolicy = options.graphPolicy;
     this.summarizer = options.summarizer;
     this.extractor = options.extractor;
     this.eventDuplicateDecider = options.eventDuplicateDecider;
@@ -400,6 +414,7 @@ export class StrataGate {
     if (!database) throw new TypeError('SQLite database path must not be empty');
     const storage = new SqliteStorage({
       filename: database,
+      ...(options.graphPolicy ? { graphPolicy: options.graphPolicy } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     });
     try {
@@ -408,6 +423,8 @@ export class StrataGate {
         namespace: options.namespace,
         ...(options.blockTurnSize !== undefined ? { blockTurnSize: options.blockTurnSize } : {}),
         ...(options.blockDecayLambda !== undefined ? { blockDecayLambda: options.blockDecayLambda } : {}),
+        ...(options.graphEnabled !== undefined ? { graphEnabled: options.graphEnabled } : {}),
+        ...(options.graphPolicy ? { graphPolicy: options.graphPolicy } : {}),
         ...(options.summarizer ? { summarizer: options.summarizer } : {}),
         ...(options.extractor ? { extractor: options.extractor } : {}),
         ...(options.eventDuplicateDecider ? { eventDuplicateDecider: options.eventDuplicateDecider } : {}),
@@ -453,10 +470,13 @@ export class StrataGate {
       if (settingsChanged) loadedRevision = await options.storage.save(namespace, loadedSnapshot, loadedRevision);
     }
     const memoryOptions: StrataGateOptions = {};
+    if (options.graphPolicy) memoryOptions.graphPolicy = options.graphPolicy;
     if (loadedSnapshot) memoryOptions.blockTurnSize = loadedSnapshot.blockTurnSize;
     else if (options.blockTurnSize !== undefined) memoryOptions.blockTurnSize = options.blockTurnSize;
     if (loadedSnapshot) memoryOptions.blockDecayLambda = loadedSnapshot.blockDecayLambda;
     else if (options.blockDecayLambda !== undefined) memoryOptions.blockDecayLambda = options.blockDecayLambda;
+    if (loadedSnapshot) memoryOptions.graphEnabled = loadedSnapshot.graphEnabled === true;
+    else if (options.graphEnabled !== undefined) memoryOptions.graphEnabled = options.graphEnabled;
     if (options.summarizer) memoryOptions.summarizer = options.summarizer;
     if (options.extractor) memoryOptions.extractor = options.extractor;
     if (options.eventDuplicateDecider) memoryOptions.eventDuplicateDecider = options.eventDuplicateDecider;
@@ -472,6 +492,7 @@ export class StrataGate {
     memory.namespace = namespace;
     if (loaded && loadedSnapshot) {
       memory.restoreSnapshot(loadedSnapshot);
+      memory.graphEnabledValue = loadedSnapshot.graphEnabled === true;
       memory.revision = loadedRevision;
     }
     // Freeze historical sources before returning a writer to ingestion or
@@ -495,11 +516,16 @@ export class StrataGate {
       }
       const covered = new Set(memory.listGraphProjectionJobs()
         .filter((job) => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION).flatMap((job) => job.sourceEventIds));
-      if (memory.graphProjector && (memory.listGraphProjectionJobs().some((job) => graphProjectionNeedsRecovery(job, memory.listAllEvents()))
-        || memory.listAllEvents().some((event) => event.status !== 'forgotten' && event.status !== 'archived' && !covered.has(event.id)))) await memory.commitMutation(() => {
+      const graphPolicy = memory.currentGraphPolicy();
+      const eventById = new Map(memory.listAllEvents().map(event => [event.id, event]));
+      const approved = new Set(graphPolicy.backfillEventIds ?? []);
+      if (memory.graphCanProcess() && memory.graphProjector && (memory.listGraphProjectionJobs().some((job) => graphProjectionNeedsRecovery(job, memory.listAllEvents())
+        && graphProjectionSourceIds(job, eventById, graphPolicy.epoch, approved).length > 0)
+        || graphPolicy.backfillEventIds?.some(id => !covered.has(id)))) await memory.commitMutation(() => {
+        memory.assertGraphEpoch(graphPolicy.epoch);
         memory.recoverGraphNameProvenanceFailures();
         memory.queueMissingGraphProjections();
-      });
+      }, graphPolicy.epoch);
     }
     return memory;
   }
@@ -538,9 +564,11 @@ export class StrataGate {
         }
       });
     }
-    const interruptedGraphProjections = [...this.graphProjectionJobs.values()].filter(expired);
+    const interruptedGraphProjections = this.graphCanProcess() ? [...this.graphProjectionJobs.values()].filter(expired) : [];
     if (interruptedGraphProjections.length > 0) {
+      const epoch = this.currentGraphPolicy().epoch;
       await this.commitMutation(() => {
+        this.assertGraphEpoch(epoch);
         const now = toUtc8Iso(this.now());
         for (const job of interruptedGraphProjections) {
           this.graphProjectionJobs.set(job.id, {
@@ -551,7 +579,7 @@ export class StrataGate {
             updatedAt: now,
           });
         }
-      });
+      }, epoch);
     }
   }
 
@@ -776,25 +804,52 @@ export class StrataGate {
 
   /** Retry exactly one failed Graph projection batch. */
   async retryGraphProjection(id: string): Promise<{ nodeIds: string[]; edgeIds: string[] }> {
+    if (!this.graphCanProcess()) throw new Error('Knowledge Graph processing is disabled or paused');
     const jobId = id.trim();
     if (!jobId) throw new TypeError('Graph projection id must not be empty');
     return this.runManualRetry(`graph:${jobId}`, async () => {
       if (!this.graphProjector) throw new Error('Graph projector is not configured');
-      await this.commitMutation(() => {
-        const job = this.requireGraphProjectionJob(jobId);
+      const epoch = this.currentGraphPolicy().epoch;
+      const retryId = await this.commitMutation(() => {
+        this.assertGraphEpoch(epoch);
+        let job = this.requireGraphProjectionJob(jobId);
         if (job.status !== 'failed') throw new Error(`Graph projection ${jobId} is ${job.status}, not failed`);
-        job.status = 'pending';
-        job.attempts = 0;
-        job.lastError = null;
+        const ids = job.sourceEventIds.filter(id => {
+          const event = this.findEvent(id);
+          return event?.status === 'active' || event?.status === 'superseded';
+        });
+        if (!ids.length) throw new Error('Graph projection has no available source events');
+        // Every manual retry gets a fresh durable job id, even in the same
+        // epoch. The old failed record remains an audit trail and can never
+        // accept a late result from the previous lease.
+        const replacement: GraphProjectionJob = {
+          ...job,
+          id: this.graphIdFactory('gproj'),
+          sourceEventIds: ids,
+          createdEpoch: epoch,
+          status: 'pending',
+          attempts: 0,
+          lastError: null,
+          nextRetryAt: null,
+          leaseUntil: null,
+          updatedAt: toUtc8Iso(this.now()),
+        };
+        delete replacement.claimEpoch;
+        delete replacement.claimToken;
+        job.status = 'failed';
+        job.lastError = 'Graph projection manually retried.';
         job.nextRetryAt = null;
+        job.leaseUntil = null;
         job.updatedAt = toUtc8Iso(this.now());
-      });
-      const batch = await this.claimGraphProjection(jobId);
+        this.graphProjectionJobs.set(replacement.id, replacement);
+        return replacement.id;
+      }, epoch);
+      const batch = await this.claimGraphProjection(retryId);
       if (!batch) throw new Error(`Graph projection ${jobId} could not be claimed`);
       try {
-        return await this.completeGraphProjection(jobId, await this.withDerivationLease('graph', jobId, () => this.graphProjector!(batch)));
+        return await this.completeGraphProjection(batch.jobId, await this.withDerivationLease('graph', batch.jobId, () => { batch.assertActive?.(); return this.graphProjector!(batch); }), batch.claimToken);
       } catch (error) {
-        await this.failGraphProjection(jobId, error);
+        await this.failGraphProjection(batch.jobId, error, batch.claimToken);
         throw error;
       }
     });
@@ -906,6 +961,9 @@ export class StrataGate {
       currentTurn: this.currentTurn,
       blockTurnSize: this.blockTurnSize,
       blockDecayLambda: this.blockDecayLambda,
+      graphEnabled: this.graphEnabledValue,
+      graphEpoch: this.graphEpoch,
+      graphBackfillEventIds: this.graphApprovedEventIds,
       openTail: this.openTail,
       blocks: this.blocks,
       summaryJobs: [...this.summaryJobs.values()],
@@ -998,6 +1056,7 @@ export class StrataGate {
     if (options.deferDerivation === true) {
       return { sealedBlocks, readyBlocks, extractedEvents, projectedElements };
     }
+    await this.prepareGraphWork();
     await this.recoverExpiredDerivations();
     for (const block of this.blocks) {
       if (options.threadId !== undefined && block.threadId !== options.threadId) continue;
@@ -1006,7 +1065,6 @@ export class StrataGate {
       extractedEvents.push(...extracted);
       if (this.blocks.find((candidate) => candidate.id === block.id)?.processingStatus === 'ready') readyBlocks.push(block);
       projectedElements.push(...(await this.projectEligibleElements() ?? []));
-      await this.projectEligibleGraph();
     }
     while (true) {
       const projected = await this.projectEligibleElements();
@@ -1294,6 +1352,19 @@ export class StrataGate {
     });
   }
 
+  async abandonExternalMemoryImportJob(jobId: string): Promise<ExternalMemoryImportJob> {
+    return this.commitMutation(() => {
+      const job = this.requireExternalMemoryImportJob(jobId);
+      if (job.status === 'abandoned') return structuredClone(job);
+      if (!['failed', 'ready', 'awaiting_confirmation'].includes(job.status)) {
+        throw new Error('只能放弃已停止且尚未导入的任务');
+      }
+      job.status = 'abandoned';
+      job.updatedAt = toUtc8Iso(this.now());
+      return structuredClone(job);
+    });
+  }
+
   async completeExternalMemoryImportJob(
     jobId: string,
     result: Pick<ExternalMemoryImportResult, 'sourceBlockId' | 'addedEvents'>,
@@ -1493,6 +1564,13 @@ export class StrataGate {
     });
   }
 
+  /** Query-independent availability in this namespace, before filters/pagination. */
+  hasSearchableEvents(options: Pick<SearchOptions, 'agentMemoryWeight'> = {}): boolean {
+    const visible = (event: EventCard): boolean => event.status === 'active' || event.status === 'superseded';
+    return this.events.some(visible)
+      || (Math.max(0, options.agentMemoryWeight ?? 1) > 0 && this.agentEvents.some(visible));
+  }
+
   async searchEvents(query: string, options: SearchOptions = {}): Promise<EventSearchResult[]> {
     const limit = Math.max(1, Math.min(20, options.limit ?? 6));
     const offset = options.offset ?? 0;
@@ -1676,14 +1754,23 @@ export class StrataGate {
   }
 
   private async claimGraphProjection(jobId?: string): Promise<GraphProjectionContext | null> {
+    if (!this.graphCanProcess()) return null;
+    await this.prepareGraphWork();
+    const policy = this.currentGraphPolicy();
+    const epoch = policy.epoch;
+    const approved = new Set(policy.backfillEventIds ?? []);
+    const eventById = new Map(this.listAllEvents().map(event => [event.id, event]));
+    const sources = (job: GraphProjectionJob) => graphProjectionSourceIds(job, eventById, epoch, approved);
     const eligible = (candidate: GraphProjectionJob) => (jobId === undefined || candidate.id === jobId)
       && candidate.attempts < DERIVATION_MAX_ATTEMPTS
+      && sources(candidate).length > 0
       && (candidate.status === 'pending' || (candidate.status === 'failed' && candidate.nextRetryAt !== null
         && Date.parse(candidate.nextRetryAt) <= this.now().getTime()));
     // A competing worker observing a live lease must not change the revision
     // just to return "no claim", which would invalidate the owner's result.
     if (![...this.graphProjectionJobs.values()].some(eligible)) return null;
     return this.commitMutation(() => {
+      this.assertGraphEpoch(epoch);
       const job = [...this.graphProjectionJobs.values()]
         .filter(eligible)
         .sort((left, right) => Number(left.status !== 'pending') - Number(right.status !== 'pending')
@@ -1691,7 +1778,15 @@ export class StrataGate {
       if (!job) return null;
       // Split legacy batches in the same durable claim transaction. Siblings
       // inherit attempts/backoff; completed or exhausted jobs are never claimed.
-      const sourceEventIds = job.sourceEventIds;
+      const sourceEventIds = sources(job);
+      const allowed = new Set(sourceEventIds);
+      const deferred = job.sourceEventIds.filter(id => !allowed.has(id));
+      if (deferred.length) {
+        const id = this.graphIdFactory('gproj');
+        // Keep unapproved/hidden sources in their own unscheduled ledger. A
+        // later explicit approval must still inherit the spent retry budget.
+        this.graphProjectionJobs.set(id, { ...job, id, sourceEventIds: deferred, nodeIds: [], edgeIds: [] });
+      }
       for (let index = GRAPH_PROJECTION_BATCH_SIZE; index < sourceEventIds.length; index += GRAPH_PROJECTION_BATCH_SIZE) {
         const id = this.graphIdFactory('gproj');
         this.graphProjectionJobs.set(id, {
@@ -1704,8 +1799,10 @@ export class StrataGate {
         const event = this.findEvent(id);
         return event ? [event] : [];
       });
-      if (events.length === 0) throw new Error(`Graph projection ${job.id} has no available source events`);
+      if (events.length !== job.sourceEventIds.length) throw new Error(`Graph projection ${job.id} has unavailable source events`);
       job.nameProvenanceRecoveryVersion = 1;
+      job.claimEpoch = epoch;
+      job.claimToken = randomUUID();
       job.status = 'running';
       job.leaseUntil = new Date(this.now().getTime() + DERIVATION_LEASE_MS).toISOString();
       job.attempts += 1;
@@ -1727,22 +1824,35 @@ export class StrataGate {
       ]).map(({ id }) => id));
       return {
         jobId: job.id,
+        claimToken: job.claimToken,
         projectorVersion: job.projectorVersion,
+        assertActive: () => {
+          this.assertGraphEpoch(epoch);
+          const current = this.graphProjectionJobs.get(job.id);
+          if (!current || current.status !== 'running' || current.claimToken !== job.claimToken) {
+            throw new Error('Knowledge Graph claim superseded; late result discarded');
+          }
+        },
         events: structuredClone(events),
         existingNodes: structuredClone(existingNodes),
         existingEdges: structuredClone(this.graphEdges.filter(({ id, fromNodeId, toNodeId }) => visibleEdgeIds.has(id)
           && nodeIds.has(fromNodeId) && nodeIds.has(toNodeId)).slice(-60)),
       };
-    });
+    }, epoch);
   }
 
   async claimNextGraphProjection(): Promise<GraphProjectionContext | null> {
     return this.claimGraphProjection();
   }
 
-  async completeGraphProjection(jobId: string, result: GraphProjectionResult): Promise<{ nodeIds: string[]; edgeIds: string[] }> {
+  async completeGraphProjection(jobId: string, result: GraphProjectionResult, claimToken?: string): Promise<{ nodeIds: string[]; edgeIds: string[] }> {
+    const epoch = this.requireGraphProjectionJob(jobId).claimEpoch ?? this.currentGraphPolicy().epoch;
     return this.commitMutation(() => {
+      this.assertGraphEpoch(epoch);
       const job = this.requireGraphProjectionJob(jobId);
+      if (claimToken !== undefined && job.claimToken !== claimToken) {
+        throw new Error('Knowledge Graph claim superseded; late result discarded');
+      }
       if (job.status === 'completed') return { nodeIds: job.nodeIds, edgeIds: job.edgeIds };
       if (job.status !== 'running') throw new Error(`Graph projection ${job.id} is ${job.status}, not running`);
       const touched = applyGraphProjection({
@@ -1764,18 +1874,23 @@ export class StrataGate {
       job.nextRetryAt = null;
       job.updatedAt = toUtc8Iso(this.now());
       return { nodeIds: touched.nodeIds, edgeIds: touched.edgeIds };
-    });
+    }, epoch);
   }
 
-  async failGraphProjection(jobId: string, error: unknown): Promise<void> {
+  async failGraphProjection(jobId: string, error: unknown, claimToken?: string): Promise<void> {
+    if (!this.graphCanProcess()) return;
+    const epoch = this.requireGraphProjectionJob(jobId).claimEpoch ?? this.currentGraphPolicy().epoch;
+    if (epoch !== this.currentGraphPolicy().epoch) return;
     await this.commitMutation(() => {
+      this.assertGraphEpoch(epoch);
       const job = this.requireGraphProjectionJob(jobId);
+      if (claimToken !== undefined && job.claimToken !== claimToken) return;
       if (job.status === 'completed') return;
       job.status = 'failed';
       job.lastError = errorMessage(error);
       job.nextRetryAt = this.retryAt(job.attempts);
       job.updatedAt = toUtc8Iso(this.now());
-    });
+    }, epoch);
   }
 
   async searchElements(query: string, options: ElementSearchOptions = {}): Promise<ElementSearchResult[]> {
@@ -1847,6 +1962,14 @@ export class StrataGate {
     return elementViewAt(element, at);
   }
 
+  /** Only sealed source messages are searched; open tails are native context. */
+  hasSearchableRawMessages(options: Pick<RawSearchOptions, 'threadId' | 'includeUnthreaded'> = {}): boolean {
+    return this.blocks.some((block) => block.l5Raw.some((message) =>
+      (options.threadId === undefined || message.threadId === options.threadId
+        || (options.includeUnthreaded === true && message.threadId === undefined))
+      && searchTokens(message.content).length > 0));
+  }
+
   searchRawMemory(query: string, limit = 6, options: RawSearchOptions = {}): RawSearchHit[] {
     const tokens = searchTokens(query);
     if (tokens.length === 0) return [];
@@ -1902,20 +2025,12 @@ export class StrataGate {
    * StrataGate namespace (never another namespace).
    */
   getBlockContext(threadId?: string): BlockContextEntry[] {
+    const timeline = buildBlockTimeline(this.blocks);
     const blocks = threadId === undefined
       ? this.blocks.filter((block) => block.processingStatus === 'ready')
       : this.blocks.filter((block) => block.threadId === threadId && block.processingStatus === 'ready');
     return blocks.map((block) => {
-      const threadBlocks = this.threadBlocks(block.threadId).filter((candidate) => candidate.processingStatus === 'ready');
-      const latestBlockPosition = threadBlocks.length;
-      const blockPosition = threadBlocks.indexOf(block) + 1;
-      const age = Math.max(0, latestBlockPosition - blockPosition);
-      const level = getDecayedBlockLevel(
-        block.pointerAnchorLevel,
-        block.pointerAnchorBlockPosition,
-        latestBlockPosition,
-        this.blockDecayLambda,
-      );
+      const { age, level } = getBlockDecayView(block, timeline.get(block.id)!, this.blockDecayLambda);
       block.pointerCurrentLevel = level;
       return {
         id: block.id,
@@ -1923,9 +2038,19 @@ export class StrataGate {
         turnRange: [block.startTurn, block.endTurn],
         age,
         level,
+        ...(block.surfaceCurrentLevel === undefined ? {} : { surfaceLevel: block.surfaceCurrentLevel }),
         label: blockLevelLabel(level),
         content: renderBlock(block, level),
       };
+    });
+  }
+
+  async setBlockSurfaceLevel(id: string, level: BlockLevel): Promise<void> {
+    await this.commitMutation(() => {
+      const block = this.blocks.find((candidate) => candidate.id === id);
+      if (!block) throw new Error(`Unknown block: ${id}`);
+      if (block.processingStatus !== 'ready') throw new Error(`Block ${id} is not ready for surface tracking`);
+      block.surfaceCurrentLevel = level;
     });
   }
 
@@ -1934,27 +2059,21 @@ export class StrataGate {
       const block = this.blocks.find((candidate) => candidate.id === id);
       if (!block) throw new Error(`Unknown block: ${id}`);
       if (block.processingStatus !== 'ready') throw new Error(`Block ${id} is not ready for decay or expansion`);
-      const readyBlocks = this.threadBlocks(block.threadId).filter((candidate) => candidate.processingStatus === 'ready');
-      const latestBlockPosition = readyBlocks.length;
-      const blockPosition = readyBlocks.indexOf(block) + 1;
-      const current = getDecayedBlockLevel(
-        block.pointerAnchorLevel,
-        block.pointerAnchorBlockPosition,
-        latestBlockPosition,
-        this.blockDecayLambda,
-      );
+      const position = buildBlockTimeline(this.threadBlocks(block.threadId)).get(block.id)!;
+      const { age, level: current } = getBlockDecayView(block, position, this.blockDecayLambda);
       const level = normalizeBlockLevel(target, current);
       block.pointerCurrentLevel = level;
       block.pointerAnchorLevel = level;
-      block.pointerAnchorBlockPosition = latestBlockPosition;
+      block.pointerAnchorBlockPosition = position.latestBlockPosition;
       block.lastLiftedAt = toUtc8Iso(this.now());
       block.lastLiftedBy = source;
       return {
         id: block.id,
         ...(block.threadId ? { threadId: block.threadId } : {}),
         turnRange: [block.startTurn, block.endTurn] as [number, number],
-        age: Math.max(0, latestBlockPosition - blockPosition),
+        age,
         level,
+        ...(block.surfaceCurrentLevel === undefined ? {} : { surfaceLevel: block.surfaceCurrentLevel }),
         label: blockLevelLabel(level),
         content: renderBlock(block, level),
       };
@@ -2275,6 +2394,7 @@ export class StrataGate {
       processingStatus: 'ready',
       ...deterministicBlockLayers([message]),
       pointerCurrentLevel: 5,
+      surfaceCurrentLevel: 5,
       pointerAnchorLevel: 5,
       pointerAnchorBlockPosition: 1,
       lastLiftedAt: null,
@@ -2313,6 +2433,7 @@ export class StrataGate {
       processingStatus: 'ready',
       ...deterministicBlockLayers([message]),
       pointerCurrentLevel: 5,
+      surfaceCurrentLevel: 5,
       pointerAnchorLevel: 5,
       pointerAnchorBlockPosition: 1,
       lastLiftedAt: null,
@@ -2715,7 +2836,15 @@ export class StrataGate {
     return job;
   }
 
+  /** Use the same Event-authoritative visibility boundary as Graph search. */
+  hasSearchableGraphNodes(): boolean {
+    if (!this.graphEnabled) return false;
+    const events = this.listAllEvents();
+    return this.graphNodes.some((node) => effectiveGraphNodeView(node, this.graphEdges, events) !== null);
+  }
+
   async searchGraphNodes(query: string, limit = 8): Promise<GraphNodeSearchResult[]> {
+    if (!this.graphEnabled) return [];
     const queryTokens = [...new Set(searchTokens(query))];
     if (queryTokens.length === 0) return [];
     const views = this.graphNodes.flatMap((node) => effectiveGraphNodeView(node, this.graphEdges, this.listAllEvents()) ?? []);
@@ -2909,7 +3038,7 @@ export class StrataGate {
   }
 
   private queueGraphProjection(sourceEventIds: readonly string[], priority: number): void {
-    if (!this.graphProjector) return;
+    if (!this.graphProjector || !this.graphCanProcess()) return;
     const completed = new Set([...this.graphProjectionJobs.values()]
       .filter((job) => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION && job.status === 'completed')
       .flatMap((job) => job.sourceEventIds));
@@ -2917,6 +3046,7 @@ export class StrataGate {
       .filter((job) => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION && job.status !== 'completed')
       .flatMap((job) => job.sourceEventIds));
     const ids = [...new Set(sourceEventIds.filter((id) => this.findEvent(id)
+      && this.findEvent(id)!.status !== 'forgotten' && this.findEvent(id)!.status !== 'archived'
       && !completed.has(id) && !queued.has(id)))];
     const now = toUtc8Iso(this.now());
     for (let index = 0; index < ids.length; index += GRAPH_PROJECTION_BATCH_SIZE) {
@@ -2924,6 +3054,7 @@ export class StrataGate {
         id: this.graphIdFactory('gproj'), sourceEventIds: ids.slice(index, index + GRAPH_PROJECTION_BATCH_SIZE),
         projectorVersion: KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
         status: 'pending', attempts: 0, priority, nodeIds: [], edgeIds: [],
+        createdEpoch: this.currentGraphPolicy().epoch,
         nameProvenanceRecoveryVersion: 1,
         reason: null, lastError: null, nextRetryAt: null, createdAt: now, updatedAt: now,
       };
@@ -2931,11 +3062,52 @@ export class StrataGate {
     }
   }
 
+  private async prepareGraphWork(): Promise<void> {
+    if (!this.graphCanProcess() || !this.graphProjector) return;
+    const policy = this.currentGraphPolicy();
+    const eventById = new Map(this.listAllEvents().map(event => [event.id, event]));
+    const approved = new Set(policy.backfillEventIds ?? []);
+    const revoked = [...this.graphProjectionJobs.values()].filter(job =>
+      job.status === 'pending' && job.attempts >= DERIVATION_MAX_ATTEMPTS
+      || job.claimEpoch !== undefined && job.claimEpoch !== policy.epoch
+        && job.status !== 'completed' && job.lastError !== 'Graph claim revoked'
+        && (job.attempts < DERIVATION_MAX_ATTEMPTS || job.status !== 'failed' || job.leaseUntil != null || job.nextRetryAt !== null)
+        && (job.attempts >= DERIVATION_MAX_ATTEMPTS || graphProjectionSourceIds(job, eventById, policy.epoch, approved).length > 0));
+    const covered = new Set([...this.graphProjectionJobs.values()].filter(job => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION).flatMap(job => job.sourceEventIds));
+    const missing = policy.backfillEventIds?.some(id => !covered.has(id) && this.findEvent(id));
+    if (!revoked.length && !missing) return;
+    await this.commitMutation(() => {
+      this.assertGraphEpoch(policy.epoch);
+      for (const job of revoked) {
+        if (job.attempts >= DERIVATION_MAX_ATTEMPTS) {
+          job.status = 'failed'; job.lastError ??= 'Graph projection retry budget exhausted.';
+          job.nextRetryAt = null; job.leaseUntil = null;
+          job.updatedAt = toUtc8Iso(this.now());
+          continue;
+        }
+        const sourceEventIds = graphProjectionSourceIds(job, eventById, policy.epoch, approved);
+        if (!sourceEventIds.length) continue;
+        const replacement: GraphProjectionJob = { ...job, id: this.graphIdFactory('gproj'),
+          status: job.nextRetryAt ? 'failed' : 'pending', leaseUntil: null,
+          updatedAt: toUtc8Iso(this.now()) };
+        delete replacement.claimEpoch;
+        job.status = 'failed'; job.lastError = 'Graph claim revoked'; job.nextRetryAt = null; job.leaseUntil = null;
+        this.graphProjectionJobs.set(replacement.id, replacement);
+      }
+      this.queueMissingGraphProjections();
+    }, policy.epoch);
+  }
+
   private recoverGraphNameProvenanceFailures(): void {
+    if (!this.graphCanProcess()) return;
+    const policy = this.currentGraphPolicy();
+    const eventById = new Map(this.listAllEvents().map(event => [event.id, event]));
+    const approved = new Set(policy.backfillEventIds ?? []);
     // Match only the old structured schema failure, never a raw-response mention
     // of that text or a mixed/unrelated validation error. No full graph rebuild.
     for (const job of this.graphProjectionJobs.values()) {
       if (!graphProjectionNeedsRecovery(job, this.listAllEvents())) continue;
+      if (!graphProjectionSourceIds(job, eventById, policy.epoch, approved).length) continue;
       // Persist with the normal mutation transaction before any worker can claim
       // it. Reopening after another terminal failure cannot reset attempts again.
       job.nameProvenanceRecoveryVersion = 1;
@@ -2948,7 +3120,10 @@ export class StrataGate {
   }
 
   private queueMissingGraphProjections(): void {
+    if (!this.graphCanProcess()) return;
+    const approved = this.currentGraphPolicy().backfillEventIds;
     const candidates = this.listAllEvents()
+      .filter(event => approved?.includes(event.id))
       .filter((event) => event.status !== 'forgotten' && event.status !== 'archived')
       .sort((left, right) => {
         const score = (event: EventCard): number => (event.status === 'active' ? 10_000 : 0)
@@ -3088,6 +3263,7 @@ export class StrataGate {
         processingStatus: 'pending',
         ...deterministic,
         pointerCurrentLevel: 5,
+        surfaceCurrentLevel: 5,
         pointerAnchorLevel: 5,
         pointerAnchorBlockPosition: blockPosition,
         lastLiftedAt: null,
@@ -3213,11 +3389,10 @@ export class StrataGate {
     if (!block.l0Title || !block.l0Tags || !block.l1Summary || !block.l2Keypoints || typeof block.shouldExtract !== 'boolean') {
       throw new Error(`Block ${block.id} cannot become ready without validated L0-L2 layers`);
     }
-    const ready = this.threadBlocks(block.threadId).filter((candidate) => candidate.processingStatus === 'ready');
     block.processingStatus = 'ready';
-    block.pointerCurrentLevel = 5;
-    block.pointerAnchorLevel = 5;
-    block.pointerAnchorBlockPosition = ready.length + 1;
+    // Derivation completion does not advance the sealed clock or reset age.
+    const position = buildBlockTimeline(this.threadBlocks(block.threadId)).get(block.id)!;
+    block.pointerCurrentLevel = getBlockDecayView(block, position, this.blockDecayLambda).level;
   }
 
   private async extractEligibleBlock(options: { blockId?: string; retryFailed?: boolean } = {}): Promise<EventCard[] | null> {
@@ -3427,9 +3602,9 @@ export class StrataGate {
     const batch = await this.claimNextGraphProjection();
     if (!batch) return null;
     try {
-      return await this.completeGraphProjection(batch.jobId, await this.withDerivationLease('graph', batch.jobId, () => this.graphProjector!(batch)));
+      return await this.completeGraphProjection(batch.jobId, await this.withDerivationLease('graph', batch.jobId, () => { batch.assertActive?.(); return this.graphProjector!(batch); }), batch.claimToken);
     } catch (error) {
-      await this.failGraphProjection(batch.jobId, error);
+      await this.failGraphProjection(batch.jobId, error, batch.claimToken);
       return null;
     }
   }
@@ -3468,7 +3643,7 @@ export class StrataGate {
     } finally { clearInterval(timer); await pending; }
   }
 
-  private async commitMutation<T>(mutation: () => T | Promise<T>): Promise<T> {
+  private async commitMutation<T>(mutation: () => T | Promise<T>, graphEpoch?: number): Promise<T> {
     if (this.storage?.readonly) throw new Error('Cannot mutate read-only StrataGate storage.');
     const previous = this.mutationQueue;
     let release!: () => void;
@@ -3493,7 +3668,7 @@ export class StrataGate {
     try {
       const result = await mutation();
       this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
-      await this.persist(before);
+      await this.persist(before, graphEpoch);
       return result;
     } catch (error) {
       this.restoreSnapshot(before);
@@ -3508,7 +3683,7 @@ export class StrataGate {
     }
   }
 
-  private async persist(before?: StrataGateSnapshot): Promise<void> {
+  private async persist(before?: StrataGateSnapshot, graphEpoch?: number): Promise<void> {
     if (!this.storage || !this.namespace) return;
     const delta = {
       upsert: [...this.pendingRawUpserts.values()],
@@ -3524,7 +3699,9 @@ export class StrataGate {
           attempts: job.attempts, leaseUntil: job.leaseUntil ?? null });
       }
     }
-    this.revision = await this.storage.save(this.namespace, snapshot, this.revision, delta, guards);
+    this.revision = await this.storage.save(this.namespace, snapshot, this.revision, delta, guards, graphEpoch);
+    const persistedGraphIds = new Set(snapshot.graphProjectionJobs.map(job => job.id));
+    for (const id of this.graphProjectionJobs.keys()) if (!persistedGraphIds.has(id)) this.graphProjectionJobs.delete(id);
     // SQLite may merge a concurrent heartbeat from the owner of a live attempt.
     for (const [jobs, live] of [[snapshot.summaryJobs, this.summaryJobs], [snapshot.extractionJobs, this.extractionJobs]] as const) {
       for (const job of jobs) {
@@ -3548,6 +3725,9 @@ export class StrataGate {
     }
     const copy = cloneSnapshot(normalized);
     this.blockDecayLambdaValue = copy.blockDecayLambda;
+    this.graphEnabledValue = copy.graphEnabled === true;
+    this.graphEpoch = copy.graphEpoch ?? 0;
+    this.graphApprovedEventIds = copy.graphBackfillEventIds ?? [];
     this.currentTurn = copy.currentTurn;
     this.openTail.splice(0, this.openTail.length, ...copy.openTail);
     this.blocks.splice(0, this.blocks.length, ...copy.blocks);
@@ -3577,6 +3757,51 @@ export class StrataGate {
     this.topicDirectory.restore(copy.memoryTopicState);
     this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
     this.validateReferences();
+  }
+
+  private currentGraphPolicy(): GraphRuntimePolicy {
+    return this.graphPolicy?.() ?? { enabled: this.graphEnabledValue, paused: false, epoch: this.graphEpoch, backfillEventIds: this.graphApprovedEventIds };
+  }
+
+  get graphEnabled(): boolean { return this.currentGraphPolicy().enabled; }
+  private graphCanProcess(): boolean { const policy = this.currentGraphPolicy(); return policy.enabled && !policy.paused; }
+  private assertGraphEpoch(epoch: number): void {
+    if (!this.graphCanProcess() || this.currentGraphPolicy().epoch !== epoch) throw new Error('Knowledge Graph claim revoked; late result discarded');
+  }
+
+  /** Count only events that are not already covered by a current-version job. */
+  graphBackfillStatus(): { enabled: boolean; pending: number; running: number; failed: number; total: number } {
+    const events = this.listAllEvents().filter(event => event.status !== 'forgotten' && event.status !== 'archived');
+    const covered = new Set([...this.graphProjectionJobs.values()]
+      .filter(job => job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION && job.status === 'completed')
+      .flatMap(job => job.sourceEventIds));
+    const pending = events.filter(event => !covered.has(event.id)
+      && ![...this.graphProjectionJobs.values()].some(job => job.status !== 'completed' && job.sourceEventIds.includes(event.id))).length;
+    return { enabled: this.graphEnabledValue, pending, running: [...this.graphProjectionJobs.values()].filter(job => job.status === 'running').length,
+      failed: [...this.graphProjectionJobs.values()].filter(job => job.status === 'failed').length, total: events.length };
+  }
+
+  async setGraphEnabled(enabled: boolean, approvedEventIds?: readonly string[]): Promise<{ enabled: boolean; pending: number }> {
+    return this.commitMutation(() => {
+      if (enabled === this.graphEnabledValue) return this.graphBackfillStatus();
+      this.graphEnabledValue = enabled;
+      this.graphEpoch += 1;
+      this.graphApprovedEventIds = enabled ? [...new Set(approvedEventIds ?? [])] : [];
+      if (!enabled) {
+        for (const job of this.graphProjectionJobs.values()) if (job.status === 'running') {
+          job.status = 'failed'; job.lastError = 'Knowledge Graph disabled before completion.'; job.nextRetryAt = null;
+          job.leaseUntil = null; job.updatedAt = toUtc8Iso(this.now());
+        }
+      } else if (approvedEventIds) {
+        this.queueGraphProjection(approvedEventIds, 1);
+      }
+      return this.graphBackfillStatus();
+    });
+  }
+
+  graphBackfillEventIds(): string[] {
+    const covered = new Set([...this.graphProjectionJobs.values()].filter(job => job.status === 'completed').flatMap(job => job.sourceEventIds));
+    return this.listAllEvents().filter(event => event.status !== 'forgotten' && event.status !== 'archived' && !covered.has(event.id)).map(event => event.id);
   }
 
   private validateReferences(): void {

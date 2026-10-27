@@ -8,7 +8,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   if (legacyGitHub !== undefined) source = source.replace('const GITHUB_FEEDBACK_ENABLED = false', 'const GITHUB_FEEDBACK_ENABLED = ' + legacyGitHub)
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
-    "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, ProfilePage, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
+    "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, ProfilePage, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
   ).replace('exports.__test = {', 'exports.__test = { DreamingPanel, MemoryPage, LongTermPage,')
   let definition: any
   runInNewContext(instrumented, {
@@ -46,7 +46,7 @@ function elementProps(tree: unknown): any[] {
 function buttonProps(tree: any, label: string): any {
   if (!Array.isArray(tree)) return undefined
   if (tree[0] === 'button' && tree.slice(2).includes(label)) return tree[1]
-  return tree.slice(2).map((child) => buttonProps(child, label)).find(Boolean)
+  return tree.map((child) => buttonProps(child, label)).find(Boolean)
 }
 
 function deepElementProps(tree: unknown): any[] {
@@ -163,7 +163,7 @@ describe('StrataGate Web client contract', () => {
     expect(supports()).toEqual([])
   })
 
-  it('registers its settings section through the DSH module loader', () => {
+  it('registers its settings section through the DSH module loader', async () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     let definition: any
     runInNewContext(source, {
@@ -187,7 +187,8 @@ describe('StrataGate Web client contract', () => {
         registrations.push({ metadata, render })
       },
     }
-    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'uiConversation' ? { events: { register: () => {} } } : undefined })
+    const selectPanel = vi.fn()
+    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'layout' ? { selectPanel } : name === 'configForms' ? { get: () => ({ set: async () => true }) } : name === 'uiConversation' ? { events: { register: () => {} } } : undefined })
     const tail = registrations.find(({ metadata }) => metadata.name === 'conversation.chat.turnTail')
     const registration = registrations.find(({ metadata }) => metadata.name === 'settings.section')
     expect(registrations[0].metadata.name).toBe('settings.section')
@@ -195,6 +196,86 @@ describe('StrataGate Web client contract', () => {
     expect(registration.metadata).toMatchObject({ name: 'settings.section', id: 'stratagate-memory' })
     expect(registration.metadata.label()).toBe('StrataGate-AgentMemory')
     expect(typeof registration.render).toBe('function')
+    const panel = registrations.find(({ metadata }) => metadata.name === 'main' && metadata.key === 'stratagate-memory')
+    const sidebar = registrations.find(({ metadata }) => metadata.name === 'sidebar.panellist' && metadata.id === 'stratagate-memory')
+    const prompt = registrations.find(({ metadata }) => metadata.name === 'shell.overlay' && metadata.id === 'stratagate.sidebar-placement-prompt')
+    expect(panel).toBeDefined()
+    expect(sidebar).toBeUndefined()
+    expect(prompt).toBeUndefined()
+    const close = vi.fn()
+    await registration.render({ close })[1].onChooseSidebar()
+    expect(selectPanel).toHaveBeenCalledWith('stratagate-memory')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('dismisses the compact sidebar placement prompt and remembers the selected action', async () => {
+    const values = new Map<string, string>()
+    const { SidebarPlacementPrompt } = loadSupportHelpers([], {
+      localStorage: {
+        getItem: (key: string) => values.get(key) || null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    })
+    let selected = 0
+    const first = SidebarPlacementPrompt({ usePluginSettings: (select: any) => select({ value: { showSidebarEntry: false }, writable: true }), onChooseSidebar: () => { selected += 1; return true } })
+    expect(JSON.stringify(first)).toContain('从左侧栏快速打开记忆')
+    await buttonProps(first, '放到左侧栏').onClick()
+    await Promise.resolve()
+    expect(selected).toBe(1)
+    expect(values.get('stratagate-dsh.sidebar-prompt.v1')).toBe('sidebar')
+
+    expect(values.get('stratagate-dsh.sidebar-prompt.v1')).toBe('sidebar')
+  })
+
+  it('reconciles the real sidebar registry from accepted settings and cleans up the subscription', async () => {
+    const registry = new SlotCore()
+    registry.register({ name: 'root', children: { 'settings.section': { kind: 'list', scope: 'root' }, main: { kind: 'keyed', scope: 'root' }, 'sidebar.panellist': { kind: 'list', scope: 'root' } } } as any, () => null)
+    let snapshot = { status: 'loading', value: { showSidebarEntry: true } }
+    let listener: (() => void) | undefined
+    const stop = vi.fn(() => { listener = undefined })
+    const disposers = new Map<string, (() => void)>()
+    const layout = { activePanelId: 'stratagate-memory', selectPanel: vi.fn() }
+    let accepted = true
+    const form = {
+      getSnapshot: () => snapshot,
+      subscribe: (callback: () => void) => { listener = callback; return stop },
+      set: vi.fn(async (_field: string, value: boolean) => {
+        if (!accepted) return false
+        snapshot = { status: 'ready', value: { showSidebarEntry: value } }; listener?.(); return true
+      }),
+    }
+    const { apply } = loadSupportHelpers()
+    apply({ get: (name: string) => name === 'slots' ? {
+      inject: (key: string, callback: () => (() => void)) => { disposers.set(key, callback()) },
+      register: (options: any, component: any) => registry.register(options, component),
+    } : name === 'configForms' ? { get: () => form } : name === 'layout' ? layout : undefined })
+    const entries = () => registry.entriesOfSlot('sidebar.panellist')
+    expect(entries()).toHaveLength(0)
+    snapshot = { status: 'ready', value: {} as { showSidebarEntry: boolean } }; listener?.()
+    expect(entries()).toHaveLength(0)
+    snapshot = { status: 'ready', value: { showSidebarEntry: false } }; listener?.()
+    expect(entries()).toHaveLength(0)
+    snapshot = { status: 'ready', value: { showSidebarEntry: true } }; listener?.()
+    expect(entries()).toHaveLength(1)
+    listener?.(); expect(entries()).toHaveLength(1)
+    const section: any = registry.entriesOfSlot('settings.section')[0]
+    const close = vi.fn()
+    const page = section.component({ close })
+    accepted = false
+    expect(await page[1].onChooseSidebar()).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+    expect(layout.selectPanel).not.toHaveBeenCalled()
+    accepted = true
+    expect(await section.inject().setSidebarEntry(false)).toBe(true)
+    expect(entries()).toHaveLength(0)
+    expect(layout.selectPanel).toHaveBeenCalledWith(null)
+    expect(registry.entriesOfSlot('main')).toHaveLength(1)
+    expect(await page[1].onChooseSidebar()).toBe(true)
+    expect(entries()).toHaveLength(1)
+    expect(close).toHaveBeenCalledOnce()
+    disposers.get('sidebar.panellist')!()
+    expect(stop).toHaveBeenCalledOnce()
+    expect(entries()).toHaveLength(0)
   })
 
   it.each(['get', 'event', 'inject', 'register'] as const)('keeps Settings available when chat %s setup fails', (failure) => {
@@ -1188,7 +1269,7 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, onOpenDreamingSession })')
+    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar })')
     expect(source).toContain("settingsScope.bind({ namespace: 'stratagate-memory' })")
     expect(source).toContain("pluginSettingsScope.set('structuredReasoningEffort', mode)")
     expect(source).toContain("pluginSettingsScope.unset('structuredReasoningEffort')")
@@ -1231,6 +1312,17 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('主题目录')
     expect(source).toContain('知识图谱')
     expect(source).toContain('事件时间线')
+    expect(source).toContain('由于知识图谱功能与事件记录和主题目录有部分重复')
+    expect(source).toContain('额外消耗token维护实体关系')
+    expect(source).toContain('长期记忆页面点击“＋”')
+    expect(source).toContain('已经生成的图谱数据会保留')
+    expect(source).not.toContain('后续新功能会优先投入其他记忆能力')
+    expect(source).toContain('.sg-long-tabs{position:relative;z-index:30;')
+    expect(source).toContain('.sg-graph-menu{position:relative;z-index:31;')
+    expect(source).toContain('.sg-graph-menu-popover{position:absolute;z-index:32;')
+    expect(source).toContain("if (!graphMenuRef.current?.contains(event.target)) setGraphMenuOpen(false)")
+    expect(source).toContain('border:1px solid color-mix(in srgb,var(--sg-muted) 58%,var(--sg-border))')
+    expect(source).toContain('background:color-mix(in srgb,var(--sg-muted) 18%,var(--sg-surface))')
     expect(source).toContain("{ '今天': [], '本周': [], '更早': [] }")
     expect(source).toContain('发生时间未知')
     expect(source).toContain('记忆状态')
@@ -1252,7 +1344,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("h(EventMemoryDetails, { event: detailedEvent")
     expect(source).toContain("onPointerDown: (event) => event.stopPropagation()")
     expect(source).toContain("onOpenGraphNode: (namespace, nodeId) => navigateToGraphNode(ctx, namespace, nodeId)")
-    expect(source).toContain('正在更新知识图谱')
+    expect(source).toContain('当前图谱尚未更新完整。')
     expect(source).toContain('搜索记忆、人物、项目、概念')
     expect(source).not.toContain("['overview', '概览']")
     expect(source).not.toContain('sg-stats')
@@ -1272,7 +1364,7 @@ describe('StrataGate Web client contract', () => {
     expect(moreSource).not.toContain("['audit'")
     expect(moreSource).not.toContain("['raw'")
     const displaySource = source.slice(source.indexOf('function DisplayPage'), source.indexOf('function redactedJson'))
-    expect(displaySource).toContain('控制 StrataGate 在聊天界面中显示的信息。设置对所有工作区生效。')
+    expect(displaySource).toContain('控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')
     expect(displaySource).toContain('关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。')
     expect(displaySource).toContain("title: '短期记忆块'")
     expect(displaySource).toContain("title: '记忆检索状态'")
@@ -1281,12 +1373,15 @@ describe('StrataGate Web client contract', () => {
     expect(settingsSource).toContain("['system', '✓', '系统状态'")
     expect(settingsSource).toContain("['audit', '↗', '使用记录'")
     expect(settingsSource).toContain("['raw', '{}', '查看原始数据'")
-    expect(settingsSource).toContain("'记忆配置'")
+    expect(settingsSource).toContain("'StrataGate 安装级设置'")
     expect(settingsSource).toContain("'数据与存储'")
-    expect(settingsSource).toContain("'运行与诊断'")
-    expect(settingsSource).toContain("'Schema、模型与项目配置'")
-    expect(settingsSource).toContain("'数据目录与原始数据'")
-    expect(settingsSource).toContain("'系统状态、使用记录与后台任务'")
+    expect(settingsSource).toContain("'当前工作区运行与诊断'")
+    expect(settingsSource).toContain('适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。')
+    expect(settingsSource).toContain("'宿主配置'")
+    expect(settingsSource).toContain("'当前工作区信息'")
+    expect(settingsSource).toContain("'保存全局设置'")
+    expect(settingsSource).toContain('数据目录属于当前安装；原始数据查看当前选中的工作区。')
+    expect(settingsSource).toContain('当前选中工作区的系统状态、使用记录与后台任务')
     expect(settingsSource).toContain("['status', '↻', '后台任务'")
     expect(settingsSource).toContain("api('storage/open-directory', {}, { method: 'POST' })")
     expect(settingsSource).toContain('navigator.clipboard.writeText(dataDirectory)')
@@ -1380,7 +1475,7 @@ describe('StrataGate Web client contract', () => {
     const state: unknown[] = []
     const refs: Array<{ current: unknown }> = []
     const effects: Array<() => () => void> = []
-    const timers = new Map<number, () => void>()
+    const timers = new Map<number, { callback: () => void; delay: number }>()
     const writes: Array<{ field: string; value: string; expectedValue: string; expectedRevision: number }> = []
     let stateIndex = 0
     let refIndex = 0
@@ -1410,7 +1505,7 @@ describe('StrataGate Web client contract', () => {
     }
     const { ProfilePage } = loadSupportHelpers([], {
       react, document, AbortController,
-      window: { setTimeout: (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id }, clearTimeout: (id: number) => timers.delete(id) },
+      window: { setTimeout: (callback: () => void, delay: number) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id }, clearTimeout: (id: number) => timers.delete(id) },
       fetch: async (_url: string, options: { method?: string; body?: string } = {}) => {
         if (options.method === 'PATCH') {
           const body = JSON.parse(options.body || '{}') as { field: string; value: string; expectedValue: string; expectedRevision: number }
@@ -1426,7 +1521,7 @@ describe('StrataGate Web client contract', () => {
     })
     const render = () => { stateIndex = 0; refIndex = 0; return ProfilePage() }
     const flush = () => new Promise((resolve) => setImmediate(resolve))
-    const tick = async () => { const next = timers.entries().next().value as [number, () => void]; expect(next).toBeDefined(); timers.delete(next[0]); next[1](); await flush() }
+    const tick = async () => { await flush(); const next = [...timers].find(([, timer]) => timer.delay === 5000)!; expect(next).toBeDefined(); timers.delete(next[0]); next[1].callback(); await flush() }
     render()
     const cleanup = effects[0]!()
     mounted = true
@@ -1460,7 +1555,7 @@ describe('StrataGate Web client contract', () => {
     expect(JSON.stringify(tree)).toContain('Français')
     expect(JSON.stringify(tree)).toContain('该项刚刚在其他位置更新')
     expect(deepElementProps(tree).find((props) => props.className === 'sg-save-button')?.disabled).toBe(true)
-    deepElementProps(tree).find((props) => props.className === 'sg-profile-action' && props.onClick && !props.disabled && props.type === 'button')?.onClick?.()
+    buttonProps(tree, '放弃草稿并载入最新内容')!.onClick()
     await flush()
     tree = render()
     expect(deepElementProps(tree).find((props) => props.id === 'sg-profile-responsePreferences')?.value).toBe('B')
@@ -1483,7 +1578,7 @@ describe('StrataGate Web client contract', () => {
     expect(deepElementProps(tree).find((props) => props.id === 'sg-profile-reasoningLanguage')?.value).toBe('日语')
     expect(JSON.stringify(tree)).toContain('该项刚刚在其他位置更新')
     expect(deepElementProps(tree).find((props) => props.className === 'sg-save-button')?.disabled).toBe(true)
-    deepElementProps(tree).find((props) => props.className === 'sg-profile-action' && props.onClick && !props.disabled && props.type === 'button')?.onClick?.()
+    buttonProps(tree, '放弃草稿并载入最新内容')!.onClick()
     await flush()
     expect(deepElementProps(render()).find((props) => props.id === 'sg-profile-reasoningLanguage')?.value).toBe('English')
     deepElementProps(render()).find((props) => props.id === 'sg-profile-reasoningLanguage')!.onChange({ target: { value: '日语' } })
@@ -1506,7 +1601,7 @@ describe('StrataGate Web client contract', () => {
     expect(server.homeCity).toBe('')
     document.hidden = true
     onVisibilityChange()
-    expect(timers.size).toBe(0)
+    expect([...timers.values()].filter((timer) => timer.delay === 5000)).toHaveLength(0)
     document.hidden = false
     onVisibilityChange()
     await flush()
@@ -2036,8 +2131,8 @@ describe('StrataGate Web client contract', () => {
   it('keeps failures reassuring and exposes related Block settings under More', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain('lastErrorFull')
-    expect(source).toContain('可查看详情并手动重试。')
-    expect(source).toContain('原始对话已保存，不会丢失')
+    expect(source).toContain('这段对话的摘要暂不可用。')
+    expect(source).not.toContain('原始对话已保存，不会丢失')
     expect(source).toContain('没有记录技术错误。')
     expect(source).toContain("['raw', '{}', '查看原始数据'")
     expect(source).toContain("['audit', '↗', '使用记录'")
@@ -2064,47 +2159,57 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'提交反馈'")
   })
 
-  it('uses one actionable status bar for background processing and retryable failures', () => {
+  it('has no global background task banner and retains dashboard read/error handling', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryStatusAlert')
-    expect(source).toContain('sg-memory-alert')
-    expect(source).toContain("'正在压缩 ' + status.blockSummary.processing + ' 个短期记忆块'")
-    expect(source).toContain('function graphMigrationNotice')
-    expect(source).toContain('graphMigrationNotice(migration, graphState, graphFailed)')
-    expect(source).toContain('graphMigrationNotice(migration, migrationState)')
-    expect(source).toContain("migrationState === 'failed' ? '查看详情并手动重试。' : '查看详情。'")
-    expect(source).toContain('可查看详情并手动重试。')
-    expect(source).not.toContain('sg-processing-alert')
-    expect(source).not.toContain('正在触发记忆整理')
-    expect(source.match(/h\(MemoryStatusAlert/g)).toHaveLength(1)
-    expect(source).toContain("view.name === 'status' || view.name === 'duplicates' ? null : h(MemoryStatusAlert")
-    expect(source).toContain("'aria-live': 'polite'")
-    expect(source).toContain('processingJobs')
-    expect(source).toContain('processingJobDetails')
+    expect(source).not.toContain('function MemoryStatusAlert')
+    expect(source).not.toContain('h(MemoryStatusAlert')
     expect(source).toContain("'/api/stratagate/dashboard'")
     expect(source).toContain("'If-None-Match'")
-    expect(source).toContain("document.addEventListener('visibilitychange'")
     expect(source).toContain('pollFast ? 2500 : 30000')
-    expect(source).not.toContain('window.setInterval')
-    expect(source).toContain("status === 'waiting'")
+    expect(source).toContain('setError(')
   })
 
-  it.each([undefined, null, {}, { graphMigration: null }])('does not warn before a workspace memory snapshot exists (%j)', (overview) => {
-    const { MemoryStatusAlert } = loadSupportHelpers()
-    expect(MemoryStatusAlert({ overview, onOpen: () => {} })).toBeNull()
+  it('distinguishes terminal summary failure from scheduled retries', () => {
+    const { summaryUnavailable } = loadSupportHelpers()
+    expect(summaryUnavailable({ summaryJob: { status: 'failed', attempts: 1, nextRetryAt: '2026-10-22T00:00:00Z' } })).toBe(false)
+    expect(summaryUnavailable({ summaryJob: { status: 'failed', attempts: 3, nextRetryAt: null } })).toBe(true)
+    expect(summaryUnavailable({ summaryJob: { state: 'retryable', status: 'failed' } })).toBe(false)
+    expect(summaryUnavailable({ summaryJob: { state: 'terminal-failed', status: 'failed' } })).toBe(true)
+    expect(summaryUnavailable({ summaryJob: { status: 'succeeded' } })).toBe(false)
   })
 
-  it('preserves real task notices when Event counts are missing or zero', () => {
-    const { MemoryStatusAlert } = loadSupportHelpers()
-    const render = (overview: any) => JSON.stringify(MemoryStatusAlert({ overview, onOpen: () => {} }))
-    expect(render({ processingJobDetails: [{ kind: 'block-summary', id: 'b1' }] })).toContain('正在压缩 1 个短期记忆块')
-    expect(render({ failedJobDetails: [{ kind: 'event-extraction', id: 'e1', attempts: 3 }] })).toContain('1 个长期记忆提取失败')
-    expect(render({ events: 0, processingJobDetails: [{ kind: 'graph-projection', id: 'g1' }] })).toContain('正在更新知识图谱')
-    expect(render({ events: 0, failedJobDetails: [{ kind: 'graph-projection', id: 'g1', attempts: 3 }] })).toContain('知识图谱有 1 批更新失败')
-    expect(render({ graphMigration: { processing: 1, failed: 2, projected: 0, total: 0 } })).toContain('知识图谱更新中，2 批失败')
-    expect(render({ graphMigration: { failed: 2, projected: 0, total: 0 } })).toContain('知识图谱有 2 批更新失败')
-    expect(render({ graphMigration: { processing: 1, projected: 1, total: 0 } })).not.toContain('1/0 Events')
-    expect(render({ graphMigration: { failed: 1, projected: 3, total: 2 } })).not.toContain('3/2 Events')
+  it('offers raw conversation only with confirmed readable source data, without default retry', () => {
+    const { SummaryUnavailable } = loadSupportHelpers()
+    for (const rawAvailable of [false, true]) {
+      const tree = SummaryUnavailable({ namespace: 'workspace-a', block: { id: 'a', rawAvailable } })
+      expect(JSON.stringify(tree)).toContain('这段对话的摘要暂不可用。')
+      expect(Boolean(buttonProps(tree, '查看原始对话'))).toBe(rawAvailable)
+      expect(JSON.stringify(tree)).not.toMatch(/重新压缩|重试任务/)
+    }
+  })
+
+  it('keeps transient source reads retryable, hides unavailable sources, and provides an explicit collapse', () => {
+    const props = { namespace: 'workspace-a', block: { id: 'a', rawAvailable: true } }
+    const temporary = loadSupportHelpers([null, { kind: 'temporary', text: '暂时无法读取这段对话的原文。' }, false, false])
+    expect(buttonProps(temporary.SummaryUnavailable(props), '重新读取原文')).toBeDefined()
+    const unavailable = loadSupportHelpers([null, { kind: 'unavailable', text: '当前没有可读取的原文。' }, false, false])
+    expect(buttonProps(unavailable.SummaryUnavailable(props), '查看原始对话')).toBeUndefined()
+    expect(buttonProps(unavailable.SummaryUnavailable(props), '重新读取原文')).toBeUndefined()
+    const expanded = loadSupportHelpers([{ messages: [{ id: 'm1', content: '真实来源', role: 'user' }] }, null, false, true])
+    const tree = expanded.SummaryUnavailable(props)
+    expect(buttonProps(tree, '收起原始对话')?.['aria-expanded']).toBe(true)
+    expect(JSON.stringify(tree)).toContain('真实来源')
+  })
+
+  it.each([true, false, undefined])('reports diagnostic source readability from evidence (%s)', (rawAvailable) => {
+    const { ProcessingStatus } = loadSupportHelpers()
+    const tree = ProcessingStatus({ namespace: 'workspace-a', blocks: [], conversations: [], refresh: async () => null,
+      overview: { processingJobDetails: [], failedJobDetails: [{ id: 'b1', kind: 'block-summary', status: 'failed',
+        state: 'terminal-failed', attempts: 3, blockDetails: [{ id: 'b1', threadId: 't1', rawAvailable }] }] } })
+    const text = JSON.stringify(tree)
+    expect(text).toContain(rawAvailable === true ? '当前可读取' : rawAvailable === false ? '当前无可读取原文' : '无法确认是否可读取')
+    expect(text).not.toContain('保存原始对话')
+    expect(text).toContain('后台任务')
   })
 
   it.each(['graph', 'timeline'])('keeps the empty long-term %s view quiet while preserving actual graph work', (mode) => {
@@ -2122,76 +2227,28 @@ describe('StrataGate Web client contract', () => {
       const { LongTermPage } = loadSupportHelpers([], { react: React })
       return JSON.stringify(LongTermPage({
         events: [], eventPage: { total: 0, offset: 0, limit: 40 },
-        graph: { nodes: [], edges: [], migration }, project: '', query: '', setQuery: () => {}, namespace: '',
+        graphSettings: { enabled: true }, graph: { nodes: [], edges: [], migration }, project: '', query: '', setQuery: () => {}, namespace: '',
       }))
     }
     expect(render(null)).not.toContain('sg-migration')
     expect(render({ projected: 0, total: 0, state: 'incomplete', complete: false })).not.toContain('sg-migration')
     expect(render({ projected: 0, total: 0, state: 'complete', complete: true })).not.toContain('sg-migration')
-    expect(render({ projected: 0, total: 1, state: 'incomplete', complete: false })).toContain('知识图谱更新未完成 · 0/1 Events')
-    expect(render({ projected: 0, total: 0, processing: 1, state: 'processing', complete: false })).toContain('正在更新知识图谱')
-    expect(render({ projected: 0, total: 0, failed: 1, state: 'failed', complete: false })).toContain('知识图谱有 1 批更新失败')
+    const notice = '当前图谱尚未更新完整。'
     for (const migration of [
-      { projected: 1, total: 0, processing: 1, state: 'complete', complete: true },
-      { projected: 3, total: 2, failed: 1, state: 'failed', complete: false },
+      { projected: 0, total: 1, state: 'incomplete' },
+      { projected: 0, total: 0, processing: 1 },
+      { projected: 0, total: 0, failed: 1 },
     ]) {
-      const tree = render(migration)
-      expect(tree).toContain('sg-migration')
-      expect(tree).not.toMatch(/\d+\/\d+ Events/)
+      expect(render(migration).includes(notice)).toBe(mode === 'graph')
+      expect(render(migration)).not.toMatch(/Graph Projection|Events|失败批次|立即重试/)
     }
-    expect(render({ projected: 0, total: 0, failed: 0, complete: true, state: 'complete' })).not.toContain('sg-migration')
-    expect(render({ state: 'processing' })).toContain('正在更新知识图谱')
-    expect(render({ state: 'failed' })).toContain('知识图谱更新失败')
+    expect(render({ projected: 1, total: 1, complete: true })).not.toContain(notice)
+    expect(render({ state: 'processing' })).not.toContain(notice)
+    expect(render({ state: 'failed' })).not.toContain(notice)
   })
 
-  it('renders separate product states for summary, extraction, and graph work', () => {
-    const { MemoryStatusAlert, taskStatus } = loadSupportHelpers()
-    const empty = { processing: 0, retryable: 0, terminalFailed: 0, completed: 0, blocked: 0 }
-    const overview = (overrides: any = {}) => ({
-      taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: empty },
-      graphMigration: { projected: 136, total: 136, state: 'complete', complete: true },
-      ...overrides,
-    })
-    const render = (value: any) => JSON.stringify(MemoryStatusAlert({ overview: value, onOpen: () => {} }))
-
-    expect(render(overview({ taskStatus: { blockSummary: { ...empty, processing: 3 }, eventExtraction: empty, graphProjection: empty } })))
-      .toContain('正在压缩 3 个短期记忆块')
-    expect(render(overview({ taskStatus: { blockSummary: { ...empty, terminalFailed: 2 }, eventExtraction: empty, graphProjection: empty } })))
-      .toContain('2 个短期记忆块压缩失败')
-    expect(render(overview({ taskStatus: { blockSummary: empty, eventExtraction: { ...empty, processing: 1 }, graphProjection: empty } })))
-      .toContain('正在提取长期记忆')
-    expect(render(overview({ taskStatus: { blockSummary: empty, eventExtraction: { ...empty, terminalFailed: 1 }, graphProjection: empty } })))
-      .toContain('1 个长期记忆提取失败')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 0, state: 'processing', complete: false }, taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: { ...empty, processing: 1 } } })))
-      .toContain('正在更新知识图谱 · 64/136 Events')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 8, state: 'failed', complete: false }, taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: { ...empty, terminalFailed: 8 } } })))
-      .toContain('知识图谱有 8 批更新失败 · 已完成 64/136 Events')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 3, state: 'processing', complete: false }, taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: { ...empty, processing: 1, terminalFailed: 3 } } })))
-      .toContain('知识图谱更新中 · 64/136 Events，3 批失败')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 0, state: 'incomplete', complete: false } })))
-      .toContain('知识图谱更新未完成 · 64/136 Events')
-    expect(MemoryStatusAlert({ overview: overview(), onOpen: () => {} })).toBeNull()
-
-    const emptyOverview = {
-      events: 0,
-      taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: empty },
-      graphMigration: { projected: 0, total: 0, state: 'incomplete', complete: false },
-    }
-    expect(MemoryStatusAlert({ overview: emptyOverview, onOpen: () => {} })).toBeNull()
-    expect(MemoryStatusAlert({ overview: { ...emptyOverview, graphMigration: undefined }, onOpen: () => {} })).toBeNull()
-
-    const issueStatus = {
-      blockSummary: empty,
-      eventExtraction: { ...empty, terminalFailed: 1 },
-      graphProjection: { ...empty, terminalFailed: 8 },
-    }
-    const issueAlert = render(overview({ taskStatus: issueStatus, graphMigration: { projected: 64, total: 136, failed: 8, state: 'failed', complete: false } }))
-    expect(issueAlert).toContain('1 个长期记忆提取失败')
-    expect(issueAlert).toContain('知识图谱有 8 批更新失败 · 已完成 64/136 Events')
-    expect(issueAlert).not.toContain('对话片段尚未整理完成')
-    expect(issueAlert).not.toContain('正在升级长期记忆')
-    expect(issueAlert).not.toContain('批待重试')
-
+  it('keeps diagnostic task states separate and scheduled retries nonterminal', () => {
+    const { taskStatus } = loadSupportHelpers()
     expect(taskStatus({
       processingJobDetails: [{ kind: 'graph-projection', id: 'g1', state: 'processing' }],
       failedJobDetails: [{ kind: 'graph-projection', id: 'g2', state: 'terminal-failed', attempts: 3, nextRetryAt: null }],
@@ -2209,8 +2266,9 @@ describe('StrataGate Web client contract', () => {
     expect(statusSource).toContain("{ method: 'POST' }")
     expect(statusSource).toContain('重试此任务')
     expect(statusSource).toContain('正在处理…')
-    expect(statusSource).toContain('短期记忆压缩详情')
-    expect(statusSource).toContain('保存原始对话')
+    expect(statusSource).toContain('后台任务')
+    expect(statusSource).toContain('原始对话')
+    expect(statusSource).not.toContain("['保存原始对话', { kind: 'done'")
     expect(statusSource).toContain('压缩短期记忆块')
     expect(statusSource).toContain('提取长期记忆')
     expect(statusSource).toContain('更新知识图谱')
@@ -2277,7 +2335,7 @@ describe('StrataGate Web client contract', () => {
     expect(rendered).toContain('知识图谱更新')
   })
 
-  it('uses the clicked stage for detail titles and only exposes terminal retry actions', () => {
+  it('uses a comprehensive diagnostic title and only exposes terminal retry actions', () => {
     const { ProcessingStatus } = loadSupportHelpers()
     const details = [{ id: 'blk-1', sourceId: 'blk-1', sequence: 1, title: '测试块', threadId: 'thread-1', turnRange: [1, 4], shouldExtract: true }]
     const job = (kind: string, state: string, nextRetryAt: string | null) => ({
@@ -2290,14 +2348,14 @@ describe('StrataGate Web client contract', () => {
       onBack: () => {}, refresh: async () => null,
     })
     const summaryRetryable = JSON.stringify(ProcessingStatus(props('summary', [job('block-summary', 'retryable', '2026-09-19T00:01:00.000Z')])))
-    expect(summaryRetryable).toContain('短期记忆压缩详情')
+    expect(summaryRetryable).toContain('后台任务')
     expect(summaryRetryable).toContain('计划自动重试')
     expect(summaryRetryable).not.toContain('重试此任务')
     const extractionTerminal = JSON.stringify(ProcessingStatus(props('extraction', [job('event-extraction', 'terminal-failed', null)])))
-    expect(extractionTerminal).toContain('长期记忆提取详情')
+    expect(extractionTerminal).toContain('后台任务')
     expect(extractionTerminal).toContain('重试此任务')
     const graphTerminal = JSON.stringify(ProcessingStatus(props('graph', [job('graph-projection', 'terminal-failed', null)])))
-    expect(graphTerminal).toContain('知识图谱提取详情')
+    expect(graphTerminal).toContain('后台任务')
     expect(graphTerminal).toContain('提取长期记忆')
     expect(graphTerminal).toContain('已完成')
     expect(graphTerminal).toContain('更新失败，可重试')

@@ -26,6 +26,7 @@ describe('DeepSeek Harness plugin config', () => {
       showStrataGateStatus: true,
       showShortTermStatus: true,
       showRetrievalStatus: true,
+      showSidebarEntry: false,
     })
   })
 
@@ -76,21 +77,25 @@ describe('DeepSeek Harness plugin config', () => {
     expect(Config.dict?.showStrataGateStatus?.meta).toMatchObject({ default: true, volatile: true })
     expect(Config.dict?.showShortTermStatus?.meta).toMatchObject({ default: true, volatile: true })
     expect(Config.dict?.showRetrievalStatus?.meta).toMatchObject({ default: true, volatile: true })
+    expect(Config.dict?.showSidebarEntry?.meta).toMatchObject({ default: false, volatile: true })
     expect(Config.dict?.structuredReasoningEffort?.meta).toMatchObject({ volatile: true })
     expect(resolveConfig({ database: 'memory.db' })).toMatchObject({
       showStrataGateStatus: true,
       showShortTermStatus: true,
       showRetrievalStatus: true,
+      showSidebarEntry: false,
     })
     expect(resolveConfig({
       database: 'memory.db',
       showStrataGateStatus: false,
       showShortTermStatus: false,
       showRetrievalStatus: false,
+      showSidebarEntry: false,
     })).toMatchObject({
       showStrataGateStatus: false,
       showShortTermStatus: false,
       showRetrievalStatus: false,
+      showSidebarEntry: false,
     })
   })
 
@@ -98,5 +103,10 @@ describe('DeepSeek Harness plugin config', () => {
     const live = { get: () => false }
     expect(resolveConfig({ database: 'memory.db', showStrataGateStatus: live as unknown as boolean }).showStrataGateStatus).toBe(false)
     expect(resolveConfig({ database: 'memory.db', showStrataGateStatus: true }).showStrataGateStatus).toBe(true)
+  })
+
+  it.each([true, false])('preserves a saved sidebar preference %s after changing the install default', (choice) => {
+    expect(resolveConfig({ database: 'memory.db', showSidebarEntry: choice }).showSidebarEntry).toBe(choice)
+    expect(resolveConfig({ database: 'memory.db', showSidebarEntry: { get: () => choice } as unknown as boolean }).showSidebarEntry).toBe(choice)
   })
 })

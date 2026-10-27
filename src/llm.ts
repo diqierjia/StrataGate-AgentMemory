@@ -836,7 +836,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
     const eventIds = new Set(context.events.map((event) => event.id))
     const raw = object(await this.callStructured('graphProjector',
       `Project the supplied Events into the current Knowledge Graph, then call ${STRUCTURED_TOOLS.graphProjector.name} exactly once. Events are the sole source of truth; never use legacy Element data. Return only nodes and edges touched by the supplied Events; never echo unchanged historical graph records. Return at most 24 nodes and 32 edges. Use stable entity nodes for people, projects, organizations, tools, and places. Use aliases to merge spelling/case/separator variants. Give every returned node 1-6 concise semantic role tags such as benchmark, evaluation, memory-plugin, parser, or development-tool; tags describe the node's specific role and never replace its person/project/organization/tool/place type. Reuse stable tag wording when possible. For every node name, alias, and tag, include metadataProvenance with the exact supplied Event ids that support that individual value; never use an unrelated active Event as a substitute. The shapes are different: metadataProvenance.name is an Event ID string array, e.g. ["evt_x"], supporting node.name; it is never an array of objects. Only metadataProvenance.aliases and metadataProvenance.tags are arrays of { value, sourceEventIds: ["evt_x"] } objects for each alias/tag. Example for node.name="StrataGate": metadataProvenance={"name":["evt_x"],"aliases":[{"value":"strata_gate","sourceEventIds":["evt_x"]}],"tags":[{"value":"memory-plugin","sourceEventIds":["evt_x"]}]}. Put attributes in node facts and every relationship in a directed edge using fromRef/toRef—never encode a relationship as a fact string. Prefer concise canonical Chinese relation labels such as 使用、属于、创建、参与、贡献、依赖、位于、相关. Every node, fact, edge, and metadata provenance id must cite only supplied Event ids. Do not return text.`,
-      compactGraphProjectionContext(context),
+      compactGraphProjectionContext(context), undefined, undefined, context.assertActive,
     ))
     const nodes = (Array.isArray(raw.nodes) ? raw.nodes : []).flatMap((candidate) => {
       const item = object(candidate)
@@ -975,14 +975,14 @@ Use project scope for repository decisions, user scope for stable preferences/id
   }
 
   private async callStructured(kind: SuccessfulModelResponseKind, system: string, payload: unknown,
-    validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>): Promise<unknown> {
+    validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>, assertActive?: () => void): Promise<unknown> {
     const execution = this.sessions.getStore()
     const scope: DiagnosticScope = { namespace: execution?.namespace ?? this.diagnosticNamespace(execution?.session, String(execution?.sessionId ?? '')),
       stage: kind, taskId: `task_${randomUUID()}`, calls: 0 }
     const start = Date.now()
     return this.diagnosticScopes.run(scope, async () => {
       try {
-        const result = await this.callStructuredInner(kind, system, payload, validate, topicMetadata)
+        const result = await this.callStructuredInner(kind, system, payload, validate, topicMetadata, assertActive)
         this.diagnostics?.record(scope, { operations: 1, operationsSucceeded: 1, operationsFailed: 0,
           operationsRecovered: (scope.calls ?? 0) > 1 ? 1 : 0, firstAttemptSucceeded: (scope.calls ?? 0) === 1 ? 1 : 0,
           retries: Math.max(0, (scope.calls ?? 0) - 1), operationMs: Date.now() - start })
@@ -996,7 +996,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
   }
 
   private async callStructuredInner(kind: SuccessfulModelResponseKind, system: string, payload: unknown,
-    validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>): Promise<unknown> {
+    validate?: (value: unknown) => void, topicMetadata?: Partial<TopicProjectionDiagnostics>, assertActive?: () => void): Promise<unknown> {
     const execution = this.sessions.getStore()
     if (!execution) throw new Error('StrataGate model callback ran without an execution context')
     // Structured memory jobs need a bounded machine-readable response. Prefer
@@ -1004,6 +1004,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
     // field-removal fallback when the adapter/provider explicitly rejects it.
     const baseRoute = this.resolveRoute(execution.session)
     const routeKey = `${baseRoute.provider}\u0000${baseRoute.model}`
+    assertActive?.()
     let useOff = await this.shouldUseOff(baseRoute)
     const isTopic = kind === 'topicProjector'
     const isGraph = kind === 'graphProjector'
@@ -1019,6 +1020,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
     let topicRetryFeedback = ''
     let offFallback = false
     for (let attempt = 1; attempt <= JSON_RESPONSE_ATTEMPTS; attempt += 1) {
+      assertActive?.()
       attemptsUsed = attempt
       if (kind === 'dreamingStep') {
         payload = structuredClone(payload)
@@ -1118,6 +1120,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
         }
         throw error
       }
+      assertActive?.()
       const finish = assembler.finish
       if (isTopic) topicDiagnostics.finishReason = finish.kind
       if (finish.kind === 'error' || finish.kind === 'aborted') {

@@ -5,11 +5,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import {
   DERIVATION_MAX_ATTEMPTS,
   deterministicBlockLayers,
+  buildBlockTimeline,
   effectiveGraphNodeView,
   estimateTokens,
   EXTERNAL_MEMORY_EXPORT_PROMPT_ZH_CN,
   formatRawTranscript,
-  getDecayedBlockLevel,
+  getBlockDecayView,
   KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
   MEMORY_TOPIC_PROJECTOR_VERSION,
   MemoryTopicDirectory,
@@ -690,11 +691,12 @@ async function topicEvents(runtime: StrataGateRuntime, url: URL): Promise<unknow
 }
 
 /** Read-only graph work view. Retained jobs without a live source are history. */
-function liveGraphProjection(snapshot: StrataGateSnapshot) {
+function liveGraphProjection(snapshot: StrataGateSnapshot, processing = true) {
   const eventIds = new Set([...snapshot.events, ...snapshot.agentEvents]
     .filter(({ status }) => status !== 'forgotten' && status !== 'archived')
     .map(({ id }) => id))
-  const jobs = snapshot.graphProjectionJobs.filter(({ sourceEventIds }) => sourceEventIds.some((id) => eventIds.has(id)))
+  const jobs = snapshot.graphProjectionJobs.filter(job => job.lastError !== 'Graph claim revoked'
+    && (processing || job.status === 'completed') && job.sourceEventIds.some((id) => eventIds.has(id)))
   const status = summarizeDerivationJobs(jobs, (job) => job.status === 'completed')
   const projected = new Set(jobs
     .filter(({ status, projectorVersion }) => status === 'completed' && projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
@@ -734,6 +736,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
           threadId: block.threadId,
           turnRange: block.turnRange,
           shouldExtract: block.source.shouldExtract ?? null,
+          rawAvailable: block.messages.some(({ content }) => Boolean(content.trim())),
         }))
       }
       const block = snapshot.blocks.find(({ id }) => id === blockId)
@@ -745,6 +748,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         threadId: block.threadId ?? null,
         turnRange: [block.startTurn, block.endTurn] as [number, number],
         shouldExtract: block.shouldExtract ?? null,
+        rawAvailable: block.l5Raw.some(({ content }) => Boolean(content.trim())),
       }] : []
     })
     const describeBlockJob = (kind: 'block-summary' | 'event-extraction', job: {
@@ -820,7 +824,8 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
     const topicStatus = summarizeDerivationJobs(topicJobs, (job) => job.status === 'completed')
     const summaryStatus = summarizeDerivationJobs(snapshot.summaryJobs, (job) => job.status === 'succeeded')
     const extractionStatus = summarizeDerivationJobs(snapshot.extractionJobs, (job) => job.status === 'succeeded' || job.status === 'skipped')
-    const graphWork = liveGraphProjection(snapshot)
+    const policy = runtime.adminGraphSettings?.()
+    const graphWork = liveGraphProjection(snapshot, policy ? policy.enabled && !policy.paused : true)
     const graphStatus = graphWork.status
     const failedJobs = summaryStatus.terminalFailed + extractionStatus.terminalFailed + graphStatus.terminalFailed + topicStatus.terminalFailed
     const processingJobs = summaryStatus.processing + extractionStatus.processing + graphStatus.processing + topicStatus.processing
@@ -857,6 +862,16 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       ...snapshot.graphNodes.map(({ updatedAt }) => updatedAt),
       ...snapshot.usageReceipts.map(({ createdAt }) => createdAt),
     ].sort()
+    // Optional directory metadata must not turn a region read failure into a
+    // failure of the complete overview. The directory reader reports its own
+    // failure; diagnostics must keep recovery disabled until a revision exists.
+    let topicDirectoryRevision: string | null = null
+    let topicDirectoryReadError = false
+    try {
+      topicDirectoryRevision = topicDirectoryProjection(snapshot, runtime.adminAgentMemoryRetrievalWeight?.() ?? 1).data.revision
+    } catch {
+      topicDirectoryReadError = true
+    }
     rows.push({
       namespace,
       duplicateRepair: runtime.adminDuplicateRepairStatus?.(namespace) ?? null,
@@ -879,7 +894,13 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         graphProjection: graphStatus,
         topicProjection: topicStatus,
       },
+      topicDirectoryRevision,
+      topicDirectoryReadError,
       graphMigration: graphWork.migration,
+      // Only a live source Block in this namespace establishes a retrieval gap.
+      longTermExtractionGap: snapshot.extractionJobs.some((job) =>
+        derivationJobState(job, job.status === 'succeeded' || job.status === 'skipped') === 'terminal-failed'
+        && snapshot.blocks.some((block) => block.id === job.blockId && block.shouldExtract === true)),
       usageReceipts: snapshot.usageReceipts.length,
       memoryUseCount: snapshot.usageReceipts.filter((receipt) =>
         receipt.eventIds.length > 0 || receipt.elementIds.length > 0).length,
@@ -894,6 +915,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
   return {
     readonly: true,
     settingsWritable: true,
+    graphSettings: runtime.adminGraphSettings?.() ?? { enabled: false, paused: false, legacy: false, noticeSeen: true, everEnabled: false },
     dataDirectory: runtime.adminDataDirectory?.() ?? null,
     pluginVersion: STRATAGATE_DSH_VERSION,
     harnessVersion: installedPackageVersion(['@deepseek-ai/dsh', '@deepseek-ai/dsh-session']),
@@ -1058,6 +1080,11 @@ async function importExternalMemory(runtime: StrataGateRuntime, req: WebRequest)
     if (!jobId) throw new AdminHttpError(400, 'jobId is required')
     return runtime.adminRetryExternalMemory(namespace, jobId)
   }
+  if (operation === 'abandon') {
+    const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
+    if (!jobId) throw new AdminHttpError(400, 'jobId is required')
+    return runtime.adminAbandonExternalMemory(namespace, jobId)
+  }
   if (operation === 'commit') {
     const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
     if (!jobId) throw new AdminHttpError(400, 'jobId is required')
@@ -1076,7 +1103,7 @@ async function importExternalMemory(runtime: StrataGateRuntime, req: WebRequest)
     if (!sourceBlockId) throw new AdminHttpError(400, 'sourceBlockId is required')
     return runtime.adminUndoExternalMemory(namespace, sourceBlockId)
   }
-  throw new AdminHttpError(400, 'operation must be preview, status, retry, commit, or undo')
+  throw new AdminHttpError(400, 'operation must be preview, status, retry, abandon, commit, or undo')
 }
 
 function externalMemoryPrompt(): unknown {
@@ -1146,6 +1173,12 @@ function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotVie
       const messages = groups.get(item.threadId) ?? []
       messages.push(item.message)
       groups.set(item.threadId, messages)
+    }
+    // A terminal summary still needs its own Block notice when no raw source
+    // can be read. Use only the recorded thread, or the existing legacy scope.
+    if (groups.size === 0 && snapshot.summaryJobs.some((job) => job.blockId === source.id
+      && derivationJobState(job, job.status === 'succeeded') === 'terminal-failed')) {
+      groups.set(source.threadId?.trim() || LEGACY_THREAD_ID, [])
     }
     const entries = [...groups]
     for (const [threadId, messages] of entries) {
@@ -1304,6 +1337,10 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
     const scopedBlocks = activeThreadId
       ? recovered.blocks.filter((block) => block.threadId === activeThreadId)
       : []
+    const timeline = buildBlockTimeline(scopedBlocks.map((block) => ({
+      id: block.id, threadId: block.threadId, sequence: block.source.sequence,
+    })))
+    const sourceTimeline = buildBlockTimeline(snapshot.blocks)
     values = scopedBlocks.map((block) => {
       const source = block.source
       const layers = virtualBlockLayers(block)
@@ -1319,26 +1356,32 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       const relatedNodes = snapshot.graphNodes
         .filter(({ sourceEventIds }) => sourceEventIds.some((id) => eventIds.has(id)))
         .map(({ id, name, type }) => ({ id, name, type }))
-      const failedProjection = projections.find(({ status }) => status === 'failed')
-      const pendingProjection = projections.some(({ status }) => status === 'pending' || status === 'running')
+      const failedProjection = projections.find((job) => derivationJobState(job, job.status === 'completed') === 'terminal-failed')
+      const pendingProjection = projections.some(graphProjectionIsProcessing)
       const needsExtraction = source.shouldExtract === true
-      const status = summary?.status === 'failed'
+      const summaryState = summary ? derivationJobState(summary, summary.status === 'succeeded') : null
+      const extractionState = extraction ? derivationJobState(extraction, extraction.status === 'succeeded' || extraction.status === 'skipped') : null
+      const status = summaryState === 'terminal-failed'
         ? 'failed'
-        : summary?.status === 'pending' || summary?.status === 'running' || (!summary && source.processingStatus === 'pending')
+        : summaryState === 'processing' || summaryState === 'retryable' || (!summary && source.processingStatus === 'pending')
           ? 'processing'
-          : extraction?.status === 'failed' || failedProjection
+          : extractionState === 'terminal-failed' || failedProjection
             ? 'failed'
+            : extractionState === 'processing' || extractionState === 'retryable' ? 'processing'
             : extraction?.status === 'succeeded' || extraction?.status === 'skipped'
               ? pendingProjection ? 'processing' : 'organized'
               : needsExtraction ? 'waiting' : 'organized'
-      const blockPosition = scopedBlocks.findIndex(({ id }) => id === block.id) + 1
-      const latestBlockPosition = scopedBlocks.length
-      const currentLevel = getDecayedBlockLevel(
-        source.pointerAnchorLevel,
-        source.threadId ? source.pointerAnchorBlockPosition : Math.min(source.pointerAnchorBlockPosition, blockPosition),
-        latestBlockPosition,
-        snapshot.blockDecayLambda,
-      )
+      const position = (block.virtual ? timeline.get(block.id) : sourceTimeline.get(source.id))!
+      const { blockPosition } = position
+      // Legacy mixed-thread sources can be split into virtual display blocks.
+      // Keep their display-only anchor bounded to that recovered conversation.
+      const { age, level: targetLevel } = getBlockDecayView({
+        pointerAnchorLevel: source.pointerAnchorLevel,
+        pointerAnchorBlockPosition: block.virtual
+          ? Math.min(source.pointerAnchorBlockPosition, blockPosition)
+          : source.pointerAnchorBlockPosition,
+      }, position, snapshot.blockDecayLambda)
+      const currentLevel = source.surfaceCurrentLevel ?? targetLevel
       const currentMetrics = layerTokens.find(({ level }) => level === currentLevel)
       const l5Tokens = layerTokens.find(({ level }) => level === 5)?.tokens ?? 0
       return {
@@ -1355,18 +1398,21 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         summary: source.l1Summary,
         keypoints: source.l2Keypoints,
         currentLevel,
+        targetLevel,
         currentTokens: currentMetrics?.tokens ?? 0,
         l5Tokens,
         compressionPercent: currentMetrics?.percentOfL5 ?? (currentLevel === 5 ? 100 : 0),
         layerTokens,
-        distanceFromLatest: Math.max(0, latestBlockPosition - blockPosition),
+        distanceFromLatest: age,
         expansionSource: source.lastLiftedAt ? source.lastLiftedBy ?? 'legacy' : null,
         lastLiftedAt: source.lastLiftedAt,
         sourceMessages: block.messages.length,
         createdAt: source.createdAt,
         virtual: block.virtual,
+        rawAvailable: sourceMessages(snapshot, blockMessageIds).some(({ content }) => Boolean(content.trim())),
         processingStatus: source.processingStatus,
         summaryJob: summary ? {
+          state: derivationJobState(summary, summary.status === 'succeeded'),
           status: summary.status,
           attempts: summary.attempts,
           nextRetryAt: summary.nextRetryAt,
@@ -1650,7 +1696,7 @@ async function dashboard(runtime: StrataGateRuntime, url: URL, ifNoneMatch: stri
   const threadId = url.searchParams.get('threadId')?.trim() ?? ''
   const revisionKey = entries.map(({ namespace, revision }) => `${namespace}:${revision}`).join('|')
   const agentMemoryWeight = runtime.adminAgentMemoryRetrievalWeight?.() ?? 1
-  const duplicateKey = JSON.stringify(entries.map(({ namespace }) => runtime.adminDuplicateRepairStatus?.(namespace) ?? null))
+  const duplicateKey = JSON.stringify([entries.map(({ namespace }) => runtime.adminDuplicateRepairStatus?.(namespace) ?? null), runtime.adminGraphSettings?.()])
   // Include the plugin version so an upgraded server cannot validate an ETag
   // generated by the previous UI/server pair when the memory revision is unchanged.
   const etag = `"${createHash('sha256').update(`${STRATAGATE_DSH_VERSION}\0${TOPIC_DIRECTORY_VIEW_VERSION}\0${revisionKey}\0${selected?.namespace ?? ''}\0${threadId}\0${agentMemoryWeight}\0${duplicateKey}`).digest('base64url').slice(0, 24)}"`
@@ -1788,6 +1834,9 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
       // This is the authenticated Settings editor. Redacting its editable values
       // would replace user data with placeholders on the next save.
       sendJson(res, 200, await persistentProfile(runtime, req), true)
+    } else if (path === '/api/stratagate/graph/control') {
+      if (req.method !== 'POST') throw new AdminHttpError(405, 'Graph control requires POST')
+      sendJson(res, 200, await runtime.adminGraphControl(url.searchParams.get('action') ?? '', url.searchParams.get('token') ?? undefined))
     } else if (path === '/api/stratagate/settings') {
       if (req.method !== 'PATCH') throw new AdminHttpError(405, 'StrataGate settings require PATCH')
       sendJson(res, 200, await updateSettings(runtime, url))

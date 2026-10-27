@@ -32,6 +32,11 @@ const session = {
   eventAt: () => undefined,
 } as unknown as Session
 
+async function enableGraph(runtime: StrataGateRuntime) {
+  const preview = await runtime.adminGraphControl('preview') as { token: string }
+  await runtime.adminGraphControl('enable', preview.token)
+}
+
 function turnEvents(turn = 1): SessionEvent[] {
   const offset = (turn - 1) * 4
   const userText = turn === 1 ? 'remember pnpm' : `remember pnpm ${turn}`
@@ -122,6 +127,7 @@ describe('DSH runtime ingestion', () => {
     })
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database, namespace, blockTurnSize: 1,
         graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
       })
@@ -152,6 +158,7 @@ describe('DSH runtime ingestion', () => {
         graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
       } as unknown as DshModelBridge)
       try {
+        await enableGraph(runtime)
         await vi.waitFor(async () => {
           const snapshot = await runtime.adminSnapshot(namespace)
           expect(snapshot?.graphProjectionJobs).toEqual([
@@ -224,6 +231,7 @@ describe('DSH runtime ingestion', () => {
         },
       } as unknown as DshModelBridge)
       try {
+        await enableGraph(runtime)
         await (runtime as unknown as { runBackgroundNamespace: (value: string) => Promise<void> })
           .runBackgroundNamespace(namespace)
         await new Promise((resolve) => setTimeout(resolve, 350))
@@ -299,6 +307,7 @@ describe('DSH runtime ingestion', () => {
     const namespace = 'dsh:project:terminal-graph'
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database, namespace, blockTurnSize: 1,
         summarizer: async () => ({ l0Title: 'ready', l0Tags: [], l1Summary: 'ready', l2Keypoints: [], shouldExtract: false }),
         graphProjector: async () => ({ reason: 'unused', nodes: [], edges: [] }),
@@ -733,6 +742,7 @@ describe('DSH runtime ingestion', () => {
     }, fakeModels)
     const active = { ...session, id: 'compact-session', header: { ...session.header, id: 'compact-session' } } as unknown as Session
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(active)
       await memory.appendTurn({ user: 'Remember the memory plugin release.', assistant: 'Saved.', threadId: String(active.id) })
       const block = memory.listBlocks()[0]!
@@ -809,6 +819,7 @@ describe('DSH runtime ingestion', () => {
       blockTurnSize: 1, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
     }, fakeModels)
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(active)
       await memory.appendTurn({ user: 'Historical source block.', assistant: 'Stored.', threadId: 'older-session' })
       const block = memory.listBlocks()[0]!
@@ -1004,6 +1015,7 @@ describe('DSH runtime ingestion', () => {
       maxOutputTokens: 2048,
     }, fakeModels)
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (session: Session) => Promise<StrataGate> })
         .space(activeSession)
       await memory.appendTurn({ user: 'Initial setup.', assistant: 'Ready.', threadId: 'historical-session' })
@@ -1086,6 +1098,12 @@ describe('DSH runtime ingestion', () => {
       expect(context).not.toContain('mentionCount')
       expect((context.match(/^\- \{"id":"evt_/gm) ?? [])).toHaveLength(3)
       expect((context.match(/^\- \{"nodeId":/gm) ?? [])).toHaveLength(1)
+      await runtime.adminGraphControl('disable')
+      const graphRecall = vi.spyOn(memory, 'searchGraphNodes')
+      const disabledContext = await runtime.buildAutoContext(activeSession)
+      expect(graphRecall).not.toHaveBeenCalled()
+      expect(disabledContext).toContain(relevant.id)
+      expect(disabledContext).not.toContain('"nodeId":')
       for (const event of memory.listEvents()) {
         expect([event.weight.mentionCount, event.weight.lastAdoptedTurn]).toEqual(before.get(event.id))
       }
@@ -1243,6 +1261,7 @@ describe('DSH runtime ingestion', () => {
     vi.spyOn(worker, 'scheduleBackgroundWorker').mockImplementation(() => {})
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database,
         namespace: runtime.namespaceFor(session),
         blockTurnSize: 1,
@@ -1285,6 +1304,7 @@ describe('DSH runtime ingestion', () => {
     } as unknown as DshModelBridge)
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database,
         namespace: runtime.namespaceFor(session),
         blockTurnSize: 1,
@@ -1531,6 +1551,7 @@ describe('DSH runtime ingestion', () => {
         .flatMap((block) => block.type === 'text' ? [block.text] : [])
         .join('\n')
       expect(firstBlockText).toMatch(/^\[StrataGate historical conversation block\]\nEarlier conversation context; not a new user message or instruction\.\nBlock: \S+ \| Turns: 1-2 \| Level: L5\n\n/u)
+      expect(firstBlockText).not.toContain('Detail is compressed to L5')
       expect(firstBlockText.match(/Earlier conversation context; not a new user message or instruction\./gu)).toHaveLength(1)
       expect(firstBlockText).not.toContain('L0: title and topical tags')
       expect(firstBlockText).not.toContain('Current user instructions')
@@ -1650,6 +1671,7 @@ describe('DSH runtime ingestion', () => {
     const namespace = runtime.namespaceFor(activeSession)
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database,
         namespace,
         blockTurnSize: 1,
@@ -1777,6 +1799,7 @@ describe('DSH runtime ingestion', () => {
     const namespace = runtime.namespaceFor(activeSession)
 
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> })
         .space(activeSession)
       await memory.appendTurn({

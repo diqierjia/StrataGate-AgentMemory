@@ -26,7 +26,7 @@ async function extractionFixture(action: EventDuplicateDecision['action'], pool:
         sourceBlockId: target.id, sourceMessageIds: [target.l5Raw[0]!.id], quotes: ['SQLite stores the project data locally.'] };
       return { shouldExtract: true, reason: 'new source', events: options.repeatedOutput ? [candidate, { ...candidate }] : [candidate] };
     }, eventDuplicateDecider: decide,
-    graphProjector: async () => ({ reason: 'deterministic fixture', nodes: [], edges: [] }),
+    graphEnabled: true, graphProjector: async () => ({ reason: 'deterministic fixture', nodes: [], edges: [] }),
   };
   memory = options.database
     ? await StrataGate.open({ ...config, database: options.database, namespace: 'review-fixes' })

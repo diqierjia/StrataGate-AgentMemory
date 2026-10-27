@@ -212,6 +212,9 @@ describe('Issue #128 indexed background discovery', () => {
       },
     })
     try {
+      const preview = await runtime.adminGraphControl('preview') as { token: string }
+      await runtime.adminGraphControl('enable', preview.token)
+      opens.mockClear()
       await poll(runtime)
       for (const call of Object.values(calls)) expect(call).toHaveBeenCalledTimes(1)
       expect(opens.mock.calls.every(([options]) => options.namespace === 'busy')).toBe(true)
@@ -266,7 +269,7 @@ describe('Issue #128 indexed background discovery', () => {
   it('skips full loading while historical Topic allowance is exhausted, then resumes at reset', async () => {
     const database = await databasePath()
     const seed = await StrataGate.open({ database, namespace: 'history', blockTurnSize: 1, summarizer: summary,
-      graphProjector: models.graphProjector })
+      graphEnabled: true, graphProjector: models.graphProjector })
     const block = (await seed.appendTurn({ user: 'historical decision', assistant: 'saved' })).sealedBlock!
     await seed.addEvent({ title: 'Historical decision', summary: 'An old project decision.',
       sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] })

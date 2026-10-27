@@ -44,7 +44,10 @@ export interface MemoryBlock extends Omit<BlockLayers, 'l0Title' | 'l0Tags' | 'l
   shouldExtract?: boolean;
   processingStatus: BlockProcessingStatus;
   pointerCurrentLevel: BlockLevel;
+  /** The layer actually present in the host's injected checkpoint surface. */
+  surfaceCurrentLevel?: BlockLevel;
   pointerAnchorLevel: BlockLevel;
+  /** Per-thread sealed-block position (including pending); schema 14 onward. */
   pointerAnchorBlockPosition: number;
   lastLiftedAt: string | null;
   lastLiftedBy: BlockLiftSource | null;
@@ -254,6 +257,7 @@ export type ExternalMemoryImportJobStatus =
   | 'awaiting_confirmation'
   | 'ready'
   | 'failed'
+  | 'abandoned'
   | 'committed'
   | 'undone';
 
@@ -531,7 +535,11 @@ export interface GraphProjectionResult {
 }
 
 export interface GraphProjectionContext {
+  /** Recheck before each provider request, including format retries. Never serialize. */
+  assertActive?: () => void;
   jobId: string;
+  /** Unique token for this lease/attempt. Never persist or expose to prompts. */
+  claimToken?: string;
   projectorVersion: number;
   events: EventCard[];
   existingNodes: GraphNode[];
