@@ -9,10 +9,9 @@
 StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细节，较早对话逐渐简化，需要时可以找回原文；重要信息整理为长期事件，知识图谱表达当前状态，主题目录帮助 Agent 了解记过哪些内容，并按需查找来源。
 
 <p align="center">
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml"><img src="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/stargazers"><img src="https://img.shields.io/github/stars/diqierjia/StrataGate-AgentMemory?style=social&amp;label=Stars" alt="GitHub stars" /></a>
+  <a href="https://gitee.com/diqier4123/StrataGate-AgentMemory/stargazers"><img src="https://gitee.com/diqier4123/StrataGate-AgentMemory/badge/star.svg?theme=dark" alt="Gitee stars" /></a>
 </p>
 
 [English](README.md) · [DeepSeek Harness 插件说明](docs/DSH.zh-CN.md) · [架构说明](docs/ARCHITECTURE.md) · [完整评测](docs/EVALUATION.md)
@@ -30,9 +29,8 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 <table align="center">
   <tr>
     <td align="center">
-      <a href="https://dshfind.com/zh/plugins/diqierjia/StrataGate-AgentMemory?ref=badge">
-        <img src="https://dshfind.com/api/card/diqierjia/StrataGate-AgentMemory?lang=zh" alt="StrataGate 的 dshfind 收录、评分与累计下载" width="350" />
-      </a>
+      <strong>插件目录</strong><br /><br />
+      <a href="https://dshfind.com">在 dshfind 浏览 DeepSeek Harness 插件</a>
     </td>
     <td align="center">
       <strong>npm 下载统计</strong><br /><br />
@@ -495,13 +493,11 @@ npm run build
 
 欢迎各种形式的贡献：修复问题、完善文档、增加集成，或探索更好的记忆与检索方案都可以。
 
-请先阅读 [`CONTRIBUTING.zh-CN.md`](CONTRIBUTING.zh-CN.md)，其中包含 monorepo 开发环境、检查与测试命令、适合参与的方向，以及提交 Pull Request 的建议。如果还不确定一个想法是否适合项目，建议先[创建 Issue](https://github.com/diqierjia/StrataGate-AgentMemory/issues)，再投入较大的改动。
+请先阅读 [`CONTRIBUTING.zh-CN.md`](CONTRIBUTING.zh-CN.md)，其中包含 monorepo 开发环境、检查与测试命令、适合参与的方向，以及提交 Pull Request 的建议。如果还不确定一个想法是否适合项目，建议先[创建 Issue](https://gitee.com/diqier4123/StrataGate-AgentMemory/issues)，再投入较大的改动。
 
 ## 贡献者
 
-<a href="https://github.com/diqierjia/StrataGate-AgentMemory/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=diqierjia/StrataGate-AgentMemory" alt="StrataGate 贡献者" />
-</a>
+[在 Gitee 查看贡献者](https://gitee.com/diqier4123/StrataGate-AgentMemory/contributors?ref=main)。
 
 ## 许可证
 

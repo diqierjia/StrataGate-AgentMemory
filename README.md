@@ -9,10 +9,9 @@
 StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent conversations stay detailed, older conversations become concise, and original records remain available when needed. Lasting information becomes Events, the knowledge graph represents current state, and the topic directory helps the agent discover what has been remembered and find its sources.
 
 <p align="center">
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml"><img src="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/stargazers"><img src="https://img.shields.io/github/stars/diqierjia/StrataGate-AgentMemory?style=social&amp;label=Stars" alt="GitHub stars" /></a>
+  <a href="https://gitee.com/diqier4123/StrataGate-AgentMemory/stargazers"><img src="https://gitee.com/diqier4123/StrataGate-AgentMemory/badge/star.svg?theme=dark" alt="Gitee stars" /></a>
 </p>
 
 [中文说明](README.zh-CN.md) · [DeepSeek Harness guide](docs/DSH.md) · [Architecture](docs/ARCHITECTURE.md) · [Full evaluation](docs/EVALUATION.md)
@@ -30,9 +29,8 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent convers
 <table align="center">
   <tr>
     <td align="center">
-      <a href="https://dshfind.com/en/plugins/diqierjia/StrataGate-AgentMemory?ref=badge">
-        <img src="https://dshfind.com/api/card/diqierjia/StrataGate-AgentMemory?lang=en" alt="StrataGate on dshfind: rating and cumulative downloads" width="350" />
-      </a>
+      <strong>Plugin directory</strong><br /><br />
+      <a href="https://dshfind.com">Browse DeepSeek Harness plugins on dshfind</a>
     </td>
     <td align="center">
       <strong>npm downloads</strong><br /><br />
@@ -491,13 +489,11 @@ See the [architecture guide](docs/ARCHITECTURE.md) for core API integration, per
 
 Contributions are welcome—whether you are fixing a bug, improving documentation, adding an integration, or exploring a better memory and retrieval strategy.
 
-To get started, read [`CONTRIBUTING.md`](CONTRIBUTING.md). It explains how to set up the monorepo, run checks and tests, choose a useful area to work on, and prepare a focused pull request. If you are unsure whether an idea fits the project, [open an issue](https://github.com/diqierjia/StrataGate-AgentMemory/issues) before investing in a large change.
+To get started, read [`CONTRIBUTING.md`](CONTRIBUTING.md). It explains how to set up the monorepo, run checks and tests, choose a useful area to work on, and prepare a focused pull request. If you are unsure whether an idea fits the project, [open an issue](https://gitee.com/diqier4123/StrataGate-AgentMemory/issues) before investing in a large change.
 
 ## Contributors
 
-<a href="https://github.com/diqierjia/StrataGate-AgentMemory/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=diqierjia/StrataGate-AgentMemory" alt="StrataGate contributors" />
-</a>
+[View contributors on Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory/contributors?ref=main).
 
 ## License
 
