@@ -11,7 +11,8 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 <p align="center">
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://gitee.com/diqier4123/StrataGate-AgentMemory/stargazers"><img src="https://gitee.com/diqier4123/StrataGate-AgentMemory/badge/star.svg?theme=dark" alt="Gitee stars" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD" alt="npm 累计下载量" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 近 30 天下载量" /></a>
 </p>
 
 [English](README.md) · [DeepSeek Harness 插件说明](docs/DSH.zh-CN.md) · [架构说明](docs/ARCHITECTURE.md) · [完整评测](docs/EVALUATION.md)
@@ -24,21 +25,11 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 
 <div align="center">
 
-<h3 align="center">社区与下载</h3>
+<h3 align="center">社区</h3>
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <strong>插件目录</strong><br /><br />
-      <a href="https://dshfind.com">在 dshfind 浏览 DeepSeek Harness 插件</a>
-    </td>
-    <td align="center">
-      <strong>npm 下载统计</strong><br /><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD" alt="npm 累计下载量" /></a><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 近 30 天下载量" /></a>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <a href="https://dshfind.com">在 dshfind 浏览 DeepSeek Harness 插件</a>
+</p>
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome DSH Plugin" /></a>

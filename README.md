@@ -11,7 +11,8 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent convers
 <p align="center">
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://gitee.com/diqier4123/StrataGate-AgentMemory/stargazers"><img src="https://gitee.com/diqier4123/StrataGate-AgentMemory/badge/star.svg?theme=dark" alt="Gitee stars" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=total%20downloads" alt="Total npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=last%2030%20days&amp;color=brightgreen" alt="npm downloads in the last 30 days" /></a>
 </p>
 
 [中文说明](README.zh-CN.md) · [DeepSeek Harness guide](docs/DSH.md) · [Architecture](docs/ARCHITECTURE.md) · [Full evaluation](docs/EVALUATION.md)
@@ -24,21 +25,11 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent convers
 
 <div align="center">
 
-<h3 align="center">Community &amp; downloads</h3>
+<h3 align="center">Community</h3>
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <strong>Plugin directory</strong><br /><br />
-      <a href="https://dshfind.com">Browse DeepSeek Harness plugins on dshfind</a>
-    </td>
-    <td align="center">
-      <strong>npm downloads</strong><br /><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=total%20downloads" alt="Total npm downloads" /></a><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=last%2030%20days&amp;color=brightgreen" alt="npm downloads in the last 30 days" /></a>
-    </td>
-  </tr>
-</table>
+<p align="center">
+  <a href="https://dshfind.com">Browse DeepSeek Harness plugins on dshfind</a>
+</p>
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome DSH Plugin" /></a>
