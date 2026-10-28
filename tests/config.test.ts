@@ -12,6 +12,8 @@ describe('DeepSeek Harness plugin config', () => {
   it('resolves safe defaults', () => {
     expect(resolveConfig({ database: ' ./memory.db ' })).toEqual({
       database: './memory.db',
+      dailyNotesEnabled: true,
+      dailyNotesContextMaxChars: 12_000,
       namespaceMode: 'project',
       namespacePrefix: 'dsh',
       globalNamespace: 'global',

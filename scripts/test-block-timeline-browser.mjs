@@ -154,7 +154,7 @@ const openUI = async url => {
   await memory.waitFor()
   const workspace = memory.getByRole('combobox', { name: '当前工作区' })
   await workspace.selectOption(namespace)
-  await memory.locator('.sg-tabs').getByRole('button', { name: '短期记忆', exact: true }).click()
+  await memory.locator('.sg-tabs').getByRole('button', { name: '会话记忆', exact: true }).click()
   await memory.getByRole('combobox', { name: '当前对话', exact: true }).selectOption('timeline-a')
   await memory.locator('.sg-block-name').filter({ hasText: /^Block #1$/ }).waitFor()
   return memory

@@ -117,11 +117,11 @@ try {
   const summaryCopy = '这段对话的摘要暂不可用。'
   const extractionCopy = '部分对话尚未形成长期记忆，暂不能通过长期记忆检索。'
   const graphCopy = '当前图谱尚未更新完整。'
-  await select(retrying); await tab('短期记忆'); await noBanners()
+  await select(retrying); await tab('会话记忆'); await noBanners()
   assert.equal(await memory.getByText(summaryCopy, { exact: true }).count(), 0)
   await capture('retrying', '摘要、提取、图谱、目录处于自动重试等待')
   checks.push('automatic retry has no global alert, terminal summary notice, dialog or failure toast')
-  await select(failed); await tab('短期记忆')
+  await select(failed); await tab('会话记忆')
   await memory.getByText(summaryCopy, { exact: true }).first().waitFor()
   assert.equal(await memory.getByText(summaryCopy, { exact: true }).count(), 2)
   assert.equal(await memory.getByRole('button', { name: '查看原始对话', exact: true }).count(), 1)
@@ -147,7 +147,7 @@ try {
   await memory.locator('.sg-summary-raw').getByText(topics.raw, { exact: true }).waitFor()
   assert.equal(sourceReads(), loadedReads, 'Opening cached source must not submit another read or task')
   for (const status of [403, 404, 200]) {
-    await tab('更多'); await tab('短期记忆')
+    await tab('更多'); await tab('会话记忆')
     await page.route('**/api/stratagate/sources?**', route => route.fulfill({ status, contentType: 'application/json',
       body: JSON.stringify(status === 200 ? { namespace: failed, messages: [] } : { error: '隔离注入：原文不可访问' }) }))
     await memory.getByRole('button', { name: '查看原始对话', exact: true }).click()

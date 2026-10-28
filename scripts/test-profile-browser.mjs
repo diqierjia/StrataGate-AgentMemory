@@ -35,7 +35,7 @@ try {
   await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('button', { name: 'StrataGate-AgentMemory' }).click()
   const tabs = page.locator('.sg-tabs button')
-  assert.deepEqual(await tabs.allTextContents(), ['常驻画像', '短期记忆', '长期记忆', '更多'])
+  assert.deepEqual(await tabs.allTextContents(), ['常驻画像', '会话记忆', '短期记忆', '长期记忆', '更多'])
   await page.getByRole('button', { name: '常驻画像', exact: true }).click()
   await page.getByRole('heading', { name: '常驻用户画像' }).waitFor()
   await page.locator('.sg-profile-row').first().waitFor()

@@ -14,6 +14,17 @@ interface Observation {
   counters: Counters; category?: string; detail?: string; taskId?: string
 }
 
+/** Shared minimal credential detector, also used before daily-note persistence. */
+export function containsCredentials(value: string): boolean {
+  if (/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/.test(value)) return true
+  return value
+    .replace(/\b(?:sk[-_]|gh[opasu]_|github_pat_)[A-Za-z0-9_-]{8,}\b/g, '[credential]')
+    .replace(/(["']?\b(?:api[_-]?key|token|password|passwd|secret|authorization|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*)(["'])([\s\S]*?)\2/gi, '$1[credential]')
+    .replace(/\b(?:Bearer|Basic|Token)\s+[^\s,;}]+/gi, '[credential]')
+    .replace(/\b(?:api[_-]?key|token|password|passwd|secret|authorization)\s*[:=]\s*[^\s,;}]+/gi, '[credential]')
+    !== value
+}
+
 /** Redact before persistence as well as before rendering. Reports default to categories. */
 export function diagnosticText(value: unknown, limit = 1500): string {
   return String(value instanceof Error ? value.message : value ?? '').slice(0, 8000)

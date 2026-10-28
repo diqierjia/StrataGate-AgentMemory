@@ -9,7 +9,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, ProfilePage, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
+  ).replace('exports.__test = {', 'exports.__test = { DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -708,7 +708,7 @@ describe('StrataGate Web client contract', () => {
       ['showRetrievalStatus', false],
     ])
     expect(source).toContain('function ShortTermMemoryTurnStatus({ matched, sessionId, useSession, useSessions, useWorkspaces })')
-    expect(source).toContain('短期记忆块 · ')
+    expect(source).toContain('会话记忆 · ')
     expect(source).toContain('正在压缩…')
     expect(source).toContain('已压缩为 L')
     expect(source).toContain("api('sources', { namespace, blockId: block.id }, { signal: controller.signal })")
@@ -1357,7 +1357,7 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar })')
+    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar, setDailyEnabled, setDailyTimeZone })')
     expect(source).toContain("settingsScope.bind({ namespace: 'stratagate-memory' })")
     expect(source).toContain("pluginSettingsScope.set('structuredReasoningEffort', mode)")
     expect(source).toContain("pluginSettingsScope.unset('structuredReasoningEffort')")
@@ -1380,7 +1380,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'/' + run.total + ' 批次'")
     expect(source).toContain('Dreaming 整理进度（批次）')
     expect(source).toContain("const [section, setSection] = React.useState('short')")
-    expect(source).toContain("[['profile', '常驻画像'], ['short', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
+    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
     expect(source).toContain('块衰减总览')
     expect(source).toContain('开放块 · 未封存')
     expect(source).toContain('距最新封存块')
@@ -1442,7 +1442,7 @@ describe('StrataGate Web client contract', () => {
   it('keeps exactly the four requested primary entries in More and nests diagnostics under Advanced', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const moreSource = source.slice(source.indexOf('function MoreHome'), source.indexOf('function DisplayPage'))
-    expect(moreSource).toContain("['display', '◐', '界面与显示', '控制短期记忆块、检索状态等前端提示']")
+    expect(moreSource).toContain("['display', '◐', '界面与显示', '控制会话记忆、检索状态等前端提示']")
     expect(moreSource).toContain("['import', '⇄', '导入其他 AI 的记忆', '将其他 AI 的历史记忆导入 StrataGate']")
     expect(moreSource).toContain("['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断']")
     expect(moreSource).toContain("['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助']")
@@ -1454,7 +1454,7 @@ describe('StrataGate Web client contract', () => {
     const displaySource = source.slice(source.indexOf('function DisplayPage'), source.indexOf('function redactedJson'))
     expect(displaySource).toContain('控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')
     expect(displaySource).toContain('关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。')
-    expect(displaySource).toContain("title: '短期记忆块'")
+    expect(displaySource).toContain("title: '会话记忆状态'")
     expect(displaySource).toContain("title: '记忆检索状态'")
     expect(displaySource).toContain('disabled: !showStrataGateStatus')
     const settingsSource = source.slice(source.indexOf('function SettingsPage'), source.indexOf('function MemoryPage'))
@@ -2357,7 +2357,7 @@ describe('StrataGate Web client contract', () => {
     expect(statusSource).toContain('后台任务')
     expect(statusSource).toContain('原始对话')
     expect(statusSource).not.toContain("['保存原始对话', { kind: 'done'")
-    expect(statusSource).toContain('压缩短期记忆块')
+    expect(statusSource).toContain('压缩会话记忆')
     expect(statusSource).toContain('提取长期记忆')
     expect(statusSource).toContain('更新知识图谱')
     expect(statusSource).toContain('const extractionJobs = item.jobs.filter')
@@ -2479,8 +2479,68 @@ describe('StrataGate Web client contract', () => {
     }))
     expect(recovered).toContain('帮我试用最新版')
     expect(recovered).toContain('第 13–18 轮')
-    expect(recovered).toContain('压缩短期记忆块')
+    expect(recovered).toContain('压缩会话记忆')
     expect(recovered).toContain('处理中')
     expect(recovered).not.toContain('任务仍在整理，具体会话暂不可用')
+  })
+})
+
+
+describe('daily notes client', () => {
+  it('keeps the default session page and five untruncated navigation labels', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("React.useState('short')")
+    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
+    expect(source).toContain('repeat(5,1fr)')
+    expect(source).toContain('会话记忆详情')
+    expect(source).toContain('会话记忆状态')
+    expect(source).toContain('完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。')
+  })
+  it('renders safe React Markdown, retaining unknown syntax and literal HTML', () => {
+    const { renderDailyMarkdown } = loadSupportHelpers()
+    const output = JSON.stringify(renderDailyMarkdown('# 2026-10-28\n## 事项\n当前：进展 `file.ts`\n已完成：验证通过\n- 列表\n### 未知语法\n<script>alert(1)</script>\n```\n# 不应丢失的标题'))
+    expect(output).not.toContain('# 2026-10-28')
+    for (const text of ['h4', '事项', 'sg-daily-status', ' done', 'ul', 'li', 'code', 'file.ts', '### 未知语法', '<script>alert(1)</script>', '# 不应丢失的标题', '```']) expect(output).toContain(text)
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const daily = source.slice(source.indexOf('function dailyInline'), source.indexOf('function ShortTermPage'))
+    expect(daily).not.toContain('dangerouslySetInnerHTML')
+    expect(daily).toContain('abort.abort()')
+    expect(daily).not.toContain('setInterval')
+  })
+  it('calculates relative dates without timezone or daylight-saving shifts', () => {
+    const { dailyRelative } = loadSupportHelpers()
+    expect(dailyRelative('2026-10-28', '2026-10-28')).toBe('今天')
+    expect(dailyRelative('2026-10-27', '2026-10-28')).toBe('昨天')
+    expect(dailyRelative('2026-09-28', '2026-10-28')).toBe('30 天前')
+    expect(dailyRelative('2026-10-29', '2026-10-28')).toBe('1 天后')
+  })
+  it('distinguishes empty, failed list, failed note and disabled states', () => {
+    const empty = { dates: [], injectedDates: [], enabled: true, today: '2026-10-28' }
+    const tree = (index: unknown, error = '', selected = '', note = { loading: false, date: selected, markdown: '', error: '' }) => loadSupportHelpers([index, false, error, selected, note]).DailyNotesPage({ namespace: 'n' })
+    expect(JSON.stringify(tree(empty))).toContain('还没有笔记')
+    expect(JSON.stringify(tree(empty))).toContain('Agent 推进工作时会自动记录。')
+    const failed = JSON.stringify(tree(null, 'permission denied'))
+    expect(failed).toContain('暂时无法读取笔记'); expect(failed).toContain('重新读取'); expect(failed).toContain('alert'); expect(failed).not.toContain('还没有笔记')
+    const index = { ...empty, enabled: false, dates: ['2026-10-28'], injectedDates: ['2026-10-28'] }
+    const disabled = JSON.stringify(tree(index, '', '2026-10-28'))
+    expect(disabled).toContain('已关闭，不再写入，也不会带入新会话。'); expect(disabled).toContain('已暂停注入')
+    const noteFailed = JSON.stringify(tree(index, '', '2026-10-28', { loading: false, date: '2026-10-28', markdown: '', error: 'file denied' }))
+    expect(noteFailed).toContain('暂时无法读取笔记'); expect(noteFailed).not.toContain('还没有笔记')
+  })
+  it('binds confirmed DSH settings values without optimistic updates', async () => {
+    const { DailyNotesSettings } = loadSupportHelpers()
+    const enabled = vi.fn(async () => true)
+    const timezone = vi.fn(async () => true)
+    const tree = DailyNotesSettings({ usePluginSettings: (select: any) => select({ writable: true, value: { dailyNotesEnabled: false, dailyNotesTimeZone: 'UTC' } }), setDailyEnabled: enabled, setDailyTimeZone: timezone })
+    const props = deepElementProps(tree)
+    const toggle = props.find(prop => prop.role === 'switch')
+    expect(toggle['aria-checked']).toBe(false)
+    toggle.onClick(); await Promise.resolve(); expect(enabled).toHaveBeenCalledWith(true)
+    const select = props.find(prop => prop['aria-label'] === '笔记时区')
+    expect(select.value).toBe('UTC'); select.onChange({ target: { value: '' } }); await Promise.resolve(); expect(timezone).toHaveBeenCalledWith('')
+    expect(JSON.stringify(tree)).toContain('已有笔记保留')
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("pluginSettingsScope.set('dailyNotesEnabled', enabled)")
+    expect(source).toContain("pluginSettingsScope.unset('dailyNotesTimeZone')")
   })
 })

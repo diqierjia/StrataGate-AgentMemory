@@ -1,9 +1,16 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { vi } from 'vitest'
+import { resolveConfig } from '../src/config.js'
+import { selectDailyInjectionDates } from '../src/daily-notes.js'
+import type { DshModelBridge } from '../src/llm.js'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { StrataGateSnapshot } from '@diqier/stratagate'
 import { StrataGate } from '@diqier/stratagate'
-import type { StrataGateRuntime } from '../src/runtime.js'
+import { StrataGateRuntime } from '../src/runtime.js'
 import { handleAdminRequest, type WebResponse } from '../src/web.js'
 
 const fullFailure = 'StrataGate model response was not valid JSON\nRaw response (full):\n' + 'x'.repeat(600)
@@ -1560,5 +1567,63 @@ describe('StrataGate admin routes', () => {
       .toMatchObject({ status: 409, body: { error: '该项刚刚在其他位置更新' } })
     expect(profile.preferredLanguage).toBe(`${literal} More.`)
     expect((await request('/api/stratagate/profile', 'PATCH', profileRuntime, { field: 'preferredLanguage', value: '中文', other: true })).status).toBe(400)
+  })
+})
+
+
+describe('read-only daily-note admin routes', () => {
+  async function fixture(run: (runtime: StrataGateRuntime, opened: ReturnType<typeof vi.fn>) => Promise<void>, enabled = true) {
+    const root = await mkdtemp(join(tmpdir(), 'stratagate-daily-api-'))
+    const opened = vi.fn(async () => {})
+    const runtime = new StrataGateRuntime(resolveConfig({ database: join(root, 'memory.db'), dailyNotesEnabled: enabled, dailyNotesTimeZone: 'Asia/Shanghai' }),
+      { isReady: () => false, onAdaptersUpdated: () => () => {} } as unknown as DshModelBridge,
+      () => {}, async () => {}, () => undefined, opened)
+    try { await run(runtime, opened) } finally { await runtime.close(); await rm(root, { recursive: true, force: true }) }
+  }
+  it.each([true, false])('lists all dates, shares injection selection and reads existing files when enabled=%s', async enabled => {
+    await fixture(async runtime => {
+      for (const date of ['2020-01-01', '2020-02-01', '2026-10-27', '2026-10-28']) await runtime.dailyNotes.write('n', { date, title: 'A', content: '当前：验证 `src/client.js`' })
+      const result = await request('/api/stratagate/daily?namespace=n', 'GET', runtime)
+      expect(result.status).toBe(200)
+      expect(result.body).toMatchObject({ enabled, timeZone: 'Asia/Shanghai', dates: ['2026-10-28', '2026-10-27', '2020-02-01', '2020-01-01'] })
+      expect(result.body.today).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(result.body.injectedDates).toEqual(selectDailyInjectionDates(result.body.dates))
+      const snapshot = await runtime.dailyNotes.snapshot('n')
+      for (const date of result.body.injectedDates) expect(snapshot).toContain('# ' + date)
+      expect(snapshot).not.toContain('2020-01-01')
+      expect(await request('/api/stratagate/daily/note?namespace=n&date=2026-10-28', 'GET', runtime)).toMatchObject({ status: 200, body: { date: '2026-10-28', markdown: '# 2026-10-28\n\n## A\n当前：验证 `src/client.js`\n' } })
+      expect((await request('/api/stratagate/daily?namespace=other', 'GET', runtime)).body.dates).toEqual([])
+    }, enabled)
+  })
+  it('distinguishes invalid date, missing file and failed reads; rejects writes and missing namespace', async () => {
+    await fixture(async runtime => {
+      for (const date of ['', '2026-02-30', '../secret', '2026-1-1']) expect((await request('/api/stratagate/daily/note?namespace=n&date=' + encodeURIComponent(date), 'GET', runtime)).status).toBe(400)
+      expect((await request('/api/stratagate/daily/note?namespace=n&date=2026-10-28', 'GET', runtime)).status).toBe(404)
+      expect((await request('/api/stratagate/daily', 'GET', runtime)).status).toBe(400)
+      for (const path of ['daily', 'daily/note?date=2026-10-28']) expect((await request('/api/stratagate/' + path + (path.includes('?') ? '&' : '?') + 'namespace=n', 'POST', runtime)).status).toBe(405)
+      await mkdir(join(runtime.dailyNotes.directory('n'), '2026-10-28.md'), { recursive: true })
+      const failed = await request('/api/stratagate/daily/note?namespace=n&date=2026-10-28', 'GET', runtime)
+      expect(failed.status).toBe(500); expect(failed.body.error).toBeTruthy(); expect(failed.body).not.toHaveProperty('markdown')
+      await rm(runtime.dailyNotes.directory('n'), { recursive: true }); await writeFile(runtime.dailyNotes.directory('n'), 'not a directory')
+      expect((await request('/api/stratagate/daily?namespace=n', 'GET', runtime)).status).toBe(500)
+    })
+  })
+  it('creates and opens only the namespace daily directory, even when disabled', async () => {
+    await fixture(async (runtime, opened) => {
+      expect((await request('/api/stratagate/daily/open-directory?namespace=n', 'GET', runtime)).status).toBe(405)
+      expect((await request('/api/stratagate/daily/open-directory?namespace=n', 'POST', runtime)).status).toBe(200)
+      expect(opened).toHaveBeenCalledWith(runtime.dailyNotes.directory('n'), expect.any(AbortSignal))
+      opened.mockRejectedValueOnce(new Error('directory access denied'))
+      expect(await request('/api/stratagate/daily/open-directory?namespace=n', 'POST', runtime)).toMatchObject({ status: 500, body: { error: 'directory access denied' } })
+    }, false)
+  })
+  it('returns explicit errors for in-memory daily storage', async () => {
+    const runtime = new StrataGateRuntime(resolveConfig({ database: ':memory:' }), { isReady: () => false, onAdaptersUpdated: () => () => {} } as unknown as DshModelBridge)
+    try {
+      for (const [path, method] of [['daily', 'GET'], ['daily/note?date=2026-10-28', 'GET'], ['daily/open-directory', 'POST']]) {
+        const result = await request('/api/stratagate/' + path + (path!.includes('?') ? '&' : '?') + 'namespace=n', method, runtime)
+        expect(result.status).toBe(500); expect(result.body.error).toContain(':memory:')
+      }
+    } finally { await runtime.close() }
   })
 })

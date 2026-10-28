@@ -34,13 +34,13 @@ Browse this plugin and other DeepSeek Harness plugins on [dshfind](https://dshfi
 
 ## Why StrataGate?
 
-1. **Short-term memory: details fade as the conversation progresses and expand when needed.**
+1. **Session memory: details fade as the conversation progresses and expand when needed.**
 
    (1) **Recent history stays detailed; older history becomes concise.** Each conversation block has six views, L0–L5, with different levels of detail. As more conversation accumulates, older memories gradually shift from full dialogue to key facts, short summaries, and title indexes, reducing the context occupied by history. → [Layered memory](#layered-memory)
 
    (2) **Views shrink while original records remain.** Complete L5 source messages and tool records are preserved. When details need checking, the agent can expand a memory to recover the original wording and context. → [Layered memory](#layered-memory)
 
-   ![Short-term memory animation: a Block becomes concise down to L0, stays in context, and expands when needed](docs/assets/short-term-memory-explainer-en.gif)
+   ![Session memory animation: a Block becomes concise down to L0, stays in context, and expands when needed](docs/assets/short-term-memory-explainer-en.gif)
 
 2. **Long-term memory: Events preserve history, the graph organizes current state, and the topic directory helps find relevant records.**
 
@@ -107,18 +107,22 @@ The directory and overviews are built from existing Events in background batches
 
 | Mechanism | What changes | What remains |
 | --- | --- | --- |
-| Short-term simplification | Which L0–L5 view an older Block displays by default | Original L5 conversations and tool records |
+| Session memory simplification | Which L0–L5 view an older Block displays by default | Original L5 conversations and tool records |
 | Long-term weight decay | An Event's priority in later recall | Event history and its sources |
 
-Both follow conversation progress: short-term decay uses ready-Block distance, while long-term decay uses turn distance. Elapsed days alone do not trigger either form of decay.
+Both follow conversation progress: session memory decay uses ready-Block distance, while long-term decay uses turn distance. Elapsed days alone do not trigger either form of decay.
+
+### Short-term memory: recent daily notes
+
+The Agent maintains its own working notes: progress, stage results, useful failures, blockers, and next steps. Each memory namespace has one Markdown file per day at `<database directory>/daily/<safe namespace encoding>/YYYY-MM-DD.md` (currently `ns-` followed by the lowercase SHA-256 hash of the namespace). Notes from the three most recent dates with entries are injected into new sessions. The Short-term memory page provides read-only access to recent and older notes. Set `dailyNotesEnabled: false` to stop writing and injection while retaining existing files.
 
 <a id="layered-memory"></a>
 
-### 1. Short-term memory: gradually condense older conversations and expand them when needed
+### 1. Session memory: gradually condense older conversations and expand them when needed
 
 Recent discussions usually need their full detail. Older conversations can remain in context as concise views. StrataGate stores several levels of detail for the same conversation block and gradually reduces what older Blocks display by default as more conversation accumulates.
 
-![Figure 2: Short-term memory—L0–L5 views, display decay, and on-demand expansion](docs/assets/stratagate-short-term-memory-en.png)
+![Figure 2: Session memory—L0–L5 views, display decay, and on-demand expansion](docs/assets/stratagate-short-term-memory-en.png)
 
 **One conversation block, six levels of detail.**
 
@@ -135,7 +139,7 @@ Each fully processed Block contains these views:
 | L4 | Near-verbatim dialogue without internal messages | Remove system messages; only trim outer whitespace and add role labels to user and assistant text; retain names and summaries for recognized tool records |
 | L5 | Source messages and tool records | Verify provenance and specific details |
 
-The model summarizes L0–L2. Fixed rules generate L3/L4: L3 removes standalone fillers and repeated long content, while L4 stays near-verbatim; both compact recognized tool records. Short-term decay advances with subsequent ready Blocks, not elapsed days.
+The model summarizes L0–L2. Fixed rules generate L3/L4: L3 removes standalone fillers and repeated long content, while L4 stays near-verbatim; both compact recognized tool records. Session memory decay advances with subsequent ready Blocks, not elapsed days.
 
 <details>
 <summary>Exact pruning rules, decay formula, and level thresholds</summary>
@@ -189,7 +193,7 @@ Older conversations can therefore remain lightweight during ordinary use while r
 
 ### 2. Long-term memory: Events preserve history, the graph organizes current state, and topics help find relevant records
 
-Short-term memory retains a discussion's context. Long-term memory organizes information with future value. The example below shows a project switching from npm to pnpm and the three views of that change:
+Session memory retains a discussion's context. Long-term memory organizes information with future value. The example below shows a project switching from npm to pnpm and the three views of that change:
 
 ![Figure 3: Long-term memory—Events preserve the choice history, the graph shows pnpm in use with CI verification pending, and topics organize context with source links](docs/assets/stratagate-long-term-memory-views-en.png)
 
@@ -299,7 +303,7 @@ References must belong to the selected retrieval batch. Accepting `sufficient` r
 
 ### 4. Retrieval hits do not automatically reinforce memory: repeated adoption means slower future decay
 
-Long-term memories also decay as conversations progress. Here, the changing quantity is an Event's weight, which participates in later recall and ranking. Unlike a short-term Block, an Event does not move through L0–L5 display levels as its weight decays.
+Long-term memories also decay as conversations progress. Here, the changing quantity is an Event's weight, which participates in later recall and ranking. Unlike a session memory Block, an Event does not move through L0–L5 display levels as its weight decays.
 
 ![Figure 4: Long-term memory weights—natural decay, retrieval without reinforcement, and adoption-based reinforcement](docs/assets/stratagate-long-term-weight-en.png)
 
@@ -399,7 +403,7 @@ Each system generated answers, and each answer received **10 independent Judge e
 
 Both systems used the same questions, order, answer model, Judge model, evaluation prompt, parser, and evaluation count, and each rebuilt its memory. Memory extraction, retrieval implementation, embedding use, and answer context differed, so this compares two complete system configurations.
 
-These results cover only `conv-26`, not the full LoCoMo dataset. They do not isolate the benefits of short-term decay, the knowledge graph, or the evidence gate. Individual contributions still require ablation experiments.
+These results cover only `conv-26`, not the full LoCoMo dataset. They do not isolate the benefits of session memory decay, the knowledge graph, or the evidence gate. Individual contributions still require ablation experiments.
 
 See the [evaluation document](docs/EVALUATION.md) for the full protocol, per-question results, and Judge variation, and the [machine-readable results](benchmarks/locomo-conv26-r8-final.json) for summary data.
 
