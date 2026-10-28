@@ -170,7 +170,7 @@ describe('one-time section membership backfill', () => {
       expect(memory.listTopicProjectionJobs().find(({ id }) => id === failedJob)).toMatchObject({ attempts: 3, status: 'failed', nextRetryAt: null });
       const retry = await memory.retryTopicProjection(failedJob);
       await expect(memory.retryTopicProjection(failedJob)).rejects.toThrow(/retry conflict/);
-      const contextA = (await memory.claimNextTopicProjection('bootstrap'))!;
+      const contextA = (await memory.claimNextTopicProjection('incremental'))!;
       expect(contextA.jobId).toBe(retry.jobId); expect(contextA.sectionBackfillTopicId).toBe(chapterA.id);
       await memory.completeTopicProjection(contextA.jobId, repair(contextA));
       expect(memory.exportSnapshot().memoryTopicState!.sectionBackfill).toEqual({});
@@ -226,7 +226,7 @@ describe('one-time section membership backfill', () => {
     expect(directory.hasPending(snapshot.events, clock)).toBe(false);
     expect(directory.claim(snapshot.events, new Date(clock).toISOString())).toBeNull();
     directory.retry(last, snapshot.events, new Date(clock).toISOString());
-    const context = directory.claim(snapshot.events, new Date(clock).toISOString(), 'bootstrap')!;
+    const context = directory.claim(snapshot.events, new Date(clock).toISOString(), 'incremental')!;
     directory.complete(context.jobId, repair(context), snapshot.events, new Date(clock).toISOString());
     expect(directory.hasPending(snapshot.events, clock)).toBe(false);
   });

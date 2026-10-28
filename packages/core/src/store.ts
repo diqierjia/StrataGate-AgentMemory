@@ -2024,12 +2024,12 @@ export class StrataGate {
    * conversation; omitting it intentionally returns every thread in this
    * StrataGate namespace (never another namespace).
    */
-  getBlockContext(threadId?: string): BlockContextEntry[] {
+  getBlockContext(threadId?: string, blockIds?: ReadonlySet<string>): BlockContextEntry[] {
     const timeline = buildBlockTimeline(this.blocks);
     const blocks = threadId === undefined
       ? this.blocks.filter((block) => block.processingStatus === 'ready')
       : this.blocks.filter((block) => block.threadId === threadId && block.processingStatus === 'ready');
-    return blocks.map((block) => {
+    return blocks.filter((block) => !blockIds || blockIds.has(block.id)).map((block) => {
       const { age, level } = getBlockDecayView(block, timeline.get(block.id)!, this.blockDecayLambda);
       block.pointerCurrentLevel = level;
       return {
@@ -2046,28 +2046,40 @@ export class StrataGate {
   }
 
   async setBlockSurfaceLevel(id: string, level: BlockLevel): Promise<void> {
-    await this.commitMutation(() => {
-      const block = this.blocks.find((candidate) => candidate.id === id);
-      if (!block) throw new Error(`Unknown block: ${id}`);
-      if (block.processingStatus !== 'ready') throw new Error(`Block ${id} is not ready for surface tracking`);
-      block.surfaceCurrentLevel = level;
+    await this.setBlockSurfaceLevels([{ id, level }]);
+  }
+
+  /** Record a whole surface pass once; unchanged values never create a snapshot or revision. */
+  async setBlockSurfaceLevels(updates: readonly { id: string; level: BlockLevel }[]): Promise<number> {
+    const levels = new Map(updates.map(({ id, level }) => [id, level]));
+    if (levels.size === 0) return 0;
+    return this.withMutationQueue(async () => {
+      const byId = new Map(this.blocks.map((block) => [block.id, block]));
+      const changed: { block: MemoryBlock; level: BlockLevel }[] = [];
+      for (const [id, level] of levels) {
+        if (!Number.isInteger(level) || level < 0 || level > 5) throw new TypeError(`Invalid block surface level: ${level}`);
+        const block = byId.get(id);
+        if (!block) throw new Error(`Unknown block: ${id}`);
+        if (block.processingStatus !== 'ready') throw new Error(`Block ${id} is not ready for surface tracking`);
+        if (block.surfaceCurrentLevel !== level) changed.push({ block, level });
+      }
+      if (changed.length === 0) return 0;
+      return this.applyMutation(() => {
+        for (const { block, level } of changed) block.surfaceCurrentLevel = level;
+        return changed.length;
+      });
     });
   }
 
   async expandBlock(id: string, target: unknown = 'next', source: BlockLiftSource = 'agent'): Promise<BlockContextEntry> {
-    return this.commitMutation(() => {
+    return this.withMutationQueue(async () => {
       const block = this.blocks.find((candidate) => candidate.id === id);
       if (!block) throw new Error(`Unknown block: ${id}`);
       if (block.processingStatus !== 'ready') throw new Error(`Block ${id} is not ready for decay or expansion`);
       const position = buildBlockTimeline(this.threadBlocks(block.threadId)).get(block.id)!;
       const { age, level: current } = getBlockDecayView(block, position, this.blockDecayLambda);
       const level = normalizeBlockLevel(target, current);
-      block.pointerCurrentLevel = level;
-      block.pointerAnchorLevel = level;
-      block.pointerAnchorBlockPosition = position.latestBlockPosition;
-      block.lastLiftedAt = toUtc8Iso(this.now());
-      block.lastLiftedBy = source;
-      return {
+      const result: BlockContextEntry = {
         id: block.id,
         ...(block.threadId ? { threadId: block.threadId } : {}),
         turnRange: [block.startTurn, block.endTurn] as [number, number],
@@ -2077,6 +2089,17 @@ export class StrataGate {
         label: blockLevelLabel(level),
         content: renderBlock(block, level),
       };
+      // Agent evidence reads cannot replace an explicit user's selection or
+      // restart its decay clock. They need neither a snapshot nor a DB write.
+      if (source === 'agent' && block.lastLiftedBy === 'user') return result;
+      return this.applyMutation(() => {
+        block.pointerCurrentLevel = level;
+        block.pointerAnchorLevel = level;
+        block.pointerAnchorBlockPosition = position.latestBlockPosition;
+        block.lastLiftedAt = toUtc8Iso(this.now());
+        block.lastLiftedBy = source;
+        return result;
+      });
     });
   }
 
@@ -3644,6 +3667,10 @@ export class StrataGate {
   }
 
   private async commitMutation<T>(mutation: () => T | Promise<T>, graphEpoch?: number): Promise<T> {
+    return this.withMutationQueue(() => this.applyMutation(mutation, graphEpoch));
+  }
+
+  private async withMutationQueue<T>(operation: () => Promise<T>): Promise<T> {
     if (this.storage?.readonly) throw new Error('Cannot mutate read-only StrataGate storage.');
     const previous = this.mutationQueue;
     let release!: () => void;
@@ -3651,14 +3678,19 @@ export class StrataGate {
       release = resolve;
     });
     await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  /** The caller owns mutationQueue, including any no-op preflight. */
+  private async applyMutation<T>(mutation: () => T | Promise<T>, graphEpoch?: number): Promise<T> {
     if (!this.storage) {
-      try {
-        const result = await mutation();
-        this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
-        return result;
-      } finally {
-        release();
-      }
+      const result = await mutation();
+      this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
+      return result;
     }
 
     const before = this.exportSnapshot();
@@ -3678,8 +3710,6 @@ export class StrataGate {
       this.pendingRawDeletes.clear();
       for (const id of beforeRawDeletes) this.pendingRawDeletes.add(id);
       throw error;
-    } finally {
-      release();
     }
   }
 

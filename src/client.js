@@ -456,6 +456,7 @@ window.__ModuleLoader__.load({
       .sg-profile-content{display:flex;align-items:center;min-width:0}.sg-profile-saved{flex-shrink:0;margin-left:8px;color:var(--sg-good);font-size:12px;white-space:nowrap}.sg-profile-save-feedback{margin:5px 0 0;color:var(--sg-warn);font-size:12px;line-height:1.5}.sg-profile-save-feedback p{margin:0}.sg-profile-save-feedback p+p{margin-top:3px}
       .sg-profile-summary.editing{align-items:start;padding:8px 0}.sg-profile-summary.editing>.sg-profile-label{padding-top:8px}.sg-profile-summary.editing>.sg-profile-action{visibility:hidden}.sg-profile-content .sg-profile-value{border:0;padding:0;background:transparent;text-align:left;font-family:inherit;cursor:text}.sg-profile-content .sg-profile-value:disabled{cursor:default}.sg-profile-editor{min-width:0;padding:0}.sg-profile-editor-foot{margin-top:5px}.sg-profile-actions .sg-save-button{padding:6px 10px;font-size:12px}
       @media(max-width:560px){.sg-profile-summary{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px}.sg-profile-summary.editing{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}.sg-profile-summary.editing>.sg-profile-action{display:none}.sg-profile-editor-foot{flex-wrap:wrap;gap:4px}.sg-profile-editor-foot .sg-profile-actions{margin-left:auto}.sg-profile-group{padding:11px 12px 2px}.sg-profile-label,.sg-profile-value{font-size:12px}}
+      .sg-layer-item{grid-template-columns:39px minmax(0,1fr) auto}.sg-layer-use,.sg-layer-using{display:flex;align-items:center;justify-content:center;min-width:0;max-width:10rem;padding:7px 10px;border:0;border-left:1px solid var(--sg-border);border-radius:0 6px 6px 0;background:transparent;color:var(--sg-accent);font:inherit;font-size:12px;line-height:1.45;white-space:normal;text-align:center}.sg-layer-use{cursor:pointer}.sg-layer-use:hover:not(:disabled){background:color-mix(in srgb,var(--sg-accent) 10%,transparent)}.sg-layer-use:focus-visible{outline:2px solid var(--sg-accent);outline-offset:-3px}.sg-layer-use:disabled{cursor:wait;opacity:.6}.sg-layer-using{color:var(--sg-muted)}.sg-layer-hint{margin:0 0 10px;color:var(--sg-muted);font-size:12px;line-height:1.6}.sg-selection-feedback{margin:0 12px 10px;padding:8px 10px;border-radius:6px;background:var(--sg-soft);color:var(--sg-muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere}.sg-selection-feedback.error{background:var(--sg-danger-soft);color:var(--sg-danger)}
       ${eventDetailCss}
       ${topicDirectoryCss}
     `
@@ -2623,12 +2624,12 @@ window.__ModuleLoader__.load({
       return 'Turn ' + range[0] + '–' + range[1]
     }
 
-    function LayerPreview({ layer, currentLevel, expanding, menuOpen, allowExpand, onMenuToggle, onExpand }) {
+    function LayerPreview({ layer, currentLevel, expanding, busy, pendingSelection, allowExpand, onExpand }) {
       const itemRef = React.useRef(null)
       const hideTimer = React.useRef(null)
       const popoverRef = React.useRef(null)
       const level = Number(layer.level)
-      const actionable = allowExpand && level > currentLevel
+      const actionable = allowExpand && Number.isInteger(level) && (level !== currentLevel || pendingSelection)
 
       const cancelHide = () => {
         if (hideTimer.current) window.clearTimeout(hideTimer.current)
@@ -2642,6 +2643,7 @@ window.__ModuleLoader__.load({
         cancelHide()
         const rect = itemRef.current?.getBoundingClientRect()
         if (!rect) return
+        const inline = window.innerWidth < 860
         const width = Math.min(390, Math.max(240, window.innerWidth - 24))
         const maxHeight = Math.min(520, window.innerHeight * 0.7)
         const right = rect.right + 12
@@ -2664,11 +2666,15 @@ window.__ModuleLoader__.load({
           popover.append(title, content)
           popover.addEventListener('mouseenter', cancelHide)
           popover.addEventListener('mouseleave', scheduleHide)
-          document.body.appendChild(popover)
+          if (inline) itemRef.current.parentElement.appendChild(popover)
+          else document.body.appendChild(popover)
           popoverRef.current = popover
         }
-        popoverRef.current.style.left = left + 'px'
-        popoverRef.current.style.top = top + 'px'
+        popoverRef.current.style.setProperty('position', inline ? 'relative' : 'fixed', 'important')
+        popoverRef.current.style.width = inline ? 'auto' : width + 'px'
+        popoverRef.current.style.left = inline ? '0' : left + 'px'
+        popoverRef.current.style.top = inline ? '0' : top + 'px'
+        popoverRef.current.style.maxHeight = inline ? '240px' : maxHeight + 'px'
       }
       const scheduleHide = () => {
         cancelHide()
@@ -2677,41 +2683,39 @@ window.__ModuleLoader__.load({
       React.useEffect(() => () => { cancelHide(); removePopover() }, [])
 
       return h('div', { className: 'sg-layer-hover' },
-        h('div', { ref: itemRef, className: 'sg-layer-item ' + (level === currentLevel ? 'current' : ''), 'data-level': String(level), tabIndex: 0, onMouseEnter: showPopover, onMouseLeave: scheduleHide, onFocus: showPopover, onBlur: scheduleHide },
+        h('div', { ref: itemRef, className: 'sg-layer-item ' + (level === currentLevel ? 'current' : ''), 'data-level': String(level) },
           h('span', { className: 'sg-layer-label' }, 'L' + level),
-          h('span', { className: 'sg-layer-preview' }, previewText(layer.content)),
-          actionable ? h('button', { className: 'sg-layer-more', type: 'button', 'aria-label': 'L' + level + ' 操作', 'aria-expanded': menuOpen ? 'true' : 'false', onClick: (event) => { event.stopPropagation(); onMenuToggle(level) } }, '···') : h('span', { className: 'sg-layer-more-placeholder', 'aria-hidden': 'true' }),
-          menuOpen ? h('div', { className: 'sg-layer-menu' }, h('button', { type: 'button', disabled: expanding, onClick: (event) => { event.stopPropagation(); onMenuToggle(null); void onExpand(level) } }, expanding ? '正在展开…' : '展开到这一层')) : null))
+          h('span', { className: 'sg-layer-preview', tabIndex: 0, onMouseEnter: showPopover, onMouseLeave: scheduleHide, onFocus: showPopover, onBlur: scheduleHide }, previewText(layer.content)),
+          actionable ? h('button', { className: 'sg-layer-use', type: 'button', disabled: busy, onMouseEnter: removePopover, onFocus: removePopover, onClick: (event) => { event.stopPropagation(); void onExpand(level) } }, expanding ? '正在应用…' : '让助手参考 L' + level)
+            : h('span', { className: 'sg-layer-using' }, level === currentLevel ? '助手可见' : '仅供预览')))
     }
 
-    function BlockLayerPanel({ block, detail, loading, expandingLevel, onExpand }) {
-      const [openMenuLevel, setOpenMenuLevel] = React.useState(null)
-      React.useEffect(() => {
-        const closeMenu = (event) => {
-          if (event.key === 'Escape') { setOpenMenuLevel(null); return }
-          const target = event.target
-          if (!target?.closest?.('.sg-layer-more, .sg-layer-menu')) setOpenMenuLevel(null)
-        }
-        document.addEventListener('pointerdown', closeMenu)
-        document.addEventListener('keydown', closeMenu)
-        return () => {
-          document.removeEventListener('pointerdown', closeMenu)
-          document.removeEventListener('keydown', closeMenu)
-        }
-      }, [])
+    function BlockLayerPanel({ block, detail, loading, expandingLevel, selectionBusy, onExpand }) {
       if (loading) return h('div', { className: 'sg-layer-panel' }, h(Loading))
       const layers = Array.isArray(detail?.layers) ? detail.layers : []
+      const visibleLevel = visibleBlockLevel(block)
       return h('div', { className: 'sg-layer-panel' },
-        h('div', { className: 'sg-layer-heading' }, h('strong', null, '分层内容预览'), h('span', null, '当前层级：L' + block.currentLevel + ' · 悬停可查看完整内容')),
+        h('div', { className: 'sg-layer-heading' }, h('strong', null, '分层内容预览'), h('span', null, '助手可见：' + (visibleLevel === null ? '尚未确认' : 'L' + visibleLevel))),
+        h('p', { className: 'sg-layer-hint' }, '预览不会改变助手可见的内容。悬停或聚焦可查看完整内容。'),
         block.virtual ? h('div', { className: 'sg-virtual-note' }, '旧会话展示片段为只读内容，不会改写原始数据库。') : null,
-        layers.length ? h('div', { className: 'sg-layer-stack' }, layers.slice().sort((a, b) => a.level - b.level).map((layer) => h(LayerPreview, { key: layer.level, layer, currentLevel: block.currentLevel, expanding: expandingLevel === layer.level, menuOpen: openMenuLevel === layer.level, allowExpand: !block.virtual, onMenuToggle: (level) => setOpenMenuLevel((current) => current === level ? null : level), onExpand }))) : h('div', { className: 'sg-muted' }, '暂时无法读取该 Block 的分层内容。'))
+        layers.length ? h('div', { className: 'sg-layer-stack' }, layers.slice().sort((a, b) => a.level - b.level).map((layer) => h(LayerPreview, { key: layer.level, layer, currentLevel: visibleLevel, expanding: expandingLevel === layer.level, busy: selectionBusy || expandingLevel >= 0, pendingSelection: block.surfaceSync?.status === 'pending' || block.surfaceSync?.status === 'blocked', allowExpand: !block.virtual, onExpand }))) : h('div', { className: 'sg-muted' }, '暂时无法读取这段历史的分层内容。'))
     }
 
-    function expansionLabel(source) {
-      if (source === 'user') return '用户展开'
-      if (source === 'agent') return 'Agent 展开'
-      if (source === 'legacy') return '曾展开'
-      return ''
+    function visibleBlockLevel(block) {
+      return block.surfaceLevelKnown === false || !Number.isInteger(block.currentLevel) ? null : block.currentLevel
+    }
+
+    function BlockSelectionFeedback({ block, feedback, onRefresh }) {
+      const value = feedback || block.surfaceSync
+      if (!value || value.status === 'applied' && !feedback) return null
+      const visible = visibleBlockLevel(block)
+      const current = visible === null ? '助手可见的层级尚未确认。' : (value.uncertain ? '上次确认助手可见 L' : '助手当前可见 L') + visible + '。'
+      const level = value.level ?? block.targetLevel
+      const selected = Number.isInteger(level) ? 'L' + level : '所选内容'
+      const message = value.status === 'applied' ? value.message
+        : (value.status === 'pending' ? '已选择 ' + selected + '。' : '暂时无法应用 ' + selected + '。') + value.message + ' ' + current
+      return h('div', { className: 'sg-selection-feedback' + (value.status === 'blocked' ? ' error' : ''), role: value.status === 'blocked' ? 'alert' : 'status' }, message,
+        value.uncertain && onRefresh ? h('button', { type: 'button', className: 'sg-quiet-button', onClick: onRefresh }, '刷新状态') : null)
     }
 
     function SummaryUnavailable({ namespace, block }) {
@@ -2765,8 +2769,28 @@ window.__ModuleLoader__.load({
       const [details, setDetails] = React.useState({})
       const [loadingId, setLoadingId] = React.useState('')
       const [expanding, setExpanding] = React.useState({ blockId: '', level: -1 })
-      const [inlineError, setInlineError] = React.useState('')
+      const [previewError, setPreviewError] = React.useState(null)
+      const [selectionFeedback, setSelectionFeedback] = React.useState({})
+      const scope = namespace + '\u0000' + activeThreadId
+      const activeScope = React.useRef(scope)
+      activeScope.current = scope
+      const selectionRequest = React.useRef(null)
       const currentOpen = openBlock || { turnRange: null, messages: 0, status: 'open' }
+
+      React.useEffect(() => {
+        setExpandedId(''); setDetails({}); setLoadingId(''); setPreviewError(null); setSelectionFeedback({})
+      }, [scope])
+
+      React.useEffect(() => {
+        const applied = Object.entries(selectionFeedback).filter(([, value]) => value?.status === 'applied')
+        if (!applied.length) return undefined
+        const timer = window.setTimeout(() => setSelectionFeedback((current) => {
+          const next = { ...current }
+          for (const [id, value] of applied) if (next[id] === value) delete next[id]
+          return next
+        }), 4000)
+        return () => window.clearTimeout(timer)
+      }, [selectionFeedback])
 
       React.useEffect(() => {
         const node = distributionRef.current
@@ -2785,23 +2809,47 @@ window.__ModuleLoader__.load({
       const toggleBlock = (block) => {
         if (expandedId === block.id) { setExpandedId(''); return }
         setExpandedId(block.id)
-        setInlineError('')
+        setPreviewError(null)
         if (details[block.id]) return
         setLoadingId(block.id)
         void api('sources', { namespace, blockId: block.id })
-          .then((value) => setDetails((current) => ({ ...current, [block.id]: value })))
-          .catch((reason) => setInlineError(String(reason.message || reason)))
-          .finally(() => setLoadingId(''))
+          .then((value) => { if (activeScope.current === scope) setDetails((current) => ({ ...current, [block.id]: value })) })
+          .catch(() => { if (activeScope.current === scope) setPreviewError({ scope, blockId: block.id, message: '暂时无法读取预览，请稍后重新打开。' }) })
+          .finally(() => { if (activeScope.current === scope) setLoadingId((current) => current === block.id ? '' : current) })
       }
 
-      const expandTo = (block, level) => {
-        setInlineError('')
-        setExpanding({ blockId: block.id, level })
-        return api('blocks/expand', { namespace, blockId: block.id, level: 'L' + level }, { method: 'PATCH' })
-          .then(() => refresh())
-          .then(() => pagedBlocks.page.offset > 0 ? pagedBlocks.loadOffset(pagedBlocks.page.offset) : null)
-          .catch((reason) => setInlineError(String(reason.message || reason)))
-          .finally(() => setExpanding({ blockId: '', level: -1 }))
+      const expandTo = async (block, level) => {
+        if (selectionRequest.current?.scope === scope) return
+        const request = { scope, blockId: block.id, level }
+        selectionRequest.current = request
+        const isCurrent = () => activeScope.current === scope && selectionRequest.current === request
+        setSelectionFeedback((current) => ({ ...current, [block.id]: null }))
+        setExpanding(request)
+        let result
+        try {
+          result = await api('blocks/expand', { namespace, blockId: block.id, level: 'L' + level }, { method: 'PATCH' })
+        } catch (reason) {
+          const rejected = reason?.code === 'BLOCK_SELECTION_REJECTED' || [400, 403, 404, 409].includes(reason?.status)
+          if (isCurrent()) setSelectionFeedback((current) => ({ ...current, [block.id]: {
+            scope, level, status: rejected ? 'blocked' : 'pending', uncertain: !rejected,
+            message: rejected ? (/[\u4e00-\u9fff]/.test(reason?.message || '') ? reason.message.replace('（blocks/expand）', '') : '这次选择未能应用，请稍后重试。') : '暂时无法确认应用结果，请刷新后查看。',
+          } }))
+        }
+        if (isCurrent()) {
+          try {
+            await refresh()
+            if (isCurrent() && pagedBlocks.page.offset > 0) await pagedBlocks.loadOffset(pagedBlocks.page.offset)
+            if (result && isCurrent()) setSelectionFeedback((current) => ({ ...current, [block.id]: result.surfaceSync?.status === 'applied'
+              ? { scope, level, status: 'applied', message: '已应用 L' + level + '，供助手后续回复参考。' }
+              : null }))
+          } catch {
+            if (isCurrent()) setSelectionFeedback((current) => ({ ...current, [block.id]: { scope, level, status: 'pending', uncertain: true, message: '暂时无法确认应用结果，请刷新后查看。' } }))
+          }
+        }
+        if (selectionRequest.current === request) {
+          selectionRequest.current = null
+          setExpanding({ blockId: '', level: -1 })
+        }
       }
 
       return h(React.Fragment, null,
@@ -2811,23 +2859,31 @@ window.__ModuleLoader__.load({
             h('label', { className: 'sg-conversation' }, h('span', null, '当前对话：'), h('select', { value: activeThreadId || '', disabled: !conversations.length, onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))),
           h('p', { className: 'sg-decay-copy' }, 'L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。'),
           h('div', { ref: distributionRef, className: 'sg-distribution', 'aria-label': 'Block 当前层级分布', onScroll: (event) => { const node = event.currentTarget; setRail({ value: Math.round(node.scrollLeft), max: Math.max(0, node.scrollWidth - node.clientWidth) }) }, onWheel: (event) => { if (rail.max <= 0) return; event.preventDefault(); event.currentTarget.scrollLeft += event.deltaY + event.deltaX } },
-            visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': String(block.currentLevel), title: 'Block #' + block.sequence }, 'L' + block.currentLevel)),
+            visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: 'Block #' + block.sequence }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
             h('span', { className: 'sg-level-chip sg-open-chip' }, '开放块 · 未封存')),
           h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: String(Math.max(1, rail.max)), step: '1', value: String(Math.min(rail.value, Math.max(1, rail.max))), disabled: rail.max <= 0, onChange: (event) => { const value = Number(event.target.value); if (distributionRef.current) distributionRef.current.scrollLeft = value; setRail((current) => ({ ...current, value })) }, 'aria-label': 'Block 分布滑轨' }),
           h('div', { className: 'sg-time-direction', 'aria-hidden': 'true' }, h('span', null, '更旧'), h('span', { className: 'sg-time-line' }), h('span', null, '更新 →')),
           h('div', { className: 'sg-overview-meta' }, h('span', null, '已封存块：本页 ' + visible.length + ' / 共 ' + pagedBlocks.page.total), h('span', null, '开放块：' + turnRangeText(currentOpen.turnRange) + '（未封存）'))),
         h('section', { className: 'sg-block-list', 'aria-label': 'Block 列表' },
-          h('div', { className: 'sg-block-header', 'aria-hidden': 'true' }, h('span', null, '当前层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
-          inlineError ? h('div', { className: 'sg-inline-error' }, '操作未完成：' + inlineError) : null,
+          h('div', { className: 'sg-block-header', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
           visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
             h('button', { className: 'sg-block-toggle', type: 'button', onClick: () => toggleBlock(block), 'aria-expanded': expandedId === block.id ? 'true' : 'false' },
-              h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-level-badge', 'data-level': String(block.currentLevel) }, 'L' + block.currentLevel), expansionLabel(block.expansionSource) ? h('span', { className: 'sg-lifted' }, expansionLabel(block.expansionSource)) : null),
+              h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-level-badge', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: '助手可参考的详细程度' }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
               h('span', { className: 'sg-block-name' }, (block.virtual ? '旧 Block #' : 'Block #') + block.sequence),
               h('span', { className: 'sg-block-turn' }, turnRangeText(block.turnRange)),
               h('span', { className: 'sg-block-distance' }, block.distanceFromLatest === 0 ? '0（最新）' : block.distanceFromLatest + ' 个 Block'),
               h('span', { className: 'sg-row-chevron', 'aria-hidden': 'true' }, expandedId === block.id ? '⌃' : '›')),
+            h(BlockSelectionFeedback, { block, feedback: selectionFeedback[block.id]?.scope === scope ? selectionFeedback[block.id] : null, onRefresh: async () => {
+              try {
+                await refresh()
+                if (activeScope.current !== scope) return
+                if (pagedBlocks.page.offset > 0) await pagedBlocks.loadOffset(pagedBlocks.page.offset)
+                if (activeScope.current === scope) setSelectionFeedback((current) => ({ ...current, [block.id]: null }))
+              } catch { /* Keep the existing explanation and refresh action available. */ }
+            } }),
+            previewError?.scope === scope && previewError.blockId === block.id ? h('div', { role: 'alert', className: 'sg-selection-feedback error' }, previewError.message) : null,
             summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
-            expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, expandingLevel: expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
+            expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
           h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-block-toggle sg-open-row' },
             h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-open-badge' }, '开放块')),
             h('span', { className: 'sg-block-name' }, '未封存'),

@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { normalizeRetrievalAssessment } from '../src/index.js';
 
 describe('evidence gate', () => {
+  it.each(['wrong', 'partial', 'sufficient'] as const)('normalizes null refs like an empty array for %s without granting sufficiency', (verdict) => {
+    const input = { verdict, fit: '', missing: 'No evidence adopted.', next_strategy: 'answer' }
+    const normalized = normalizeRetrievalAssessment({ ...input, evidence_refs: null }, new Set(['fresh']))
+    expect(normalized).toEqual(normalizeRetrievalAssessment({ ...input, evidence_refs: [] }, new Set(['fresh'])))
+    expect(normalized.evidenceRefs).toEqual([])
+    expect(normalized.verdict).not.toBe('sufficient')
+  })
+
   it('accepts sufficient only with fresh evidence and the answer strategy', () => {
     expect(normalizeRetrievalAssessment({
       verdict: 'sufficient',

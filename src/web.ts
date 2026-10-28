@@ -1398,6 +1398,7 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         summary: source.l1Summary,
         keypoints: source.l2Keypoints,
         currentLevel,
+        surfaceLevelKnown: source.surfaceCurrentLevel !== undefined,
         targetLevel,
         currentTokens: currentMetrics?.tokens ?? 0,
         l5Tokens,
@@ -1405,6 +1406,11 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         layerTokens,
         distanceFromLatest: age,
         expansionSource: source.lastLiftedAt ? source.lastLiftedBy ?? 'legacy' : null,
+        surfaceSync: source.lastLiftedBy === 'user'
+          ? runtime.adminBlockSurfaceSync?.(namespace, source.id) ?? (source.surfaceCurrentLevel === undefined || currentLevel !== targetLevel && targetLevel === source.pointerAnchorLevel
+            ? { status: 'pending', reason: 'session-unloaded', message: '已保存选择，打开这段对话后生效。' }
+            : { status: 'applied', message: '已应用，供助手后续回复参考。' })
+          : null,
         lastLiftedAt: source.lastLiftedAt,
         sourceMessages: block.messages.length,
         createdAt: source.createdAt,
@@ -1579,7 +1585,14 @@ async function expandBlock(runtime: StrataGateRuntime, url: URL): Promise<unknow
   if (!blockId) throw new AdminHttpError(400, 'blockId is required')
   if (blockId.startsWith('virtual:')) throw new AdminHttpError(409, 'Recovered legacy fragments are read-only display data')
   if (!/^L?[0-5]$/i.test(target)) throw new AdminHttpError(400, 'level must be L0 through L5')
-  return runtime.adminExpandBlock(namespace, blockId, target)
+  try {
+    return await runtime.adminExpandBlock(namespace, blockId, target)
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'BLOCK_SELECTION_REJECTED') {
+      throw new AdminHttpError(409, error.message, { code: 'BLOCK_SELECTION_REJECTED' })
+    }
+    throw error
+  }
 }
 
 async function retryBlockSummary(runtime: StrataGateRuntime, url: URL): Promise<unknown> {

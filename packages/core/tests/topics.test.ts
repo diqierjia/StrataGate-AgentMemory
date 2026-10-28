@@ -298,7 +298,7 @@ describe('rebuildable Event-backed topic directory', () => {
     expect(memory.getMemoryTopic(id!)!.sections).toEqual([{ title: '发展脉络', sourceEventIds: [old!.id] }, { title: '新小节', sourceEventIds: [added!.id] }]);
   });
 
-  it('keeps exhausted collateral rebuild retries historical even after Bootstrap originally completed', async () => {
+  it('gives an explicit collateral rebuild retry one priority attempt after Bootstrap originally completed', async () => {
     let clock = Date.parse('2026-10-06T00:00:00Z');
     const memory = StrataGate.inMemory(options); const events = await seed(memory, 2);
     const directory = new MemoryTopicDirectory(); const now = () => new Date(clock).toISOString();
@@ -316,8 +316,8 @@ describe('rebuildable Event-backed topic directory', () => {
     expect(directory.claim(events, now(), 'incremental')).toBeNull();
     const retry = directory.retry(job.jobId, events, now());
     const restarted = new MemoryTopicDirectory(); restarted.restore(directory.snapshot());
-    expect(restarted.hasPending(events, clock, 'incremental')).toBe(false);
-    const fresh = restarted.claim(events, now(), 'bootstrap')!;
+    expect(restarted.hasPending(events, clock, 'incremental')).toBe(true);
+    const fresh = restarted.claim(events, now(), 'incremental')!;
     expect(fresh.jobId).toBe(retry.jobId);
     restarted.complete(fresh.jobId, projection(fresh), events, now());
     expect(restarted.snapshot().rebuildVersions).toEqual({});
@@ -568,10 +568,10 @@ describe('rebuildable Event-backed topic directory', () => {
     const retry = directory.retry(oldId, events, new Date(clock).toISOString());
     expect(retry.jobId).not.toBe(oldId);
     expect(directory.bootstrap()).toMatchObject({ status: 'pending', completedAt: null, failedEvents: 0 });
-    expect(directory.hasPending(events, clock, 'incremental')).toBe(false);
-    expect(directory.hasPending(events, clock, 'bootstrap')).toBe(true);
+    expect(directory.hasPending(events, clock, 'incremental')).toBe(true);
+    expect(directory.hasPending(events, clock, 'bootstrap')).toBe(false);
     expect(() => directory.retry(oldId, events, new Date(clock).toISOString())).toThrow(/conflict/);
-    context = directory.claim(events, new Date(clock).toISOString(), 'bootstrap')!;
+    context = directory.claim(events, new Date(clock).toISOString(), 'incremental')!;
     expect(context.jobId).toBe(retry.jobId);
     expect(directory.jobs().find(({ id }) => id === context.jobId)!.attempts).toBe(1);
     expect(() => directory.complete(oldId, projection(context), events, new Date(clock).toISOString())).toThrow(/not running/);
@@ -585,7 +585,7 @@ describe('rebuildable Event-backed topic directory', () => {
     expect(directory.hasPending(events, clock)).toBe(false);
     expect(directory.bootstrap()).toMatchObject({ status: 'failed', failedEvents: 2 });
     directory.retry(context.jobId, events, new Date(clock).toISOString());
-    context = directory.claim(events, new Date(clock).toISOString(), 'bootstrap')!;
+    context = directory.claim(events, new Date(clock).toISOString(), 'incremental')!;
     directory.complete(context.jobId, projection(context), events, new Date(clock).toISOString());
     directory.synchronize(events, new Date(clock).toISOString());
     expect(directory.bootstrap()).toMatchObject({ status: 'completed', failedEvents: 0 });
@@ -1153,6 +1153,29 @@ describe('Topic failure diagnostics and bounded recovery (#119)', () => {
     directory.initializeBootstrap(events, new Date(clock).toISOString());
     return { memory, events, directory, clock };
   };
+  it('consumes one durable manual attempt before returning failed historical work to its ordinary budget', async () => {
+    const { events, directory, clock: initial } = await start(2);
+    let clock = initial, id = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const claimed = directory.claim(events, new Date(clock).toISOString(), 'bootstrap')!;
+      id = claimed.jobId;
+      directory.fail(id, new Error('synthetic model failure'), new Date(clock).toISOString());
+      clock += 120_000;
+    }
+    const retry = directory.retry(id, events, new Date(clock).toISOString());
+    const restored = new MemoryTopicDirectory(); restored.restore(directory.snapshot());
+    expect(restored.nextWakeTimes(events, clock)).toEqual({ incremental: 0, bootstrap: null });
+    expect(restored.claim(events, new Date(clock).toISOString(), 'bootstrap')).toBeNull();
+    const claimed = restored.claim(events, new Date(clock).toISOString(), 'incremental')!;
+    expect(claimed.jobId).toBe(retry.jobId);
+    expect(restored.jobs().find(job => job.id === claimed.jobId)?.manualAttemptPending).toBeUndefined();
+    restored.fail(claimed.jobId, new Error('synthetic model failure'), new Date(clock).toISOString());
+    clock += 120_000;
+    expect(restored.hasPending(events, clock, 'incremental')).toBe(false);
+    expect(restored.nextWakeTimes(events, clock)).toEqual({ incremental: null, bootstrap: 0 });
+    expect(restored.claim(events, new Date(clock).toISOString(), 'incremental')).toBeNull();
+    expect(restored.claim(events, new Date(clock).toISOString(), 'bootstrap')?.events).toHaveLength(2);
+  });
   it('splits explicit max-tokens without changing evidence, reprocessing success or accepting old replies', async () => {
     const { events, directory, clock } = await start();
     const now = (delta = 0) => new Date(clock + delta).toISOString();
