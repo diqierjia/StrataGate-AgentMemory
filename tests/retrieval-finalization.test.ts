@@ -83,6 +83,30 @@ const record = (used: boolean) => (request: GenerateOptions): Reply => ({ calls:
 })) })
 
 describe('retrieval finalization through the real DSH agent loop', () => {
+  it('answers after wrong + null assessment and null receipt without retrying or reinforcing evidence', async () => {
+    const answer = '这条历史记录不适用于当前问题。'
+    const host = await harness([retrieve, (request) => ({ calls: batches(request).map((batch) => ({
+      name: 'memory_assess', args: { batch_id: batch.batchId, verdict: 'wrong', evidence_refs: null,
+        fit: '', missing: 'The retrieved fact does not apply.', next_strategy: 'answer' },
+    })) }), (request) => ({ calls: batches(request).map((batch) => ({
+      name: 'memory_record_use', args: { batch_id: batch.batchId, evidence_refs: null },
+    })) }), () => ({ text: answer })])
+    try {
+      host.agent.followup(createUserMessage({ content: [{ type: 'text', text: '这个方案适合当前问题吗？' }], source: { kind: 'user' } }))
+      await host.agent.whenIdle()
+      const events = host.agent.session.snapshotEvents()
+      const answers = events.filter((event) => event.type === 'assistant/message' && event.data.message.content.some((block) => block.type === 'text'))
+      expect(answers).toHaveLength(1)
+      expect(JSON.stringify(answers[0])).toContain(answer)
+      const receipt = [...events].reverse().find((event) => event.type === 'tool/result')!
+      expect(answers[0]!.seq).toBeGreaterThan(receipt.seq)
+      expect(host.runtime.pendingBatchIds(host.agent.session)).toEqual([])
+      expect(host.memory.listEvents().find(({ id }) => id === host.event.id)?.weight.mentionCount).toBe(1)
+      expect(host.memory.exportSnapshot().usageReceipts).toMatchObject([{ eventIds: [], audit: { evidenceRefs: [], verdict: 'wrong' } }])
+      expect(host.adapter.requests).toHaveLength(4)
+    } finally { await host.close() }
+  })
+
   it('retrieves, assesses, records, then answers exactly once without recovery', async () => {
     const answer = '本项目选择 SQLite。'
     const host = await harness([retrieve, assess, record(true), (request) => {

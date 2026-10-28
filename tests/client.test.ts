@@ -9,7 +9,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, ProfilePage, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { DreamingPanel, MemoryPage, LongTermPage,')
+  ).replace('exports.__test = {', 'exports.__test = { DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -61,6 +61,94 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
+  it('separates preview from applying a layer and allows replacing a pending selection with the current layer', () => {
+    const { BlockLayerPanel, LayerPreview, visibleBlockLevel } = loadSupportHelpers()
+    const onExpand = vi.fn()
+    const panel = BlockLayerPanel({ block: { currentLevel: 4 }, detail: { layers: [] } })
+    expect(JSON.stringify(panel)).toContain('预览不会改变助手可见的内容')
+    expect(JSON.stringify(panel)).toContain('助手可见：L4')
+    expect(onExpand).not.toHaveBeenCalled()
+    const layer = LayerPreview({ layer: { level: 0 }, currentLevel: 4, allowExpand: true, onExpand })
+    buttonProps(layer, '让助手参考 L0').onClick({ stopPropagation() {} })
+    expect(onExpand).toHaveBeenCalledWith(0)
+    const current = { layer: { level: 4 }, currentLevel: 4, allowExpand: true, onExpand }
+    expect(buttonProps(LayerPreview(current), '让助手参考 L4')).toBeUndefined()
+    expect(JSON.stringify(LayerPreview(current))).toContain('助手可见')
+    expect(buttonProps(LayerPreview({ ...current, pendingSelection: true }), '让助手参考 L4')).toBeDefined()
+    expect(buttonProps(LayerPreview({ ...current, pendingSelection: true, busy: true }), '让助手参考 L4').disabled).toBe(true)
+    expect(buttonProps(LayerPreview({ ...current, currentLevel: 0, allowExpand: false }), '让助手参考 L4')).toBeUndefined()
+    expect(visibleBlockLevel({ currentLevel: 4, surfaceLevelKnown: false })).toBeNull()
+    expect(visibleBlockLevel({ currentLevel: 4, surfaceLevelKnown: true })).toBe(4)
+    const waiting = BlockLayerPanel({ block: { currentLevel: 0 }, detail: { layers: [{ level: 4 }] }, expandingLevel: -1, selectionBusy: true, onExpand })
+    expect(deepElementProps(waiting).find(props => props.layer)?.busy).toBe(true)
+  })
+
+  it('explains waiting and failure next to the Block, retaining the actual available layer', () => {
+    const { BlockSelectionFeedback } = loadSupportHelpers()
+    const block = { currentLevel: 0, targetLevel: 4, surfaceLevelKnown: true }
+    const waiting = BlockSelectionFeedback({ block: { ...block, surfaceSync: { status: 'pending', message: '已保存选择，打开这段对话后生效。' } } })
+    expect(JSON.stringify(waiting)).toContain('已选择 L4。已保存选择，打开这段对话后生效。 助手当前可见 L0。')
+    const blocked = BlockSelectionFeedback({ block: { ...block, surfaceSync: { status: 'blocked', message: '当前模型预计放不下，请选更简略的层级。' } } })
+    expect(deepElementProps(blocked).some(props => props.role === 'alert')).toBe(true)
+    expect(JSON.stringify(blocked)).toContain('助手当前可见 L0')
+    expect(JSON.stringify(blocked)).toContain('请选更简略的层级')
+    expect(BlockSelectionFeedback({ block: { ...block, surfaceSync: { status: 'applied' } } })).toBeNull()
+    const unknown = BlockSelectionFeedback({ block: { ...block, surfaceLevelKnown: false }, feedback: { status: 'pending', message: '暂时无法确认应用结果，请刷新后查看。' } })
+    expect(JSON.stringify(unknown)).toContain('助手可见的层级尚未确认')
+  })
+
+  it.each(['applied', 'pending', 'blocked', 'rejected', 'interrupted', 'refresh-failed'])('refreshes the actual state and reports a %s expansion response', async (status) => {
+    const hooks: any[] = []
+    let cursor = 0
+    const react = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState(initial: any) {
+        const index = cursor++
+        if (!(index in hooks)) hooks[index] = typeof initial === 'function' ? initial() : initial
+        return [hooks[index], (value: any) => { hooks[index] = typeof value === 'function' ? value(hooks[index]) : value }]
+      },
+      useRef(initial: unknown) { const index = cursor++; return hooks[index] ??= { current: initial } },
+      useEffect: () => {},
+    }
+    const fetch = vi.fn(async (url: string, options: any) => {
+      if (status === 'interrupted' && options?.method === 'PATCH') throw new TypeError('Failed to fetch')
+      return {
+        ok: status !== 'rejected' || options?.method !== 'PATCH', status: 409,
+        json: async () => url.includes('/sources') ? { layers: [] } : status === 'rejected' ? { error: '容量不足' }
+          : { surfaceSync: { status: status === 'refresh-failed' ? 'applied' : status, message: status + ' 的真实状态' } },
+      }
+    })
+    const { ShortTermPage, BlockSelectionFeedback } = loadSupportHelpers([], { react, fetch })
+    const block = { id: 'block-1', currentLevel: 0, targetLevel: 4, surfaceLevelKnown: true, sequence: 1, surfaceSync: undefined as unknown }
+    const refresh = vi.fn(async () => {
+      if (status === 'refresh-failed' && refresh.mock.calls.length === 1) throw new Error('read failed')
+      if (!['rejected', 'interrupted'].includes(status)) block.surfaceSync = { status: status === 'refresh-failed' ? 'applied' : status, message: status + ' 的真实状态' }
+      if (status === 'applied' || status === 'refresh-failed') block.currentLevel = 4
+    })
+    const props = { blocks: [block], conversations: [], namespace: 'test', activeThreadId: 'thread-1', refresh }
+    const render = () => { cursor = 0; return ShortTermPage(props) }
+    const toggle = deepElementProps(render()).find((item) => item.className === 'sg-block-toggle')!
+    toggle.onClick()
+    const expand = deepElementProps(render()).find((item) => typeof item.onExpand === 'function')!
+    await Promise.all([expand.onExpand(4), expand.onExpand(4)])
+    expect(fetch.mock.calls.filter(([, options]) => options?.method === 'PATCH')).toHaveLength(1)
+    const feedbackProps = deepElementProps(render()).find(item => item.block && 'feedback' in item)!
+    const text = JSON.stringify(BlockSelectionFeedback(feedbackProps))
+    expect(refresh).toHaveBeenCalledTimes(1)
+    if (status === 'rejected') expect(text).toContain('暂时无法应用 L4。容量不足')
+    else if (status === 'applied') expect(text).toContain('已应用 L4，供助手后续回复参考')
+    else if (status === 'interrupted' || status === 'refresh-failed') {
+      expect(text).toContain('暂时无法确认应用结果')
+      expect(text).not.toContain('暂时无法应用')
+      await buttonProps(BlockSelectionFeedback(feedbackProps), '刷新状态').onClick()
+      expect(refresh).toHaveBeenCalledTimes(2)
+      const refreshed = deepElementProps(render()).find(item => item.block && 'feedback' in item)!
+      expect(refreshed.feedback).toBeNull()
+    }
+    else expect(text).toContain(status + ' 的真实状态')
+    if (status !== 'applied') expect(text).toContain(status === 'interrupted' || status === 'refresh-failed' ? '上次确认助手可见 L0' : '助手当前可见 L0')
+  })
+
   it('shows projection drain status and requires restart instead of offering resume for a conflicted Dreaming', () => {
     const baseRun = { id: 'review', sessionId: null, status: 'running', waitingForProjection: true,
       activity: '等待当前后台目录整理完成，随后开始 Dreaming', completed: 0, total: 2 }
@@ -1297,16 +1385,16 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('开放块 · 未封存')
     expect(source).toContain('距最新封存块')
     expect(source).toContain('分层内容预览')
-    expect(source).toContain('展开到这一层')
+    expect(source).toContain('让助手参考 L')
     expect(source).toContain("api('blocks/expand'")
-    expect(source).toContain('用户展开')
-    expect(source).toContain('Agent 展开')
-    expect(source).toContain('曾展开')
+    expect(source).toContain('助手可见层级')
+    expect(source).not.toContain('用户展开')
+    expect(source).not.toContain('Agent 展开')
     expect(source).toContain('当前对话：')
     expect(source).toContain('Block 分布滑轨')
     expect(source).toContain('L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。')
     expect(source).toContain('document.body.appendChild(popover)')
-    expect(source).toContain('setOpenMenuLevel')
+    expect(source).toContain('BlockSelectionFeedback')
     expect(source).toContain('完整内容')
     expect(source).toContain("React.useState('topics')")
     expect(source).toContain('主题目录')

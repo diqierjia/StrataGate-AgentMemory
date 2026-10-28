@@ -51,6 +51,43 @@ async function harness(kind: 'ordinary' | 'agent' | 'mixed' | 'empty', agentMemo
 }
 
 describe('memory_search_events through the real DSH output boundary', () => {
+  it.each(['ordinary', 'empty'] as const)('settles rejected %s evidence with null refs through real argument validation', async (kind) => {
+    const host = await harness(kind)
+    try {
+      const outcome = await host.call('memory_search_events', { query: 'SQLite' })
+      expect(outcome.isError).toBe(false)
+      if (outcome.isError) throw outcome.error
+      const batch = outcome.value as unknown as Batch
+      const before = structuredClone(host.memory.listAllEvents())
+      expect(await host.call('memory_assess', {
+        batch_id: batch.batchId, verdict: 'wrong', evidence_refs: null,
+        fit: '', missing: 'No evidence adopted.', next_strategy: 'answer',
+      })).toMatchObject({ isError: false, value: { verdict: 'wrong', evidenceRefs: [], rejectedEvidenceRefs: [] } })
+      expect(await host.call('memory_record_use', { batch_id: batch.batchId, evidence_refs: null }))
+        .toMatchObject({ isError: false, value: { batchId: batch.batchId, incremented: 0, eventIds: [] } })
+      expect(host.runtime.pendingBatchIds(host.session)).toEqual([])
+      expect(host.memory.listAllEvents()).toEqual(before)
+      expect(host.memory.exportSnapshot().usageReceipts).toMatchObject([{ eventIds: [], audit: { batchId: batch.batchId, evidenceRefs: [] } }])
+    } finally { await host.close() }
+  })
+
+  it.each([{}, { evidence_refs: 'event:ordinary-sqlite' }, { evidence_refs: {} }, { evidence_refs: 0 }, { evidence_refs: [null] }])(
+    'rejects missing or malformed refs without settling the batch: %j', async (refs) => {
+      const host = await harness('ordinary')
+      try {
+        await host.call('memory_search_events', { query: 'SQLite' })
+        for (const name of ['memory_assess', 'memory_record_use']) {
+          expect(await host.call(name, {
+            ...(name === 'memory_assess' ? { verdict: 'wrong', fit: '', missing: 'unused', next_strategy: 'answer' } : {}),
+            ...refs,
+          })).toMatchObject({ isError: true, error: { info: { code: 'INVALID_ARGS' } } })
+        }
+        expect(host.runtime.pendingBatchIds(host.session)).toHaveLength(1)
+        expect(host.memory.exportSnapshot().usageReceipts).toEqual([])
+      } finally { await host.close() }
+    },
+  )
+
   it.each(['ordinary', 'agent', 'mixed'] as const)('returns lossless raw %s results with intact evidence and usage', async (kind) => {
     const host = await harness(kind)
     try {

@@ -169,13 +169,14 @@ server.registerTool('memory_assess', {
   inputSchema: {
     batch_id: z.string().startsWith('batch_'),
     verdict: z.enum(['sufficient', 'partial', 'wrong']),
-    evidence_refs: z.array(z.string()).max(8),
+    evidence_refs: z.array(z.string()).max(8).nullable()
+      .describe('Evidence refs adopted from this batch. Use [] when none are adopted; null is also accepted as [].'),
     fit: z.string().max(160),
     missing: z.string().max(160),
     next_strategy: z.enum(['answer', 'search_events', 'expand_event', 'search_elements', 'expand_element', 'search_raw_memory', 'expand_block']),
   },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
-}, (args) => safe(() => runtime.assess(args.batch_id, args)))
+}, (args) => safe(() => runtime.assess(args.batch_id, { ...args, evidence_refs: args.evidence_refs ?? [] })))
 
 server.registerTool('memory_record_use', {
   title: 'Record adopted StrataGate evidence',

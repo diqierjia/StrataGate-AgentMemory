@@ -46,7 +46,7 @@ export const RETRIEVAL_ASSESSMENT_SCHEMA = {
   additionalProperties: false,
   properties: {
     verdict: { type: 'string', enum: ['sufficient', 'partial', 'wrong'] },
-    evidence_refs: { type: 'array', maxItems: 8, items: { type: 'string' } },
+    evidence_refs: { oneOf: [{ type: 'array', maxItems: 8, items: { type: 'string' } }, { type: 'null' }] },
     fit: { type: 'string', maxLength: 160 },
     missing: { type: 'string', maxLength: 160 },
     next_strategy: { type: 'string', enum: RETRIEVAL_STRATEGIES },

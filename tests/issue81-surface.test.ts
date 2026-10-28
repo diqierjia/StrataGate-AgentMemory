@@ -108,7 +108,10 @@ async function queuedSurfaceFixture(flush = vi.fn(async (_session: Session) => {
     knownSessions: Map<string, WeakRef<Session>>
     syncPendingRetrySurface(session: Session, memory: StrataGate): Promise<void>
     queueSurfaceSync(namespace: string, blockId: string, reason?: 'user-expansion'): void
+    flushSurface(session: Session): Promise<void>
   }
+  await internals.flushSurface(session)
+  flush.mockClear()
   internals.spaces.set(namespace, Promise.resolve(memory))
   const key = `${namespace}\u0000${block.id}`
   const sync = () => internals.syncPendingRetrySurface(session, memory)
@@ -240,7 +243,7 @@ describe('deferred Block surface synchronization', () => {
     } finally { await f.dispose() }
   })
 
-  it.each([undefined, 'user-expansion'] as const)('retains a %s request when its source surface cannot be found', async (reason) => {
+  it.each([undefined, 'user-expansion'] as const)('retains a %s request while native event history is unavailable', async (reason) => {
     const f = await queuedSurfaceFixture()
     try {
       await f.memory.expandBlock(f.block.id, 'L5', 'user')
@@ -253,18 +256,19 @@ describe('deferred Block surface synchronization', () => {
     } finally { await f.dispose() }
   })
 
-  it('retains an expansion that exceeds capacity and completes it when capacity is available', async () => {
+  it('rejects a known capacity failure before saving the pointer and allows a later user retry', async () => {
     const f = await queuedSurfaceFixture()
     try {
       f.internals.knownSessions.set(String(f.session.id), new WeakRef(f.session))
       const capacity = vi.spyOn(f.session, 'requestContext').mockReturnValue({ contextWindow: 100 } as never)
       const before = f.session.seq
-      await expect(f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')).rejects.toThrow('无法将 Block')
-      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(true)
-      expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(0)
+      const original = structuredClone(f.memory.listBlocks()[0])
+      await expect(f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')).rejects.toThrow('当前模型预计放不下')
+      expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
+      expect(f.memory.listBlocks()[0]).toEqual(original)
       expect(f.session.seq).toBe(before)
       capacity.mockRestore()
-      await f.sync()
+      await f.plugin.adminExpandBlock(f.namespace, f.block.id, 'L5')
       expect(f.internals.pendingSurfaceSync.has(f.key)).toBe(false)
       expect(f.memory.listBlocks()[0]!.surfaceCurrentLevel).toBe(5)
     } finally { vi.restoreAllMocks(); await f.dispose() }
@@ -761,7 +765,9 @@ describe('Issue #81 surface ownership and size', () => {
           && source.plugin === 'stratagate-memory'
       })).toBe(false)
       append('compaction/end', { compactionId: 'failed-compact', turn: null, error: 'summarization failed' })
+      plugin.acceptEvent(session, session.eventAt((session.seq - 1) as SessionSeq)!)
       await plugin.buildAutoContext(session)
+      await vi.waitFor(() => expect(session.deriveMessages()).toHaveLength(1))
       const after = JSON.stringify(session.deriveMessages())
       expect(session.deriveMessages()).toHaveLength(1)
       expect(after).toContain('[StrataGate historical conversation block]')

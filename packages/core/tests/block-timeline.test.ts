@@ -63,8 +63,10 @@ describe('sealed block timeline', () => {
       await memory.setBlockSurfaceLevel(id, 2);
       for (let read = 0; read < 5; read++) memory.getBlockContext('a');
       expect(memory.listBlocks()[1]).toMatchObject({ pointerAnchorLevel: 3, pointerAnchorBlockPosition: 6, lastLiftedBy: 'user' });
-      await memory.expandBlock(id, 'next', 'agent');
-      expect(memory.listBlocks()[1]).toMatchObject({ pointerAnchorLevel: 3, pointerAnchorBlockPosition: 8 });
+      const beforeAgentRead = structuredClone(memory.listBlocks()[1]);
+      expect(await memory.expandBlock(id, 'next', 'agent')).toMatchObject({ level: 3 });
+      expect(memory.listBlocks()[1]).toEqual(beforeAgentRead);
+      expect(memory.getBlockContext('a').find((block) => block.id === id)?.level).toBe(2);
     } finally { await memory.close(); }
   });
 
