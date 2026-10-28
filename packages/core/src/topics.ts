@@ -113,6 +113,8 @@ export interface TopicProjectionJob {
   overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   /** Bounded binary split ancestry; manual retry starts a fresh cycle. */
   splitDepth?: number;
+  /** One explicit user retry attempt, consumed atomically when claimed. */
+  manualAttemptPending?: boolean;
 }
 
 export type TopicProjectionMode = 'all' | 'incremental' | 'bootstrap';
@@ -544,6 +546,13 @@ export class MemoryTopicDirectory {
     return mode === 'all' || ids.some((id) => this.isBootstrap(id, versions.get(id)!, sectionBackfillTopicId) === (mode === 'bootstrap'));
   }
 
+  private jobMatchesMode(job: TopicProjectionJob, versions: ReadonlyMap<string, string>, mode: TopicProjectionMode): boolean {
+    // Use the immediately runnable lane for one user-authorized attempt. The
+    // ordinary historical allowance still owns all subsequent automatic tries.
+    return job.manualAttemptPending === true ? mode !== 'bootstrap'
+      : this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId);
+  }
+
   hasPending(events: readonly EventCard[], now: number, mode: TopicProjectionMode = 'all'): boolean {
     const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
     const versions = sourceVersions(sources);
@@ -563,7 +572,7 @@ export class MemoryTopicDirectory {
       !job.superseded && job.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION && job.attempts < TOPIC_MAX_ATTEMPTS
       && ((job.status === 'pending' && (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= now)) || (job.status === 'failed'
         && job.nextRetryAt !== null && Date.parse(job.nextRetryAt) <= now))
-      && jobInputsCurrent(job, versions) && this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId));
+      && jobInputsCurrent(job, versions) && this.jobMatchesMode(job, versions, mode));
   }
 
   /** Derived wake time, using exactly the claim eligibility rules, including work without a Job. */
@@ -600,11 +609,12 @@ export class MemoryTopicDirectory {
     const eligible = this.state.jobs.filter((job) => !job.superseded && job.attempts < TOPIC_MAX_ATTEMPTS
       && ((job.status === 'pending' && (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= Date.parse(now))) || (job.status === 'failed' && job.nextRetryAt !== null
         && Date.parse(job.nextRetryAt) <= Date.parse(now)))
-      && jobInputsCurrent(job, versions) && this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId))
-      .sort((a, b) => Number(this.isBootstrap(a.sourceEventIds[0]!, versions.get(a.sourceEventIds[0]!)!, a.sectionBackfillTopicId))
+      && jobInputsCurrent(job, versions) && this.jobMatchesMode(job, versions, mode))
+      .sort((a, b) => Number(b.manualAttemptPending === true) - Number(a.manualAttemptPending === true)
+        || Number(this.isBootstrap(a.sourceEventIds[0]!, versions.get(a.sourceEventIds[0]!)!, a.sectionBackfillTopicId))
         - Number(this.isBootstrap(b.sourceEventIds[0]!, versions.get(b.sourceEventIds[0]!)!, b.sectionBackfillTopicId)))[0];
     let job = eligible;
-    if (job && this.isBootstrap(job.sourceEventIds[0]!, versions.get(job.sourceEventIds[0]!)!, job.sectionBackfillTopicId)
+    if (job && !job.manualAttemptPending && this.isBootstrap(job.sourceEventIds[0]!, versions.get(job.sourceEventIds[0]!)!, job.sectionBackfillTopicId)
       && mode === 'all' && this.pendingWork(events).some(({ event, sectionBackfillTopicId }) =>
         !this.isBootstrap(event.id, versions.get(event.id)!, sectionBackfillTopicId))) job = undefined;
     if (job?.status === 'failed') {
@@ -709,6 +719,7 @@ export class MemoryTopicDirectory {
       ])]);
     job.dependencyVersions = Object.fromEntries(dependencyIds.map((id) => [id, versions.get(id)!]));
     job.diagnostics = undefined;
+    delete job.manualAttemptPending;
     job.status = 'running'; job.attempts += 1; job.lastError = null; job.nextRetryAt = null; job.updatedAt = now;
     if (this.state.bootstrap.status === 'pending' && this.matchesMode(job.sourceEventIds, versions, 'bootstrap', job.sectionBackfillTopicId)) {
       this.state.bootstrap.status = 'running';
@@ -951,6 +962,7 @@ export class MemoryTopicDirectory {
       throw new Error('Topic retry conflict: failure is no longer current or retryable.');
     }
     const job = this.requeue(previous, ids, versions, now);
+    job.manualAttemptPending = true;
     this.synchronize(events, now);
     return { jobId: job.id, status: 'pending' };
   }

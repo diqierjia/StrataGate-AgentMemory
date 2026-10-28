@@ -1082,7 +1082,7 @@ describe('memory topic runtime boundaries', () => {
     }
   })
 
-  it.each(['manual', 'upgrade'] as const)('charges %s recovery to the same backfill budget and persists it across restart', async (recovery) => {
+  it.each(['manual', 'upgrade'] as const)('persists %s recovery across restart, prioritizing only the explicit user attempt', async (recovery) => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-topic-budget-retry-'))
     const database = join(directory, 'memory.db')
     const namespace = 'dsh:project:history-retry'
@@ -1164,12 +1164,11 @@ describe('memory topic runtime boundaries', () => {
       manualWorker(runtime)
       expect(queued).toMatchObject({ status: 'pending' })
       await expect(runtime.adminRetryTopicProjection(namespace, exhausted.id)).rejects.toThrow(/conflict/)
-      await worker.runBackgroundNamespace(namespace)
-      expect(topicProjector).toHaveBeenCalledTimes(4)
       expect(topicBudget(database)).toBe(budgetBeforeRetry)
       const pending = (await runtime.adminSnapshot(namespace))!.memoryTopicState!
       expect(pending.bootstrap).toMatchObject({ status: 'pending', completedAt: null, failedEvents: 0 })
       expect(pending.jobs.find((job) => job.id === queued.jobId)).toMatchObject({ attempts: 0, status: 'pending' })
+      expect(pending.jobs.find((job) => job.id === queued.jobId)?.manualAttemptPending).toBe(recovery === 'manual' ? true : undefined)
       await runtime.close()
       const restarted = new StrataGateRuntime(makeConfig(database), {
         ...makeModels().models, isReady: () => true, topicProjector,
@@ -1177,9 +1176,12 @@ describe('memory topic runtime boundaries', () => {
       const restartedWorker = manualWorker(restarted)
       try {
         await restartedWorker.runBackgroundNamespace(namespace)
-        expect(topicProjector).toHaveBeenCalledTimes(4)
-        now += TOPIC_BOOTSTRAP_WINDOW_MS; vi.setSystemTime(now)
-        await restartedWorker.runBackgroundNamespace(namespace)
+        expect(topicProjector).toHaveBeenCalledTimes(recovery === 'manual' ? 5 : 4)
+        expect(topicBudget(database)).toBe(budgetBeforeRetry)
+        if (recovery === 'upgrade') {
+          now += TOPIC_BOOTSTRAP_WINDOW_MS; vi.setSystemTime(now)
+          await restartedWorker.runBackgroundNamespace(namespace)
+        }
         expect(topicProjector).toHaveBeenCalledTimes(5)
         expect(topicProjector.mock.calls[4]![0].events.map(({ id }) => id)).toEqual(failedIds)
         const completed = (await restarted.adminSnapshot(namespace))!.memoryTopicState!

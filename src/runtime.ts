@@ -17,6 +17,9 @@ import {
   graphTimeline,
   estimateTokens,
   blockLevelLabel,
+  buildBlockTimeline,
+  getBlockDecayView,
+  normalizeBlockLevel,
   renderBlock,
   memoryWeightAt,
   rrfRank,
@@ -280,6 +283,44 @@ export function feedbackDraftUrl(namespace: string, origin?: string): string {
   return origin ? new URL(route, origin).href : route
 }
 
+interface SurfaceSyncRequest {
+  namespace: string
+  blockId: string
+  reason?: 'user-expansion'
+  waitingFor?: 'session-unloaded' | 'compaction' | 'saving'
+  blocked?: { reason: 'capacity' | 'source-unavailable'; message: string; sessionId: string; capacityKey: string }
+  appliedSessionId?: string
+}
+
+interface SurfaceRelief {
+  id: string
+  seq: SessionSeq
+  level: BlockLevel
+  text: string
+}
+
+type ExpandedSurfacePlan = { status: 'ready'; text: string; seqs: SessionSeq[]; relief: SurfaceRelief[] }
+  | { status: 'pending'; reason: 'compaction' | 'session-unloaded'; message: string }
+  | { status: 'blocked'; reason: 'capacity' | 'source-unavailable'; message: string }
+
+export interface BlockSurfaceSyncStatus {
+  status: 'applied' | 'pending' | 'blocked'
+  reason?: 'session-unloaded' | 'compaction' | 'saving' | 'capacity' | 'source-unavailable'
+  message: string
+}
+
+interface SurfaceMaintenance {
+  session: Session
+  memory: StrataGate
+  dirty: boolean
+  generation: number
+  busy: boolean
+  timer?: ReturnType<typeof setTimeout> | undefined
+  run?: Promise<void> | undefined
+  failures: number
+  checkpointLimit: number
+}
+
 export class StrataGateRuntime {
   readonly diagnostics: DiagnosticsRecorder
   private readonly diagnosticSessionNamespaces = new Map<string, string>()
@@ -295,7 +336,12 @@ export class StrataGateRuntime {
   private readonly derivationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly derivationRuns = new Map<string, Promise<void>>()
   private readonly knownSessions = new Map<string, WeakRef<Session>>()
-  private readonly pendingSurfaceSync = new Map<string, { namespace: string; blockId: string; reason?: 'user-expansion' }>()
+  private readonly pendingSurfaceSync = new Map<string, SurfaceSyncRequest>()
+  private readonly surfaceMaintenance = new Map<string, SurfaceMaintenance>()
+  private readonly surfaceMaintenanceRuns = new Set<Promise<void>>()
+  private readonly surfaceFlushPending = new WeakSet<Session>()
+  private readonly checkpointTokenCache = new WeakMap<Session, Map<SessionSeq, number>>()
+  private readonly surfaceAssemblyReaders = new WeakMap<Session, number>()
   private readonly adminSnapshotCache = new Map<string, AdminSnapshotEntry>()
   private readonly externalImportRuns = new Map<string, Promise<void>>()
   private readonly dreamingRuns = new Map<string, Promise<void>>()
@@ -750,7 +796,12 @@ export class StrataGateRuntime {
           const session = this.knownSessions.get(block.threadId)?.deref()
           if (session && this.namespaceFor(session) === namespace) sessionsToSync.add(session)
         }
-        for (const session of sessionsToSync) await this.syncPendingRetrySurface(session, memory)
+        for (const session of sessionsToSync) {
+          // Admin-only workers close their owned connection below. A live session
+          // must reconcile through its cached connection, or wait until it loads.
+          const opening = this.spaces.get(namespace)
+          if (opening) this.markSurfaceDirty(session, await opening)
+        }
       } finally {
         if (owned) await memory.close()
       }
@@ -809,6 +860,32 @@ export class StrataGateRuntime {
     if (this.isDreamingSession(session)) return
     if (this.closed) return
     if (!this.config.ingestSubagents && session.header.origin === 'subagent') return
+    if (event.type === 'request/context' || event.type === 'request/header') this.retryCapacityBlockedSurface(session)
+    if (event.type === 'compaction/end' || event.type === 'session/end-seed'
+      || (event.type === 'user/message' && event.surfaceOp !== undefined && event.surfaceOp !== 'append'
+        && !isStrataGateMessageSource(event.data.source))) this.retryCapacityBlockedSurface(session, true)
+    const surface = this.surfaceMaintenance.get(String(session.id))
+    if (surface?.session === session) {
+      if (event.type === 'turn/start') {
+        surface.busy = true
+        surface.generation += 1
+        if (surface.timer) clearTimeout(surface.timer)
+        surface.timer = undefined
+      } else if (event.type === 'turn/end') {
+        surface.busy = false
+        this.scheduleSurfaceMaintenance(surface)
+      } else if (event.type === 'request/context') {
+        const limit = surfaceCheckpointLimit(session)
+        if (surface.checkpointLimit !== limit) {
+          surface.checkpointLimit = limit
+          this.markSurfaceDirty(session, surface.memory)
+        }
+      } else if (String(event.type).startsWith('compaction/') || event.type === 'session/end-seed'
+        || (event.type === 'user/message' && event.surfaceOp !== undefined && event.surfaceOp !== 'append'
+          && !isStrataGateMessageSource(event.data.source))) {
+        this.markSurfaceDirty(session, surface.memory)
+      }
+    }
     const turn = this.folder.accept(session, event)
     if (!turn) return
     const key = String(session.id)
@@ -888,6 +965,7 @@ export class StrataGateRuntime {
       for (const turn of turns) {
         const result = await memory.appendTurn(turn, { deferDerivation: true })
         completed += 1
+        if (result.sealedBlock) this.markSurfaceDirty(session, memory)
         if (result.sealedBlock) this.scheduleBlockDerivation(session, memory)
       }
     } catch (error) {
@@ -1315,14 +1393,23 @@ export class StrataGateRuntime {
   }
 
   async buildAutoContext(session: Session): Promise<string> {
+    this.surfaceAssemblyReaders.set(session, (this.surfaceAssemblyReaders.get(session) ?? 0) + 1)
+    try {
+      return await this.assembleAutoContext(session)
+    } finally {
+      this.surfaceAssemblyReaders.set(session, (this.surfaceAssemblyReaders.get(session) ?? 1) - 1)
+      const state = this.surfaceMaintenance.get(String(session.id))
+      if (state?.session === session) this.scheduleSurfaceMaintenance(state)
+    }
+  }
+
+  private async assembleAutoContext(session: Session): Promise<string> {
     await this.flush()
     const memory = await this.space(session)
     await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
     const threadId = String(session.id)
-    const blockContexts = memory.getBlockContext(threadId)
-    if (await this.syncDecayedBlockSurface(session, memory, blockContexts)) {
-      await this.flushNativeSession(session)
-    }
+    // Only explicit lifts and hard capacity repairs belong on the request path.
+    await this.syncRequestSurface(session, memory)
     const openTail = memory.listOpenTail(threadId)
     const activationQuery = [currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
@@ -1382,8 +1469,18 @@ export class StrataGateRuntime {
     context: BlockContextEntry,
     endTurn: number | null,
   ): Promise<boolean> {
+    const levels = new Map<string, BlockLevel>()
+    const changed = this.applySealedSurface(session, block, context, endTurn, levels)
+    await this.commitSurfaceLevels(memory, levels)
+    return changed
+  }
+
+  private applySealedSurface(
+    session: Session, block: MemoryBlock, context: BlockContextEntry,
+    endTurn: number | null, levels: Map<string, BlockLevel>, sources?: SessionSeq[],
+  ): boolean {
     if (endTurn === null || hostCompactionActive(session)) return false
-    const sourceEventSeqs = sealedSurfaceSeqs(session, endTurn, block)
+    const sourceEventSeqs = sources ?? sealedSurfaceSeqs(session, endTurn, block)
     if (!sourceEventSeqs) return false
     const start = sourceEventSeqs[0]
     const end = sourceEventSeqs.at(-1)
@@ -1397,39 +1494,58 @@ export class StrataGateRuntime {
       surfaceOp: dshReplaceSurfaceOp(start, end),
       sourceEventSeqs,
     })
-    await memory.setBlockSurfaceLevel(block.id, context.level)
+    this.surfaceFlushPending.add(session)
+    levels.set(block.id, checkpointLevel(selected) ?? context.level)
     return true
   }
 
   /** Keep each native Block checkpoint synchronized with its current decay pointer. */
-  private async syncDecayedBlockSurface(session: Session, memory: StrataGate, contexts: readonly BlockContextEntry[]): Promise<boolean> {
+  private async syncDecayedBlockSurface(
+    session: Session, memory: StrataGate, contexts: readonly BlockContextEntry[],
+  ): Promise<boolean> {
+    const levels = new Map<string, BlockLevel>()
+    const changed = this.applyDecayedBlockSurface(session, memory, contexts, levels)
+    const applied = this.appliedSurfaceRequests(session)
+    await this.commitSurfaceLevels(memory, levels)
+    await this.flushSurface(session)
+    this.completeSurfaceRequests(applied)
+    return changed
+  }
+
+  private applyDecayedBlockSurface(
+    session: Session, memory: StrataGate, contexts: readonly BlockContextEntry[], levels: Map<string, BlockLevel>,
+  ): boolean {
     if (hostCompactionActive(session)) return false
-    const current = currentBlockSurfaceMessages(session)
+    let current = currentBlockSurfaceMessages(session)
     const blocks = new Map(memory.listBlocks().map((block) => [block.id, block]))
     const checkpointLimit = surfaceCheckpointLimit(session)
     let changed = false
     for (const context of contexts) {
       const node = current.get(context.id)
       if (!node) continue
-      const currentLevel = Number(node.text.match(/(?:^|\n)Block: [^|\n]+ \| Turns: \d+-\d+ \| Level: L([0-5])(?:\s|$)/mu)?.[1] ?? -1)
-      const currentTokens = surfaceCheckpointTokens(node.text)
+      const currentLevel = checkpointLevel(node.text) ?? -1
+      const currentTokens = this.cachedCheckpointTokens(session, node)
       const sourceTokens = originalCheckpointSourceTokens(session, node.seq)
       const violatesLimit = currentTokens > checkpointLimit
         || (sourceTokens !== null && !worthwhileSurfaceReduction(sourceTokens, currentTokens))
       const block = blocks.get(context.id)
       if (!block) continue
-      if (currentLevel >= 0 && block.surfaceCurrentLevel !== currentLevel) {
-        await memory.setBlockSurfaceLevel(context.id, currentLevel as BlockLevel)
-      }
+      if (currentLevel >= 0) levels.set(context.id, currentLevel as BlockLevel)
       // An explicit user lift is different from decay recalculation: the user
       // asked for the richer layer to be present in the live conversation.
       // Replace the existing checkpoint even when that makes it larger. Agent
       // evidence expansion remains turn-scoped and does not raise the surface.
-      const userLift = block.lastLiftedBy === 'user'
-        && currentLevel >= 0
-        && context.level > currentLevel
-      if (userLift) {
-        changed = await this.replaceExpandedSurface(session, memory, block, context) || changed
+      const userSelection = block.lastLiftedBy === 'user' && context.level === block.pointerAnchorLevel
+      if (userSelection) {
+        // Until natural decay advances, an explicit selection owns both upward
+        // and downward changes. Automatic checkpoint limits cannot undo it.
+        if (context.level !== currentLevel) {
+          this.queueSurfaceSync(this.namespaceFor(session), block.id, 'user-expansion')
+          const applied = this.applyExpandedSurface(session, memory, block, context, levels)
+          changed = applied || changed
+          // Capacity relief may replace checkpoints visited later in this loop.
+          if (applied) current = currentBlockSurfaceMessages(session)
+        }
         continue
       }
       if (context.level >= currentLevel && currentLevel >= 0 && !violatesLimit) continue
@@ -1450,9 +1566,10 @@ export class StrataGateRuntime {
           surfaceOp: dshReplaceSurfaceOp(node.seq, node.seq),
           sourceEventSeqs: [node.seq],
         })
+        this.surfaceFlushPending.add(session)
         changed = true
       }
-      await memory.setBlockSurfaceLevel(context.id, Number(text.match(/(?:^|\n)Block: [^|\n]+ \| Turns: \d+-\d+ \| Level: L([0-5])(?:\s|$)/mu)?.[1] ?? currentLevel) as BlockLevel)
+      levels.set(context.id, checkpointLevel(text) ?? (currentLevel as BlockLevel))
     }
     return changed
   }
@@ -1460,65 +1577,363 @@ export class StrataGateRuntime {
   private queueSurfaceSync(namespace: string, blockId: string, reason?: 'user-expansion'): void {
     const key = `${namespace}\u0000${blockId}`
     // A sealing retry must not downgrade an outstanding explicit expansion.
-    if (!reason && this.pendingSurfaceSync.has(key)) return
+    const previous = this.pendingSurfaceSync.get(key)
+    if (previous && (!reason || previous.reason === reason)) return
     this.pendingSurfaceSync.set(key, { namespace, blockId, ...(reason ? { reason } : {}) })
   }
 
-  /** Apply an explicit user request without the automatic decay size-reduction gate. */
-  private async replaceExpandedSurface(session: Session, memory: StrataGate, block: MemoryBlock, context: BlockContextEntry): Promise<boolean> {
-    if (hostCompactionActive(session) || block.threadId !== String(session.id)) return false
+  private expandedSurfacePlan(session: Session, memory: StrataGate, block: MemoryBlock, context: BlockContextEntry): ExpandedSurfacePlan {
+    if (hostCompactionActive(session)) return { status: 'pending', reason: 'compaction', message: '正在整理这段对话，完成后会应用你的选择。' }
+    if (block.threadId !== String(session.id)) return { status: 'pending', reason: 'session-unloaded', message: '已保存选择，打开这段对话后生效。' }
     const text = renderBlockSurfaceMessage(context)
-    if (surfaceCheckpointTokens(text) > surfaceCheckpointLimit(session)) return false
+    const current = currentBlockSurfaceMessages(session)
+    const node = current.get(block.id)
+    const endTurn = node ? null : dshTurnAtBlockEnd(session, block)
+    const seqs = node ? [node.seq] : endTurn === null ? null : sealedSurfaceSeqs(session, endTurn, block)
+    if (!seqs?.length) return { status: 'blocked', reason: 'source-unavailable', message: '这段历史已被整理，无法在这里切换层级。可以让助手查找这段历史。' }
+    const relief: SurfaceRelief[] = []
+    const window = session.requestContext?.()?.contextWindow
+    if (node?.text !== text && typeof window === 'number' && Number.isInteger(window) && window > 0) {
+      const start = seqs[0]!
+      const end = seqs.at(-1)!
+      let before = 0
+      let removed = 0
+      for (const seq of session.surface.nodes) {
+        const event = session.eventAt(seq)
+        const message = event && session.deriveEventMessage(event)
+        const tokens = message ? estimateTokens(JSON.stringify(message)) : 0
+        before += tokens
+        if (seq >= start && seq <= end) removed += tokens
+      }
+      const header = session.requestHeader?.()
+      const reserved = (header?.config.maxTokens ?? 0) + (header?.tools?.length ? estimateTokens(JSON.stringify(header.tools)) : 0)
+      const after = before - removed + surfaceCheckpointTokens(text)
+      // Use the whole advertised window, including known tools/output reserve.
+      // A smaller user selection remains useful even if the host is already full.
+      if (after > before && after + reserved > window) {
+        let needed = after + reserved - window
+        // Plan before mutating anything. Only owned checkpoints are eligible:
+        // raw input, tool chains and every other manual selection stay intact.
+        const candidates = memory.listBlocks().filter((candidate) => candidate.id !== block.id
+          && candidate.threadId === block.threadId && candidate.processingStatus === 'ready'
+          && candidate.lastLiftedBy !== 'user').sort((a, b) => a.sequence - b.sequence)
+        for (const candidate of candidates) {
+          const checkpoint = current.get(candidate.id)
+          if (!checkpoint || checkpoint.seq >= start && checkpoint.seq <= end) continue
+          const level = checkpointLevel(checkpoint.text)
+          if (level === undefined || level === 0) continue
+          const original = this.cachedCheckpointTokens(session, checkpoint)
+          let best: SurfaceRelief | undefined
+          let saved = 0
+          for (let lower = level - 1; lower >= 0; lower--) {
+            const candidateLevel = lower as BlockLevel
+            const candidateText = renderBlockSurfaceMessage({
+              id: candidate.id, threadId: candidate.threadId!, turnRange: [candidate.startTurn, candidate.endTurn],
+              age: 0, level: candidateLevel, label: blockLevelLabel(candidateLevel), content: renderBlock(candidate, candidateLevel),
+            })
+            const reduction = original - surfaceCheckpointTokens(candidateText)
+            if (reduction > saved) {
+              best = { id: candidate.id, seq: checkpoint.seq, level: candidateLevel, text: candidateText }
+              saved = reduction
+            }
+            if (saved >= needed) break
+          }
+          if (best) { relief.push(best); needed -= saved }
+          if (needed <= 0) break
+        }
+        if (needed > 0) return {
+          status: 'blocked', reason: 'capacity',
+          message: `L${context.level} 内容太长，当前模型预计放不下，其他可简略的历史也不足以腾出空间。请选更简略的层级，或切换到容量更大的模型。`,
+        }
+      }
+    }
+    return { status: 'ready', text, seqs, relief }
+  }
+
+  /** Explicit user requests bypass automatic per-checkpoint compression limits. */
+  private applyExpandedSurface(session: Session, memory: StrataGate, block: MemoryBlock, context: BlockContextEntry, levels: Map<string, BlockLevel>): boolean {
+    const request = this.pendingSurfaceSync.get(`${this.namespaceFor(session)}\u0000${block.id}`)
+    if (request?.blocked) return false
+    const plan = this.expandedSurfacePlan(session, memory, block, context)
+    if (plan.status === 'pending') {
+      if (request) request.waitingFor = plan.reason
+      return false
+    }
+    if (plan.status === 'blocked') {
+      if (request) request.blocked = {
+        reason: plan.reason, message: plan.message, sessionId: String(session.id), capacityKey: surfaceCapacityKey(session),
+      }
+      this.onIngestError(new Error(`Block ${block.id}: ${plan.message}`))
+      return false
+    }
+    const { text, seqs, relief } = plan
+    for (const replacement of relief) {
+      session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: replacement.text }], source: dshMessageSource(),
+      }), { surfaceOp: dshReplaceSurfaceOp(replacement.seq, replacement.seq), sourceEventSeqs: [replacement.seq] })
+      levels.set(replacement.id, replacement.level)
+      this.surfaceFlushPending.add(session)
+    }
     const node = currentBlockSurfaceMessages(session).get(block.id)
     if (node?.text !== text) {
-      const endTurn = node ? null : dshTurnAtBlockEnd(session, block)
-      const seqs = node ? [node.seq] : endTurn === null ? null : sealedSurfaceSeqs(session, endTurn, block)
-      if (!seqs) return false
       const start = seqs[0]
       const end = seqs.at(-1)
       if (start === undefined || end === undefined) return false
       session.append('user/message', createUserMessage({
         content: [{ type: 'text', text }], source: dshMessageSource(),
       }), { surfaceOp: dshReplaceSurfaceOp(start, end), sourceEventSeqs: seqs })
+      this.surfaceFlushPending.add(session)
     }
-    if (block.surfaceCurrentLevel !== context.level) await memory.setBlockSurfaceLevel(block.id, context.level)
+    levels.set(block.id, context.level)
+    // A prior native append may have survived a failed metadata transaction.
+    // Reconcile other owned checkpoints too, including capacity relief already
+    // present in the session, before reporting this selection as saved.
+    const knownIds = new Set(memory.listBlocks().filter(candidate => candidate.threadId === block.threadId).map(candidate => candidate.id))
+    for (const [id, checkpoint] of currentBlockSurfaceMessages(session)) {
+      const level = checkpointLevel(checkpoint.text)
+      if (knownIds.has(id) && level !== undefined) levels.set(id, level)
+    }
+    if (request) { request.appliedSessionId = String(session.id); request.waitingFor = 'saving' }
     return true
   }
 
+  private retryCapacityBlockedSurface(session: Session, force = false): void {
+    const namespace = this.namespaceFor(session)
+    let capacityKey: string | undefined
+    for (const item of this.pendingSurfaceSync.values()) {
+      if (item.namespace !== namespace || item.blocked?.reason !== 'capacity' || item.blocked.sessionId !== String(session.id)) continue
+      capacityKey ??= surfaceCapacityKey(session)
+      if (force || item.blocked.capacityKey !== capacityKey) delete item.blocked
+    }
+  }
+
+  adminBlockSurfaceSync(namespace: string, blockId: string): BlockSurfaceSyncStatus | undefined {
+    const request = this.pendingSurfaceSync.get(`${namespace}\u0000${blockId}`)
+    if (!request || request.reason !== 'user-expansion') return undefined
+    return request.blocked
+      ? { status: 'blocked', reason: request.blocked.reason, message: request.blocked.message }
+      : { status: 'pending', reason: request.waitingFor ?? 'session-unloaded', message: request.waitingFor === 'compaction'
+        ? '正在整理这段对话，完成后会应用你的选择。'
+        : request.waitingFor === 'saving' ? '正在保存这段对话，完成后可供助手参考。'
+          : '已保存选择，打开这段对话后生效。' }
+  }
+
+  private async commitSurfaceLevels(memory: StrataGate, levels: ReadonlyMap<string, BlockLevel>): Promise<void> {
+    if (levels.size > 0) await memory.setBlockSurfaceLevels([...levels].map(([id, level]) => ({ id, level })))
+  }
+
+  private async flushSurface(session: Session): Promise<void> {
+    if (!this.surfaceFlushPending.has(session)) return
+    // New appends during the save must remain dirty for the next save.
+    const seq = session.seq
+    await this.flushNativeSession(session)
+    if (session.seq === seq) this.surfaceFlushPending.delete(session)
+  }
+
+  private cachedCheckpointTokens(session: Session, node: { seq: SessionSeq; text: string }): number {
+    let cache = this.checkpointTokenCache.get(session)
+    if (!cache) {
+      cache = new Map()
+      this.checkpointTokenCache.set(session, cache)
+    }
+    let tokens = cache.get(node.seq)
+    if (tokens === undefined) {
+      tokens = surfaceCheckpointTokens(node.text)
+      cache.set(node.seq, tokens)
+    }
+    return tokens
+  }
+
   /** Finish deferred sealing or user expansion only after the target surface is applied. */
-  private async syncPendingRetrySurface(session: Session, memory: StrataGate): Promise<void> {
-    if (hostCompactionActive(session)) return
+  private async syncPendingRetrySurface(session: Session, memory: StrataGate, userOnly = false): Promise<void> {
+    const levels = new Map<string, BlockLevel>()
+    const completed = this.applyPendingRetrySurface(session, memory, levels, userOnly)
+    if (completed.length === 0) return
+    await this.commitSurfaceLevels(memory, levels)
+    await this.flushSurface(session)
+    this.completeSurfaceRequests(completed)
+  }
+
+  private applyPendingRetrySurface(
+    session: Session, memory: StrataGate, levels: Map<string, BlockLevel>, userOnly = false,
+    recoverable?: SealedSurfaceRecovery,
+  ): [string, SurfaceSyncRequest][] {
     const namespace = this.namespaceFor(session)
     const threadId = String(session.id)
-    const pending = [...this.pendingSurfaceSync.entries()]
-      .filter(([, item]) => item.namespace === namespace)
-    if (pending.length === 0) return
-    const contexts = new Map(memory.getBlockContext(threadId).map((context) => [context.id, context]))
+    if (hostCompactionActive(session)) {
+      const blockIds = new Set(memory.listBlocks().filter(block => block.threadId === threadId).map(block => block.id))
+      for (const request of this.pendingSurfaceSync.values()) {
+        if (request.namespace === namespace && blockIds.has(request.blockId) && !request.blocked) request.waitingFor = 'compaction'
+      }
+      return []
+    }
+    let pending = [...this.pendingSurfaceSync.entries()]
+      .filter(([, item]) => item.namespace === namespace && !item.blocked && (!userOnly || item.reason === 'user-expansion'))
+    if (pending.length === 0) return []
     const existing = currentBlockSurfaceMessages(session)
+    const blocks = new Map(memory.listBlocks().filter((block) => block.threadId === threadId).map((block) => [block.id, block]))
+    const automatic = pending.flatMap(([, item]) => {
+      const block = blocks.get(item.blockId)
+      return !item.reason && !existing.has(item.blockId) && block?.processingStatus === 'ready' ? [block] : []
+    })
+    const recovery = recoverable ?? recoverableSealedSurfaceSources(session, automatic)
+    pending = pending.filter(([key, item]) => {
+      const block = blocks.get(item.blockId)
+      if (item.reason || existing.has(item.blockId) || block?.processingStatus !== 'ready' || recovery.sources.has(item.blockId)) return true
+      // An automatic retry no longer owns a range after host compaction.
+      // Explicit selections retain their visible blocked/pending status.
+      // Missing event history can also mean the session has not loaded yet.
+      if (recovery.retired.has(item.blockId) && this.pendingSurfaceSync.get(key) === item) this.pendingSurfaceSync.delete(key)
+      return false
+    })
+    if (pending.length === 0) return []
+    const contexts = new Map(memory.getBlockContext(threadId, new Set(pending.map(([, item]) => item.blockId))).map((context) => [context.id, context]))
     let changed = false
     const completed: typeof pending = []
     for (const [key, item] of pending) {
+      if (item.blocked) continue
       const { blockId } = item
-      const block = memory.listBlocks().find((candidate) => candidate.id === blockId && candidate.threadId === threadId)
+      const block = blocks.get(blockId)
       const context = contexts.get(blockId)
       if (!block || block.processingStatus !== 'ready' || !context) continue
-      try {
-        if (item.reason === 'user-expansion') {
-          if (!await this.replaceExpandedSurface(session, memory, block, context)) continue
-          changed = true
-        } else if (!existing.has(blockId)) {
-          if (!await this.replaceSealedSurface(session, memory, block, context, dshTurnAtBlockEnd(session, block))) continue
-          changed = true
-        }
-        completed.push([key, item])
-      } catch (error) {
-        this.onIngestError(error)
+      if (item.reason === 'user-expansion') {
+        if (!this.applyExpandedSurface(session, memory, block, context, levels)) continue
+        changed = true
+      } else if (!existing.has(blockId)) {
+        const source = recovery.sources.get(blockId)!
+        if (!this.applySealedSurface(session, block, context, source.endTurn, levels, source.seqs)) continue
+        changed = true
+      } else {
+        const level = checkpointLevel(existing.get(blockId)!.text)
+        if (level !== undefined) levels.set(blockId, level)
       }
+      completed.push([key, item])
     }
-    if (changed) await this.flushNativeSession(session)
+    if (changed) this.surfaceFlushPending.add(session)
+    return completed
+  }
+
+  private completeSurfaceRequests(completed: readonly [string, SurfaceSyncRequest][]): void {
     for (const [key, item] of completed) {
       if (this.pendingSurfaceSync.get(key) === item) this.pendingSurfaceSync.delete(key)
     }
+  }
+
+  private appliedSurfaceRequests(session: Session): [string, SurfaceSyncRequest][] {
+    return [...this.pendingSurfaceSync.entries()]
+      .filter(([, item]) => item.appliedSessionId === String(session.id))
+  }
+
+  /** Read-only in the common case; render only explicit lifts or oversized checkpoints. */
+  private async syncRequestSurface(session: Session, memory: StrataGate): Promise<void> {
+    if (hostCompactionActive(session)) return
+    const current = currentBlockSurfaceMessages(session)
+    const limit = surfaceCheckpointLimit(session)
+    const repair = new Set<string>()
+    const namespace = this.namespaceFor(session)
+    const timeline = buildBlockTimeline(memory.listBlocks())
+    for (const block of memory.listBlocks()) {
+      if (block.threadId !== String(session.id) || block.processingStatus !== 'ready') continue
+      const node = current.get(block.id)
+      const target = getBlockDecayView(block, timeline.get(block.id)!, memory.blockDecayLambda).level
+      const userSelection = block.lastLiftedBy === 'user' && target === block.pointerAnchorLevel
+      if (node && !userSelection && this.cachedCheckpointTokens(session, node) > limit) repair.add(block.id)
+      if (userSelection && (!node || target !== checkpointLevel(node.text))) {
+        this.queueSurfaceSync(namespace, block.id, 'user-expansion')
+      }
+    }
+    const cache = this.checkpointTokenCache.get(session)
+    if (cache && cache.size > current.size + 16) {
+      const live = new Set([...current.values()].map(({ seq }) => seq))
+      for (const seq of cache.keys()) if (!live.has(seq)) cache.delete(seq)
+    }
+    await this.syncPendingRetrySurface(session, memory, true)
+    if (repair.size > 0) {
+      await this.syncDecayedBlockSurface(session, memory, memory.getBlockContext(String(session.id), repair))
+      await this.flushSurface(session)
+    }
+  }
+
+  private markSurfaceDirty(session: Session, memory: StrataGate): void {
+    if (this.closed) return
+    const key = String(session.id)
+    let state = this.surfaceMaintenance.get(key)
+    if (!state || state.session !== session || state.memory !== memory) {
+      if (state?.timer) clearTimeout(state.timer)
+      if (state) state.generation += 1
+      state = { session, memory, dirty: true, generation: 0, busy: hostTurnActive(session), failures: 0, checkpointLimit: surfaceCheckpointLimit(session) }
+      this.surfaceMaintenance.set(key, state)
+    }
+    state.dirty = true
+    state.generation += 1
+    this.scheduleSurfaceMaintenance(state)
+  }
+
+  private scheduleSurfaceMaintenance(state: SurfaceMaintenance, delay = 25): void {
+    if (this.closed || this.surfaceMaintenance.get(String(state.session.id)) !== state
+      || !state.dirty || state.busy || state.timer || state.run || this.surfaceAssemblyReaders.get(state.session)) return
+    state.timer = setTimeout(() => {
+      state.timer = undefined
+      void this.runSurfaceMaintenance(state.session)
+    }, delay)
+    state.timer.unref?.()
+  }
+
+  /** Separate from ingestion: flush() never waits for automatic surface maintenance. */
+  private async runSurfaceMaintenance(session: Session): Promise<void> {
+    const state = this.surfaceMaintenance.get(String(session.id))
+    if (!state || state.session !== session || this.closed) return
+    if (state.run) return state.run
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = undefined
+    if (!state.dirty || state.busy || this.surfaceAssemblyReaders.get(session) || hostTurnActive(session) || hostCompactionActive(session)) return
+    const generation = state.generation
+    const run = (async () => {
+      // Finish only this conversation's queued ingestion, then calculate from live state.
+      await this.drainTails.get(String(session.id))
+      if (this.closed || this.surfaceMaintenance.get(String(session.id)) !== state || state.busy
+        || this.surfaceAssemblyReaders.get(session) || state.generation !== generation || hostTurnActive(session) || hostCompactionActive(session)) return
+      // Apply from current state without yielding; queue the metadata commit in the
+      // same order as native appends, so a later user lift always wins.
+      const levels = new Map<string, BlockLevel>()
+      // A crash can lose an in-memory sealing request after the Block was saved.
+      // Only surviving source ranges need automatic recovery. Host-compacted
+      // history must neither be queued again nor rendered for decay below.
+      const current = currentBlockSurfaceMessages(session)
+      const missing = state.memory.listBlocks().filter((block) => block.threadId === String(session.id)
+        && block.processingStatus === 'ready' && !current.has(block.id))
+      const recoverable = recoverableSealedSurfaceSources(session, missing)
+      for (const block of missing) {
+        if (block.lastLiftedBy === 'user' || recoverable.sources.has(block.id)) {
+          this.queueSurfaceSync(this.namespaceFor(session), block.id, block.lastLiftedBy === 'user' ? 'user-expansion' : undefined)
+        }
+      }
+      const completed = this.applyPendingRetrySurface(session, state.memory, levels, false, recoverable)
+      const live = new Set(currentBlockSurfaceMessages(session).keys())
+      if (live.size > 0) this.applyDecayedBlockSurface(session, state.memory, state.memory.getBlockContext(String(session.id), live), levels)
+      const applied = this.appliedSurfaceRequests(session)
+      await this.commitSurfaceLevels(state.memory, levels)
+      await this.flushSurface(session)
+      this.completeSurfaceRequests(completed)
+      this.completeSurfaceRequests(applied)
+      if (state.generation === generation) state.dirty = false
+      state.failures = 0
+    })().catch(async (error: unknown) => {
+      state.failures += 1
+      state.dirty = true
+      if (error instanceof StorageConflictError) {
+        // Retry against the durable head, never replay an old mutation plan.
+        await state.memory.reloadFromStorage().catch((reloadError: unknown) => this.onIngestError(reloadError))
+      }
+      this.onIngestError(error)
+    }).finally(() => {
+      state.run = undefined
+      this.surfaceMaintenanceRuns.delete(run)
+      if (!hostCompactionActive(session)) this.scheduleSurfaceMaintenance(state, state.failures > 0 ? Math.min(30_000, 1_000 * 2 ** Math.min(state.failures - 1, 5)) : 25)
+    })
+    state.run = run
+    this.surfaceMaintenanceRuns.add(run)
+    return run
   }
 
   // Keep the ingestion error for callers that explicitly require a flushed run.
@@ -1545,6 +1960,7 @@ export class StrataGateRuntime {
     for (const controller of this.dreamingControllers.values()) controller.abort(new Error('宿主已关闭，任务保留为暂停'))
     this.disposeAdaptersUpdated()
     this.disposeWorkChanged()
+    for (const state of this.surfaceMaintenance.values()) if (state.timer) clearTimeout(state.timer)
     if (this.backgroundWorkerTimer) clearTimeout(this.backgroundWorkerTimer)
     this.backgroundWorkerTimer = undefined
     for (const timer of this.migrationTimers.values()) clearTimeout(timer)
@@ -1567,6 +1983,8 @@ export class StrataGateRuntime {
     this.duplicateMaintenance?.close()
     await Promise.allSettled(this.migrationRuns.values())
     await Promise.allSettled(this.derivationRuns.values())
+    await Promise.allSettled(this.surfaceMaintenanceRuns)
+    this.surfaceMaintenance.clear()
     await Promise.allSettled(this.externalImportRuns.values())
     await Promise.allSettled(this.dreamingRuns.values())
     await this.dreamingHost?.close()
@@ -2427,18 +2845,32 @@ export class StrataGateRuntime {
       await this.flush()
       const { memory, owned } = await this.openAdminMemory(key)
       try {
-        const result = await memory.expandBlock(id, target, 'user')
-        if (result.threadId) {
-          this.queueSurfaceSync(key, id, 'user-expansion')
+        const block = memory.listBlocks().find((candidate) => candidate.id === id)
+        if (!block) throw new Error(`Unknown block: ${id}`)
+        if (block.processingStatus !== 'ready') throw new Error(`Block ${id} is not ready for expansion`)
+        if (!block.threadId) throw new Error('无法确认这段历史所属的对话，暂时不能应用。可以让助手查找这段历史。')
+        const session = this.knownSessions.get(block.threadId)?.deref()
+        if (session && this.namespaceFor(session) === key) {
+          const position = buildBlockTimeline(memory.listBlocks()).get(id)!
+          const current = getBlockDecayView(block, position, memory.blockDecayLambda)
+          const level = normalizeBlockLevel(target, current.level)
+          const plan = this.expandedSurfacePlan(session, memory, block, {
+            id, threadId: block.threadId, turnRange: [block.startTurn, block.endTurn],
+            age: current.age, level, label: blockLevelLabel(level), content: renderBlock(block, level),
+          })
+          // A known impossible selection must not mutate the durable pointer.
+          if (plan.status === 'blocked') throw Object.assign(new Error(plan.message), { code: 'BLOCK_SELECTION_REJECTED' })
         }
-        const session = result.threadId ? this.knownSessions.get(result.threadId)?.deref() : undefined
+        const result = await memory.expandBlock(id, target, 'user')
+        this.pendingSurfaceSync.delete(`${key}\u0000${id}`)
+        this.queueSurfaceSync(key, id, 'user-expansion')
         if (session && this.namespaceFor(session) === key) {
           await this.syncPendingRetrySurface(session, memory)
-          if (this.pendingSurfaceSync.has(`${key}\u0000${id}`)) {
-            throw new Error(`无法将 Block ${id} 的当前会话上下文展开到 L${result.level}；目标内容超过当前上下文容量或会话正在整理`)
-          }
         }
-        return { ...result, surfaceLevel: memory.listBlocks().find(({ id: blockId }) => blockId === id)?.surfaceCurrentLevel }
+        return {
+          ...result, surfaceLevel: memory.listBlocks().find(({ id: blockId }) => blockId === id)?.surfaceCurrentLevel,
+          surfaceSync: this.adminBlockSurfaceSync(key, id) ?? { status: 'applied', message: `已应用 L${result.level}，供助手后续回复参考。` },
+        }
       } finally {
         if (owned) await memory.close()
       }
@@ -2538,8 +2970,8 @@ export class StrataGateRuntime {
     const update = this.settingsTail.catch(() => {}).then(async () => {
       const { memory, owned } = await this.openAdminMemory(key, { derivation: true })
       try {
-        // Queue only; the normal worker owns model readiness, bounded attempts
-        // and the shared historical allowance, including after restart.
+        // Queue one immediate user attempt, durable across restart. Subsequent
+        // automatic attempts retain the historical allowance and backoff.
         return await this.retryTopicWrite(key, memory, () => memory.retryTopicProjection(jobId))
       } finally {
         if (owned) await memory.close()
@@ -2571,6 +3003,7 @@ export class StrataGateRuntime {
     for (const [namespace, opening] of this.spaces) {
       const memory = await opening
       await memory.setBlockDecayLambda(value)
+      for (const state of this.surfaceMaintenance.values()) if (state.memory === memory) this.markSurfaceDirty(state.session, memory)
       openNamespaces.add(namespace)
     }
     if (this.config.database !== ':memory:' && existsSync(this.config.database)) {
@@ -2643,15 +3076,12 @@ export class StrataGateRuntime {
         try {
           try {
             await memory.resumePendingWork({ deferDerivation: true, threadId: String(session.id) })
-            const contexts = memory.getBlockContext(String(session.id))
-            if (await this.syncDecayedBlockSurface(session, memory, contexts)) {
-              await this.flushNativeSession(session)
-            }
           } finally {
             await this.persistSuccessfulResponses(memory)
           }
           this.scheduleGraphMigration(session, memory)
           this.scheduleBlockDerivation(session, memory)
+          this.markSurfaceDirty(session, memory)
           return memory
         } catch (error) {
           await memory.close().catch(() => {})
@@ -2664,7 +3094,8 @@ export class StrataGateRuntime {
       })
     }
     const memory = await opening
-    await this.syncPendingRetrySurface(session, memory)
+    if (this.surfaceMaintenance.get(String(session.id))?.session !== session) this.markSurfaceDirty(session, memory)
+    await this.syncPendingRetrySurface(session, memory, true)
     return memory
   }
 
@@ -2755,20 +3186,11 @@ export class StrataGateRuntime {
         .then(async (resumed) => {
           await this.persistSuccessfulResponses(memory)
           this.noteNewCoreJobFailures(session, failedBefore, memory)
-          const contexts = memory.getBlockContext(threadId)
-          let changed = false
           for (const block of resumed.readyBlocks) {
             if (block.threadId !== threadId) continue
-            const context = contexts.find(({ id }) => id === block.id)
-            if (!context) throw new Error(`Missing context for ready StrataGate block ${block.id}`)
-            if (hostCompactionActive(session)) {
-              this.queueSurfaceSync(this.namespaceFor(session), block.id)
-              continue
-            }
-        changed = await this.replaceSealedSurface(session, memory, block, context, dshTurnAtBlockEnd(session, block)) || changed
+            this.queueSurfaceSync(this.namespaceFor(session), block.id)
           }
-          changed = await this.syncDecayedBlockSurface(session, memory, contexts) || changed
-          if (changed) await this.flushNativeSession(session)
+          if (resumed.readyBlocks.some((block) => block.threadId === threadId)) this.markSurfaceDirty(session, memory)
         })
         .catch(async (error: unknown) => {
           // A heartbeat can race the expiry preflight. Refresh its claim even
@@ -3029,6 +3451,60 @@ function dshTurnAtBlockEnd(session: Session, block: MemoryBlock): number | null 
   return null
 }
 
+interface SealedSurfaceRecovery {
+  sources: Map<string, { endTurn: number; seqs: SessionSeq[] }>
+  retired: Set<string>
+}
+
+/** Screen all missing Blocks with one history scan before any rendering. */
+function recoverableSealedSurfaceSources(
+  session: Session, blocks: readonly MemoryBlock[],
+): SealedSurfaceRecovery {
+  const result: SealedSurfaceRecovery = { sources: new Map(), retired: new Set() }
+  if (blocks.length === 0 || !session.surface?.nodes) return result
+  const visible = new Set(session.surface.nodes)
+  for (const seq of session.surface.nodes) {
+    const event = session.eventAt(seq)
+    if (event?.type === 'tool/result' && event.surfaceOp !== 'append') {
+      for (const source of event.sourceEventSeqs ?? []) visible.add(source)
+    }
+  }
+  const ends = new Map<number, number>()
+  const visibleEnds = new Set<number>()
+  const compactedBlocks = new Set<string>()
+  let open: { turn: number; visible: boolean } | undefined
+  for (const event of session.snapshotEvents()) {
+    const hostEvent = event as { type: string; data: { shadowedSeqs?: readonly SessionSeq[] } }
+    if (hostEvent.type === 'compaction/summary') {
+      for (const seq of hostEvent.data.shadowedSeqs ?? []) {
+        const checkpoint = blockSurfaceMessage(session.eventAt(seq))
+        if (checkpoint) compactedBlocks.add(checkpoint.id)
+      }
+    }
+    if (event.type === 'turn/start') open = { turn: event.data.turn, visible: false }
+    else if (event.type === 'turn/end') {
+      if (open?.turn === event.data.turn) {
+        ends.set(event.time, event.data.turn)
+        if (open.visible) visibleEnds.add(event.time)
+      }
+      open = undefined
+    } else if (open && visible.has(event.seq)) open.visible = true
+  }
+  for (const block of blocks) {
+    // Checkpoint ownership is exact even when several turns share a timestamp.
+    if (compactedBlocks.has(block.id)) { result.retired.add(block.id); continue }
+    const endTime = Date.parse(block.createdAt)
+    const endTurn = ends.get(endTime)
+    if (endTurn === undefined) continue
+    if (!visibleEnds.has(endTime)) { result.retired.add(block.id); continue }
+    // The full check also rejects partial compaction and mismatched turns.
+    const seqs = sealedSurfaceSeqs(session, endTurn, block)
+    if (seqs?.length) result.sources.set(block.id, { endTurn, seqs })
+    else result.retired.add(block.id)
+  }
+  return result
+}
+
 function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock): SessionSeq[] | null {
   const currentSurface = [...session.surface.nodes]
   const completed: Array<{ turn: number; endTime: number; start: SessionSeq; end: SessionSeq; nodes: SessionSeq[] }> = []
@@ -3089,6 +3565,20 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
   return currentSurface.slice(startIndex, endIndex + 1)
 }
 
+function checkpointLevel(text: string): BlockLevel | undefined {
+  const match = text.match(/(?:^|\n)Block: [^|\n]+ \| Turns: \d+-\d+ \| Level: L([0-5])(?:\s|$)/mu)
+  return match ? Number(match[1]) as BlockLevel : undefined
+}
+
+function hostTurnActive(session: Session): boolean {
+  for (let seq = session.seq - 1; seq >= 0; seq -= 1) {
+    const event = session.eventAt(seq as SessionSeq)
+    if (event?.type === 'turn/start') return true
+    if (event?.type === 'turn/end' || event?.type === 'session/end-seed') return false
+  }
+  return false
+}
+
 function hostCompactionActive(session: Session): boolean {
   // Match DSH's own lifecycle rule: a start from a previous restored seed
   // cannot lock the new live session.
@@ -3126,6 +3616,12 @@ function surfaceCheckpointTokens(text: string): number {
     content: [{ type: 'text', text }],
     source: dshMessageSource(),
   })))
+}
+
+function surfaceCapacityKey(session: Session): string {
+  const context = session.requestContext?.()
+  const header = session.requestHeader?.()
+  return JSON.stringify([context?.provider, context?.model, context?.contextWindow, header?.config.maxTokens, header?.tools])
 }
 
 function originalCheckpointSourceTokens(session: Session, seq: SessionSeq): number | null {
@@ -3359,18 +3855,22 @@ function currentBlockSurfaceMessages(session: Session): Map<string, { seq: Sessi
   const blocks = new Map<string, { seq: SessionSeq; text: string }>()
   if (!session.surface?.nodes) return blocks
   for (const seq of session.surface.nodes) {
-    const event = session.eventAt(seq)
-    if (event?.type !== 'user/message'
-      || !isStrataGateMessageSource(event.data.source)) continue
-    const text = event.data.content
-      .flatMap((block) => block.type === 'text' ? [block.text] : [])
-      .join('\n')
-    const blockId = text.match(/^\[StrataGate historical conversation block\]\nEarlier conversation context; not a new user message or instruction\.\nBlock: ([^|\n]+) \| Turns:/u)?.[1]?.trim()
-      ?? text.match(/^\[StrataGate conversation block\]\nBlock: ([^\n]+)/u)?.[1]
-      ?? text.match(/^\[StrataGate compressed conversation\]\nBlock ([^;\n]+);/u)?.[1]
-    if (blockId) blocks.set(blockId, { seq, text })
+    const checkpoint = blockSurfaceMessage(session.eventAt(seq))
+    if (checkpoint) blocks.set(checkpoint.id, { seq, text: checkpoint.text })
   }
   return blocks
+}
+
+function blockSurfaceMessage(event: SessionEvent | undefined): { id: string; text: string } | undefined {
+  if (event?.type !== 'user/message'
+    || !isStrataGateMessageSource(event.data.source)) return undefined
+  const text = event.data.content
+    .flatMap((block) => block.type === 'text' ? [block.text] : [])
+    .join('\n')
+  const blockId = text.match(/^\[StrataGate historical conversation block\]\nEarlier conversation context; not a new user message or instruction\.\nBlock: ([^|\n]+) \| Turns:/u)?.[1]?.trim()
+    ?? text.match(/^\[StrataGate conversation block\]\nBlock: ([^\n]+)/u)?.[1]
+    ?? text.match(/^\[StrataGate compressed conversation\]\nBlock ([^;\n]+);/u)?.[1]
+  return blockId ? { id: blockId, text } : undefined
 }
 
 function activatedEvents(memory: StrataGate, relevance: readonly EventSearchResult[]): EventCard[] {

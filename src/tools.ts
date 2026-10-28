@@ -229,7 +229,8 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
       parameters: {
         batch_id: { type: 'string', description: 'The batchId returned by the retrieval to assess. Omit only in a strictly sequential flow.' },
         verdict: { type: 'string', enum: ['sufficient', 'partial', 'wrong'] as const, required: true },
-        evidence_refs: { type: 'array', items: { type: 'string' }, required: true },
+        evidence_refs: { oneOf: [{ type: 'array', items: { type: 'string' } }, { type: 'null' }], required: true,
+          description: 'Evidence refs adopted from this batch. Use [] when none are adopted; null is also accepted as [].' },
         fit: { type: 'string', required: true },
         missing: { type: 'string', required: true },
         next_strategy: {
@@ -241,7 +242,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
         },
       },
       output: jsonOutput,
-      execute: async (args, exec) => runtime.assess(sessionOf(exec), args, args.batch_id) as never,
+      execute: async (args, exec) => runtime.assess(sessionOf(exec), { ...args, evidence_refs: args.evidence_refs ?? [] }, args.batch_id) as never,
     }))
     assessmentGraphEnabled = enabled
   }
@@ -252,13 +253,14 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
     description: 'This tool is provided by the StrataGate plugin. Close one StrataGate retrieval batch BEFORE outputting the final user answer. Complete memory_assess / memory_record_use as pre-answer evidence processing for ALL batches, then generate the final user answer. Pass its batch_id and exactly the evidenceRefs from that batch actually adopted for the answer, or [] when none are used. Non-empty refs require that batch\'s sufficient assessment. Never write the answer first and record usage afterwards. Do not turn this tool\'s internal receipt or batch status into a user-facing answer. The host renders successful selections as answer-tail citations, so do not write a manual citation list. Omitting batch_id selects the latest batch for sequential compatibility.',
     parameters: {
       batch_id: { type: 'string', description: 'The batchId to close. Omit only in a strictly sequential flow.' },
-      evidence_refs: { type: 'array', items: { type: 'string' }, required: true },
+      evidence_refs: { oneOf: [{ type: 'array', items: { type: 'string' } }, { type: 'null' }], required: true,
+        description: 'Evidence refs actually used in the answer. Use [] when none are used; null is also accepted as [].' },
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.recordUse(
       sessionOf(exec),
       String(exec.callId),
-      args.evidence_refs,
+      args.evidence_refs ?? [],
       args.batch_id,
     ) as never,
   }))

@@ -1463,6 +1463,35 @@ describe('StrataGate admin routes', () => {
     expect(invalid).toMatchObject({ status: 400, body: { error: expect.stringContaining('L0 through L5') } })
   })
 
+  it('distinguishes a preflight rejection from an ambiguous save failure', async () => {
+    const url = '/api/stratagate/blocks/expand?namespace=test&blockId=blk_1&level=L4'
+    const rejected = { ...runtime, adminExpandBlock: async () => { throw Object.assign(new Error('当前模型预计放不下'), { code: 'BLOCK_SELECTION_REJECTED' }) } } as unknown as StrataGateRuntime
+    expect(await request(url, 'PATCH', rejected)).toMatchObject({ status: 409, body: { code: 'BLOCK_SELECTION_REJECTED', error: '当前模型预计放不下' } })
+    const ambiguous = { ...runtime, adminExpandBlock: async () => { throw new Error('native save failed') } } as unknown as StrataGateRuntime
+    expect(await request(url, 'PATCH', ambiguous)).toMatchObject({ status: 500, body: { error: 'native save failed' } })
+  })
+
+  it.each(['pending', 'blocked'] as const)('reports a %s selection separately from the actual injected level', async (status) => {
+    const state = structuredClone(snapshot)
+    Object.assign(state.blocks[0]!, { threadId: 's1', pointerCurrentLevel: 4, pointerAnchorLevel: 4,
+      surfaceCurrentLevel: 0, lastLiftedBy: 'user', lastLiftedAt: '2026-10-27T12:00:00Z' })
+    state.blocks[0]!.l5Raw[0]!.threadId = 's1'
+    const target = { ...runtime, adminSnapshot: async () => state,
+      adminBlockSurfaceSync: () => ({ status, message: '当前模型上下文尚未更新' }) } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Atest&kind=blocks&threadId=s1', 'GET', target)
+    expect(result.body.items[0]).toMatchObject({ currentLevel: 0, targetLevel: 4, surfaceSync: { status, message: '当前模型上下文尚未更新' } })
+  })
+
+  it('keeps an unknown surface level pending after restart instead of claiming the selection is applied', async () => {
+    const state = structuredClone(snapshot)
+    Object.assign(state.blocks[0]!, { threadId: 's1', pointerAnchorLevel: 4,
+      lastLiftedBy: 'user', lastLiftedAt: '2026-10-27T12:00:00Z' })
+    state.blocks[0]!.l5Raw[0]!.threadId = 's1'
+    const target = { ...runtime, adminSnapshot: async () => state } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Atest&kind=blocks&threadId=s1', 'GET', target)
+    expect(result.body.items[0]).toMatchObject({ surfaceLevelKnown: false, surfaceSync: { status: 'pending' } })
+  })
+
   it('links answer audit records to events and original messages', async () => {
     const result = await request('/api/stratagate/audit?namespace=dsh%3Aproject%3Atest')
     expect(result.body.items[0]).toMatchObject({
