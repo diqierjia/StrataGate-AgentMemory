@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -217,7 +217,7 @@ test('CLI rejects a changed artifact before npm; a live lock blocks concurrent r
   const missingAssetArtifact = join(f.evidence, 'missing-asset.tgz')
   const missingAssetRoot = join(f.evidence, 'missing-asset')
   mkdirSync(missingAssetRoot, { recursive: true })
-  execFileSync('cp', ['-R', join(f.evidence, 'package'), join(missingAssetRoot, 'package')])
+  cpSync(join(f.evidence, 'package'), join(missingAssetRoot, 'package'), { recursive: true })
   rmSync(join(missingAssetRoot, 'package', 'docs/assets/stratagate-avatar.png'))
   execFileSync('tar', ['-czf', missingAssetArtifact, '-C', missingAssetRoot, 'package'])
   assert.throws(() => inspectArtifact(missingAssetArtifact, digest(readFileSync(missingAssetArtifact))), /tar.*Not found|Command failed/)
