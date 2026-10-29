@@ -290,6 +290,12 @@ If `provider` and `model` are omitted, memory processing uses the session's late
 
 ## Privacy and failure behavior
 
+Event extraction preflights the full estimated request, including prompts and tools. Input is capped at 12,000 estimated tokens with output and context-window headroom (32,768 fallback window). Output uses the larger of `maxOutputTokens` and 8,192, capped to available context. Capacity failures and explicit output truncation split consecutive sources by message boundary, then newline/character boundary for oversized messages. Source IDs and all pending derivation text are retained; existing tool-payload compaction still applies and L5 remains unchanged. Automatic neighbor/timeline hints have a separate size limit and cannot supply new facts.
+
+All slices share a maximum of 32 provider calls, eight split levels, 262,144 reserved input/output tokens, and three times `structuredTaskTimeoutMs` capped at 360 seconds. Reserved tokens are a conservative ceiling, not measured billing. Transport, authentication, rate-limit and timeout failures do not fan out. Schema/provenance errors receive at most one repair attempt. Only a complete set of slice results reaches the existing Event commit path; any failure leaves the Block pending without publishing earlier candidates or marking extraction skipped.
+
+Slice candidates currently live only within one invocation; retries after failure/restart reprocess the Block. Persistent slice checkpoints and cross-slice factual reconciliation remain unimplemented. Isolated tests verify capacity, source coverage and failure states, not live semantic recall, correction/cancellation handling or production failure rates.
+
 Memory is stored in the configured local SQLite file. Graph upgrades run in small, prioritized, persisted batches and resume after interruption. Raw source messages remain available at L5 for verification.
 
 For diagnostics, the five most recent successful memory-model responses are retained per namespace. Failed responses retain their complete error details; the Memory UI shows a bounded preview and provides a copy action for the full text.
