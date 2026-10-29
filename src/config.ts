@@ -6,6 +6,7 @@ export type StructuredReasoningEffortMode = 'auto' | 'force-off'
 export interface Config {
   dailyNotesEnabled?: boolean
   dailyNotesTimeZone?: string
+  dailyNotesInjectionDays?: number
   dailyNotesContextMaxChars?: number
   database?: string
   sessionRoot?: string
@@ -31,6 +32,7 @@ export interface Config {
 export interface ResolvedConfig {
   dailyNotesEnabled?: boolean
   dailyNotesTimeZone?: string
+  dailyNotesInjectionDays?: number
   dailyNotesContextMaxChars?: number
   database: string
   sessionRoot?: string
@@ -88,6 +90,7 @@ export function volatileIfSupported<T>(schema: T): T {
 export const Config = z.object({
   dailyNotesEnabled: z.boolean().default(true),
   dailyNotesTimeZone: z.string(),
+  dailyNotesInjectionDays: z.natural().min(1).max(30).default(3),
   dailyNotesContextMaxChars: z.natural().min(1024).default(12_000),
   database: z.string().required(),
   sessionRoot: z.string(),
@@ -139,7 +142,9 @@ export function resolveConfig(config: Config): ResolvedConfig {
   }
   if (config.dailyNotesTimeZone !== undefined) new Intl.DateTimeFormat('en-US', { timeZone: config.dailyNotesTimeZone }).format()
   if (config.dailyNotesContextMaxChars !== undefined && (!Number.isSafeInteger(config.dailyNotesContextMaxChars) || config.dailyNotesContextMaxChars < 1024)) throw new TypeError('dailyNotesContextMaxChars must be an integer >= 1024')
+  if (config.dailyNotesInjectionDays !== undefined && (!Number.isSafeInteger(config.dailyNotesInjectionDays) || config.dailyNotesInjectionDays < 1 || config.dailyNotesInjectionDays > 30)) throw new TypeError('dailyNotesInjectionDays must be an integer between 1 and 30')
   return {
+    dailyNotesInjectionDays: config.dailyNotesInjectionDays ?? 3,
     dailyNotesEnabled: config.dailyNotesEnabled ?? true,
     ...(config.dailyNotesTimeZone !== undefined ? { dailyNotesTimeZone: config.dailyNotesTimeZone } : {}),
     dailyNotesContextMaxChars: config.dailyNotesContextMaxChars ?? 12_000,

@@ -25,10 +25,11 @@ import {
   type ExternalMemoryAction,
   type MemoryBlock,
   type RawMessage,
-  type StrataGateSnapshot,
+  type AdminReadModel,
+  type AdminReadEntry,
   type UsageReceipt,
 } from '@diqier/stratagate'
-import type { AdminSnapshotEntry, FeedbackDraftInput, StrataGateRuntime } from './runtime.js'
+import type { FeedbackDraftInput, StrataGateRuntime } from './runtime.js'
 import { clusterKnowledgeGraph } from './graph-clustering.js'
 import { memoryTopicSections, memoryTopicSectionNavigation, renderMemoryDirectory, sortMemoryTopics } from './topics.js'
 
@@ -187,7 +188,7 @@ function redactedMessage(message: RawMessage, blockId: string | null): RawMessag
     : common
 }
 
-function sourceMessages(snapshot: StrataGateSnapshot, ids?: ReadonlySet<string>): Array<RawMessage & { blockId: string | null }> {
+function sourceMessages(snapshot: AdminReadModel, ids?: ReadonlySet<string>): Array<RawMessage & { blockId: string | null }> {
   const output: Array<RawMessage & { blockId: string | null }> = []
   for (const block of snapshot.blocks) {
     for (const message of block.l5Raw) {
@@ -285,7 +286,7 @@ function appendWeightSegment(
   points.push({ turn: toTurn, weight: sampledEventWeight(event, toTurn, fromTurn, mentionCount), kind: 'sample' })
 }
 
-function eventWeightTrajectory(snapshot: StrataGateSnapshot, event: EventCard): unknown {
+function eventWeightTrajectory(snapshot: AdminReadModel, event: EventCard): unknown {
   const currentTurn = snapshot.currentTurn
   const formedTurn = Number.isSafeInteger(event.formedTurn) && event.formedTurn! >= 0
     ? event.formedTurn!
@@ -435,7 +436,7 @@ function eventWeightTrajectory(snapshot: StrataGateSnapshot, event: EventCard): 
   }
 }
 
-function eventSummary(event: EventCard, snapshot?: StrataGateSnapshot): unknown {
+function eventSummary(event: EventCard, snapshot?: AdminReadModel): unknown {
   return {
     id: event.id,
     formedTurn: event.formedTurn,
@@ -481,7 +482,23 @@ function matchesQuery(value: unknown, query: string): boolean {
   return JSON.stringify(value).toLocaleLowerCase().includes(query.toLocaleLowerCase())
 }
 
-async function requiredSnapshot(runtime: StrataGateRuntime, namespace: string): Promise<StrataGateSnapshot> {
+function associationIndex<T>(values: readonly T[], keys: (value: T) => readonly string[]): Map<string, T[]> {
+  const index = new Map<string, T[]>()
+  for (const value of values) for (const key of new Set(keys(value))) {
+    const group = index.get(key) ?? []
+    group.push(value)
+    index.set(key, group)
+  }
+  return index
+}
+
+function indexedAssociations<T>(index: ReadonlyMap<string, readonly T[]>, keys: Iterable<string>, order: ReadonlyMap<T, number>): T[] {
+  const values = new Set<T>()
+  for (const key of keys) for (const value of index.get(key) ?? []) values.add(value)
+  return [...values].sort((left, right) => order.get(left)! - order.get(right)!)
+}
+
+async function requiredSnapshot(runtime: StrataGateRuntime, namespace: string): Promise<AdminReadModel> {
   const snapshot = await runtime.adminSnapshot(namespace)
   if (!snapshot) throw new AdminHttpError(404, `Unknown StrataGate namespace: ${namespace}`)
   return snapshot
@@ -494,7 +511,7 @@ class AdminHttpError extends Error {
 }
 
 /** Rebuild the display on a clone, without opening a writer or claiming work. */
-function topicDirectoryProjection(snapshot: StrataGateSnapshot, agentMemoryWeight: number) {
+function topicDirectoryProjection(snapshot: AdminReadModel, agentMemoryWeight: number) {
   const visibleEvents = [...snapshot.events, ...(agentMemoryWeight > 0 ? snapshot.agentEvents : [])]
     .filter((event) => event.status === 'active' || event.status === 'superseded')
   const directory = new MemoryTopicDirectory()
@@ -692,7 +709,7 @@ async function topicEvents(runtime: StrataGateRuntime, url: URL): Promise<unknow
 }
 
 /** Read-only graph work view. Retained jobs without a live source are history. */
-function liveGraphProjection(snapshot: StrataGateSnapshot, processing = true) {
+function liveGraphProjection(snapshot: AdminReadModel, processing = true) {
   const eventIds = new Set([...snapshot.events, ...snapshot.agentEvents]
     .filter(({ status }) => status !== 'forgotten' && status !== 'archived')
     .map(({ id }) => id))
@@ -716,7 +733,7 @@ function liveGraphProjection(snapshot: StrataGateSnapshot, processing = true) {
   }
 }
 
-async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly AdminSnapshotEntry[]): Promise<unknown> {
+async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly AdminReadEntry[]): Promise<unknown> {
   const entries = cachedEntries ?? await Promise.all((await runtime.adminNamespaces()).map(async (namespace) => ({
     namespace,
     revision: 0,
@@ -877,7 +894,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       namespace,
       duplicateRepair: runtime.adminDuplicateRepairStatus?.(namespace) ?? null,
       workspaceName: runtime.adminWorkspaceName(namespace) ?? '当前工作区',
-      schemaVersion: snapshot.schemaVersion,
+      schemaVersion: 'schemaVersion' in snapshot ? snapshot.schemaVersion : snapshot.storedSchemaVersion,
       currentTurn: snapshot.currentTurn,
       blockTurnSize: snapshot.blockTurnSize,
       blockDecayLambda: snapshot.blockDecayLambda,
@@ -1132,7 +1149,8 @@ function timestampKey(value: string): string {
   return Number.isFinite(parsed) ? String(parsed) : value
 }
 
-function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotView {
+function recoverSnapshotView(snapshot: AdminReadModel): RecoveredSnapshotView {
+  const failedSummaries = new Set(snapshot.summaryJobs.filter(job => derivationJobState(job, job.status === 'succeeded') === 'terminal-failed').map(job => job.blockId))
   const receiptThreads = new Map<string, string>()
   const receiptActivity = new Map<string, string>()
   const receiptTurns = new Map<string, number>()
@@ -1177,8 +1195,7 @@ function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotVie
     }
     // A terminal summary still needs its own Block notice when no raw source
     // can be read. Use only the recorded thread, or the existing legacy scope.
-    if (groups.size === 0 && snapshot.summaryJobs.some((job) => job.blockId === source.id
-      && derivationJobState(job, job.status === 'succeeded') === 'terminal-failed')) {
+    if (groups.size === 0 && failedSummaries.has(source.id)) {
       groups.set(source.threadId?.trim() || LEGACY_THREAD_ID, [])
     }
     const entries = [...groups]
@@ -1240,17 +1257,19 @@ function virtualBlockLayers(block: DisplayBlock): DisplayLayer[] {
   ])
 }
 
-function conversationRows(snapshot: StrataGateSnapshot, view = recoverSnapshotView(snapshot)): Array<{ id: string; label: string; blocks: number; lastActivityAt: string | null }> {
+function conversationRows(snapshot: AdminReadModel, view = recoverSnapshotView(snapshot)): Array<{ id: string; label: string; blocks: number; lastActivityAt: string | null }> {
+  const blocksByThread = associationIndex(view.blocks, block => [block.threadId])
+  const openByThread = associationIndex(view.openMessages, message => [message.threadId])
   const ids = new Set([
     ...view.blocks.map((block) => block.threadId),
     ...view.openMessages.map(({ threadId }) => threadId),
     ...view.receiptThreads.values(),
   ])
   return [...ids].map((id) => {
-    const blocks = view.blocks.filter((block) => block.threadId === id)
+    const blocks = blocksByThread.get(id) ?? []
     const messages = [
       ...blocks.flatMap((block) => block.messages),
-      ...view.openMessages.filter((message) => message.threadId === id).map(({ message }) => message),
+      ...(openByThread.get(id) ?? []).map(({ message }) => message),
     ]
     const firstUser = messages.find(({ role, content }) => role === 'user' && content.trim())
     const title = firstUser?.content.replace(/\s+/g, ' ').trim().slice(0, 28)
@@ -1271,11 +1290,16 @@ function conversationRows(snapshot: StrataGateSnapshot, view = recoverSnapshotVi
 async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
   const namespace = url.searchParams.get('namespace')?.trim() ?? ''
   if (!namespace) throw new AdminHttpError(400, 'namespace is required')
-  const snapshot = await requiredSnapshot(runtime, namespace)
   const kind = url.searchParams.get('kind') ?? 'events'
   const query = url.searchParams.get('q')?.trim() ?? ''
   const offset = numeric(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER)
   const limit = numeric(url.searchParams.get('limit'), 100, 1, 200)
+  const blockPage = kind === 'blocks' && !query && runtime.adminReadBlockPage
+    ? await runtime.adminReadBlockPage(namespace, { threadId: url.searchParams.get('threadId')?.trim() ?? '', offset, limit },
+      model => conversationRows(model)[0]?.id ?? null)
+    : null
+  const eventModel = kind === 'events' && runtime.adminReadEventModel ? await runtime.adminReadEventModel(namespace) : null
+  const snapshot = blockPage?.model ?? eventModel ?? await requiredSnapshot(runtime, namespace)
   let values: unknown[]
   if (kind === 'events') {
     const timeline = url.searchParams.get('timeline') === 'true'
@@ -1289,7 +1313,10 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       const happened = event.temporal.happenedStart ?? event.temporal.happenedEnd
       return { value: happened ?? event.temporal.mentionedAt ?? event.createdAt, known: Boolean(happened) }
     }
-    values = [...snapshot.events]
+    const nodesById = new Map(snapshot.graphNodes.map(node => [node.id, node]))
+    const nodeOrder = new Map(snapshot.graphNodes.map((node, index) => [node, index]))
+    const elementsByEvent = associationIndex(snapshot.elements, element => element.sourceEventIds)
+    const candidates = [...snapshot.events]
       .sort((left, right) => occurrence(right).value.localeCompare(occurrence(left).value))
       .filter((event) => !timeline || (event.status !== 'forgotten' && event.status !== 'archived'))
       .filter((event) => !eventType || event.temporal.eventType === eventType)
@@ -1304,15 +1331,15 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         if (timeFilter === 'week') return Number.isFinite(time) && time >= weekAgo
         return true
       })
-      .map((event) => ({
+    values = (query ? candidates : candidates.slice(offset, offset + limit)).map((event) => ({
         ...(eventSummary(event, snapshot) as object),
-        relatedNodes: snapshot.graphNodes
-          .filter(({ id }) => (event.temporal.participantNodeIds ?? []).includes(id))
+        relatedNodes: [...new Set(event.temporal.participantNodeIds ?? [])]
+          .flatMap(id => nodesById.get(id) ?? []).sort((left, right) => nodeOrder.get(left)! - nodeOrder.get(right)!)
           .map(({ id, name, type, aliases }) => ({ id, name, type, aliases })),
-        relatedElements: snapshot.elements
-          .filter(({ sourceEventIds }) => sourceEventIds.includes(event.id))
+        relatedElements: (elementsByEvent.get(event.id) ?? [])
           .map(({ id, name }) => ({ id, name })),
       }))
+    if (!query) return { namespace, kind, total: candidates.length, offset, limit, items: values }
   }
   else if (kind === 'graph') {
     const eventMap = new Map(snapshot.events.map((event) => [event.id, event]))
@@ -1334,7 +1361,7 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
     const recovered = recoverSnapshotView(snapshot)
     const conversations = conversationRows(snapshot, recovered)
     const requestedThreadId = url.searchParams.get('threadId')?.trim() ?? ''
-    const activeThreadId = requestedThreadId || conversations[0]?.id || null
+    const activeThreadId = blockPage?.threadId ?? (requestedThreadId || conversations[0]?.id || null)
     const scopedBlocks = activeThreadId
       ? recovered.blocks.filter((block) => block.threadId === activeThreadId)
       : []
@@ -1342,20 +1369,27 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       id: block.id, threadId: block.threadId, sequence: block.source.sequence,
     })))
     const sourceTimeline = buildBlockTimeline(snapshot.blocks)
-    values = scopedBlocks.map((block) => {
+    const summaries = new Map(snapshot.summaryJobs.map(job => [job.blockId, job]))
+    const extractions = new Map(snapshot.extractionJobs.map(job => [job.blockId, job]))
+    const eventsByBlock = associationIndex(snapshot.events, event => event.sourceBlockId ? [event.sourceBlockId] : [])
+    const projectionsByEvent = associationIndex(snapshot.graphProjectionJobs, job => job.sourceEventIds)
+    const nodesByEvent = associationIndex(snapshot.graphNodes, node => node.sourceEventIds)
+    const projectionOrder = new Map(snapshot.graphProjectionJobs.map((job, index) => [job, index]))
+    const nodeOrder = new Map(snapshot.graphNodes.map((node, index) => [node, index]))
+    const pageIds = blockPage ? new Set(blockPage.blockIds) : null
+    const pageBlocks = query ? scopedBlocks : pageIds
+      ? scopedBlocks.filter(block => pageIds.has(block.id)) : scopedBlocks.slice(offset, offset + limit)
+    values = pageBlocks.map((block) => {
       const source = block.source
       const layers = virtualBlockLayers(block)
       const layerTokens = layers.map(({ level, tokens, percentOfL5 }) => ({ level, tokens, percentOfL5 }))
-      const extraction = snapshot.extractionJobs.find(({ blockId }) => blockId === source.id)
-      const summary = snapshot.summaryJobs.find(({ blockId }) => blockId === source.id)
+      const extraction = extractions.get(source.id)
+      const summary = summaries.get(source.id)
       const blockMessageIds = new Set(block.messages.map(({ id }) => id))
-      const relatedEvents = snapshot.events.filter((event) => event.sourceBlockId === source.id
-        && (!block.virtual || event.sourceMessageIds.some((id) => blockMessageIds.has(id))))
+      const relatedEvents = (eventsByBlock.get(source.id) ?? []).filter(event => !block.virtual || event.sourceMessageIds.some(id => blockMessageIds.has(id)))
       const eventIds = new Set(relatedEvents.map(({ id }) => id))
-      const projections = snapshot.graphProjectionJobs
-        .filter(({ sourceEventIds }) => sourceEventIds.some((id) => eventIds.has(id)))
-      const relatedNodes = snapshot.graphNodes
-        .filter(({ sourceEventIds }) => sourceEventIds.some((id) => eventIds.has(id)))
+      const projections = indexedAssociations(projectionsByEvent, eventIds, projectionOrder)
+      const relatedNodes = indexedAssociations(nodesByEvent, eventIds, nodeOrder)
         .map(({ id, name, type }) => ({ id, name, type }))
       const failedProjection = projections.find((job) => derivationJobState(job, job.status === 'completed') === 'terminal-failed')
       const pendingProjection = projections.some(graphProjectionIsProcessing)
@@ -1416,7 +1450,7 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         sourceMessages: block.messages.length,
         createdAt: source.createdAt,
         virtual: block.virtual,
-        rawAvailable: sourceMessages(snapshot, blockMessageIds).some(({ content }) => Boolean(content.trim())),
+        rawAvailable: block.messages.some(({ content }) => Boolean(content.trim())),
         processingStatus: source.processingStatus,
         summaryJob: summary ? {
           state: derivationJobState(summary, summary.status === 'succeeded'),
@@ -1454,10 +1488,10 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
     return {
       namespace,
       kind,
-      total: filtered.length,
+      total: query ? filtered.length : blockPage?.total ?? scopedBlocks.length,
       offset,
       limit,
-      items: filtered.slice(offset, offset + limit),
+      items: query ? filtered.slice(offset, offset + limit) : filtered,
       openBlock: {
         turnRange: openTurns > 0
           ? openDshTurns.length > 0 && openDshTurns.every((turn): turn is number => turn !== undefined)
@@ -1660,7 +1694,7 @@ async function retryTopicProjection(runtime: StrataGateRuntime, url: URL): Promi
   }
 }
 
-function receiptSources(snapshot: StrataGateSnapshot, receipt: UsageReceipt): unknown {
+function receiptSources(snapshot: AdminReadModel, receipt: UsageReceipt): unknown {
   const events = snapshot.events.filter(({ id }) => receipt.eventIds.includes(id))
   const elements = snapshot.elements.filter(({ id }) => receipt.elementIds.includes(id))
   const eventIds = new Set([...receipt.eventIds, ...elements.flatMap(({ sourceEventIds }) => sourceEventIds)])
@@ -1704,16 +1738,27 @@ function requestHeader(req: WebRequest, name: string): string {
 }
 
 async function dashboard(runtime: StrataGateRuntime, url: URL, ifNoneMatch: string): Promise<DashboardResult> {
-  const entries = await runtime.adminSnapshotEntries()
   const requestedNamespace = url.searchParams.get('namespace')?.trim() ?? ''
-  const selected = entries.find(({ namespace }) => namespace === requestedNamespace) ?? entries[0]
   const threadId = url.searchParams.get('threadId')?.trim() ?? ''
-  const revisionKey = entries.map(({ namespace, revision }) => `${namespace}:${revision}`).join('|')
+  const queryKey = JSON.stringify(['offset', 'q', 'time', 'eventType', 'eventStatus', 'participant', 'timeline'].map(key => url.searchParams.get(key) ?? ''))
   const agentMemoryWeight = runtime.adminAgentMemoryRetrievalWeight?.() ?? 1
-  const duplicateKey = JSON.stringify([entries.map(({ namespace }) => runtime.adminDuplicateRepairStatus?.(namespace) ?? null), runtime.adminGraphSettings?.()])
+  const etagFor = (entries: readonly { namespace: string; revision: number }[]): string => {
+    const selectedNamespace = entries.find(entry => entry.namespace === requestedNamespace)?.namespace ?? entries[0]?.namespace ?? ''
+    const revisionKey = entries.map(({ namespace, revision }) => `${namespace}:${revision}`).join('|')
+    const duplicateKey = JSON.stringify([entries.map(({ namespace }) => runtime.adminDuplicateRepairStatus?.(namespace) ?? null), runtime.adminGraphSettings?.()])
+    return `"${createHash('sha256').update(`${STRATAGATE_DSH_VERSION}\0${TOPIC_DIRECTORY_VIEW_VERSION}\0${revisionKey}\0${selectedNamespace}\0${threadId}\0${agentMemoryWeight}\0${duplicateKey}\0${queryKey}`).digest('base64url').slice(0, 24)}"`
+  }
+  if (ifNoneMatch && typeof runtime.adminReadNamespaceRevisions === 'function') {
+    const etag = etagFor(await runtime.adminReadNamespaceRevisions())
+    if (ifNoneMatch.split(',').map(value => value.trim()).includes(etag)) return { etag, notModified: true }
+  }
+  const entries = typeof runtime.adminReadDashboardEntries === 'function' && !url.searchParams.get('q')?.trim()
+    ? await runtime.adminReadDashboardEntries({ namespace: requestedNamespace, threadId, offset: numeric(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER), limit: 40 }, model => conversationRows(model)[0]?.id ?? null)
+    : await runtime.adminSnapshotEntries()
+  const selected = entries.find(({ namespace }) => namespace === requestedNamespace) ?? entries[0]
   // Include the plugin version so an upgraded server cannot validate an ETag
   // generated by the previous UI/server pair when the memory revision is unchanged.
-  const etag = `"${createHash('sha256').update(`${STRATAGATE_DSH_VERSION}\0${TOPIC_DIRECTORY_VIEW_VERSION}\0${revisionKey}\0${selected?.namespace ?? ''}\0${threadId}\0${agentMemoryWeight}\0${duplicateKey}`).digest('base64url').slice(0, 24)}"`
+  const etag = etagFor(entries)
   if (ifNoneMatch.split(',').map((value) => value.trim()).includes(etag)) return { etag, notModified: true }
 
   const overviewValue = await overview(runtime, entries)

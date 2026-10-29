@@ -188,6 +188,17 @@ export interface LoadedStrataGateState {
   revision: number;
 }
 
+/** Read projection, deliberately not a persistable/exportable snapshot. */
+export type AdminReadModel = Omit<StrataGateSnapshot, 'schemaVersion'> & { storedSchemaVersion?: number };
+export interface AdminBlockPage {
+  model: AdminReadModel;
+  revision: number;
+  threadId: string | null;
+  blockIds: string[];
+  total: number;
+}
+export interface AdminReadEntry { namespace: string; revision: number; snapshot: AdminReadModel }
+
 export interface RawMessageIndexDelta {
   upsert: Array<Pick<RawMessage, 'id' | 'content'>>;
   deleteIds: string[];
@@ -214,6 +225,16 @@ export interface LoadedDerivationLeases {
   jobs: Array<DerivationLeaseGuard & { updatedAt: string }>;
 }
 
+/** Small business transactions; prepared values are published in memory only after COMMIT. */
+export type RecordMutation =
+  | { kind: 'append'; messages: RawMessage[]; receipt?: IngestionReceipt; updatedAt: string }
+  | { kind: 'block-pointers'; blocks: Array<Pick<MemoryBlock, 'id'> & Partial<Pick<MemoryBlock,
+      'surfaceCurrentLevel' | 'pointerCurrentLevel' | 'pointerAnchorLevel' | 'pointerAnchorBlockPosition' | 'lastLiftedAt' | 'lastLiftedBy'>>>; updatedAt: string }
+  | { kind: 'pin-event'; id: string; agent: boolean; pinned: boolean; updatedAt: string }
+  | { kind: 'memory-use'; eventIds: string[]; agentEventIds: string[]; elementIds: string[];
+      receipt?: UsageReceipt; updatedAt: string };
+export interface RecordMutationResult { revision: number; changed: boolean }
+
 export interface StorageAdapter {
   /** Read-only adapters never initialize or recover writer-owned state. */
   readonly readonly?: boolean;
@@ -229,6 +250,13 @@ export interface StorageAdapter {
     leaseGuards?: readonly DerivationLeaseGuard[],
     graphEpoch?: number,
   ): Promise<number>;
+  /** Optional Unit of Work: persist changed records, retaining the full-save contract for adapters. */
+  saveChanges?(
+    namespace: string, before: StrataGateSnapshot, snapshot: StrataGateSnapshot,
+    expectedRevision: number, rawMessageIndexDelta?: RawMessageIndexDelta,
+    leaseGuards?: readonly DerivationLeaseGuard[], graphEpoch?: number,
+  ): Promise<number>;
+  commitRecords?(namespace: string, expectedRevision: number, mutation: RecordMutation): Promise<RecordMutationResult>;
   /** Renew only the still-owned running attempt, without loading memory history. */
   renewDerivationLease?(
     namespace: string, kind: 'summary' | 'extraction' | 'graph' | 'topic', id: string,

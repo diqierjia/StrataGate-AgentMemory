@@ -115,7 +115,7 @@ describe('surface maintenance outside assembly', () => {
     const f = await surfaceFixture()
     try {
       const revision = f.memory.storageRevision
-      const save = vi.spyOn(SqliteStorage.prototype, 'save')
+      const save = vi.spyOn(SqliteStorage.prototype, 'commitRecords')
       await f.run()
       expect(save).toHaveBeenCalledTimes(1)
       expect(f.memory.storageRevision).toBe(revision + 1)
@@ -255,7 +255,7 @@ describe('surface maintenance outside assembly', () => {
     const f = await surfaceFixture(8, undefined, (error) => errors.push(error))
     try {
       const revision = f.memory.storageRevision
-      const save = vi.spyOn(SqliteStorage.prototype, 'save').mockRejectedValueOnce(new Error('disk failure'))
+      const save = vi.spyOn(SqliteStorage.prototype, 'commitRecords').mockRejectedValueOnce(new Error('disk failure'))
       await f.run()
       expect(errors).toHaveLength(1)
       expect(f.memory.storageRevision).toBe(revision)
@@ -358,7 +358,7 @@ describe('surface maintenance outside assembly', () => {
       restarted = surfaceRuntime(f.database)
       await restarted.buildAutoContext(restored)
       const internals = restarted as unknown as SurfaceInternals
-      const save = vi.spyOn(SqliteStorage.prototype, 'save')
+      const save = vi.spyOn(SqliteStorage.prototype, 'commitRecords')
       await internals.runSurfaceMaintenance(restored)
       expect(save).toHaveBeenCalledTimes(1)
       expect(restored.deriveMessages()).toHaveLength(8)

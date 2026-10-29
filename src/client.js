@@ -2929,6 +2929,7 @@ window.__ModuleLoader__.load({
       }, [calendarOpen])
       const choose = date => { setSelected(date); setCalendarOpen(false) }
       const dates = index?.dates || []; const injected = index?.injectedDates || []; const enabled = index?.enabled !== false
+      const injectionDays = index?.injectionDays ?? 3
       const months = [...new Set(dates.map(date => date.slice(0, 7)))].sort()
       const calendarMonth = month || selected.slice(0, 7) || months[months.length - 1]
       const calendar = () => {
@@ -2945,7 +2946,7 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'sg-daily-icon-btn', disabled: cursor <= 0, 'aria-label': '上个月', onClick: () => setMonth(months[cursor - 1]) }, h(DailyIcon, { name: 'left' })),
             h('button', { type: 'button', className: 'sg-daily-icon-btn', disabled: cursor >= months.length - 1, 'aria-label': '下个月', onClick: () => setMonth(months[cursor + 1]) }, h(DailyIcon, { name: 'right' })))),
           h('div', { className: 'sg-daily-cal-grid' }, DAILY_WEEK.map(day => h('span', { key: day, className: 'sg-daily-cal-dow' }, day.slice(1))), cells),
-          h('div', { className: 'sg-daily-cal-foot' }, h('i', { 'aria-hidden': true }), '最近三天，会带入新会话'))
+          h('div', { className: 'sg-daily-cal-foot' }, h('i', { 'aria-hidden': true }), '最近 ' + injectionDays + ' 个有笔记日期，会带入新会话'))
       }
       const openDirectory = async () => {
         if (directoryOpening) return
@@ -2957,14 +2958,14 @@ window.__ModuleLoader__.load({
       const failure = error => h('div', { className: 'sg-daily-state error', role: 'alert' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'alert' })), h('h3', null, '暂时无法读取笔记'), h('p', null, '文件可能被占用或权限不足，已有笔记不会丢失。'), h('button', { type: 'button', className: 'sg-daily-retry', onClick: () => indexError ? setRevision(v => v + 1) : setNoteRevision(v => v + 1) }, h(DailyIcon, { name: 'refresh' }), '重新读取'), h('details', null, h('summary', null, '错误详情'), error))
       const date = selected ? dailyParts(selected) : null
       return h('div', { className: 'sg-daily' },
-        h('div', { className: 'sg-daily-head' }, h('div', null, h('h2', null, '短期记忆'), h('p', null, '每天一份工作笔记，最近三天会带入新会话。')),
+        h('div', { className: 'sg-daily-head' }, h('div', null, h('h2', null, '短期记忆'), h('p', null, '每天一份工作笔记，最近 ' + injectionDays + ' 个有笔记日期会带入新会话。')),
           h('div', { className: 'sg-daily-actions', ref: actions }, h('button', { type: 'button', ref: calendarButton, className: 'sg-daily-icon-btn', 'aria-label': '查看更早日期', title: '查看更早日期', 'data-tip': '查看更早日期', 'aria-haspopup': 'dialog', 'aria-expanded': calendarOpen, disabled: !dates.length || indexLoading || Boolean(indexError), onClick: () => { setMonth(selected.slice(0, 7) || months[months.length - 1]); setCalendarOpen(value => !value) } }, h(DailyIcon, { name: 'calendar' })),
             h('button', { type: 'button', className: 'sg-daily-icon-btn', 'aria-label': '打开笔记文件夹', title: '打开笔记文件夹', 'data-tip': '打开笔记文件夹', disabled: !namespace || directoryOpening, onClick: openDirectory }, h(DailyIcon, { name: 'folder' })), calendar())),
         directoryFeedback ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, directoryFeedback) : null,
         indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
           !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
           dates.length ? h(React.Fragment, null,
-            h('div', { className: 'sg-daily-strip', role: 'tablist', 'aria-label': '最近三天' }, injected.map((date, i) => {
+            h('div', { className: 'sg-daily-strip', role: 'tablist', 'aria-label': '带入新会话的笔记' }, injected.map((date, i) => {
               const parts = dailyParts(date)
               return h('button', { key: date, type: 'button', role: 'tab', 'aria-selected': selected === date, tabIndex: selected === date || (!injected.includes(selected) && i === 0) ? 0 : -1, className: 'sg-daily-day' + (selected === date ? ' selected' : ''), onClick: () => choose(date), onKeyDown: event => {
                 const next = event.key === 'ArrowRight' ? (i + 1) % injected.length : event.key === 'ArrowLeft' ? (i + injected.length - 1) % injected.length : event.key === 'Home' ? 0 : event.key === 'End' ? injected.length - 1 : -1
@@ -2973,7 +2974,7 @@ window.__ModuleLoader__.load({
             })),
             note.loading || note.date !== selected ? h(Loading) : note.error ? failure(note.error) : date ? h('article', { key: selected, className: 'sg-daily-note' },
               h('div', { className: 'sg-daily-note-date' }, h('h3', null, date.month + ' 月 ' + date.day + ' 日'), h('span', null, date.week + ' · ' + dailyRelative(selected, index.today))),
-              h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在最近三天'), !injected.includes(selected) ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到今天') : null), renderDailyMarkdown(note.markdown)) : null)
+              h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在带入范围内'), !injected.includes(selected) ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null), renderDailyMarkdown(note.markdown)) : null)
             : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
     }
 
@@ -4874,13 +4875,14 @@ window.__ModuleLoader__.load({
       return h(GraphControlPanel, { state, refresh })
     }
 
-    function DailyNotesSettings({ usePluginSettings, setDailyEnabled, setDailyTimeZone }) {
+    function DailyNotesSettings({ usePluginSettings, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }) {
       const settings = usePluginSettings ? usePluginSettings(state => state) : null
       const [saving, setSaving] = React.useState(false)
       const [error, setError] = React.useState('')
       const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
       const timeZone = settings?.value?.dailyNotesTimeZone || ''
       const enabled = settings?.value?.dailyNotesEnabled !== false
+      const injectionDays = settings?.value?.dailyNotesInjectionDays ?? 3
       const zones = [...new Set(['Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'Asia/Kolkata', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'UTC', timeZone].filter(Boolean))]
       const save = async (setter, value) => {
         setSaving(true); setError('')
@@ -4890,13 +4892,15 @@ window.__ModuleLoader__.load({
       }
       const disabled = settings?.writable !== true || saving
       return h('div', { className: 'sg-settings-panel sg-pipeline' },
-        h('div', { className: 'sg-display-setting' }, h('span', { className: 'sg-display-setting-copy' }, h('span', { className: 'sg-display-setting-title' }, '短期记忆'), h('span', { className: 'sg-display-setting-description' }, '每天一份工作笔记，最近三天带入新会话。关闭后不再写入和注入，已有笔记保留。')),
+        h('div', { className: 'sg-display-setting' }, h('span', { className: 'sg-display-setting-copy' }, h('span', { className: 'sg-display-setting-title' }, '短期记忆'), h('span', { className: 'sg-display-setting-description' }, '每天一份工作笔记。关闭后不再写入和注入，已有笔记保留。')),
           h('button', { type: 'button', className: 'sg-setting-switch', role: 'switch', 'aria-label': '短期记忆', 'aria-checked': enabled, disabled: disabled || !setDailyEnabled, onClick: () => void save(setDailyEnabled, !enabled) })),
+        h('div', { className: 'sg-display-setting' }, h('span', { className: 'sg-display-setting-copy' }, h('span', { className: 'sg-display-setting-title' }, '带入新会话的天数'), h('span', { className: 'sg-display-setting-description' }, '取最近有笔记的日期，默认 3 天。修改后用于新会话；内容仍受长度上限约束。')),
+          h('select', { className: 'sg-effort-select', 'aria-label': '带入新会话的天数', value: injectionDays, disabled: disabled || !setDailyInjectionDays, onChange: event => void save(setDailyInjectionDays, Number(event.target.value)) }, Array.from({ length: 30 }, (_, i) => h('option', { key: i + 1, value: i + 1 }, (i + 1) + ' 天')))),
         h('div', { className: 'sg-stage' }, h('span', null, '笔记时区'), h('select', { className: 'sg-effort-select', style: { maxWidth: '100%', minWidth: 0 }, 'aria-label': '笔记时区', value: timeZone, disabled: disabled || !setDailyTimeZone, onChange: event => void save(setDailyTimeZone, event.target.value) }, h('option', { value: '' }, '跟随本机（' + localTimeZone + '）'), zones.map(zone => h('option', { key: zone, value: zone }, zone)))),
         error ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, error) : null)
     }
 
-    function SettingsPage({ selected, graphSettings, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone }) {
+    function SettingsPage({ selected, graphSettings, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       const [agentWeight, setAgentWeight] = React.useState(String(selected.agentMemoryRetrievalWeight ?? 1))
@@ -4955,7 +4959,7 @@ window.__ModuleLoader__.load({
           h('h3', { id: 'sg-memory-settings-title', className: 'sg-settings-group-title' }, 'StrataGate 安装级设置'),
           h('p', { className: 'sg-settings-group-copy' }, '适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。设置保存在当前记忆数据库中，不会自动同步到其他设备或安装。'),
           h(GraphSettingsPanel, { state: graphSettings, refresh }),
-          h(DailyNotesSettings, { usePluginSettings, setDailyEnabled, setDailyTimeZone }),
+          h(DailyNotesSettings, { usePluginSettings, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }),
           h('div', { className: 'sg-settings-panel sg-pipeline' },
             h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
             h('p', { className: 'sg-setting-note' }, '1 轮是一次用户提问和 AI 完整回复。轮数越小，Block 生成越频繁，也会让相同长度的对话衰减得更快；已有 Block 不会重新切分，尚未封存的内容按新阈值继续处理。'),
@@ -5002,7 +5006,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar, setDailyEnabled, setDailyTimeZone }) {
+    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }) {
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -5281,7 +5285,7 @@ window.__ModuleLoader__.load({
       let content = null
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone })
+      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
@@ -5294,7 +5298,7 @@ window.__ModuleLoader__.load({
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, auditPage: data.pagination?.audit, namespace, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'display') content = h(DisplayPage, { onBack: moreBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry })
-      else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone })
+      else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
       else if (view.name === 'support') content = h(SupportPage, { key: namespace, namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
@@ -5404,6 +5408,7 @@ window.__ModuleLoader__.load({
           hooks: { pluginSettings: pluginSettingsScope },
           setEffort: pluginSettingsScope ? (mode) => pluginSettingsScope.set('structuredReasoningEffort', mode) : null,
           setDailyEnabled: pluginSettingsScope ? enabled => pluginSettingsScope.set('dailyNotesEnabled', enabled) : null,
+          setDailyInjectionDays: pluginSettingsScope ? days => pluginSettingsScope.set('dailyNotesInjectionDays', days) : null,
           setDailyTimeZone: pluginSettingsScope ? zone => zone ? pluginSettingsScope.set('dailyNotesTimeZone', zone) : pluginSettingsScope.unset('dailyNotesTimeZone') : null,
           resetEffort: pluginSettingsScope ? () => pluginSettingsScope.unset('structuredReasoningEffort') : null,
           setStrataGateStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showStrataGateStatus', visible) : null,
@@ -5427,6 +5432,7 @@ window.__ModuleLoader__.load({
         ...(pluginSettingsScope ? { hooks: { pluginSettings: pluginSettingsScope } } : {}),
         setEffort: pluginSettingsScope ? (mode) => pluginSettingsScope.set('structuredReasoningEffort', mode) : null,
           setDailyEnabled: pluginSettingsScope ? enabled => pluginSettingsScope.set('dailyNotesEnabled', enabled) : null,
+          setDailyInjectionDays: pluginSettingsScope ? days => pluginSettingsScope.set('dailyNotesInjectionDays', days) : null,
           setDailyTimeZone: pluginSettingsScope ? zone => zone ? pluginSettingsScope.set('dailyNotesTimeZone', zone) : pluginSettingsScope.unset('dailyNotesTimeZone') : null,
         resetEffort: pluginSettingsScope ? () => pluginSettingsScope.unset('structuredReasoningEffort') : null,
         setStrataGateStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showStrataGateStatus', visible) : null,

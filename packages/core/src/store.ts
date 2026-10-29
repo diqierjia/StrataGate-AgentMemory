@@ -16,6 +16,8 @@ import { externalMemoryJsonExtractor, parseExternalMemoryExport } from './extern
 import { GRAPH_PROVENANCE_LIMIT, applyGraphProjection, boundEffectiveGraphNodeView, effectiveGraphNodeView, graphTimeline } from './graph.js';
 import { normalizeRetrievalAssessment, type RetrievalAssessment, type RetrievalAssessmentInput } from './retrieval.js';
 import { SqliteStorage } from './sqlite.js';
+import { captureMutationState, captureRawMessage, hasRecordChanges, snapshotWriteSet } from './storage-write-set.js';
+import { isDeepStrictEqual } from 'node:util';
 import {
   bm25Rank,
   fuzzySearchMatch,
@@ -377,6 +379,7 @@ export class StrataGate {
   private storage: StorageAdapter | undefined;
   private namespace: string | undefined;
   private revision = 0;
+  private committedMetadata: StrataGateSnapshot | undefined;
   private mutationQueue: Promise<void> = Promise.resolve();
 
   private constructor(options: StrataGateOptions, token: symbol) {
@@ -491,7 +494,7 @@ export class StrataGate {
     memory.storage = options.storage;
     memory.namespace = namespace;
     if (loaded && loadedSnapshot) {
-      memory.restoreSnapshot(loadedSnapshot);
+      memory.restoreSnapshot(loadedSnapshot, true);
       memory.graphEnabledValue = loadedSnapshot.graphEnabled === true;
       memory.revision = loadedRevision;
     }
@@ -655,7 +658,7 @@ export class StrataGate {
       }
       const loaded = await this.storage.load(this.namespace);
       if (!loaded || (loaded.revision === this.revision && !forceSameRevision)) return false;
-      this.restoreSnapshot(loaded.snapshot);
+      this.restoreSnapshot(loaded.snapshot, true);
       this.revision = loaded.revision;
       return true;
     } finally {
@@ -956,7 +959,12 @@ export class StrataGate {
   }
 
   exportSnapshot(): StrataGateSnapshot {
-    return cloneSnapshot({
+    return cloneSnapshot({ ...this.snapshotView(), memoryTopicState: this.topicDirectory.snapshot(this.listAllEvents()) });
+  }
+
+  /** Internal view for the serialized mutation queue; never returned to integrations. */
+  private snapshotView(includeTopics = true): StrataGateSnapshot {
+    return {
       schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION,
       currentTurn: this.currentTurn,
       blockTurnSize: this.blockTurnSize,
@@ -979,8 +987,9 @@ export class StrataGate {
       ingestionReceipts: [...this.ingestionReceipts.values()],
       externalMemoryImportJobs: [...this.externalMemoryImportJobs.values()],
       successfulModelResponses: this.successfulModelResponses,
-      memoryTopicState: this.topicDirectory.snapshot(this.listAllEvents()),
-    });
+      memoryTopicState: includeTopics ? this.topicDirectory.snapshot()
+        : this.committedMetadata?.memoryTopicState ?? { topics: [], jobs: [], projectedVersions: {} },
+    };
   }
 
   hasIngestionReceipt(receiptId: string): boolean {
@@ -1003,7 +1012,7 @@ export class StrataGate {
       content: input.user,
       createdAt,
       ...(threadId ? { threadId } : {}),
-      ...(input.userToolCalls ? { toolCalls: input.userToolCalls } : {}),
+      ...(input.userToolCalls ? { toolCalls: structuredClone(input.userToolCalls) } : {}),
     };
     const assistantMessage: RawMessage = {
       id: this.idFactory('msg'),
@@ -1011,15 +1020,34 @@ export class StrataGate {
       content: input.assistant,
       createdAt,
       ...(threadId ? { threadId } : {}),
-      ...(input.assistantToolCalls ? { toolCalls: input.assistantToolCalls } : {}),
+      ...(input.assistantToolCalls ? { toolCalls: structuredClone(input.assistantToolCalls) } : {}),
     };
-    const appended = await this.commitMutation(() => {
+    const appendInMemory = (): boolean => {
       if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
       this.currentTurn += 1;
       this.openTail.push(userMessage, assistantMessage);
       if (receiptId) this.ingestionReceipts.set(receiptId, { id: receiptId, createdAt });
       return true;
-    });
+    };
+    const appended = this.storage?.commitRecords ? await this.withMutationQueue(async () => {
+      if (this.hasPendingRecordChanges()) return this.applyMutation(appendInMemory);
+      if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
+      const receipt = receiptId ? { id: receiptId, createdAt } : undefined;
+      const committed = await this.storage!.commitRecords!(this.namespace!, this.revision, {
+        kind: 'append', messages: [userMessage, assistantMessage], updatedAt: createdAt, ...(receipt ? { receipt } : {}),
+      });
+      if (committed.changed) {
+        this.currentTurn += 1;
+        this.openTail.push(userMessage, assistantMessage);
+        if (receipt) this.ingestionReceipts.set(receipt.id, receipt);
+        const baseline = this.committedMetadata!;
+        baseline.currentTurn = this.currentTurn;
+        baseline.openTail.push(captureRawMessage(userMessage), captureRawMessage(assistantMessage));
+        if (receipt) baseline.ingestionReceipts.push(structuredClone(receipt));
+      }
+      this.revision = committed.revision;
+      return committed.changed;
+    }) : await this.commitMutation(appendInMemory);
     if (!appended) return { sealedBlock: null, readyBlocks: [], extractedEvents: [], projectedElements: [] };
     if (options.deferProcessing === true) {
       return { sealedBlock: null, readyBlocks: [], extractedEvents: [], projectedElements: [] };
@@ -2064,6 +2092,19 @@ export class StrataGate {
         if (block.surfaceCurrentLevel !== level) changed.push({ block, level });
       }
       if (changed.length === 0) return 0;
+      const pendingPointers = this.storage?.commitRecords ? this.pendingPointerUpdates() : null;
+      if (this.storage?.commitRecords && pendingPointers !== null) {
+        const updates = new Map(pendingPointers.map(block => [block.id, { ...block } as { id: string; pointerCurrentLevel?: BlockLevel; surfaceCurrentLevel?: BlockLevel }]));
+        for (const { block, level } of changed) updates.set(block.id, { ...updates.get(block.id), id: block.id, surfaceCurrentLevel: level });
+        const committed = await this.storage.commitRecords(this.namespace!, this.revision, {
+          kind: 'block-pointers', blocks: [...updates.values()],
+          updatedAt: toUtc8Iso(this.now()),
+        });
+        for (const { block, level } of changed) block.surfaceCurrentLevel = level;
+        for (const update of updates.values()) Object.assign(this.committedMetadata!.blocks.find(item => item.id === update.id)!, update);
+        this.revision = committed.revision;
+        return changed.length;
+      }
       return this.applyMutation(() => {
         for (const { block, level } of changed) block.surfaceCurrentLevel = level;
         return changed.length;
@@ -2092,6 +2133,17 @@ export class StrataGate {
       // Agent evidence reads cannot replace an explicit user's selection or
       // restart its decay clock. They need neither a snapshot nor a DB write.
       if (source === 'agent' && block.lastLiftedBy === 'user') return result;
+      if (this.storage?.commitRecords && !this.hasPendingRecordChanges()) {
+        const update = { id, pointerCurrentLevel: level, pointerAnchorLevel: level,
+          pointerAnchorBlockPosition: position.latestBlockPosition, lastLiftedAt: toUtc8Iso(this.now()), lastLiftedBy: source };
+        const committed = await this.storage.commitRecords(this.namespace!, this.revision, {
+          kind: 'block-pointers', blocks: [update], updatedAt: update.lastLiftedAt,
+        });
+        Object.assign(block, update);
+        Object.assign(this.committedMetadata!.blocks.find(item => item.id === id)!, update);
+        this.revision = committed.revision;
+        return result;
+      }
       return this.applyMutation(() => {
         block.pointerCurrentLevel = level;
         block.pointerAnchorLevel = level;
@@ -2116,6 +2168,21 @@ export class StrataGate {
     const requestedEventIds = [...new Set(normalizedRefs.eventIds ?? [])];
     const requestedElementIds = [...new Set(normalizedRefs.elementIds ?? [])];
     const audit = options.audit === undefined ? undefined : structuredClone(options.audit);
+    const recordUseInMemory = (): void => {
+      const now = toUtc8Iso(this.now());
+      for (const id of requestedEventIds) {
+        const event = this.findEvent(id);
+        if (!event || event.status === 'forgotten' || event.status === 'archived') continue;
+        event.weight.mentionCount += 1; event.weight.lastAdoptedTurn = this.currentTurn; event.updatedAt = now;
+      }
+      for (const id of requestedElementIds) {
+        const element = this.elements.find(candidate => candidate.id === id);
+        if (!element) continue;
+        element.weight.mentionCount += 1; element.weight.lastAdoptedTurn = this.currentTurn; element.updatedAt = now;
+      }
+      if (receiptId) this.usageReceipts.set(receiptId, { id: receiptId, eventIds: requestedEventIds, elementIds: requestedElementIds,
+        ...(audit === undefined ? {} : { audit }), createdAt: now });
+    };
     if (receiptId) {
       const existing = this.usageReceipts.get(receiptId);
       if (existing) {
@@ -2128,33 +2195,65 @@ export class StrataGate {
       }
     }
 
-    await this.commitMutation(() => {
+    if (this.storage?.commitRecords) return this.withMutationQueue(async () => {
+      // Recheck inside the queue: two requests can arrive before the first
+      // receipt commits. Only the first one may reinforce the memories.
+      const existing = receiptId ? this.usageReceipts.get(receiptId) : undefined;
+      if (existing) {
+        if (!sameIds(existing.eventIds, requestedEventIds) || !sameIds(existing.elementIds, requestedElementIds)
+          || JSON.stringify(existing.audit ?? null) !== JSON.stringify(audit ?? null)) throw new Error(`Usage receipt ${receiptId} was already recorded with different memory IDs or audit metadata`);
+        return;
+      }
+      if (this.hasPendingRecordChanges()) return this.applyMutation(recordUseInMemory);
       const now = toUtc8Iso(this.now());
-      for (const id of requestedEventIds) {
+      const events = requestedEventIds.flatMap(id => {
         const event = this.findEvent(id);
-        if (!event || event.status === 'forgotten' || event.status === 'archived') continue;
-        event.weight.mentionCount += 1;
-        event.weight.lastAdoptedTurn = this.currentTurn;
-        event.updatedAt = now;
-      }
-      for (const id of requestedElementIds) {
-        const element = this.elements.find((candidate) => candidate.id === id);
-        if (!element) continue;
-        element.weight.mentionCount += 1;
-        element.weight.lastAdoptedTurn = this.currentTurn;
-        element.updatedAt = now;
-      }
-      if (receiptId) this.usageReceipts.set(receiptId, {
-        id: receiptId,
-        eventIds: requestedEventIds,
-        elementIds: requestedElementIds,
-        ...(audit === undefined ? {} : { audit }),
-        createdAt: now,
+        return event && event.status !== 'forgotten' && event.status !== 'archived' ? [event] : [];
       });
+      const elements = requestedElementIds.flatMap(id => this.elements.find(element => element.id === id) ?? []);
+      const receipt = receiptId ? { id: receiptId, eventIds: requestedEventIds, elementIds: requestedElementIds,
+        ...(audit === undefined ? {} : { audit }), createdAt: now } : undefined;
+      const agents = new Set(this.agentEvents.map(event => event.id));
+      const committed = await this.storage!.commitRecords!(this.namespace!, this.revision, {
+        kind: 'memory-use', eventIds: events.filter(event => !agents.has(event.id)).map(event => event.id),
+        agentEventIds: events.filter(event => agents.has(event.id)).map(event => event.id),
+        elementIds: elements.map(element => element.id), updatedAt: now, ...(receipt ? { receipt } : {}),
+      });
+      if (committed.changed) {
+        for (const record of [...events, ...elements]) {
+          record.weight.mentionCount += 1; record.weight.lastAdoptedTurn = this.currentTurn; record.updatedAt = now;
+        }
+        if (receipt) this.usageReceipts.set(receipt.id, receipt);
+        const eventIds = new Set(events.map(event => event.id)), elementIds = new Set(elements.map(element => element.id));
+        for (const [records, ids] of [
+          [[...this.committedMetadata!.events, ...this.committedMetadata!.agentEvents], eventIds],
+          [this.committedMetadata!.elements, elementIds],
+        ] as const) for (const record of records) if (ids.has(record.id)) {
+          record.weight.mentionCount += 1; record.weight.lastAdoptedTurn = this.currentTurn; record.updatedAt = now;
+        }
+        if (receipt) this.committedMetadata!.usageReceipts.push(structuredClone(receipt));
+      }
+      this.revision = committed.revision;
     });
+
+    await this.commitMutation(recordUseInMemory);
   }
 
   async pinEvent(id: string, pinned = true): Promise<void> {
+    if (this.storage?.commitRecords) return this.withMutationQueue(async () => {
+      const event = this.requireEvent(id);
+      const updatedAt = toUtc8Iso(this.now());
+      if (this.hasPendingRecordChanges()) return this.applyMutation(() => {
+        event.weight.pinned = pinned; event.updatedAt = updatedAt;
+      });
+      const committed = await this.storage!.commitRecords!(this.namespace!, this.revision, {
+        kind: 'pin-event', id, pinned, agent: this.agentEvents.includes(event), updatedAt,
+      });
+      event.weight.pinned = pinned; event.updatedAt = updatedAt;
+      const baseline = [...this.committedMetadata!.events, ...this.committedMetadata!.agentEvents].find(item => item.id === id)!;
+      baseline.weight.pinned = pinned; baseline.updatedAt = updatedAt;
+      this.revision = committed.revision;
+    });
     await this.commitMutation(() => {
       const event = this.requireEvent(id);
       event.weight.pinned = pinned;
@@ -3670,6 +3769,33 @@ export class StrataGate {
     return this.withMutationQueue(() => this.applyMutation(mutation, graphEpoch));
   }
 
+  private hasPendingRecordChanges(): boolean {
+    return !this.committedMetadata || hasRecordChanges(this.committedMetadata, this.snapshotView(false));
+  }
+
+  /** getBlockContext historically updates the derived pointer while reading.
+   * Include those pending pointer values in the next surface transaction;
+   * semantic or external record edits still take the general Unit of Work.
+   */
+  private pendingPointerUpdates(): Array<Pick<MemoryBlock, 'id' | 'pointerCurrentLevel'>> | null {
+    if (!this.committedMetadata) return null;
+    const changes = snapshotWriteSet(this.committedMetadata, this.snapshotView(false));
+    if (changes.graph || changes.messages.length || changes.deletedMessages.size
+      || [...changes.removed.values()].some(ids => ids.size)
+      || [...changes.changed].some(([collection, ids]) => collection !== 'blocks' && ids.size)) return null;
+    const previous = new Map(this.committedMetadata.blocks.map(block => [block.id, block]));
+    const updates: Array<Pick<MemoryBlock, 'id' | 'pointerCurrentLevel'>> = [];
+    for (const block of this.blocks) if (changes.changed.get('blocks')!.has(block.id)) {
+      const old = previous.get(block.id);
+      if (!old) return null;
+      const { l5Raw: _raw, pointerCurrentLevel: _level, ...metadata } = block;
+      const { l5Raw: _oldRaw, pointerCurrentLevel: _oldLevel, ...oldMetadata } = old;
+      if (!isDeepStrictEqual(metadata, oldMetadata)) return null;
+      updates.push({ id: block.id, pointerCurrentLevel: block.pointerCurrentLevel });
+    }
+    return updates;
+  }
+
   private async withMutationQueue<T>(operation: () => Promise<T>): Promise<T> {
     if (this.storage?.readonly) throw new Error('Cannot mutate read-only StrataGate storage.');
     const previous = this.mutationQueue;
@@ -3693,7 +3819,7 @@ export class StrataGate {
       return result;
     }
 
-    const before = this.exportSnapshot();
+    const before = this.storage.saveChanges ? captureMutationState(this.snapshotView()) : this.exportSnapshot();
     const beforeRevision = this.revision;
     const beforeRawUpserts = new Map(this.pendingRawUpserts);
     const beforeRawDeletes = new Set(this.pendingRawDeletes);
@@ -3719,7 +3845,7 @@ export class StrataGate {
       upsert: [...this.pendingRawUpserts.values()],
       deleteIds: [...this.pendingRawDeletes],
     };
-    const snapshot = this.exportSnapshot();
+    const snapshot = this.storage.saveChanges ? this.snapshotView() : this.exportSnapshot();
     const guards: DerivationLeaseGuard[] = [];
     if (before) {
       for (const kind of ['summary', 'extraction', 'graph', 'topic'] as const) {
@@ -3729,7 +3855,9 @@ export class StrataGate {
           attempts: job.attempts, leaseUntil: job.leaseUntil ?? null });
       }
     }
-    this.revision = await this.storage.save(this.namespace, snapshot, this.revision, delta, guards, graphEpoch);
+    this.revision = before && this.storage.saveChanges
+      ? await this.storage.saveChanges(this.namespace, this.committedMetadata ?? before, snapshot, this.revision, delta, guards, graphEpoch)
+      : await this.storage.save(this.namespace, snapshot, this.revision, delta, guards, graphEpoch);
     const persistedGraphIds = new Set(snapshot.graphProjectionJobs.map(job => job.id));
     for (const id of this.graphProjectionJobs.keys()) if (!persistedGraphIds.has(id)) this.graphProjectionJobs.delete(id);
     // SQLite may merge a concurrent heartbeat from the owner of a live attempt.
@@ -3746,9 +3874,10 @@ export class StrataGate {
     for (const job of snapshot.memoryTopicState?.jobs ?? []) if (job.leaseUntil) this.topicDirectory.renewLease(job.id, job.attempts, job.updatedAt, job.leaseUntil);
     this.pendingRawUpserts.clear();
     this.pendingRawDeletes.clear();
+    this.committedMetadata = captureMutationState(this.snapshotView());
   }
 
-  private restoreSnapshot(snapshot: StrataGateSnapshot): void {
+  private restoreSnapshot(snapshot: StrataGateSnapshot, committed = false): void {
     const normalized = normalizeSnapshot(snapshot);
     if (normalized.blockTurnSize !== this.blockTurnSize) {
       throw new Error(`Snapshot blockTurnSize ${normalized.blockTurnSize} does not match ${this.blockTurnSize}`);
@@ -3787,6 +3916,7 @@ export class StrataGate {
     this.topicDirectory.restore(copy.memoryTopicState);
     this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
     this.validateReferences();
+    if (committed) this.committedMetadata = captureMutationState(this.snapshotView());
   }
 
   private currentGraphPolicy(): GraphRuntimePolicy {

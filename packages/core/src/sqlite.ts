@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { snapshotWriteSet, type RecordCollection } from './storage-write-set.js';
 import { resolve } from 'node:path';
 import { BACKGROUND_WORK_INDEX_VERSION, backgroundWorkTimes, type BackgroundWorkTimes } from './background-work.js';
 import { TOPIC_LEASE_MS, type MemoryTopicState } from './topics.js';
@@ -24,6 +25,11 @@ import {
   type StrataGateSnapshot,
   type UsageAudit,
   type UsageReceipt,
+  type AdminReadModel,
+  type AdminBlockPage,
+  type AdminReadEntry,
+  type RecordMutation,
+  type RecordMutationResult,
 } from './storage.js';
 import type {
   BlockLevel,
@@ -720,6 +726,150 @@ export class SqliteStorage implements StorageAdapter {
   }
 
   async load(namespace: string): Promise<LoadedStrataGateState | null> {
+    return this.readState(namespace);
+  }
+
+  readEventModel(namespace: string): AdminReadModel | null {
+    this.assertOpen();
+    const key = nonEmptyNamespace(namespace);
+    this.database.exec('BEGIN');
+    try {
+      const head = this.database.prepare('SELECT schema_version FROM memory_spaces WHERE namespace = ?').get(key) as { schema_version: number } | undefined;
+      const state = head?.schema_version === STRATAGATE_STORAGE_SCHEMA_VERSION ? this.readState(key, true) : null;
+      this.database.exec('COMMIT');
+      if (!state) return null;
+      const { schemaVersion: storedSchemaVersion, ...model } = state.snapshot;
+      return { ...model, storedSchemaVersion };
+    } catch (error) {
+      try { this.database.exec('ROLLBACK'); } catch { /* preserve read error */ }
+      throw error;
+    }
+  }
+
+  /** Dashboard read model: keep metadata for navigation and hydrate only the
+   * displayed blocks and the provenance explicitly returned by its audit page.
+   */
+  readDashboardEntries(options: { namespace?: string; threadId?: string; offset?: number; limit: number },
+    chooseThread: (model: AdminReadModel) => string | null): AdminReadEntry[] {
+    this.assertOpen();
+    this.database.exec('BEGIN');
+    try {
+      const entries: AdminReadEntry[] = [];
+      const namespaces = this.listNamespaces();
+      const selected = namespaces.includes(options.namespace ?? '') ? options.namespace : namespaces[0];
+      for (const namespace of namespaces) {
+        const legacy = this.database.prepare(`SELECT 1 FROM blocks WHERE namespace = ? AND (thread_id IS NULL OR trim(thread_id) = '')
+          UNION ALL SELECT 1 FROM messages m LEFT JOIN blocks b ON b.namespace = m.namespace AND b.id = m.block_id
+          WHERE m.namespace = ? AND (m.thread_id IS NULL OR trim(m.thread_id) = '' OR (m.block_id IS NOT NULL AND m.thread_id IS NOT b.thread_id)) LIMIT 1`).get(namespace, namespace);
+        const head = this.database.prepare('SELECT schema_version FROM memory_spaces WHERE namespace = ?').get(namespace) as { schema_version: number };
+        const projected = !legacy && head.schema_version === STRATAGATE_STORAGE_SCHEMA_VERSION;
+        const state = this.readState(namespace, projected);
+        if (!state) continue;
+        const { schemaVersion: storedSchemaVersion, ...data } = state.snapshot;
+        const model = { ...data, storedSchemaVersion };
+        if (namespace === selected && projected) {
+          const threadId = options.threadId?.trim() || chooseThread(model);
+          const ids = threadId ? (this.database.prepare(`SELECT id FROM blocks WHERE namespace = ? AND thread_id = ?
+            AND (EXISTS (SELECT 1 FROM messages WHERE namespace = blocks.namespace AND block_id = blocks.id)
+              OR EXISTS (SELECT 1 FROM block_summary_jobs j WHERE j.namespace = blocks.namespace AND j.block_id = blocks.id
+                AND j.status = 'failed' AND (j.attempts >= 3 OR j.next_retry_at IS NULL)))
+            ORDER BY sequence LIMIT ? OFFSET ?`).all(namespace, threadId, options.limit, options.offset ?? 0) as Array<{ id: string }>).map(row => row.id) : [];
+          this.hydrateReadBlocks(namespace, model, ids);
+          const receipts = [...model.usageReceipts].reverse().slice(options.offset ?? 0, (options.offset ?? 0) + 100);
+          const elementIds = new Set(receipts.flatMap(receipt => receipt.elementIds));
+          const eventIds = new Set([...receipts.flatMap(receipt => receipt.eventIds),
+            ...model.elements.filter(element => elementIds.has(element.id)).flatMap(element => element.sourceEventIds)]);
+          const messageIds = model.events.filter(event => eventIds.has(event.id)).flatMap(event => event.sourceMessageIds);
+          this.hydrateReadMessages(namespace, model, messageIds);
+        }
+        entries.push({ namespace, revision: state.revision, snapshot: model });
+      }
+      this.database.exec('COMMIT');
+      return entries;
+    } catch (error) {
+      try { this.database.exec('ROLLBACK'); } catch { /* preserve read error */ }
+      throw error;
+    }
+  }
+
+  private hydrateReadMessages(namespace: string, model: AdminReadModel, ids: readonly string[]): void {
+    if (!ids.length) return;
+    const rows = this.database.prepare(`SELECT id, thread_id, role, content, created_at, tool_calls_json
+      FROM messages WHERE namespace = ? AND id IN (SELECT value FROM json_each(?))`).all(namespace, JSON.stringify([...new Set(ids)])) as unknown as MessageRow[];
+    const messages = new Map(rows.map(row => [row.id, { id: row.id, role: row.role, content: row.content, createdAt: row.created_at,
+      ...(row.thread_id ? { threadId: row.thread_id } : {}),
+      ...(row.tool_calls_json ? { toolCalls: parseJson<ToolTrace[]>(row.tool_calls_json, 'messages.tool_calls_json') } : {}) }]));
+    model.openTail = model.openTail.map(message => messages.get(message.id) ?? message);
+    for (const block of model.blocks) block.l5Raw = block.l5Raw.map(message => messages.get(message.id) ?? message);
+  }
+
+  private hydrateReadBlocks(namespace: string, model: AdminReadModel, ids: readonly string[]): void {
+    if (!ids.length) return;
+    const byId = new Map(model.blocks.map(block => [block.id, block]));
+    for (const row of this.database.prepare('SELECT id, l3_condensed, l4_readable FROM blocks WHERE namespace = ? AND id IN (SELECT value FROM json_each(?))').all(namespace, JSON.stringify(ids)) as Array<{ id: string; l3_condensed: string; l4_readable: string }>) {
+      const block = byId.get(row.id)!;
+      block.l3Condensed = row.l3_condensed; block.l4Readable = row.l4_readable;
+    }
+    this.hydrateReadMessages(namespace, model, ids.flatMap(id => byId.get(id)?.l5Raw.map(message => message.id) ?? []));
+  }
+
+  /** A single read transaction keeps navigation, page and associations at the same revision.
+   * Legacy mixed-thread records use the existing recovery path, never guessed SQL scopes.
+   */
+  readBlockPage(namespace: string, options: { threadId?: string; offset: number; limit: number },
+    chooseThread: (model: AdminReadModel) => string | null): AdminBlockPage | null {
+    this.assertOpen();
+    const key = nonEmptyNamespace(namespace);
+    if (!Number.isSafeInteger(options.offset) || options.offset < 0 || !Number.isSafeInteger(options.limit)
+      || options.limit < 1 || options.limit > 200) throw new TypeError('Invalid block page');
+    this.database.exec('BEGIN');
+    try {
+      const head = this.database.prepare('SELECT schema_version FROM memory_spaces WHERE namespace = ?').get(key) as { schema_version: number } | undefined;
+      if (!head || head.schema_version !== STRATAGATE_STORAGE_SCHEMA_VERSION) { this.database.exec('COMMIT'); return null; }
+      const legacy = this.database.prepare(`SELECT 1 FROM blocks WHERE namespace = ? AND (thread_id IS NULL OR trim(thread_id) = '')
+        UNION ALL SELECT 1 FROM messages m LEFT JOIN blocks b ON b.namespace = m.namespace AND b.id = m.block_id
+        WHERE m.namespace = ? AND (m.thread_id IS NULL OR trim(m.thread_id) = '' OR (m.block_id IS NOT NULL AND m.thread_id IS NOT b.thread_id)) LIMIT 1`).get(key, key);
+      if (legacy) { this.database.exec('COMMIT'); return null; }
+      const loaded = this.readState(key, true);
+      if (!loaded) { this.database.exec('COMMIT'); return null; }
+      const { schemaVersion: storedSchemaVersion, ...data } = loaded.snapshot;
+      const model = { ...data, storedSchemaVersion };
+      const threadId = options.threadId?.trim() || chooseThread(model);
+      const blockIds = threadId ? (this.database.prepare(`SELECT id FROM blocks WHERE namespace = ? AND thread_id = ?
+        AND (EXISTS (SELECT 1 FROM messages WHERE namespace = blocks.namespace AND block_id = blocks.id)
+          OR EXISTS (SELECT 1 FROM block_summary_jobs j WHERE j.namespace = blocks.namespace AND j.block_id = blocks.id
+            AND j.status = 'failed' AND (j.attempts >= ? OR j.next_retry_at IS NULL)))
+        ORDER BY sequence LIMIT ? OFFSET ?`).all(key, threadId, 3, options.limit, options.offset) as Array<{ id: string }>).map(row => row.id) : [];
+      const failedSummaries = new Set(model.summaryJobs.filter(job => job.status === 'failed' && (job.attempts >= 3 || job.nextRetryAt === null)).map(job => job.blockId));
+      const total = threadId ? model.blocks.filter(block => block.threadId === threadId && (block.l5Raw.length || failedSummaries.has(block.id))).length : 0;
+      const byId = new Map(model.blocks.map(block => [block.id, block]));
+      for (const row of this.database.prepare(`SELECT * FROM blocks WHERE namespace = ? AND id IN (SELECT value FROM json_each(?))`).all(key, JSON.stringify(blockIds)) as unknown as BlockRow[]) {
+        const block = byId.get(row.id)!;
+        if (row.l0_title) {
+          block.shouldExtract = Boolean(row.should_extract);
+          block.l0Title = row.l0_title;
+          block.l0Tags = parseJson<string[]>(row.l0_tags_json, 'blocks.l0_tags_json');
+          block.l1Summary = row.l1_summary;
+          block.l2Keypoints = parseJson<string[]>(row.l2_keypoints_json, 'blocks.l2_keypoints_json');
+        }
+        block.l3Condensed = row.l3_condensed; block.l4Readable = row.l4_readable;
+        block.l5Raw = [];
+      }
+      for (const row of this.database.prepare(`SELECT id, block_id, thread_id, position, role, content, created_at, tool_calls_json
+        FROM messages WHERE namespace = ? AND block_id IN (SELECT value FROM json_each(?)) ORDER BY block_id, position`).all(key, JSON.stringify(blockIds)) as unknown as MessageRow[]) {
+        byId.get(row.block_id!)!.l5Raw.push({ id: row.id, role: row.role, content: row.content, createdAt: row.created_at,
+          ...(row.thread_id ? { threadId: row.thread_id } : {}),
+          ...(row.tool_calls_json ? { toolCalls: parseJson<ToolTrace[]>(row.tool_calls_json, 'messages.tool_calls_json') } : {}) });
+      }
+      this.database.exec('COMMIT');
+      return { model, revision: loaded.revision, threadId, blockIds, total };
+    } catch (error) {
+      try { this.database.exec('ROLLBACK'); } catch { /* preserve read error */ }
+      throw error;
+    }
+  }
+
+  private readState(namespace: string, navigation = false): LoadedStrataGateState | null {
     this.assertOpen();
     const key = nonEmptyNamespace(namespace);
     const hasGraphEnabled = this.hasColumn('memory_spaces', 'graph_enabled');
@@ -732,7 +882,16 @@ export class SqliteStorage implements StorageAdapter {
       throw new Error(`Unsupported stored StrataGate schema: ${space.schema_version}`);
     }
 
-    const messageRows = this.database.prepare(`
+    const messageRows = navigation ? this.database.prepare(`
+      WITH first_users AS (
+        SELECT m.id, row_number() OVER (PARTITION BY m.thread_id ORDER BY b.sequence IS NULL, b.sequence, m.position) AS rank
+        FROM messages m LEFT JOIN blocks b ON b.namespace = m.namespace AND b.id = m.block_id
+        WHERE m.namespace = ? AND m.role = 'user' AND length(trim(m.content, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0
+      ) SELECT id, block_id, thread_id, position, role, created_at,
+        CASE WHEN id IN (SELECT id FROM first_users WHERE rank = 1) THEN content
+          WHEN length(trim(content, char(9,10,11,12,13,32,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0 THEN '…' ELSE '' END AS content,
+        NULL AS tool_calls_json FROM messages WHERE namespace = ? ORDER BY block_id, position
+    `).all(key, key) as unknown as MessageRow[] : this.database.prepare(`
       SELECT id, block_id, thread_id, position, role, content, created_at, tool_calls_json
       FROM messages WHERE namespace = ? ORDER BY block_id, position
     `).all(key) as unknown as MessageRow[];
@@ -755,7 +914,12 @@ export class SqliteStorage implements StorageAdapter {
       }
     }
 
-    const blockRows = this.database.prepare(`
+    const blockRows = this.database.prepare(navigation ? `
+      SELECT id, thread_id, sequence, start_turn, end_turn, created_at, processing_status, should_extract,
+        l0_title, l0_tags_json, l1_summary, l2_keypoints_json,
+        '' AS l3_condensed, '' AS l4_readable, pointer_current_level, surface_current_level,
+        pointer_anchor_level, pointer_anchor_block_position, last_lifted_at, last_lifted_by
+      FROM blocks WHERE namespace = ? ORDER BY sequence` : `
       SELECT * FROM blocks WHERE namespace = ? ORDER BY sequence
     `).all(key) as unknown as BlockRow[];
     const blocks: MemoryBlock[] = blockRows.map((row) => ({
@@ -1020,6 +1184,14 @@ export class SqliteStorage implements StorageAdapter {
       successfulModelResponses,
       ...(topicState ? { memoryTopicState: parseJson<MemoryTopicState>(topicState.state_json, 'memory_topic_state.state_json') } : {}),
     };
+    if (navigation) {
+      // Keep exactly the normal reader's migration/validation semantics, while
+      // normalizing metadata only. The projected raw containers are not exports.
+      const normalized = normalizeSnapshot({ ...snapshot, openTail: [], blocks: snapshot.blocks.map(block => ({ ...block, l5Raw: [] })) });
+      normalized.openTail = snapshot.openTail;
+      normalized.blocks.forEach((block, index) => { block.l5Raw = snapshot.blocks[index]!.l5Raw; });
+      return { snapshot: normalized, revision: space.revision };
+    }
     return { snapshot: cloneSnapshot(normalizeSnapshot(snapshot)), revision: space.revision };
   }
 
@@ -1030,9 +1202,95 @@ export class SqliteStorage implements StorageAdapter {
     rawMessageIndexDelta?: RawMessageIndexDelta,
     leaseGuards?: readonly DerivationLeaseGuard[],
     graphEpoch?: number,
+    before?: StrataGateSnapshot,
   ): Promise<number> {
+    return this.saveUnit(namespace, snapshot, expectedRevision, rawMessageIndexDelta, leaseGuards, graphEpoch, before);
+  }
+
+  async saveChanges(namespace: string, before: StrataGateSnapshot, snapshot: StrataGateSnapshot,
+    expectedRevision: number, rawMessageIndexDelta?: RawMessageIndexDelta,
+    leaseGuards?: readonly DerivationLeaseGuard[], graphEpoch?: number): Promise<number> {
+    return this.save(namespace, snapshot, expectedRevision, rawMessageIndexDelta, leaseGuards, graphEpoch, before);
+  }
+
+  async commitRecords(namespace: string, expectedRevision: number, mutation: RecordMutation): Promise<RecordMutationResult> {
     this.assertOpen();
-    assertValidSnapshot(snapshot);
+    const key = nonEmptyNamespace(namespace);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new TypeError('Invalid revision');
+    const result = this.immediateTransaction(() => {
+      const space = this.database.prepare('SELECT revision, current_turn FROM memory_spaces WHERE namespace = ?').get(key) as { revision: number; current_turn: number } | undefined;
+      if (!space || space.revision !== expectedRevision) throw new StorageConflictError(key, expectedRevision, space?.revision ?? null);
+      if (mutation.kind === 'append') {
+        if (mutation.receipt && this.database.prepare('SELECT 1 FROM ingestion_receipts WHERE namespace = ? AND receipt_id = ?').get(key, mutation.receipt.id)) {
+          return { revision: space.revision, changed: false };
+        }
+        const start = this.database.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS position FROM messages WHERE namespace = ? AND block_id IS NULL').get(key) as { position: number };
+        const insert = this.database.prepare('INSERT INTO messages(namespace, id, block_id, thread_id, position, role, content, created_at, tool_calls_json) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)');
+        mutation.messages.forEach((message, index) => insert.run(key, message.id, message.threadId ?? null, start.position + index,
+          message.role, message.content, message.createdAt, message.toolCalls ? JSON.stringify(message.toolCalls) : null));
+        if (mutation.receipt) this.database.prepare('INSERT INTO ingestion_receipts(namespace, receipt_id, created_at) VALUES (?, ?, ?)').run(key, mutation.receipt.id, mutation.receipt.createdAt);
+        this.syncRawSearchIndex(key, { upsert: mutation.messages, deleteIds: [] });
+      } else if (mutation.kind === 'block-pointers') {
+        for (const block of mutation.blocks) {
+          const fields = Object.entries(block).filter(([field]) => field !== 'id');
+          const columns = { surfaceCurrentLevel: 'surface_current_level', pointerCurrentLevel: 'pointer_current_level',
+            pointerAnchorLevel: 'pointer_anchor_level', pointerAnchorBlockPosition: 'pointer_anchor_block_position',
+            lastLiftedAt: 'last_lifted_at', lastLiftedBy: 'last_lifted_by' } as const;
+          if (!fields.length) continue;
+          for (const [field, value] of fields) {
+            if (!Object.hasOwn(columns, field)) throw new TypeError('Invalid block pointer field');
+            if (field.endsWith('Level') && (!Number.isInteger(value) || Number(value) < 0 || Number(value) > 5)) throw new TypeError('Invalid block level');
+            if (field === 'pointerAnchorBlockPosition' && (!Number.isSafeInteger(value) || Number(value) < 1)) throw new TypeError('Invalid block anchor');
+            if (field === 'lastLiftedBy' && value !== null && value !== 'user' && value !== 'agent') throw new TypeError('Invalid block lift source');
+          }
+          const update = this.database.prepare(`UPDATE blocks SET ${fields.map(([field]) => `${columns[field as keyof typeof columns]} = ?`).join(', ')} WHERE namespace = ? AND id = ? AND processing_status = 'ready'`)
+            .run(...fields.map(([, value]) => value as string | number | null), key, block.id);
+          if (Number(update.changes) !== 1) throw new Error(`Block ${block.id} is not ready or missing`);
+        }
+      } else if (mutation.kind === 'pin-event') {
+        const table = mutation.agent ? 'agent_events' : 'events';
+        if (Number(this.database.prepare(`UPDATE ${table} SET pinned = ?, updated_at = ? WHERE namespace = ? AND id = ?`)
+          .run(Number(mutation.pinned), mutation.updatedAt, key, mutation.id).changes) !== 1) throw new Error(`Unknown event ${mutation.id}`);
+      } else {
+        if (mutation.receipt) {
+          const existing = this.database.prepare('SELECT event_ids_json, element_ids_json, audit_json FROM usage_receipts WHERE namespace = ? AND receipt_id = ?').get(key, mutation.receipt.id) as { event_ids_json: string; element_ids_json: string; audit_json: string } | undefined;
+          if (existing) {
+            if (existing.event_ids_json !== JSON.stringify(mutation.receipt.eventIds) || existing.element_ids_json !== JSON.stringify(mutation.receipt.elementIds)
+              || existing.audit_json !== JSON.stringify(mutation.receipt.audit ?? {})) throw new Error(`Usage receipt ${mutation.receipt.id} has different content`);
+            return { revision: space.revision, changed: false };
+          }
+        }
+        for (const [table, ids] of [['events', mutation.eventIds], ['agent_events', mutation.agentEventIds], ['elements', mutation.elementIds]] as const) {
+          const update = this.database.prepare(`UPDATE ${table} SET mention_count = mention_count + 1, last_adopted_turn = ?, updated_at = ?
+            WHERE namespace = ? AND id = ?${table === 'elements' ? '' : " AND status NOT IN ('forgotten', 'archived')"}`);
+          for (const id of new Set(ids)) update.run(space.current_turn, mutation.updatedAt, key, id);
+        }
+        if (mutation.receipt) this.database.prepare('INSERT INTO usage_receipts(namespace, receipt_id, event_ids_json, element_ids_json, audit_json, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(key, mutation.receipt.id, JSON.stringify(mutation.receipt.eventIds), JSON.stringify(mutation.receipt.elementIds), JSON.stringify(mutation.receipt.audit ?? {}), mutation.receipt.createdAt);
+      }
+      const revision = expectedRevision + 1;
+      this.database.prepare('UPDATE memory_spaces SET revision = ?, current_turn = ?, updated_at = ? WHERE namespace = ?')
+        .run(revision, space.current_turn + Number(mutation.kind === 'append'), mutation.updatedAt, key);
+      return { revision, changed: true };
+    });
+    if (result.changed) this.notifyWorkChanged();
+    return result;
+  }
+
+  private notifyWorkChanged(): void {
+    for (const listener of SqliteStorage.workListeners.get(this.filename) ?? []) {
+      try { listener(); } catch { /* observers cannot reject a committed write */ }
+    }
+  }
+
+  private saveUnit(namespace: string, snapshot: StrataGateSnapshot, expectedRevision: number,
+    rawMessageIndexDelta?: RawMessageIndexDelta, leaseGuards?: readonly DerivationLeaseGuard[],
+    graphEpoch?: number, before?: StrataGateSnapshot): number {
+    this.assertOpen();
+    // Validation normalizes a detached copy. Historical raw values are not part
+    // of normalization; omit them on the internal Unit of Work path.
+    assertValidSnapshot(before ? { ...snapshot, openTail: [],
+      blocks: snapshot.blocks.map(({ l5Raw: _raw, ...block }) => ({ ...block, l5Raw: [] })) } : snapshot);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
       throw new TypeError('expectedRevision must be a non-negative integer');
     }
@@ -1052,12 +1310,9 @@ export class SqliteStorage implements StorageAdapter {
         const retained = new Set((JSON.parse(row?.jobs_json ?? '[]') as GraphProjectionJob[]).map(job => job.id));
         snapshot.graphProjectionJobs = snapshot.graphProjectionJobs.filter(job => retained.has(job.id));
       }
-      return this.persistSnapshot(key, snapshot, expectedRevision, rawMessageIndexDelta, leaseGuards);
+      return this.persistSnapshot(key, snapshot, expectedRevision, rawMessageIndexDelta, leaseGuards, before);
     });
-    for (const listener of SqliteStorage.workListeners.get(this.filename) ?? []) {
-      // Notification follows COMMIT and can never roll back or reject a durable save.
-      try { listener(); } catch { /* observers do not own storage */ }
-    }
+    this.notifyWorkChanged();
     return revision;
   }
 
@@ -1231,6 +1486,7 @@ export class SqliteStorage implements StorageAdapter {
     expectedRevision: number,
     rawMessageIndexDelta?: RawMessageIndexDelta,
     leaseGuards?: readonly DerivationLeaseGuard[],
+    before?: StrataGateSnapshot,
   ): number {
     const current = this.database.prepare('SELECT revision FROM memory_spaces WHERE namespace = ?')
       .get(namespace) as { revision: number } | undefined;
@@ -1243,6 +1499,10 @@ export class SqliteStorage implements StorageAdapter {
     // Lease heartbeats deliberately do not change the business revision. Merge
     // them into unchanged running attempts; fence stale recovery/completion.
     this.mergeDerivationLeases(namespace, snapshot, expectedRevision, leaseGuards);
+    // Compute after merging live leases: an unversioned heartbeat must never be
+    // overwritten or mistaken for an unchanged task.
+    const changes = before && current ? snapshotWriteSet(before, snapshot, rawMessageIndexDelta) : undefined;
+    const includes = (collection: RecordCollection, id: string): boolean => !changes || changes.changed.get(collection)!.has(id);
     const updatedAt = nowUtc8();
     if (current) {
       this.database.prepare(`
@@ -1310,6 +1570,7 @@ export class SqliteStorage implements StorageAdapter {
         processing_status = excluded.processing_status
     `);
     for (const block of snapshot.blocks) {
+      if (!includes('blocks', block.id)) continue;
       insertBlock.run(
         namespace,
         block.id,
@@ -1370,17 +1631,21 @@ export class SqliteStorage implements StorageAdapter {
         );
       }
     };
-    insertMessages(snapshot.openTail, null);
-    for (const block of snapshot.blocks) insertMessages(block.l5Raw, block.id);
-    this.syncRawSearchIndex(namespace, rawMessageIndexDelta ?? {
+    if (changes) {
+      for (const { message, blockId, position } of changes.messages) {
+        insertMessage.run(namespace, message.id, blockId, message.threadId ?? null, position,
+          message.role, message.content, message.createdAt, message.toolCalls ? JSON.stringify(message.toolCalls) : null);
+      }
+    } else {
+      insertMessages(snapshot.openTail, null);
+      for (const block of snapshot.blocks) insertMessages(block.l5Raw, block.id);
+    }
+    this.syncRawSearchIndex(namespace, changes ? {
+      upsert: changes.messages.map(({ message }) => message), deleteIds: [...changes.deletedMessages],
+    } : rawMessageIndexDelta ?? {
       upsert: snapshot.blocks.flatMap(({ l5Raw }) => l5Raw),
       deleteIds: [],
     });
-    if (rawMessageIndexDelta) {
-      const deleteMessage = this.database.prepare('DELETE FROM messages WHERE namespace = ? AND id = ?');
-      for (const messageId of rawMessageIndexDelta.deleteIds) deleteMessage.run(namespace, messageId);
-    }
-
     const insertEvent = this.database.prepare(`
       INSERT INTO events (
         namespace, id, position, title, summary, narrative, tags_json, quotes_json, source_block_id,
@@ -1421,6 +1686,7 @@ export class SqliteStorage implements StorageAdapter {
       ON CONFLICT (namespace, event_id, message_id) DO UPDATE SET position = excluded.position
     `);
     for (const [eventPosition, event] of snapshot.events.entries()) {
+      if (!includes('events', event.id)) continue;
       // Passive events always carry a provenance block (enforced by
       // addEventInMemory); only agent events may omit sourceBlockId.
       // Legacy NOT NULL columns stay as storage placeholders. Event readers
@@ -1460,8 +1726,12 @@ export class SqliteStorage implements StorageAdapter {
     // Agent-recorded events use delete-then-reinsert so removals are reflected
     // immediately; the pool is low-volume and FK-ordering is already satisfied
     // because this runs after the messages upsert.
-    this.database.prepare('DELETE FROM agent_event_sources WHERE namespace = ?').run(namespace);
-    this.database.prepare('DELETE FROM agent_events WHERE namespace = ?').run(namespace);
+    if (!changes) {
+      this.database.prepare('DELETE FROM agent_event_sources WHERE namespace = ?').run(namespace);
+      this.database.prepare('DELETE FROM agent_events WHERE namespace = ?').run(namespace);
+    } else for (const id of new Set([...changes.changed.get('agentEvents')!, ...changes.removed.get('agentEvents')!])) {
+      this.database.prepare('DELETE FROM agent_events WHERE namespace = ? AND id = ?').run(namespace, id);
+    }
     const insertAgentEvent = this.database.prepare(`
       INSERT INTO agent_events (
         namespace, id, position, title, summary, narrative, tags_json, quotes_json, source_block_id,
@@ -1474,6 +1744,7 @@ export class SqliteStorage implements StorageAdapter {
       INSERT INTO agent_event_sources (namespace, event_id, message_id, position) VALUES (?, ?, ?, ?)
     `);
     for (const [eventPosition, event] of snapshot.agentEvents.entries()) {
+      if (!includes('agentEvents', event.id)) continue;
       // Keep the same legacy-column placeholders in the agent Event table.
       insertAgentEvent.run(
         namespace,
@@ -1506,16 +1777,26 @@ export class SqliteStorage implements StorageAdapter {
       }
     }
 
-    this.database.prepare('DELETE FROM event_merge_sources WHERE namespace = ?').run(namespace);
+    const changedEvent = (id: string): boolean => includes('events', id) || includes('agentEvents', id);
+    const clearEventAuxiliary = (table: 'event_merge_sources' | 'event_metadata'): void => {
+      if (!changes) this.database.prepare(`DELETE FROM ${table} WHERE namespace = ?`).run(namespace);
+      else for (const id of new Set([...changes.changed.get('events')!, ...changes.changed.get('agentEvents')!,
+        ...changes.removed.get('events')!, ...changes.removed.get('agentEvents')!])) {
+        this.database.prepare(`DELETE FROM ${table} WHERE namespace = ? AND event_id = ?`).run(namespace, id);
+      }
+    };
+    clearEventAuxiliary('event_merge_sources');
     const insertMergedSources = this.database.prepare('INSERT INTO event_merge_sources (namespace, event_id, source_ids_json) VALUES (?, ?, ?)');
     for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
+      if (!changedEvent(event.id)) continue;
       if (event.mergedFromEventIds?.length) insertMergedSources.run(namespace, event.id, JSON.stringify(event.mergedFromEventIds));
     }
-    this.database.prepare('DELETE FROM event_metadata WHERE namespace = ?').run(namespace);
+    clearEventAuxiliary('event_metadata');
     const insertEventMetadata = this.database.prepare(`
       INSERT INTO event_metadata (namespace, event_id, catalog_hints_json, extractor_version) VALUES (?, ?, ?, ?)
     `);
     for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
+      if (!changedEvent(event.id)) continue;
       const metadata = normalizeEventMetadata(event);
       if (metadata.catalogHints === undefined && metadata.extractorVersion === undefined) continue;
       insertEventMetadata.run(namespace, event.id,
@@ -1568,6 +1849,11 @@ export class SqliteStorage implements StorageAdapter {
       ON CONFLICT (namespace, fact_id, event_id) DO UPDATE SET position = excluded.position
     `);
     for (const [elementPosition, element] of snapshot.elements.entries()) {
+      if (!includes('elements', element.id)) continue;
+      if (changes || rawMessageIndexDelta?.deleteIds.length) {
+        this.database.prepare('DELETE FROM element_sources WHERE namespace = ? AND element_id = ?').run(namespace, element.id);
+        this.database.prepare('DELETE FROM element_facts WHERE namespace = ? AND element_id = ?').run(namespace, element.id);
+      }
       insertElement.run(
         namespace,
         element.id,
@@ -1623,6 +1909,7 @@ export class SqliteStorage implements StorageAdapter {
         lease_until = excluded.lease_until
     `);
     for (const job of snapshot.extractionJobs) {
+      if (!includes('extractionJobs', job.blockId)) continue;
       insertJob.run(namespace, job.blockId, job.status, job.attempts, job.lastError, job.nextRetryAt, job.updatedAt, job.leaseUntil ?? null);
     }
 
@@ -1639,6 +1926,7 @@ export class SqliteStorage implements StorageAdapter {
         lease_until = excluded.lease_until
     `);
     for (const job of snapshot.summaryJobs) {
+      if (!includes('summaryJobs', job.blockId)) continue;
       insertSummaryJob.run(namespace, job.blockId, job.status, job.attempts, job.lastError, job.nextRetryAt, job.updatedAt, job.leaseUntil ?? null);
     }
 
@@ -1657,6 +1945,7 @@ export class SqliteStorage implements StorageAdapter {
         updated_at = excluded.updated_at
     `);
     for (const job of snapshot.elementProjectionJobs) {
+      if (!includes('elementProjectionJobs', job.id)) continue;
       insertElementProjectionJob.run(
         namespace,
         job.id,
@@ -1671,7 +1960,7 @@ export class SqliteStorage implements StorageAdapter {
       );
     }
 
-    this.database.prepare(`
+    if (!changes || changes.graph) this.database.prepare(`
       INSERT INTO graph_state (namespace, nodes_json, edges_json, jobs_json, updated_at)
       VALUES (?, ?, ?, ?, ?)
       ON CONFLICT (namespace) DO UPDATE SET
@@ -1687,7 +1976,7 @@ export class SqliteStorage implements StorageAdapter {
       updatedAt,
     );
 
-    this.database.prepare(`
+    if (!changes || changes.topics) this.database.prepare(`
       INSERT INTO memory_topic_state (namespace, state_json, updated_at) VALUES (?, ?, ?)
       ON CONFLICT (namespace) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at
     `).run(namespace, JSON.stringify(snapshot.memoryTopicState ?? { topics: [], jobs: [], projectedVersions: {} }), updatedAt);
@@ -1698,6 +1987,7 @@ export class SqliteStorage implements StorageAdapter {
       ON CONFLICT (namespace, receipt_id) DO NOTHING
     `);
     for (const receipt of snapshot.usageReceipts) {
+      if (!includes('usageReceipts', receipt.id)) continue;
       insertReceipt.run(
         namespace,
         receipt.id,
@@ -1714,30 +2004,67 @@ export class SqliteStorage implements StorageAdapter {
       ON CONFLICT (namespace, receipt_id) DO NOTHING
     `);
     for (const receipt of snapshot.ingestionReceipts) {
+      if (!includes('ingestionReceipts', receipt.id)) continue;
       insertIngestionReceipt.run(namespace, receipt.id, receipt.createdAt);
     }
 
-    this.database.prepare('DELETE FROM external_memory_import_jobs WHERE namespace = ?').run(namespace);
+    if (!changes) this.database.prepare('DELETE FROM external_memory_import_jobs WHERE namespace = ?').run(namespace);
+    else for (const id of new Set([...changes.changed.get('externalMemoryImportJobs')!, ...changes.removed.get('externalMemoryImportJobs')!])) {
+      this.database.prepare('DELETE FROM external_memory_import_jobs WHERE namespace = ? AND id = ?').run(namespace, id);
+    }
     const insertExternalMemoryImportJob = this.database.prepare(`
       INSERT INTO external_memory_import_jobs (namespace, id, payload_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?)
     `);
     for (const job of snapshot.externalMemoryImportJobs) {
+      if (!includes('externalMemoryImportJobs', job.id)) continue;
       insertExternalMemoryImportJob.run(namespace, job.id, JSON.stringify(job), job.createdAt, job.updatedAt);
     }
 
-    this.database.prepare('DELETE FROM model_response_history WHERE namespace = ?').run(namespace);
+    if (!changes) this.database.prepare('DELETE FROM model_response_history WHERE namespace = ?').run(namespace);
+    else for (const id of new Set([...changes.changed.get('successfulModelResponses')!, ...changes.removed.get('successfulModelResponses')!])) {
+      this.database.prepare('DELETE FROM model_response_history WHERE namespace = ? AND id = ?').run(namespace, id);
+    }
     const insertSuccessfulModelResponse = this.database.prepare(`
       INSERT INTO model_response_history (namespace, id, kind, response, created_at)
       VALUES (?, ?, ?, ?, ?)
     `);
     for (const response of snapshot.successfulModelResponses ?? []) {
+      if (!includes('successfulModelResponses', response.id)) continue;
       insertSuccessfulModelResponse.run(namespace, response.id, response.kind, response.response, response.createdAt);
     }
 
     if (!current && this.rawSearchFtsAvailable) this.database.prepare(
       'INSERT INTO raw_message_fts_state (namespace, backfill_complete) VALUES (?, 1) ON CONFLICT (namespace) DO NOTHING',
     ).run(namespace);
+    if (changes || rawMessageIndexDelta?.deleteIds.length) {
+      // First reconcile surviving provenance and remove absent child records,
+      // then remove Events and Blocks. Full-save adapters have no write set:
+      // an explicit raw deletion must also remove records absent from the
+      // supplied snapshot (not leave their old source links in SQLite).
+      const tables = [
+        ['elements', 'elements', 'id'], ['elementProjectionJobs', 'element_projection_jobs', 'id'],
+        ['summaryJobs', 'block_summary_jobs', 'block_id'], ['extractionJobs', 'extraction_jobs', 'block_id'],
+        ['events', 'events', 'id'], ['usageReceipts', 'usage_receipts', 'receipt_id'],
+        ['ingestionReceipts', 'ingestion_receipts', 'receipt_id'], ['blocks', 'blocks', 'id'],
+      ] as const;
+      for (const [collection, table, column] of tables) {
+        if (changes) for (const id of changes.removed.get(collection)!) {
+          this.database.prepare(`DELETE FROM ${table} WHERE namespace = ? AND ${column} = ?`).run(namespace, id);
+        } else {
+          const ids = snapshot[collection].map(record => 'blockId' in record ? record.blockId : record.id);
+          this.database.prepare(`DELETE FROM ${table} WHERE namespace = ? AND ${column} NOT IN (SELECT value FROM json_each(?))`).run(namespace, JSON.stringify(ids));
+        }
+      }
+    }
+    // message_id foreign keys are immediate. Surviving Event links have now
+    // been updated and removed Event/Block links have been cleaned by cascades.
+    // A reference still present in the final snapshot must keep rejecting the
+    // deletion, rolling back rows, revision and FTS together.
+    if (changes || rawMessageIndexDelta) {
+      const deleteMessage = this.database.prepare('DELETE FROM messages WHERE namespace = ? AND id = ?');
+      for (const messageId of changes?.deletedMessages ?? rawMessageIndexDelta!.deleteIds) deleteMessage.run(namespace, messageId);
+    }
     const tails = new Map<string | undefined, number>();
     for (const message of snapshot.openTail) if (message.role === 'user') tails.set(message.threadId, (tails.get(message.threadId) ?? 0) + 1);
     this.writeBackgroundWorkTimes(namespace, backgroundWorkTimes({

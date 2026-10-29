@@ -18,9 +18,9 @@
 
 ## 它是怎么设计的
 
-### 短期记忆：最近三天的工作笔记
+### 短期记忆：最近的工作笔记
 
-Agent 自己维护工作进展、阶段结果、有效失败经验、阻塞和下一步，每个记忆空间每天一份 Markdown。最近三个有笔记的日期会注入新会话；可在“短期记忆”页只读查看近期及更早笔记。文件位于 `<数据库所在目录>/daily/<namespace 安全编码>/YYYY-MM-DD.md`（当前安全编码为 `ns-` 加 namespace 的 SHA-256 小写十六进制）。设置 `dailyNotesEnabled: false` 可关闭写入和注入，已有笔记保留。
+Agent 自己维护工作进展、阶段结果、有效失败经验、阻塞和下一步，每个记忆空间每天一份 Markdown。默认将最近三个有笔记的日期注入新会话，天数可在设置中调整；可在“短期记忆”页只读查看近期及更早笔记。文件位于 `<数据库所在目录>/daily/<namespace 安全编码>/YYYY-MM-DD.md`（当前安全编码为 `ns-` 加 namespace 的 SHA-256 小写十六进制）。设置 `dailyNotesEnabled: false` 可关闭写入和注入，已有笔记保留。
 
 ### 侧栏入口
 
@@ -135,9 +135,9 @@ DSH_HOME/stratagate/memory.db
 
 笔记是纯 Markdown，位于数据库同目录的 `daily/ns-<namespace 的 SHA-256 小写十六进制>/YYYY-MM-DD.md`；不存入 SQLite。写入按进程内同文件队列串行处理，先写临时文件再 rename，覆盖前将上一版保存到 `.md.bak`。同日文件日期在写入时确定，之后不自动更改。`database: :memory:` 时日记工具报明确不可用错误。
 
-新会话注入最近三个有笔记日期，不限制回看天数。每个会话首次组装时固定快照（包括没有笔记或加载失败的状态），后续写入不改变本会话注入文本；工具返回和重新读取反映当前文件。会话释放、插件关闭时清理快照；Dreaming 不注入。正文超出预算时先省略最旧日期的事项，并提示用 `memory_daily_read` 读取。日记不是新指令，也不新增授权。
+新会话默认注入最近三个有笔记日期，可在设置中调整为 1–30 天，不限制回看天数。每个会话首次组装时固定快照（包括没有笔记或加载失败的状态），后续写入不改变本会话注入文本；工具返回和重新读取反映当前文件。会话释放、插件关闭时清理快照；Dreaming 不注入。正文超出预算时先省略最旧日期的事项，并提示用 `memory_daily_read` 读取。日记不是新指令，也不新增授权。
 
-配置：`dailyNotesEnabled` 默认 `true`；`dailyNotesTimeZone` 默认不设置，使用本机时区，可填 IANA 名如 `Asia/Shanghai`；`dailyNotesContextMaxChars` 默认 `12000` 字符（含头部和省略提示，最小 `1024`）。关闭日记时不注册两个工具、不注入上下文，协议及 `memory_remember` 说明恢复原句。
+配置：`dailyNotesInjectionDays` 默认 `3`，可设为 `1`–`30` 的整数，修改后用于新会话；`dailyNotesEnabled` 默认 `true`；`dailyNotesTimeZone` 默认不设置，使用本机时区，可填 IANA 名如 `Asia/Shanghai`；`dailyNotesContextMaxChars` 默认 `12000` 字符（含头部和省略提示，最小 `1024`）。关闭日记时不注册两个工具、不注入上下文，协议及 `memory_remember` 说明恢复原句。
 
 Block 的 L3/L4 与摘要、Event 抽取输入只保留日记工具的一行操作摘要，L5 按原文策略保留完整工具记录。第一期不接入 WorkBuddy，不聚合到 `memory_recall`。
 

@@ -26,7 +26,7 @@ describe('batched surface level tracking', () => {
       await f.memory.appendTurn({ user: 'other thread', assistant: 'answer', threadId: 'b' });
       const anchors = f.memory.listBlocks().map(({ pointerAnchorLevel, pointerAnchorBlockPosition, lastLiftedBy }) => ({ pointerAnchorLevel, pointerAnchorBlockPosition, lastLiftedBy }));
       const revision = f.memory.storageRevision;
-      const save = vi.spyOn(SqliteStorage.prototype, 'save');
+      const save = vi.spyOn(SqliteStorage.prototype, 'commitRecords');
       expect(await f.memory.setBlockSurfaceLevels([
         { id: f.ids[0]!, level: 3 }, { id: f.ids[1]!, level: 2 }, { id: f.ids[0]!, level: 1 },
       ])).toBe(2);
@@ -45,7 +45,7 @@ describe('batched surface level tracking', () => {
     try {
       const revision = f.memory.storageRevision;
       const snapshot = vi.spyOn(f.memory, 'exportSnapshot');
-      const save = vi.spyOn(SqliteStorage.prototype, 'save');
+      const save = vi.spyOn(SqliteStorage.prototype, 'commitRecords');
       expect(await f.memory.setBlockSurfaceLevels([])).toBe(0);
       expect(await f.memory.setBlockSurfaceLevels(f.ids.map((id) => ({ id, level: 5 })))).toBe(0);
       await f.memory.setBlockSurfaceLevel(f.ids[0]!, 5);
@@ -58,7 +58,7 @@ describe('batched surface level tracking', () => {
   it('checks no-ops after earlier queued writes, so concurrent duplicates commit once', async () => {
     const f = await fixture();
     try {
-      const save = vi.spyOn(SqliteStorage.prototype, 'save');
+      const save = vi.spyOn(SqliteStorage.prototype, 'commitRecords');
       const updates = [{ id: f.ids[0]!, level: 2 as const }];
       expect(await Promise.all([f.memory.setBlockSurfaceLevels(updates), f.memory.setBlockSurfaceLevels(updates)])).toEqual([1, 0]);
       expect(save).toHaveBeenCalledTimes(1);
@@ -89,7 +89,7 @@ describe('batched surface level tracking', () => {
       const before = f.memory.exportSnapshot();
       const revision = f.memory.storageRevision;
       const updates = f.ids.map((id) => ({ id, level: 1 as const }));
-      const save = vi.spyOn(SqliteStorage.prototype, 'save').mockRejectedValueOnce(new Error('disk failure'));
+      const save = vi.spyOn(SqliteStorage.prototype, 'commitRecords').mockRejectedValueOnce(new Error('disk failure'));
       await expect(f.memory.setBlockSurfaceLevels(updates)).rejects.toThrow('disk failure');
       expect(f.memory.exportSnapshot()).toEqual(before);
       expect(f.memory.storageRevision).toBe(revision);
