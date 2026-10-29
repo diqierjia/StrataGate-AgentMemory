@@ -4,6 +4,9 @@ export type NamespaceMode = 'project' | 'session' | 'global'
 export type StructuredReasoningEffortMode = 'auto' | 'force-off'
 
 export interface Config {
+  dailyNotesEnabled?: boolean
+  dailyNotesTimeZone?: string
+  dailyNotesContextMaxChars?: number
   database?: string
   sessionRoot?: string
   namespaceMode?: NamespaceMode
@@ -26,6 +29,9 @@ export interface Config {
 }
 
 export interface ResolvedConfig {
+  dailyNotesEnabled?: boolean
+  dailyNotesTimeZone?: string
+  dailyNotesContextMaxChars?: number
   database: string
   sessionRoot?: string
   namespaceMode: NamespaceMode
@@ -63,8 +69,8 @@ export const StructuredReasoningEffortSettings: z<StructuredReasoningEffortSetti
     .description('显示 StrataGate 状态提示')
     .comment('关闭后隐藏聊天界面中的 StrataGate 状态信息；记忆、检索和后台处理不受影响。'),
   showShortTermStatus: z.boolean().default(true)
-    .description('显示短期记忆块状态')
-    .comment('控制短期记忆块进度、Block 封存与整理状态的聊天内提示；后台处理不受影响。'),
+    .description('显示会话记忆状态')
+    .comment('控制会话记忆进度、Block 封存与整理状态的聊天内提示；后台处理不受影响。'),
   showSidebarEntry: z.boolean().default(false)
     .description('在左侧栏显示 StrataGate')
     .comment('仅控制左侧栏入口；关闭后仍可从设置打开，记忆、检索和后台处理不受影响。'),
@@ -80,6 +86,9 @@ export function volatileIfSupported<T>(schema: T): T {
 }
 
 export const Config = z.object({
+  dailyNotesEnabled: z.boolean().default(true),
+  dailyNotesTimeZone: z.string(),
+  dailyNotesContextMaxChars: z.natural().min(1024).default(12_000),
   database: z.string().required(),
   sessionRoot: z.string(),
   namespaceMode: z.union(['project', 'session', 'global'] as const).default('project'),
@@ -128,7 +137,12 @@ export function resolveConfig(config: Config): ResolvedConfig {
   if (Boolean(provider) !== Boolean(model)) {
     throw new TypeError('StrataGate provider and model must be configured together')
   }
+  if (config.dailyNotesTimeZone !== undefined) new Intl.DateTimeFormat('en-US', { timeZone: config.dailyNotesTimeZone }).format()
+  if (config.dailyNotesContextMaxChars !== undefined && (!Number.isSafeInteger(config.dailyNotesContextMaxChars) || config.dailyNotesContextMaxChars < 1024)) throw new TypeError('dailyNotesContextMaxChars must be an integer >= 1024')
   return {
+    dailyNotesEnabled: config.dailyNotesEnabled ?? true,
+    ...(config.dailyNotesTimeZone !== undefined ? { dailyNotesTimeZone: config.dailyNotesTimeZone } : {}),
+    dailyNotesContextMaxChars: config.dailyNotesContextMaxChars ?? 12_000,
     database,
     ...(sessionRoot ? { sessionRoot } : {}),
     namespaceMode: config.namespaceMode ?? 'project',

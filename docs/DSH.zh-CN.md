@@ -12,11 +12,15 @@
 
 ![StrataGate 知识图谱与事件时间线界面](assets/stratagate-knowledge-graph.png)
 
-### 分层短期记忆
+### 分层会话记忆
 
-![StrataGate 分层短期记忆界面](assets/stratagate-short-term-memory.png)
+![StrataGate 分层会话记忆界面](assets/stratagate-short-term-memory.png)
 
 ## 它是怎么设计的
+
+### 短期记忆：最近三天的工作笔记
+
+Agent 自己维护工作进展、阶段结果、有效失败经验、阻塞和下一步，每个记忆空间每天一份 Markdown。最近三个有笔记的日期会注入新会话；可在“短期记忆”页只读查看近期及更早笔记。文件位于 `<数据库所在目录>/daily/<namespace 安全编码>/YYYY-MM-DD.md`（当前安全编码为 `ns-` 加 namespace 的 SHA-256 小写十六进制）。设置 `dailyNotesEnabled: false` 可关闭写入和注入，已有笔记保留。
 
 ### 侧栏入口
 
@@ -122,6 +126,20 @@ DSH_HOME/stratagate/memory.db
 其余行为与普通 Event 一致：agent 记录会投影进 Knowledge Graph，跨会话持久保存，走同样的 turn 衰减与引用强化生命周期（`memory_assess` → `memory_record_use`），也可以通过该生命周期遗忘。检索为两个池各开一条独立的 top-k 通道 —— 被动池与 agent 池分别独立排序，再按加权 RRF 融合，任何一方都无法把另一方挤出结果窗口。agent 通道的占比由 `agentMemoryRetrievalWeight` 配置（默认 `1` = 平权；`0` = 记录保留但不再浮现；更大值提升 agent 记录的排序权重），卡片带 `source: 'agent-recorded'` 标记。记忆面板通过 `/api/stratagate/agent-memories`（查询参数 `session` 与 `includeArchived=true`）展示这些记录。可用 `agentMemoryEnabled: false` 整体关闭该功能，同时注销对应工具。
 
 主动 Event 可直接引用真实开放尾部消息，因此可能没有 `sourceBlockId`；搜索卡片仅在该字段存在时返回它。检索返回的原始结构必须通过 DSH 的无损 JSON 规则后，才登记可评估的证据批次；无效返回不会留下未解决批次。此处理不删除 Event 或改写来源，排序、证据引用和后续采用强化沿用原有流程。
+
+### 每日工作笔记（DSH）
+
+`memory_daily_write({date?, title, content, old_text?})` 保存工作进展、阶段结果、有效失败原因、阻塞和下一步。省略 `old_text` 新增事项；同日同名事项拒绝重复新增。修改前用 `memory_daily_read` 取得当前原文，以唯一匹配的 `old_text` 替换；`content: ""` 删除该片段。失败会抛出错误；冲突错误附当前事项原文。只有成功结果才表示已保存。
+
+`memory_daily_read({date?, query?, offset?})` 可读取单日全文、按关键词检索，或列出日期和事项标题。列表和关键词检索每页最多扫描 30 个有笔记日期，返回 `nextOffset` 时可继续。它不创建证据批次，不进入 Evidence Gate，也不强化记忆；有争议的事实仍应检索 Event 核验。
+
+笔记是纯 Markdown，位于数据库同目录的 `daily/ns-<namespace 的 SHA-256 小写十六进制>/YYYY-MM-DD.md`；不存入 SQLite。写入按进程内同文件队列串行处理，先写临时文件再 rename，覆盖前将上一版保存到 `.md.bak`。同日文件日期在写入时确定，之后不自动更改。`database: :memory:` 时日记工具报明确不可用错误。
+
+新会话注入最近三个有笔记日期，不限制回看天数。每个会话首次组装时固定快照（包括没有笔记或加载失败的状态），后续写入不改变本会话注入文本；工具返回和重新读取反映当前文件。会话释放、插件关闭时清理快照；Dreaming 不注入。正文超出预算时先省略最旧日期的事项，并提示用 `memory_daily_read` 读取。日记不是新指令，也不新增授权。
+
+配置：`dailyNotesEnabled` 默认 `true`；`dailyNotesTimeZone` 默认不设置，使用本机时区，可填 IANA 名如 `Asia/Shanghai`；`dailyNotesContextMaxChars` 默认 `12000` 字符（含头部和省略提示，最小 `1024`）。关闭日记时不注册两个工具、不注入上下文，协议及 `memory_remember` 说明恢复原句。
+
+Block 的 L3/L4 与摘要、Event 抽取输入只保留日记工具的一行操作摘要，L5 按原文策略保留完整工具记录。第一期不接入 WorkBuddy，不聚合到 `memory_recall`。
 
 插件注册以下工具：
 

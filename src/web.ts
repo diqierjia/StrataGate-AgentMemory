@@ -1,3 +1,4 @@
+import { validDate } from './daily-notes.js'
 import { createHash } from 'node:crypto'
 import { dreamingStatus } from './dreaming.js'
 import { createRequire } from 'node:module'
@@ -1853,6 +1854,21 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
     } else if (path === '/api/stratagate/settings') {
       if (req.method !== 'PATCH') throw new AdminHttpError(405, 'StrataGate settings require PATCH')
       sendJson(res, 200, await updateSettings(runtime, url))
+    } else if (['/api/stratagate/daily', '/api/stratagate/daily/note', '/api/stratagate/daily/open-directory'].includes(path)) {
+      const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      if (path.endsWith('/open-directory')) {
+        if (req.method !== 'POST') throw new AdminHttpError(405, 'Daily directory open requires POST')
+        sendJson(res, 200, await runtime.adminOpenDailyDirectory(namespace, AbortSignal.timeout(15_000)))
+      } else {
+        if (req.method !== 'GET') throw new AdminHttpError(405, 'Daily notes are read-only and require GET')
+        if (path.endsWith('/note')) {
+          const date = url.searchParams.get('date') ?? ''
+          try { validDate(date) } catch { throw new AdminHttpError(400, 'date 必须是有效的 YYYY-MM-DD') }
+          try { sendJson(res, 200, await runtime.adminDailyNote(namespace, date), true) }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new AdminHttpError(404, '该日期的笔记文件不存在'); throw error }
+        } else sendJson(res, 200, await runtime.adminDailyNotes(namespace))
+      }
     } else if (path === '/api/stratagate/storage/open-directory') {
       if (req.method !== 'POST') throw new AdminHttpError(405, 'StrataGate data directory open requires POST')
       sendJson(res, 200, await runtime.adminOpenDataDirectory(AbortSignal.timeout(15_000)))

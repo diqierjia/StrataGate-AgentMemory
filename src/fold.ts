@@ -87,7 +87,7 @@ export class TurnFolder {
         return null
       }
       case 'tool/call': {
-        if (event.data.name.startsWith('memory_')) {
+        if (event.data.name.startsWith('memory_') && !['memory_daily_write', 'memory_daily_read'].includes(event.data.name)) {
           this.pending(sessionId, event.data.turn).ignoredTools.add(String(event.data.callId))
           return null
         }

@@ -1,3 +1,5 @@
+import { mkdir } from 'node:fs/promises'
+import { DailyNotes, DAILY_LOAD_FAILURE, dailyDate, selectDailyInjectionDates } from './daily-notes.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -322,6 +324,25 @@ interface SurfaceMaintenance {
 }
 
 export class StrataGateRuntime {
+  readonly dailyNotes: DailyNotes
+  private readonly dailySnapshots = new Map<string, Promise<string>>()
+  get dailyNotesEnabled(): boolean { return this.config.dailyNotesEnabled !== false }
+  clearDailySnapshot(sessionId: string): void { this.dailySnapshots.delete(sessionId) }
+  buildDailyContext(session: Session): Promise<string> {
+    if (!this.dailyNotesEnabled || this.isDreamingSession(session)) return Promise.resolve('')
+    const id = String(session.id)
+    let snapshot = this.dailySnapshots.get(id)
+    if (!snapshot) {
+      snapshot = this.dailyNotes.snapshot(this.namespaceFor(session)).catch(error => {
+        this.onIngestError(error)
+        this.notePluginError(session, error, 'autoContext')
+        return DAILY_LOAD_FAILURE
+      })
+      this.dailySnapshots.set(id, snapshot)
+    }
+    return snapshot
+  }
+
   readonly diagnostics: DiagnosticsRecorder
   private readonly diagnosticSessionNamespaces = new Map<string, string>()
   private readonly diagnosticMemoryEstimates = new Map<string, number>()
@@ -442,6 +463,7 @@ export class StrataGateRuntime {
     private readonly feedbackOrigin: () => string | undefined = () => undefined,
     private readonly openPath: (path: string, signal: AbortSignal) => Promise<void> = openNativePath,
   ) {
+    this.dailyNotes = new DailyNotes(config.database, config.dailyNotesTimeZone, config.dailyNotesContextMaxChars)
     this.diagnostics = new DiagnosticsRecorder(config.database)
     this.models.setDiagnostics?.(this.diagnostics, (session, sessionId) => session
       ? this.namespaceFor(session) : this.diagnosticNamespaceForSession(sessionId ?? '') ?? '@shared')
@@ -1992,6 +2014,7 @@ export class StrataGateRuntime {
     await Promise.all(settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.close()] : []))
     if (this.profileStorage) await this.profileStorage.close()
     this.graphMetadata?.close()
+    this.dailySnapshots.clear()
     this.sessionsById.clear()
     if (flushError !== undefined) throw flushError
   }
@@ -2828,6 +2851,24 @@ export class StrataGateRuntime {
   adminDataDirectory(): string | null {
     if (this.config.database === ':memory:') return null
     return dirname(resolve(this.config.database))
+  }
+
+  async adminDailyNotes(namespace: string) {
+    const dates = await this.dailyNotes.dates(namespace)
+    return { enabled: this.dailyNotesEnabled, timeZone: this.dailyNotes.timeZone,
+      today: dailyDate(new Date(), this.dailyNotes.timeZone), injectedDates: selectDailyInjectionDates(dates), dates }
+  }
+
+  async adminDailyNote(namespace: string, date: string) {
+    const result = await this.dailyNotes.read(namespace, { date })
+    return { date, markdown: result.content! }
+  }
+
+  async adminOpenDailyDirectory(namespace: string, signal: AbortSignal) {
+    const path = this.dailyNotes.directory(namespace)
+    await mkdir(path, { recursive: true })
+    await this.openPath(path, signal)
+    return { opened: true, path }
   }
 
   async adminOpenDataDirectory(signal: AbortSignal): Promise<{ opened: true; path: string }> {

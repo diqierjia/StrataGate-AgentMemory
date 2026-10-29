@@ -352,7 +352,7 @@ describe('DSH plugin composition', () => {
       await ctx.plugin(ToolRuntime, { mode: 'native' })
       await ctx.plugin(AgentDefaultModelConfig, { provider: 'test', model: 'test' })
       ctx.provide('webServer', { host: '127.0.0.1', port: 10259, register: () => () => {} })
-      await ctx.plugin(plugin, { database: join(directory, 'memory.db') })
+      await ctx.plugin(plugin, { database: join(directory, 'memory.db'), dailyNotesEnabled: false })
 
       expect(ctx.tools.get('memory_search_graph')).toBeUndefined()
       expect(ctx.tools.get('memory_expand_graph_node')).toBeUndefined()

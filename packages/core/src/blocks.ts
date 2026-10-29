@@ -211,12 +211,14 @@ function compactDerivationText(value: string, maxChars: number, label: string): 
 export function buildMemoryDerivationMessages(messages: readonly RawMessage[]): RawMessage[] {
   return messages.map((message) => ({
     ...message,
-    content: message.role === 'tool'
+    content: (message.role === 'tool' ? dailyToolJson(message.content) : undefined) ?? (message.role === 'tool'
       ? compactDerivationText(message.content, DERIVATION_TOOL_MESSAGE_MAX_CHARS, 'tool message content')
-      : message.content,
+      : message.content),
     ...(message.toolCalls
       ? {
           toolCalls: message.toolCalls.map((trace) => {
+            const daily = dailyToolSummary(trace);
+            if (daily) return { name: trace.name, result: daily };
             const argumentsValue = trace.arguments === undefined
               ? undefined
               : compactDerivationValue(
@@ -237,12 +239,35 @@ export function buildMemoryDerivationMessages(messages: readonly RawMessage[]): 
   }));
 }
 
+function dailyToolSummary(trace: ToolTrace): string | undefined {
+  if (trace.name !== 'memory_daily_write' && trace.name !== 'memory_daily_read') return undefined;
+  let result = trace.result;
+  if (typeof result === 'string') { try { result = JSON.parse(result); } catch { result = {}; } }
+  const saved = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  const args = trace.arguments ?? {};
+  const oneLine = (value: unknown) => String(value ?? '').replace(/[\r\n]+/g, ' ');
+  return trace.name === 'memory_daily_write'
+    ? `更新了 ${oneLine(saved.date ?? args.date ?? '今天')} 日记：《${oneLine(args.title)}》`
+    : `读取了每日笔记（${oneLine(args.date ?? args.query ?? '最近日期')}）`;
+}
+
+function dailyToolJson(text: string): string | undefined {
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    return dailyToolSummary({ name: String(value.name ?? value.tool ?? ''), arguments: (value.arguments ?? value.parameters) as Record<string, unknown>, result: value.result });
+  } catch { return undefined; }
+}
+
 function summarizeToolTrace(trace: ToolTrace): string {
+  const daily = dailyToolSummary(trace);
+  if (daily) return daily;
   const summary = resultSummary(trace.result);
   return `Tool call: ${trace.name}${summary ? ` (${summary})` : ''}`;
 }
 
 function summarizeToolJson(value: string): string | null {
+  const daily = dailyToolJson(value);
+  if (daily) return daily;
   const trimmed = value.trim().replace(/^```(?:json)?\s*/iu, '').replace(/\s*```$/u, '');
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
@@ -403,7 +428,10 @@ export function deterministicBlockLayers(messages: readonly RawMessage[]): Pick<
 > {
   const l5Rendered = formatRawTranscript(messages);
   const readable = formatReadableTranscript(messages);
-  const l4Readable = estimateTokens(readable) <= estimateTokens(l5Rendered) ? readable : l5Rendered;
+  // Daily traces must never fall back to raw bodies, even for tiny calls where
+  // the explanatory summary is longer than the original JSON.
+  const hasDailyTrace = messages.some(message => message.toolCalls?.some(trace => dailyToolSummary(trace) !== undefined) || (message.role === 'tool' && dailyToolJson(message.content) !== undefined));
+  const l4Readable = hasDailyTrace || estimateTokens(readable) <= estimateTokens(l5Rendered) ? readable : l5Rendered;
   const condensed = condenseTranscript(messages);
   const l3Condensed = estimateTokens(condensed) <= estimateTokens(l4Readable) ? condensed : l4Readable;
   return {

@@ -76,7 +76,7 @@ try {
   await page.getByRole('button', { name: 'StrataGate-AgentMemory' }).click()
   const memory = page.getByTestId('stratagate-memory-ui')
   await memory.waitFor()
-  assert.deepEqual(await memory.locator('.sg-tabs button').allTextContents(), ['常驻画像', '短期记忆', '长期记忆', '更多'])
+  assert.deepEqual(await memory.locator('.sg-tabs button').allTextContents(), ['常驻画像', '会话记忆', '短期记忆', '长期记忆', '更多'])
   checks.push('four-primary-tabs')
   const selectNamespace = async (namespace) => {
     if (await memory.getByRole('combobox', { name: '当前工作区' }).inputValue() === namespace) return
@@ -490,7 +490,7 @@ try {
   await deepEvent.scrollIntoViewIfNeeded()
   await deepEvent.click()
   await memory.locator('.sg-event-page-header').waitFor()
-  await memory.getByRole('button', { name: '短期记忆', exact: true }).click()
+  await memory.getByRole('button', { name: '会话记忆', exact: true }).click()
   await memory.getByRole('heading', { name: '块衰减总览', exact: true }).waitFor()
   assert.equal(await page.evaluate(() => window.__topicBrowserScrollSnapshot.ancestors
     .filter(({ node }) => node.isConnected).every(({ node }) => node.scrollTop <= 5)), true)
@@ -509,7 +509,7 @@ try {
   checks.push('graph-fullscreen-to-directory-releases-body-scroll-lock')
   await memory.getByRole('button', { name: '事件时间线', exact: true }).click()
   await memory.locator('.sg-timeline-card').first().waitFor()
-  await memory.getByRole('button', { name: '短期记忆', exact: true }).click()
+  await memory.getByRole('button', { name: '会话记忆', exact: true }).click()
   await memory.getByRole('heading', { name: '块衰减总览', exact: true }).waitFor()
   await memory.locator('.sg-block-toggle').first().waitFor()
   await memory.getByRole('button', { name: '常驻画像', exact: true }).click()

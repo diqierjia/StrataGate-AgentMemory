@@ -81,7 +81,7 @@ try {
   page.on('dialog', dialog => { errors.push('Unexpected dialog: ' + dialog.message()); void dialog.dismiss() })
   await page.goto(`http://127.0.0.1:${server.address().port}`)
   const tab = name => page.locator('.sg-tabs').getByRole('button', { name, exact: true }).click()
-  const cycle = async () => { await tab('短期记忆'); await tab('常驻画像') }
+  const cycle = async () => { await tab('会话记忆'); await tab('常驻画像') }
   const workspace = namespace => page.getByRole('combobox', { name: '当前工作区' }).selectOption(namespace)
   const language = page.locator('.sg-profile-row').filter({ hasText: '默认回答语言' })
   const reasoning = page.locator('.sg-profile-row').filter({ hasText: '思考过程语言' })

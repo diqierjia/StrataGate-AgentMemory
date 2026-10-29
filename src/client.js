@@ -365,6 +365,94 @@ window.__ModuleLoader__.load({
       @media(prefers-reduced-motion:reduce){.sg-directory-fold,.sg-directory-chevron,.sg-topic-bootstrap{transition:none!important}.sg-topic-bootstrap .sg-processing-icon{animation:none!important}}
     `
 
+    const DAILY_NOTES_CSS = `
+  /* New: short-term memory page */
+  .sg-memory .sg-daily-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+  .sg-memory .sg-daily-head h2{margin:0;font-size:19px;line-height:1.28;font-weight:760}
+  .sg-memory .sg-daily-head p{margin:4px 0 0;color:var(--sg-muted);font-size:13px}
+  .sg-memory .sg-daily-actions{position:relative;display:flex;gap:4px;flex:0 0 auto}
+  .sg-memory .sg-daily-icon-btn{position:relative;display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--sg-muted);cursor:pointer;transition:background .14s,color .14s,border-color .14s}
+  .sg-memory .sg-daily-icon-btn:hover, .sg-memory .sg-daily-icon-btn[aria-expanded=true]{background:var(--sg-soft);color:var(--sg-text)}
+  .sg-memory .sg-daily-icon-btn[aria-expanded=true]{border-color:var(--sg-border)}
+  .sg-memory .sg-daily-icon-btn svg{width:17px;height:17px}
+  .sg-memory .sg-daily-icon-btn[data-tip]:hover:after{content:attr(data-tip);position:absolute;right:0;top:calc(100% + 6px);z-index:5;padding:4px 8px;border-radius:6px;background:#000;color:#fff;font-size:11px;white-space:nowrap;pointer-events:none}
+
+  .sg-memory .sg-daily-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:26px}
+  .sg-memory .sg-daily-day{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:2px 12px;min-width:0;padding:12px 14px 12px 13px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-surface);text-align:left;cursor:pointer;overflow:hidden;transition:border-color .16s,background .16s,transform .16s var(--sg-ease)}
+  .sg-memory .sg-daily-day:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent;transition:background .16s}
+  .sg-memory .sg-daily-day:hover{border-color:color-mix(in srgb,var(--sg-accent) 40%,var(--sg-border));transform:translateY(-1px)}
+  .sg-memory .sg-daily-num{grid-row:span 2;font-size:30px;line-height:1;font-weight:700;font-variant-numeric:tabular-nums;color:var(--sg-text)}
+  .sg-memory .sg-daily-week{font-size:12px;font-weight:650;color:var(--sg-text);white-space:nowrap}
+  .sg-memory .sg-daily-rel{font-size:11px;color:var(--sg-muted);white-space:nowrap}
+  .sg-memory .sg-daily-day.selected{border-color:color-mix(in srgb,var(--sg-accent) 55%,transparent);background:var(--sg-accent-soft)}
+  .sg-memory .sg-daily-day.selected:before{background:var(--sg-accent)}
+  .sg-memory .sg-daily-day.selected .sg-daily-num{color:var(--sg-accent)}
+
+  /* Calendar popover */
+  .sg-memory .sg-daily-cal{position:absolute;right:0;top:calc(100% + 8px);z-index:10;width:268px;padding:12px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-page);box-shadow:0 18px 44px rgba(0,0,0,.38)}
+  .sg-memory .sg-daily-cal[hidden]{display:none}
+  .sg-memory .sg-daily-cal-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .sg-memory .sg-daily-cal-top strong{font-size:13px}
+  .sg-memory .sg-daily-cal-nav{display:flex;gap:2px}
+  .sg-memory .sg-daily-cal-nav .sg-daily-icon-btn{width:28px;height:28px}
+  .sg-memory .sg-daily-cal-nav .sg-daily-icon-btn:disabled{opacity:.3;cursor:default;background:transparent}
+  .sg-memory .sg-daily-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center}
+  .sg-memory .sg-daily-cal-dow{padding:3px 0 5px;color:var(--sg-muted);font-size:11px}
+  .sg-memory .sg-daily-cal-day{position:relative;height:32px;padding:0;border:0;border-radius:7px;background:transparent;font-size:12px;font-variant-numeric:tabular-nums;color:color-mix(in srgb,var(--sg-muted) 45%,transparent);cursor:default}
+  .sg-memory .sg-daily-cal-day.has{color:var(--sg-text);font-weight:600;cursor:pointer}
+  .sg-memory .sg-daily-cal-day.has:after{content:"";position:absolute;left:50%;bottom:4px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--sg-muted)}
+  .sg-memory .sg-daily-cal-day.has:hover{background:var(--sg-soft)}
+  .sg-memory .sg-daily-cal-day.recent{background:var(--sg-accent-soft);color:var(--sg-accent)}
+  .sg-memory .sg-daily-cal-day.recent:after{background:var(--sg-accent)}
+  .sg-memory .sg-daily-cal-day.selected{background:var(--sg-accent);color:#fff}
+  .sg-memory .sg-daily-cal-day.selected:after{background:#fff}
+  .sg-memory .sg-daily-cal-day.today{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sg-accent) 55%,transparent)}
+  .sg-memory .sg-daily-cal-foot{display:flex;align-items:center;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11px}
+  .sg-memory .sg-daily-cal-foot i{display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--sg-accent-soft);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sg-accent) 40%,transparent)}
+
+  /* Reading view */
+  .sg-memory .sg-daily-note{max-width:68ch;animation:sg-daily-fade .22s var(--sg-ease) both}
+  @keyframes sg-daily-fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .sg-memory .sg-daily-note-date{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:0 0 4px}
+  .sg-memory .sg-daily-note-date h3{margin:0;font-size:22px;line-height:1.3;font-weight:740}
+  .sg-memory .sg-daily-note-date span{color:var(--sg-muted);font-size:13px}
+  .sg-memory .sg-daily-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:18px;color:var(--sg-muted);font-size:12px}
+  .sg-memory .sg-daily-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:11px;font-weight:650}
+  .sg-memory .sg-daily-pill.muted{background:var(--sg-soft);color:var(--sg-muted)}
+  .sg-memory .sg-daily-back{padding:0;border:0;background:transparent;color:var(--sg-accent);font-size:12px;font-weight:600;cursor:pointer}
+  .sg-memory .sg-daily-back:hover{text-decoration:underline}
+  .sg-memory .sg-daily-item{padding:16px 0 18px;border-top:1px solid var(--sg-border)}
+  .sg-memory .sg-daily-item h4{margin:0 0 8px;font-size:15px;line-height:1.45;font-weight:700}
+  .sg-memory .sg-daily-status{display:flex;gap:9px;margin:0 0 9px;line-height:1.65}
+  .sg-memory .sg-daily-status b{flex:0 0 auto;padding:1px 7px;border-radius:5px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:11.5px;font-weight:700;line-height:1.75;height:max-content}
+  .sg-memory .sg-daily-status.done b{background:var(--sg-good-soft);color:var(--sg-good)}
+  .sg-memory .sg-daily-item ul{margin:0;padding-left:18px;color:color-mix(in srgb,var(--sg-text) 86%,var(--sg-muted))}
+  .sg-memory .sg-daily-item li{margin:3px 0;line-height:1.65}
+  .sg-memory .sg-daily-item li::marker{color:var(--sg-muted)}
+  .sg-memory .sg-daily-item p{margin:6px 0;line-height:1.7}
+  .sg-memory .sg-daily-note code{padding:1px 5px;border-radius:4px;background:var(--sg-soft);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
+  .sg-memory .sg-daily-ref{color:var(--sg-muted);font-size:12.5px}
+
+  .sg-memory .sg-daily-state{display:grid;justify-items:start;gap:6px;padding:34px 2px 30px;border-top:1px solid var(--sg-border)}
+  .sg-memory .sg-daily-state h3{margin:0;font-size:15px}
+  .sg-memory .sg-daily-state p{margin:0;color:var(--sg-muted);font-size:13px}
+  .sg-memory .sg-daily-state .sg-daily-icon-wrap{display:grid;place-items:center;width:38px;height:38px;margin-bottom:4px;border-radius:10px;background:var(--sg-soft);color:var(--sg-muted)}
+  .sg-memory .sg-daily-state.error .sg-daily-icon-wrap{background:var(--sg-danger-soft);color:var(--sg-danger)}
+  .sg-memory .sg-daily-retry{display:inline-flex;align-items:center;gap:6px;margin-top:8px;min-height:32px;padding:0 12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);cursor:pointer}
+  .sg-memory .sg-daily-retry:hover{border-color:var(--sg-accent);color:var(--sg-accent)}
+  .sg-memory .sg-daily-retry svg{width:15px;height:15px}
+  .sg-memory .sg-daily-off{display:flex;align-items:center;gap:8px;margin:-4px 0 16px;padding:8px 11px;border-radius:8px;background:var(--sg-soft);color:var(--sg-muted);font-size:12px}
+  .sg-memory .sg-daily-off svg{width:15px;height:15px;flex:none}
+@container sg-daily (max-width:400px){  .sg-memory .sg-daily-strip{gap:6px;margin-bottom:20px}
+  .sg-memory .sg-daily-day{grid-template-columns:1fr;justify-items:center;gap:3px;padding:10px 4px 9px;text-align:center}
+  .sg-memory .sg-daily-day:before{left:0;right:0;top:0;bottom:auto;width:auto;height:3px}
+  .sg-memory .sg-daily-num{grid-row:auto;font-size:24px}}
+.sg-daily{container:sg-daily / inline-size;min-width:0}.sg-memory .sg-daily *{min-width:0}.sg-memory .sg-daily-note,.sg-memory .sg-daily-note code{overflow-wrap:anywhere;white-space:pre-wrap}.sg-memory .sg-daily-item ul{white-space:normal}.sg-memory .sg-daily-note{min-width:0}.sg-memory .sg-daily-head>div:first-child{min-width:0}.sg-memory .sg-daily-cal{max-width:calc(100cqw - 2px)}.sg-memory .sg-daily-icon-btn:disabled{opacity:.35;cursor:default}.sg-memory .sg-daily-icon-wrap svg{width:24px;height:24px}.sg-memory .sg-daily-rel{font-size:11px}.sg-memory .sg-daily-tab:focus-visible{outline:2px solid var(--sg-accent)}
+@container sg-daily (max-width:400px){.sg-memory .sg-daily-strip{gap:10px}.sg-memory .sg-daily-head{gap:8px}}
+@container sg-memory (max-width:400px){.sg-memory .sg-tab{font-size:12px;padding:8px 0}.sg-tabs{gap:2px}}
+@media(prefers-reduced-motion:reduce){.sg-memory .sg-daily *{animation:none!important;transition:none!important}}
+`
+
     const css = `
       .sg-feedback-wizard .sg-primary-link{color:#fff}.sg-feedback-wizard .sg-support-field{display:grid;gap:6px;margin:14px 0}.sg-feedback-wizard .sg-support-preview{white-space:pre-wrap;overflow-wrap:anywhere}.sg-feedback-step-back{margin-bottom:14px}
       .sg-memory {
@@ -394,7 +482,7 @@ window.__ModuleLoader__.load({
         --sg-ease:cubic-bezier(.22,1,.36,1);
         --sg-fast:140ms;
         --sg-medium:220ms;
-        position:relative;isolation:isolate;box-sizing:border-box;width:100%;max-width:1200px;min-width:0;margin:0 auto;padding:18px 20px 36px;
+        container:sg-memory / inline-size;position:relative;isolation:isolate;box-sizing:border-box;width:100%;max-width:1200px;min-width:0;margin:0 auto;padding:18px 20px 36px;
         background:radial-gradient(circle at 8% -8%,color-mix(in srgb,var(--sg-accent) 5%,transparent),transparent 32%),var(--sg-page);color:var(--sg-text);font:14px/1.55 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;
         letter-spacing:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;
       }
@@ -402,7 +490,7 @@ window.__ModuleLoader__.load({
       .sg-header{display:grid;gap:9px;margin-bottom:12px;padding:12px 13px;border:1px solid color-mix(in srgb,var(--sg-accent) 16%,var(--sg-border));border-radius:12px;background:color-mix(in srgb,var(--sg-surface) 84%,transparent);box-shadow:0 8px 24px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-header-row{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0}.sg-header-row-primary{min-height:38px}.sg-header-row-secondary{align-items:center}.sg-brand{display:flex;align-items:center;gap:10px;min-width:0;color:var(--sg-text);text-decoration:none}.sg-brand:hover .sg-logo{transform:translateY(-1px) rotate(-1.5deg)}.sg-logo{width:38px;height:38px;display:block;object-fit:cover;flex:0 0 auto;border-radius:11px;box-shadow:0 5px 14px color-mix(in srgb,var(--sg-accent) 22%,transparent);transition:transform var(--sg-medium) var(--sg-ease)}.sg-brand-copy{display:grid;min-width:0;gap:1px}.sg-brand-title{display:flex;align-items:baseline;gap:7px;min-width:0}.sg-brand-name{min-width:0;font-size:15px;font-weight:740;letter-spacing:-.018em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sg-brand-version{flex:0 0 auto;color:var(--sg-muted);font-size:10px;font-weight:560;font-variant-numeric:tabular-nums}.sg-brand-kicker{color:var(--sg-muted);font-size:11px;white-space:nowrap}.sg-header-usage{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;color:var(--sg-muted);font-size:11px;line-height:1.4;text-align:right}.sg-usage-count{display:inline-flex;align-items:baseline;gap:4px;padding:4px 8px;border-radius:7px;background:var(--sg-soft)}.sg-usage-number{color:var(--sg-text);font-size:14px;font-weight:760}.sg-header-community{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;min-width:0}.sg-header-star,.sg-header-contribute{white-space:nowrap;text-decoration:none}.sg-header-star{display:inline-flex;align-items:center;padding:6px 10px;border:1px solid color-mix(in srgb,var(--sg-accent) 28%,var(--sg-border));border-radius:7px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:12px;font-weight:720;box-shadow:0 4px 12px color-mix(in srgb,var(--sg-accent) 12%,transparent)}.sg-header-contribute{color:var(--sg-muted);font-size:12px;font-weight:600}.sg-header-star:hover,.sg-header-contribute:hover{color:var(--sg-accent);opacity:.86}.sg-header-star:hover{border-color:var(--sg-accent);background:color-mix(in srgb,var(--sg-accent-soft) 75%,var(--sg-surface));transform:translateY(-1px)}
       .sg-icon-button,.sg-back,.sg-quiet-button{border:0;background:transparent;cursor:pointer}.sg-icon-button{width:32px;height:32px;border-radius:6px;font-size:20px}.sg-icon-button:hover,.sg-back:hover,.sg-quiet-button:hover{background:var(--sg-soft);transform:translateY(-1px)}
       .sg-project{display:flex;align-items:center;gap:7px;flex:1;min-width:0;margin:0;color:var(--sg-muted);font-size:12px}.sg-project-label{flex:0 0 auto}.sg-project-select{min-width:0;max-width:100%;padding:3px 22px 3px 5px;border:0;border-radius:5px;background:transparent;color:var(--sg-text);font-weight:620;cursor:pointer;text-overflow:ellipsis}
-      .sg-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:22px;padding:4px;border:1px solid var(--sg-border);border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 58%,transparent)}.sg-tab{position:relative;min-width:0;padding:9px 6px;border:0;border-radius:7px;background:transparent;color:var(--sg-muted);cursor:pointer;white-space:nowrap}.sg-tab:hover{color:var(--sg-text);background:color-mix(in srgb,var(--sg-soft) 70%,transparent)}.sg-tab.active{color:var(--sg-accent);background:var(--sg-surface);font-weight:720;box-shadow:0 3px 12px color-mix(in srgb,var(--sg-text) 7%,transparent)}.sg-tab.active:after{content:"";position:absolute;left:32%;right:32%;bottom:3px;height:2px;border-radius:2px;background:var(--sg-accent)}
+      .sg-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:22px;padding:4px;border:1px solid var(--sg-border);border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 58%,transparent)}.sg-tab{position:relative;min-width:0;padding:9px 6px;border:0;border-radius:7px;background:transparent;color:var(--sg-muted);cursor:pointer;white-space:nowrap}.sg-tab:hover{color:var(--sg-text);background:color-mix(in srgb,var(--sg-soft) 70%,transparent)}.sg-tab.active{color:var(--sg-accent);background:var(--sg-surface);font-weight:720;box-shadow:0 3px 12px color-mix(in srgb,var(--sg-text) 7%,transparent)}.sg-tab.active:after{content:"";position:absolute;left:32%;right:32%;bottom:3px;height:2px;border-radius:2px;background:var(--sg-accent)}
       .sg-alert{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:11px 12px;margin:0 0 18px;border:1px solid color-mix(in srgb,var(--sg-warn) 28%,var(--sg-border));border-radius:8px;background:var(--sg-warn-soft);text-align:left;cursor:pointer}.sg-alert-mark{color:var(--sg-warn);font-size:17px}.sg-alert-title{font-weight:700}.sg-alert-copy{color:var(--sg-muted);font-size:12px}.sg-chevron{color:var(--sg-muted);font-size:18px}.sg-memory-alert{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:11px 12px;margin:0 0 18px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-soft);color:var(--sg-text);text-align:left;cursor:pointer}.sg-memory-alert.processing{border-color:color-mix(in srgb,var(--sg-accent) 30%,var(--sg-border));background:var(--sg-accent-soft)}.sg-memory-alert.attention{border-color:color-mix(in srgb,var(--sg-warn) 34%,var(--sg-border));background:var(--sg-warn-soft)}.sg-memory-alert:hover{box-shadow:0 6px 18px color-mix(in srgb,var(--sg-text) 7%,transparent);transform:translateY(-1px)}.sg-memory-alert-mark{display:inline-grid;place-items:center;width:20px;height:20px;flex:0 0 auto;color:var(--sg-accent);font-size:19px;font-weight:700;line-height:1}.sg-memory-alert.attention .sg-memory-alert-mark{color:var(--sg-warn)}.sg-memory-alert.processing .sg-memory-alert-mark{animation:sg-spin 1s linear infinite}.sg-memory-alert-title{display:block;font-weight:720}.sg-memory-alert-copy{display:block;margin-top:2px;color:var(--sg-muted);font-size:12px}.sg-processing-icon{display:inline-grid;place-items:center;width:20px;height:20px;flex:0 0 auto;font-size:19px;font-weight:700;line-height:1;animation:sg-spin 1s linear infinite}@keyframes sg-spin{to{transform:rotate(360deg)}}
       .sg-intro{margin-bottom:17px}.sg-intro h2,.sg-detail-title{margin:0;font-size:19px;line-height:1.28;font-weight:760;letter-spacing:-.025em;text-wrap:balance}.sg-intro p,.sg-detail-subtitle{max-width:65ch;margin:5px 0 0;color:var(--sg-muted);font-size:13px;text-wrap:pretty}.sg-search{position:relative;margin-bottom:7px}.sg-search-mark{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--sg-muted);font-size:16px;pointer-events:none}.sg-search input{width:100%;height:41px;padding:0 12px 0 37px;border:1px solid var(--sg-border);border-radius:9px;background:var(--sg-surface);outline:0}.sg-search input:hover{border-color:color-mix(in srgb,var(--sg-accent) 35%,var(--sg-border))}.sg-search input:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}
       .sg-feed{border-top:1px solid var(--sg-border)}.sg-entry{position:relative;width:100%;min-width:0;padding:17px 10px;margin:0 -10px;border:0;border-bottom:1px solid var(--sg-border);border-radius:8px;background:transparent;text-align:left}.sg-entry-button{cursor:pointer}.sg-entry-button:hover{background:color-mix(in srgb,var(--sg-accent) 5%,transparent);transform:translateX(2px)}.sg-entry-button:hover .sg-entry-title{color:var(--sg-accent)}.sg-entry-title{padding-right:22px;font-size:15px;line-height:1.42;font-weight:720;letter-spacing:-.01em}.sg-entry-summary{margin-top:5px;color:var(--sg-text);white-space:pre-wrap}.sg-entry-chevron{position:absolute;right:9px;top:18px;color:var(--sg-muted);font-size:18px}.sg-entry-button:hover .sg-entry-chevron{color:var(--sg-accent);transform:translateX(2px)}.sg-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px;color:var(--sg-muted);font-size:12px}.sg-meta-sep:before{content:"·";margin-right:7px}.sg-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.sg-tag{max-width:100%;padding:3px 8px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-soft);color:var(--sg-text);font-size:12px;line-height:1.45;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}.sg-tag-button{cursor:pointer}.sg-tag-button:hover{border-color:var(--sg-accent);color:var(--sg-accent);transform:translateY(-1px)}
@@ -449,7 +537,7 @@ window.__ModuleLoader__.load({
       .sg-support-ai-notice{position:sticky;top:8px;z-index:8;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px;margin:12px 0;padding:13px 14px;border:1px solid color-mix(in srgb,var(--sg-good) 45%,var(--sg-border));border-radius:8px;background:color-mix(in srgb,var(--sg-good-soft) 92%,var(--sg-surface));color:var(--sg-text);box-shadow:0 8px 24px rgba(0,0,0,.16);scroll-margin-top:8px}.sg-support-ai-notice-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--sg-good);color:#fff;font-weight:800}.sg-support-ai-notice strong{display:block;color:var(--sg-good);font-size:13px}.sg-support-ai-notice p{margin:4px 0 0;color:var(--sg-text);font-size:12px;line-height:1.5}.sg-support-ai-notice .sg-quiet-button{margin-top:9px}.sg-support-ai-notice-close{display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--sg-muted);font-size:20px;line-height:1;cursor:pointer}.sg-support-ai-notice-close:hover{background:var(--sg-soft);color:var(--sg-text)}
       @media (max-width:560px){.sg-decay-head{align-items:flex-start;flex-direction:column}.sg-conversation{width:100%;justify-content:flex-start}.sg-conversation select{max-width:100%;flex:1}}
       @media (prefers-reduced-motion:reduce){.sg-memory *,.sg-memory *:before,.sg-memory *:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}.sg-processing-icon,.sg-memory-alert-mark{animation:none}.sg-skeleton:after{display:none}}
-      .sg-tabs{grid-template-columns:repeat(4,1fr)}
+      .sg-tabs{grid-template-columns:repeat(5,1fr)}
       .sg-profile-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-profile-sync{color:var(--sg-muted);font-size:11px;white-space:nowrap}.sg-profile-sync:before{content:'●';margin-right:5px;color:var(--sg-good)}.sg-profile-sync.pending:before{color:var(--sg-accent)}.sg-profile-sync.failed:before{color:var(--sg-danger)}
       .sg-profile-group{margin-top:19px;padding:14px 16px 3px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-profile-group h3{margin:0 0 4px;font-size:14px}.sg-profile-row{border-bottom:1px solid var(--sg-border)}.sg-profile-row:last-child{border-bottom:0}.sg-profile-summary{display:grid;grid-template-columns:minmax(170px,1fr) minmax(0,2fr) auto;align-items:center;gap:14px;min-height:51px}.sg-profile-label{font-size:13px;font-weight:650}.sg-profile-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sg-muted);font-size:13px}.sg-profile-value.empty{opacity:.66}.sg-profile-action{padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--sg-accent)!important;cursor:pointer;font-size:12px!important}.sg-profile-action:hover{background:var(--sg-accent-soft)}.sg-profile-editor{padding:0 0 14px}.sg-profile-editor :is(input,textarea){width:100%;padding:9px 10px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);outline:0}.sg-profile-editor textarea{min-height:104px;resize:vertical;font:inherit}.sg-profile-editor :is(input,textarea):focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-profile-editor-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px}.sg-profile-count{color:var(--sg-muted);font-size:11px}.sg-profile-actions{display:flex;align-items:center;gap:6px}.sg-profile-actions .sg-save-button{margin-top:0}.sg-profile-conflict{margin:8px 0 0;color:var(--sg-warn);font-size:12px}.sg-profile-error{margin:8px 0 0;color:var(--sg-danger);font-size:12px}
       .sg-profile-action:disabled{opacity:.45;cursor:default}.sg-profile-action:disabled:hover{background:transparent}
@@ -970,7 +1058,7 @@ window.__ModuleLoader__.load({
     }
 
     function shortTermDisplayLabel(display) {
-      if (display.kind === 'progress') return '短期记忆块 · ' + display.current + '/' + display.capacity
+      if (display.kind === 'progress') return '会话记忆 · ' + display.current + '/' + display.capacity
       if (display.kind === 'processing') return '已封块 ' + display.current + '/' + display.capacity + ' · 正在压缩…'
       if (display.kind === 'failed') return shortTermTurnRangeText(display.block.turnRange) + ' · 压缩暂不可用'
       return 'Block ' + shortTermBlockNumber(display.block) + ' · ' + shortTermTurnRangeText(display.block.turnRange)
@@ -1149,7 +1237,7 @@ window.__ModuleLoader__.load({
       const layers = new Map((detail?.layers || []).map((layer) => [Number(layer.level), layer]))
       const preview = layers.get(selectedPreviewLayer)
       const previewMetrics = preview || layerMetrics.get(selectedPreviewLayer) || { tokens: 0, percentOfL5: selectedPreviewLayer === 5 ? 100 : 0 }
-      return h('section', { className: 'sg-stm-detail', 'aria-label': '短期记忆块详情' },
+      return h('section', { className: 'sg-stm-detail', 'aria-label': '会话记忆详情' },
         h('div', { className: 'sg-stm-detail-head' },
           h('strong', null, 'Block ' + Number(block.blockIndex || block.sequence || 1) + ' · ' + shortTermTurnRangeText(block.turnRange)),
           h('span', null, '原文一直保留；选择层级只切换预览')),
@@ -2760,6 +2848,135 @@ window.__ModuleLoader__.load({
         open && source ? h('div', { id: rawId, className: 'sg-summary-raw' }, source.messages.map((message) => h('div', { key: message.id, className: 'sg-raw-message' }, h('div', { className: 'sg-muted' }, message.role + ' · ' + formatTime(message.createdAt)), h('div', { className: 'sg-code' }, String(message.content || ''))))) : null)
     }
 
+    const DAILY_WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+    function dailyParts(date) {
+      const [year, month, day] = date.split('-').map(Number)
+      return { year, month, day, week: DAILY_WEEK[new Date(Date.UTC(year, month - 1, day)).getUTCDay()] }
+    }
+    function dailyRelative(date, today) {
+      const days = Math.round((Date.parse(today + 'T00:00:00Z') - Date.parse(date + 'T00:00:00Z')) / 86400000)
+      return days === 0 ? '今天' : days === 1 ? '昨天' : days > 1 ? days + ' 天前' : Math.abs(days) + ' 天后'
+    }
+    function DailyIcon({ name }) {
+      const paths = {
+        calendar: ['M8 2v4', 'M16 2v4', 'M3 10h18', 'M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2'],
+        folder: ['M6 14 7.5 11a2 2 0 0 1 1.8-1H20a2 2 0 0 1 1.9 2.6l-2.2 7A2 2 0 0 1 17.8 21H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v2'],
+        left: ['m15 18-6-6 6-6'], right: ['m9 18 6-6-6-6'],
+        refresh: ['M3 12a9 9 0 0 1 15.4-6.4L21 8', 'M21 3v5h-5', 'M21 12a9 9 0 0 1-15.4 6.4L3 16', 'M8 16H3v5'],
+        notebook: ['M2 6h4', 'M2 10h4', 'M2 14h4', 'M2 18h4', 'M8 2v20', 'M6 2h13a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2'],
+        alert: ['M12 8v4', 'M12 16h.01'], pause: ['M10 8v8', 'M14 8v8'],
+      }
+      return h('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+        ['alert', 'pause'].includes(name) ? h('circle', { cx: 12, cy: 12, r: 10 }) : null,
+        (paths[name] || []).map((d, key) => h('path', { key, d })))
+    }
+    function dailyInline(text) {
+      return String(text).split(/(`[^`\n]+`)/g).map((part, key) =>  /^`[^`\n]+`$/.test(part) ? h('code', { key }, part.slice(1, -1)) : part)
+    }
+    function renderDailyMarkdown(markdown) {
+      const output = []; let children = []; let title = null; let list = []
+      const flushList = () => { if (list.length) { children.push(h('ul', { key: 'list-' + children.length }, list)); list = [] } }
+      const flushItem = () => { flushList(); if (children.length || title !== null) output.push(h('article', { className: 'sg-daily-item', key: output.length }, title !== null ? h('h4', null, dailyInline(title)) : null, children)); children = []; title = null }
+      for (const raw of String(markdown).split(/\r?\n/)) {
+        const line = raw.trimEnd()
+        if (/^# \d{4}-\d{2}-\d{2}$/.test(line)) continue
+        if (line.startsWith('## ')) { flushItem(); title = line.slice(3); continue }
+        if (line.startsWith('- ')) { list.push(h('li', { key: list.length }, dailyInline(line.slice(2)))); continue }
+        flushList()
+        if (!line) continue
+        const status = line.match(/^(当前|已完成)：\s*(.*)$/)
+        children.push(status ? h('p', { key: children.length, className: 'sg-daily-status' + (status[1] === '已完成' ? ' done' : '') }, h('b', null, status[1]), h('span', null, dailyInline(status[2]))) : h('p', { key: children.length }, dailyInline(line)))
+      }
+      flushItem(); return output
+    }
+    function DailyNotesPage({ namespace }) {
+      const [index, setIndex] = React.useState(null)
+      const [indexLoading, setIndexLoading] = React.useState(true)
+      const [indexError, setIndexError] = React.useState('')
+      const [selected, setSelected] = React.useState('')
+      const [note, setNote] = React.useState({ loading: false, date: '', markdown: '', error: '' })
+      const [revision, setRevision] = React.useState(0)
+      const [noteRevision, setNoteRevision] = React.useState(0)
+      const [calendarOpen, setCalendarOpen] = React.useState(false)
+      const [month, setMonth] = React.useState('')
+      const [directoryOpening, setDirectoryOpening] = React.useState(false)
+      const [directoryFeedback, setDirectoryFeedback] = React.useState('')
+      const calendarButton = React.useRef(null); const actions = React.useRef(null); const calendarPopup = React.useRef(null)
+      React.useEffect(() => {
+        const abort = new AbortController()
+        setIndexLoading(true); setIndexError(''); setCalendarOpen(false)
+        if (!namespace) { setIndex(null); setSelected(''); setIndexLoading(false); return () => abort.abort() }
+        void api('daily', { namespace }, { signal: abort.signal }).then(data => {
+          if (abort.signal.aborted) return
+          setIndex(data); setSelected(current => data.dates.includes(current) ? current : data.injectedDates[0] || data.dates[0] || '')
+        }).catch(error => { if (!abort.signal.aborted) setIndexError(String(error.message || error)) }).finally(() => { if (!abort.signal.aborted) setIndexLoading(false) })
+        return () => abort.abort()
+      }, [namespace, revision])
+      React.useEffect(() => {
+        const abort = new AbortController()
+        setNote({ loading: Boolean(selected), date: selected, markdown: '', error: '' })
+        if (selected) void api('daily/note', { namespace, date: selected }, { signal: abort.signal }).then(data => {
+          if (!abort.signal.aborted) setNote({ loading: false, date: selected, markdown: data.markdown, error: '' })
+        }).catch(error => { if (!abort.signal.aborted) setNote({ loading: false, date: selected, markdown: '', error: String(error.message || error) }) })
+        return () => abort.abort()
+      }, [namespace, selected, noteRevision])
+      React.useEffect(() => {
+        if (!calendarOpen) return
+        const outside = event => { if (!calendarButton.current?.contains(event.target) && !calendarPopup.current?.contains(event.target)) setCalendarOpen(false) }
+        const escape = event => { if (event.key === 'Escape') { event.preventDefault(); setCalendarOpen(false); calendarButton.current?.focus() } }
+        document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape)
+        return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape) }
+      }, [calendarOpen])
+      const choose = date => { setSelected(date); setCalendarOpen(false) }
+      const dates = index?.dates || []; const injected = index?.injectedDates || []; const enabled = index?.enabled !== false
+      const months = [...new Set(dates.map(date => date.slice(0, 7)))].sort()
+      const calendarMonth = month || selected.slice(0, 7) || months[months.length - 1]
+      const calendar = () => {
+        if (!calendarOpen || !calendarMonth) return null
+        const [year, m] = calendarMonth.split('-').map(Number)
+        const cursor = months.indexOf(calendarMonth); const cells = []
+        for (let i = 0; i < new Date(Date.UTC(year, m - 1, 1)).getUTCDay(); i++) cells.push(h('span', { key: 'empty-' + i }))
+        for (let day = 1; day <= new Date(Date.UTC(year, m, 0)).getUTCDate(); day++) {
+          const date = calendarMonth + '-' + String(day).padStart(2, '0'); const has = dates.includes(date)
+          cells.push(h('button', { key: date, type: 'button', disabled: !has, className: 'sg-daily-cal-day' + (has ? ' has' : '') + (injected.includes(date) ? ' recent' : '') + (selected === date ? ' selected' : '') + (index.today === date ? ' today' : ''), 'aria-label': m + '月' + day + '日' + (has ? '' : '，没有笔记'), 'aria-pressed': has ? selected === date : undefined, onClick: () => choose(date) }, day))
+        }
+        return h('div', { className: 'sg-daily-cal', ref: calendarPopup, role: 'dialog', 'aria-label': '选择日期' },
+          h('div', { className: 'sg-daily-cal-top' }, h('strong', null, year + ' 年 ' + m + ' 月'), h('span', { className: 'sg-daily-cal-nav' },
+            h('button', { type: 'button', className: 'sg-daily-icon-btn', disabled: cursor <= 0, 'aria-label': '上个月', onClick: () => setMonth(months[cursor - 1]) }, h(DailyIcon, { name: 'left' })),
+            h('button', { type: 'button', className: 'sg-daily-icon-btn', disabled: cursor >= months.length - 1, 'aria-label': '下个月', onClick: () => setMonth(months[cursor + 1]) }, h(DailyIcon, { name: 'right' })))),
+          h('div', { className: 'sg-daily-cal-grid' }, DAILY_WEEK.map(day => h('span', { key: day, className: 'sg-daily-cal-dow' }, day.slice(1))), cells),
+          h('div', { className: 'sg-daily-cal-foot' }, h('i', { 'aria-hidden': true }), '最近三天，会带入新会话'))
+      }
+      const openDirectory = async () => {
+        if (directoryOpening) return
+        setDirectoryOpening(true); setDirectoryFeedback('')
+        try { await api('daily/open-directory', { namespace }, { method: 'POST' }) }
+        catch (error) { setDirectoryFeedback('打开失败：' + String(error.message || error)) }
+        finally { setDirectoryOpening(false) }
+      }
+      const failure = error => h('div', { className: 'sg-daily-state error', role: 'alert' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'alert' })), h('h3', null, '暂时无法读取笔记'), h('p', null, '文件可能被占用或权限不足，已有笔记不会丢失。'), h('button', { type: 'button', className: 'sg-daily-retry', onClick: () => indexError ? setRevision(v => v + 1) : setNoteRevision(v => v + 1) }, h(DailyIcon, { name: 'refresh' }), '重新读取'), h('details', null, h('summary', null, '错误详情'), error))
+      const date = selected ? dailyParts(selected) : null
+      return h('div', { className: 'sg-daily' },
+        h('div', { className: 'sg-daily-head' }, h('div', null, h('h2', null, '短期记忆'), h('p', null, '每天一份工作笔记，最近三天会带入新会话。')),
+          h('div', { className: 'sg-daily-actions', ref: actions }, h('button', { type: 'button', ref: calendarButton, className: 'sg-daily-icon-btn', 'aria-label': '查看更早日期', title: '查看更早日期', 'data-tip': '查看更早日期', 'aria-haspopup': 'dialog', 'aria-expanded': calendarOpen, disabled: !dates.length || indexLoading || Boolean(indexError), onClick: () => { setMonth(selected.slice(0, 7) || months[months.length - 1]); setCalendarOpen(value => !value) } }, h(DailyIcon, { name: 'calendar' })),
+            h('button', { type: 'button', className: 'sg-daily-icon-btn', 'aria-label': '打开笔记文件夹', title: '打开笔记文件夹', 'data-tip': '打开笔记文件夹', disabled: !namespace || directoryOpening, onClick: openDirectory }, h(DailyIcon, { name: 'folder' })), calendar())),
+        directoryFeedback ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, directoryFeedback) : null,
+        indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
+          !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
+          dates.length ? h(React.Fragment, null,
+            h('div', { className: 'sg-daily-strip', role: 'tablist', 'aria-label': '最近三天' }, injected.map((date, i) => {
+              const parts = dailyParts(date)
+              return h('button', { key: date, type: 'button', role: 'tab', 'aria-selected': selected === date, tabIndex: selected === date || (!injected.includes(selected) && i === 0) ? 0 : -1, className: 'sg-daily-day' + (selected === date ? ' selected' : ''), onClick: () => choose(date), onKeyDown: event => {
+                const next = event.key === 'ArrowRight' ? (i + 1) % injected.length : event.key === 'ArrowLeft' ? (i + injected.length - 1) % injected.length : event.key === 'Home' ? 0 : event.key === 'End' ? injected.length - 1 : -1
+                if (next >= 0) { event.preventDefault(); choose(injected[next]); event.currentTarget.parentElement.children[next]?.focus() }
+              } }, h('span', { className: 'sg-daily-num' }, parts.day), h('span', { className: 'sg-daily-week' }, parts.month + '月 · ' + parts.week), h('span', { className: 'sg-daily-rel' }, dailyRelative(date, index.today)))
+            })),
+            note.loading || note.date !== selected ? h(Loading) : note.error ? failure(note.error) : date ? h('article', { key: selected, className: 'sg-daily-note' },
+              h('div', { className: 'sg-daily-note-date' }, h('h3', null, date.month + ' 月 ' + date.day + ' 日'), h('span', null, date.week + ' · ' + dailyRelative(selected, index.today))),
+              h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在最近三天'), !injected.includes(selected) ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到今天') : null), renderDailyMarkdown(note.markdown)) : null)
+            : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
+    }
+
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh }) {
       const pagedBlocks = usePagedMemory({ namespace, kind: 'blocks', initialItems: blocks, initialPage: blockPage, fallbackLimit: 40, extraParams: { threadId: activeThreadId } })
       const visible = [...pagedBlocks.items].sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || String(a.createdAt).localeCompare(String(b.createdAt)))
@@ -2993,7 +3210,7 @@ window.__ModuleLoader__.load({
           if (!found) addLegacyJob(block, 'event-extraction', 'running')
         }
       }
-      const taskLabel = (kind) => kind === 'block-summary' ? '短期记忆压缩' : kind === 'event-extraction' ? '长期记忆提取' : kind === 'topic-projection' ? '主题整理' : '知识图谱更新'
+      const taskLabel = (kind) => kind === 'block-summary' ? '会话记忆压缩' : kind === 'event-extraction' ? '长期记忆提取' : kind === 'topic-projection' ? '主题整理' : '知识图谱更新'
       const retryKey = statusJobKey
       const technicalStatusText = (status, job) => job?.state === 'terminal-failed'
         ? '终态失败'
@@ -3077,7 +3294,7 @@ window.__ModuleLoader__.load({
           ['原始对话', item.rawAvailable === true
             ? { kind: 'done', mark: '✓', label: '当前可读取' }
             : { kind: 'waiting', mark: '○', label: item.rawAvailable === false ? '当前无可读取原文' : '无法确认是否可读取' }],
-          ['压缩短期记忆块', shortStage],
+          ['压缩会话记忆', shortStage],
           ['提取长期记忆', extractionStage],
           ['更新知识图谱', graphStage],
         ]
@@ -3361,7 +3578,7 @@ window.__ModuleLoader__.load({
     function MoreHome({ setView }) {
       const rows = [
         ['duplicates', '⇄', '重复记忆整理', '查看保留原因、合并候选与重新扫描'],
-        ['display', '◐', '界面与显示', '控制短期记忆块、检索状态等前端提示'],
+        ['display', '◐', '界面与显示', '控制会话记忆、检索状态等前端提示'],
         ['import', '⇄', '导入其他 AI 的记忆', '将其他 AI 的历史记忆导入 StrataGate'],
         ['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断'],
         ['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助'],
@@ -3393,7 +3610,7 @@ window.__ModuleLoader__.load({
           setting({ title: '在左侧栏显示 StrataGate', description: '关闭后隐藏侧栏入口，仍可从设置打开；记忆、检索和后台处理不受影响。', checked: pluginSettings?.value?.showSidebarEntry === true, disabled: sidebarSaving || !setSidebarEntry, onChange: changeSidebar }),
           sidebarError ? h('p', { role: 'alert', className: 'sg-error-note' }, sidebarError) : null,
           setting({ title: '显示 StrataGate 状态提示', description: '关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。', checked: showStrataGateStatus, onChange: setStrataGateStatus }),
-          setting({ title: '短期记忆块', description: '显示 Block 进度、封存结果和正在整理短期记忆等状态。', checked: showShortTermStatus, disabled: !showStrataGateStatus, onChange: setShortTermStatus, child: true }),
+          setting({ title: '会话记忆状态', description: '显示 Block 进度、封存结果和正在整理会话记忆等状态。', checked: showShortTermStatus, disabled: !showStrataGateStatus, onChange: setShortTermStatus, child: true }),
           setting({ title: '记忆检索状态', description: '显示检索次数、返回数量，以及回答下方的记忆采用信息。', checked: showRetrievalStatus, disabled: !showStrataGateStatus, onChange: setRetrievalStatus, child: true })))
     }
 
@@ -4657,7 +4874,29 @@ window.__ModuleLoader__.load({
       return h(GraphControlPanel, { state, refresh })
     }
 
-    function SettingsPage({ selected, graphSettings, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort }) {
+    function DailyNotesSettings({ usePluginSettings, setDailyEnabled, setDailyTimeZone }) {
+      const settings = usePluginSettings ? usePluginSettings(state => state) : null
+      const [saving, setSaving] = React.useState(false)
+      const [error, setError] = React.useState('')
+      const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+      const timeZone = settings?.value?.dailyNotesTimeZone || ''
+      const enabled = settings?.value?.dailyNotesEnabled !== false
+      const zones = [...new Set(['Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'Asia/Kolkata', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'UTC', timeZone].filter(Boolean))]
+      const save = async (setter, value) => {
+        setSaving(true); setError('')
+        try { if (!setter || !await setter(value)) setError('未能保存笔记设置，请重试。') }
+        catch (reason) { setError('保存失败：' + String(reason.message || reason)) }
+        finally { setSaving(false) }
+      }
+      const disabled = settings?.writable !== true || saving
+      return h('div', { className: 'sg-settings-panel sg-pipeline' },
+        h('div', { className: 'sg-display-setting' }, h('span', { className: 'sg-display-setting-copy' }, h('span', { className: 'sg-display-setting-title' }, '短期记忆'), h('span', { className: 'sg-display-setting-description' }, '每天一份工作笔记，最近三天带入新会话。关闭后不再写入和注入，已有笔记保留。')),
+          h('button', { type: 'button', className: 'sg-setting-switch', role: 'switch', 'aria-label': '短期记忆', 'aria-checked': enabled, disabled: disabled || !setDailyEnabled, onClick: () => void save(setDailyEnabled, !enabled) })),
+        h('div', { className: 'sg-stage' }, h('span', null, '笔记时区'), h('select', { className: 'sg-effort-select', style: { maxWidth: '100%', minWidth: 0 }, 'aria-label': '笔记时区', value: timeZone, disabled: disabled || !setDailyTimeZone, onChange: event => void save(setDailyTimeZone, event.target.value) }, h('option', { value: '' }, '跟随本机（' + localTimeZone + '）'), zones.map(zone => h('option', { key: zone, value: zone }, zone)))),
+        error ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, error) : null)
+    }
+
+    function SettingsPage({ selected, graphSettings, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       const [agentWeight, setAgentWeight] = React.useState(String(selected.agentMemoryRetrievalWeight ?? 1))
@@ -4716,6 +4955,7 @@ window.__ModuleLoader__.load({
           h('h3', { id: 'sg-memory-settings-title', className: 'sg-settings-group-title' }, 'StrataGate 安装级设置'),
           h('p', { className: 'sg-settings-group-copy' }, '适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。设置保存在当前记忆数据库中，不会自动同步到其他设备或安装。'),
           h(GraphSettingsPanel, { state: graphSettings, refresh }),
+          h(DailyNotesSettings, { usePluginSettings, setDailyEnabled, setDailyTimeZone }),
           h('div', { className: 'sg-settings-panel sg-pipeline' },
             h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
             h('p', { className: 'sg-setting-note' }, '1 轮是一次用户提问和 AI 完整回复。轮数越小，Block 生成越频繁，也会让相同长度的对话衰减得更快；已有 Block 不会重新切分，尚未封存的内容按新阈值继续处理。'),
@@ -4762,7 +5002,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar }) {
+    function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar, setDailyEnabled, setDailyTimeZone }) {
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -5021,7 +5261,7 @@ window.__ModuleLoader__.load({
         if (previous.item && ['event', 'block'].includes(previous.name)) loadSource(previous.name, previous.item)
         else clearSource()
       }
-      const backLabel = view.back?.name === 'duplicates' ? '重复记忆整理' : view.back?.name === 'block' ? '短期记忆' : view.back?.name === 'event' ? '长期记忆' : view.back?.name === 'structure' ? '记忆结构' : section === 'short' ? '短期记忆' : '长期记忆'
+      const backLabel = view.back?.name === 'duplicates' ? '重复记忆整理' : view.back?.name === 'block' ? '会话记忆' : view.back?.name === 'event' ? '长期记忆' : view.back?.name === 'structure' ? '记忆结构' : section === 'short' ? '会话记忆' : '长期记忆'
       const refresh = (options = {}) => loadDashboard(namespace, { threadId: conversationId, force: true, ...options })
       const refreshDirectory = React.useCallback(() => loadDashboard(namespace, { threadId: conversationId, background: true, force: true }), [namespace, conversationId, loadDashboard])
       const selectConversation = (nextConversationId) => {
@@ -5041,9 +5281,10 @@ window.__ModuleLoader__.load({
       let content = null
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
+      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
-      else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，短期记忆和长期记忆会出现在这里。' })
+      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace })
+      else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
       else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })
       else if (view.name === 'status') content = h(ProcessingStatus, { key: namespace, overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
       else if (view.name === 'import') content = h(ImportPage, { key: namespace, namespace, onBack: moreBack, refresh })
@@ -5053,13 +5294,13 @@ window.__ModuleLoader__.load({
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, auditPage: data.pagination?.audit, namespace, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'display') content = h(DisplayPage, { onBack: moreBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry })
-      else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort })
+      else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone })
       else if (view.name === 'support') content = h(SupportPage, { key: namespace, namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
 
       return h('main', { className: 'sg-memory' + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-testid': 'stratagate-memory-ui' },
-        h('style', null, css + DUPLICATE_STYLES),
+        h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS),
         h('header', { className: 'sg-header' },
           h('div', { className: 'sg-header-row sg-header-row-primary' },
             h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
@@ -5069,7 +5310,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'sg-header-row sg-header-row-secondary' },
             h('div', { className: 'sg-project' }, h('span', { className: 'sg-project-label' }, '当前工作区：'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
             h(HeaderCommunityLinks))),
-        h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
+        h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
@@ -5162,6 +5403,8 @@ window.__ModuleLoader__.load({
         inject: () => ({
           hooks: { pluginSettings: pluginSettingsScope },
           setEffort: pluginSettingsScope ? (mode) => pluginSettingsScope.set('structuredReasoningEffort', mode) : null,
+          setDailyEnabled: pluginSettingsScope ? enabled => pluginSettingsScope.set('dailyNotesEnabled', enabled) : null,
+          setDailyTimeZone: pluginSettingsScope ? zone => zone ? pluginSettingsScope.set('dailyNotesTimeZone', zone) : pluginSettingsScope.unset('dailyNotesTimeZone') : null,
           resetEffort: pluginSettingsScope ? () => pluginSettingsScope.unset('structuredReasoningEffort') : null,
           setStrataGateStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showStrataGateStatus', visible) : null,
           setShortTermStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showShortTermStatus', visible) : null,
@@ -5183,6 +5426,8 @@ window.__ModuleLoader__.load({
       const memoryPanelInject = () => ({
         ...(pluginSettingsScope ? { hooks: { pluginSettings: pluginSettingsScope } } : {}),
         setEffort: pluginSettingsScope ? (mode) => pluginSettingsScope.set('structuredReasoningEffort', mode) : null,
+          setDailyEnabled: pluginSettingsScope ? enabled => pluginSettingsScope.set('dailyNotesEnabled', enabled) : null,
+          setDailyTimeZone: pluginSettingsScope ? zone => zone ? pluginSettingsScope.set('dailyNotesTimeZone', zone) : pluginSettingsScope.unset('dailyNotesTimeZone') : null,
         resetEffort: pluginSettingsScope ? () => pluginSettingsScope.unset('structuredReasoningEffort') : null,
         setStrataGateStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showStrataGateStatus', visible) : null,
         setShortTermStatus: pluginSettingsScope ? (visible) => pluginSettingsScope.set('showShortTermStatus', visible) : null,
