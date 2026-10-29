@@ -1572,14 +1572,24 @@ describe('StrataGate admin routes', () => {
 
 
 describe('read-only daily-note admin routes', () => {
-  async function fixture(run: (runtime: StrataGateRuntime, opened: ReturnType<typeof vi.fn>) => Promise<void>, enabled = true) {
+  async function fixture(run: (runtime: StrataGateRuntime, opened: ReturnType<typeof vi.fn>) => Promise<void>, enabled = true, dailyNotesInjectionDays = 3) {
     const root = await mkdtemp(join(tmpdir(), 'stratagate-daily-api-'))
     const opened = vi.fn(async () => {})
-    const runtime = new StrataGateRuntime(resolveConfig({ database: join(root, 'memory.db'), dailyNotesEnabled: enabled, dailyNotesTimeZone: 'Asia/Shanghai' }),
+    const runtime = new StrataGateRuntime(resolveConfig({ database: join(root, 'memory.db'), dailyNotesEnabled: enabled, dailyNotesInjectionDays, dailyNotesTimeZone: 'Asia/Shanghai' }),
       { isReady: () => false, onAdaptersUpdated: () => () => {} } as unknown as DshModelBridge,
       () => {}, async () => {}, () => undefined, opened)
     try { await run(runtime, opened) } finally { await runtime.close(); await rm(root, { recursive: true, force: true }) }
   }
+  it.each([1, 7, 30])('reports the configured %s days using the same selection as injection', async days => {
+    await fixture(async runtime => {
+      for (let d = 1; d <= 10; d++) await runtime.dailyNotes.write('n', { date: `2026-10-${String(d).padStart(2, '0')}`, title: 'A', content: 'progress' })
+      const result = await request('/api/stratagate/daily?namespace=n', 'GET', runtime)
+      expect(result.body.injectionDays).toBe(days)
+      expect(result.body.injectedDates).toEqual(selectDailyInjectionDates(result.body.dates, days))
+      const snapshot = await runtime.dailyNotes.snapshot('n')
+      expect((snapshot.match(/^# 2026-/gm) || []).length).toBe(Math.min(days, 10))
+    }, true, days)
+  })
   it.each([true, false])('lists all dates, shares injection selection and reads existing files when enabled=%s', async enabled => {
     await fixture(async runtime => {
       for (const date of ['2020-01-01', '2020-02-01', '2026-10-27', '2026-10-28']) await runtime.dailyNotes.write('n', { date, title: 'A', content: '当前：验证 `src/client.js`' })

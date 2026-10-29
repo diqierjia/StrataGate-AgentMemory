@@ -9,10 +9,18 @@ describe('DeepSeek Harness plugin config', () => {
     expect(volatileIfSupported(current)).toEqual({ meta: { volatile: true } })
   })
 
+  it.each([0, -1, 31, 1.5, NaN, Infinity])('rejects invalid injection days %s', dailyNotesInjectionDays => {
+    expect(() => resolveConfig({ database: 'db', dailyNotesInjectionDays })).toThrow('dailyNotesInjectionDays')
+  })
+  it.each([1, 7, 30])('accepts injection days %s', dailyNotesInjectionDays => {
+    expect(resolveConfig({ database: 'db', dailyNotesInjectionDays }).dailyNotesInjectionDays).toBe(dailyNotesInjectionDays)
+  })
+
   it('resolves safe defaults', () => {
     expect(resolveConfig({ database: ' ./memory.db ' })).toEqual({
       database: './memory.db',
       dailyNotesEnabled: true,
+      dailyNotesInjectionDays: 3,
       dailyNotesContextMaxChars: 12_000,
       namespaceMode: 'project',
       namespacePrefix: 'dsh',

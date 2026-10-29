@@ -463,7 +463,7 @@ export class StrataGateRuntime {
     private readonly feedbackOrigin: () => string | undefined = () => undefined,
     private readonly openPath: (path: string, signal: AbortSignal) => Promise<void> = openNativePath,
   ) {
-    this.dailyNotes = new DailyNotes(config.database, config.dailyNotesTimeZone, config.dailyNotesContextMaxChars)
+    this.dailyNotes = new DailyNotes(config.database, config.dailyNotesTimeZone, config.dailyNotesContextMaxChars, config.dailyNotesInjectionDays)
     this.diagnostics = new DiagnosticsRecorder(config.database)
     this.models.setDiagnostics?.(this.diagnostics, (session, sessionId) => session
       ? this.namespaceFor(session) : this.diagnosticNamespaceForSession(sessionId ?? '') ?? '@shared')
@@ -2346,6 +2346,36 @@ export class StrataGateRuntime {
     }
   }
 
+  async adminReadBlockPage(namespace: string, options: { threadId?: string; offset: number; limit: number },
+    chooseThread: (model: import('@diqier/stratagate').AdminReadModel) => string | null): Promise<import('@diqier/stratagate').AdminBlockPage | null> {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const storage = new SqliteStorage({ filename: this.config.database, readonly: true })
+    try { return storage.readBlockPage(namespace, options, chooseThread) }
+    finally { await storage.close() }
+  }
+
+  async adminReadEventModel(namespace: string): Promise<import('@diqier/stratagate').AdminReadModel | null> {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const storage = new SqliteStorage({ filename: this.config.database, readonly: true })
+    try { return storage.readEventModel(namespace) }
+    finally { await storage.close() }
+  }
+
+  async adminReadNamespaceRevisions(): Promise<Array<{ namespace: string; revision: number }>> {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return []
+    const storage = new SqliteStorage({ filename: this.config.database, readonly: true })
+    try { return storage.listNamespaceRevisions() }
+    finally { await storage.close() }
+  }
+
+  async adminReadDashboardEntries(options: { namespace?: string; threadId?: string; offset?: number; limit: number },
+    chooseThread: (model: import('@diqier/stratagate').AdminReadModel) => string | null): Promise<import('@diqier/stratagate').AdminReadEntry[]> {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return []
+    const storage = new SqliteStorage({ filename: this.config.database, readonly: true })
+    try { return storage.readDashboardEntries(options, chooseThread) }
+    finally { await storage.close() }
+  }
+
   private externalImportView(job: ExternalMemoryImportJob): Record<string, unknown> {
     return {
       jobId: job.id,
@@ -2856,7 +2886,7 @@ export class StrataGateRuntime {
   async adminDailyNotes(namespace: string) {
     const dates = await this.dailyNotes.dates(namespace)
     return { enabled: this.dailyNotesEnabled, timeZone: this.dailyNotes.timeZone,
-      today: dailyDate(new Date(), this.dailyNotes.timeZone), injectedDates: selectDailyInjectionDates(dates), dates }
+      today: dailyDate(new Date(), this.dailyNotes.timeZone), injectionDays: this.dailyNotes.injectionDays, injectedDates: selectDailyInjectionDates(dates, this.dailyNotes.injectionDays), dates }
   }
 
   async adminDailyNote(namespace: string, date: string) {

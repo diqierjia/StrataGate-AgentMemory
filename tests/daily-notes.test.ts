@@ -104,6 +104,18 @@ describe('daily Markdown storage', () => {
     await expect(notes.write('n', { date, title: 'A', old_text: 'aa', content: 'b' })).rejects.toThrow('匹配到 2 处')
     expect((await notes.read('n', { date })).content).toContain('## B')
   })
+  it.each([1, 7, 30])('injects the configured %s note dates and preserves older files', async days => {
+    const { root, notes } = await fixture()
+    for (let d = 1; d <= 31; d++) await notes.write('n', { date: `2026-10-${String(d).padStart(2, '0')}`, title: 'A', content: 'progress' })
+    const configured = new DailyNotes(join(root, 'memory.db'), 'Asia/Shanghai', 12_000, days)
+    const snapshot = await configured.snapshot('n')
+    expect((snapshot.match(/^# 2026-/gm) || []).length).toBe(days)
+    expect(snapshot).toContain('# 2026-10-31')
+    expect(snapshot).not.toContain('# 2026-10-01')
+    expect((await notes.read('n', { date: '2026-10-01' })).content).toContain('progress')
+    const bounded = await new DailyNotes(join(root, 'memory.db'), 'Asia/Shanghai', 1024, days).snapshot('n')
+    expect(bounded.length).toBeLessThanOrEqual(1024)
+  })
   it('injects only three most recent dates with no lookback cutoff, truncating oldest items first', async () => {
     const { notes } = await fixture(1800)
     for (const date of ['2020-01-01', '2020-02-01', '2021-03-01', '2026-10-28']) await notes.write('n', { date, title: date, content: '当前：' + '进展'.repeat(250) })
@@ -121,7 +133,7 @@ describe('daily DSH integration', () => {
     try {
       await ctx.plugin(LlmRuntime); await ctx.plugin(SystemPrompt, {}); await ctx.plugin(ToolRuntime, { mode: 'native' })
       await ctx.plugin(AgentDefaultModel, { provider: 'test', model: 'test' })
-      await ctx.plugin(plugin, { database: join(root, 'memory.db'), namespaceMode: 'global', dailyNotesEnabled: enabled })
+      await ctx.plugin(plugin, { database: join(root, 'memory.db'), namespaceMode: 'global', dailyNotesEnabled: enabled, dailyNotesInjectionDays: 7 })
       const makeSession = (id: string) => ({ id, header: { cwd: root }, snapshotEvents: () => [], eventAt: () => undefined, deriveMessages: () => [] }) as unknown as Session
       const session = makeSession('daily-1'); const agent = { session } as Agent
       const assemble = (agent: Agent) => ctx.systemPrompt.assemble({ agent })
@@ -134,13 +146,17 @@ describe('daily DSH integration', () => {
       expect(Boolean(ctx.tools.get('memory_daily_read'))).toBe(enabled)
       expect(prompt.contexts.some(context => context.name === 'stratagate:daily-notes')).toBe(false)
       if (!enabled) return
+      expect(protocol).toContain('Notes from the 7 most recent dates')
       const execute = (name: string, args: object) => ctx.tools.get(name)!.execute(args as never, { agent, callId: 'daily-call' } as never)
       await execute('memory_daily_write', { date: '2026-10-28', title: 'A', content: '当前：原始' })
       // Empty first snapshot is fixed too.
       expect((await assemble(agent)).contexts.some(context => context.name === 'stratagate:daily-notes')).toBe(false)
+      for (let d = 1; d <= 8; d++) await execute('memory_daily_write', { date: `2026-10-${String(d).padStart(2, '0')}`, title: 'A', content: 'earlier progress' })
       const other = { session: makeSession('daily-2') } as Agent
       const context = (await assemble(other)).contexts.find(context => context.name === 'stratagate:daily-notes')!.text
       expect(context).toContain('当前：原始')
+      expect((context.match(/^# 2026-/gm) || []).length).toBe(7)
+      expect(context).not.toContain('# 2026-10-02')
       await execute('memory_daily_write', { date: '2026-10-28', title: 'A', old_text: '原始', content: '更新' })
       expect((await assemble(other)).contexts.find(context => context.name === 'stratagate:daily-notes')!.text).toBe(context)
       const read = await execute('memory_daily_read', { date: '2026-10-28' })
