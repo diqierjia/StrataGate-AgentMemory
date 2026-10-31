@@ -39,6 +39,7 @@ import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, validateProfile, type P
 import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
 import { dshMessageSource } from './dsh-compatibility.js'
 import { ModelJsonResponseError, parseJsonResponse } from './json-response.js'
+import { ExtractionCapacityError, mergeExtractionEvents, splitExtractionSlice, type ExtractionSlice } from './extraction-batches.js'
 import { randomUUID } from 'node:crypto'
 import { DiagnosticsRecorder, observeModelStream, type DiagnosticScope } from './diagnostics.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -69,28 +70,41 @@ function l2Neighbor(block: MemoryBlock | null): Record<string, unknown> | null {
   }
 }
 
-function extractorPayload(context: ExtractionContext): Record<string, unknown> {
-  return {
+function extractorPayload(context: ExtractionContext, slice: ExtractionSlice): Record<string, unknown> {
+  const payload = {
     target: {
       blockId: context.target.id,
       sequence: context.target.sequence,
       startTurn: context.target.startTurn,
       endTurn: context.target.endTurn,
       createdAt: context.target.createdAt,
-      messages: buildMemoryDerivationMessages(context.target.l5Raw),
+      messages: slice.messages,
+      ...(slice.depth ? { fragment: { depth: slice.depth, beforeContextOnly: slice.before, afterContextOnly: slice.after } } : {}),
     },
     neighbors: {
       previous: l2Neighbor(context.previous),
       next: l2Neighbor(context.next),
     },
-    allowedSourceMessageIds: context.target.l5Raw.map((message) => message.id),
-    timeline: context.timeline,
+    allowedSourceMessageIds: [...new Set(slice.messages.map((message) => message.id))],
+    timeline: [...context.timeline],
   }
+  // These are automatic navigation hints, never new evidence. A malformed or
+  // very large historical record must not make every source slice unprocessable.
+  if (estimateTokens(JSON.stringify(payload.neighbors)) > 3_000) {
+    payload.neighbors = { previous: null, next: null }
+  }
+  while (payload.timeline.length && estimateTokens(JSON.stringify({ neighbors: payload.neighbors, timeline: payload.timeline })) > 3_000) payload.timeline.pop()
+  return payload
 }
 
 const JSON_RESPONSE_ATTEMPTS = 2
 const JSON_RETRY_INSTRUCTION = 'Your previous response did not make one valid call to the requested tool. Do not spend output on analysis or reasoning. Immediately call that tool exactly once with complete arguments. Do not return an answer as text or markdown.'
 const DEFAULT_STRUCTURED_TIMEOUT_MS = 120_000
+const EXTRACTION_OUTPUT_TOKENS = 8_192
+const EXTRACTION_INPUT_TOKENS = 12_000
+const EXTRACTION_MAX_CALLS = 32
+const EXTRACTION_MAX_DEPTH = 8
+const EXTRACTION_MAX_RESERVED_TOKENS = 262_144
 const STRUCTURED_FIELDS = {
   summarizer: ['l0Title', 'l0Tags', 'l1Summary', 'l2Keypoints', 'shouldExtract'],
   extractor: ['shouldExtract', 'reason', 'events'],
@@ -629,6 +643,7 @@ export const TOPIC_OUTPUT_TOKEN_BUDGET = 32_768
 export const GRAPH_OUTPUT_TOKEN_BUDGET = 32_768
 
 export class DshModelBridge {
+  private readonly extractionBudgets = new AsyncLocalStorage<{ calls: number; reservedTokens: number; deadline: number }>()
   private readonly diagnosticScopes = new AsyncLocalStorage<DiagnosticScope>()
   private diagnostics?: DiagnosticsRecorder
   private diagnosticNamespace: (session?: Session, sessionId?: string) => string = () => '@shared'
@@ -726,7 +741,38 @@ Choose exactly one action using stratagate_dreaming_step. args is an object. Fin
   }
 
   readonly extractor: EventExtractor = async (context: ExtractionContext) => {
-    const validMessageIds = new Set(context.target.l5Raw.map((message) => message.id))
+    // A Block is still committed by the core only after every slice succeeds.
+    // Partial candidates never escape this callback or become a skipped Block.
+    const budget = { calls: 0, reservedTokens: 0, deadline: Date.now() + Math.min(360_000,
+      3 * (this.config.structuredTaskTimeoutMs ?? DEFAULT_STRUCTURED_TIMEOUT_MS)) }
+    return this.extractionBudgets.run(budget, async () => {
+      const exactKeys = new WeakMap<EventCardInput, string>()
+      const visit = async (slice: ExtractionSlice): Promise<EventCardInput[]> => {
+        this.assertExtractionBudget()
+        try {
+          return (await this.extractSlice(context, slice, exactKeys)).events
+        } catch (error) {
+          if (!(error instanceof ExtractionCapacityError)) throw error
+          if (slice.depth >= EXTRACTION_MAX_DEPTH) throw new Error('Event extraction split depth exhausted; original Block remains pending', { cause: error })
+          const [left, right] = splitExtractionSlice(slice)
+          return [...await visit(left), ...await visit(right)]
+        }
+      }
+      const events = mergeExtractionEvents(await visit({ messages: buildMemoryDerivationMessages(context.target.l5Raw),
+        before: '', after: '', depth: 0 }), event => exactKeys.get(event)!)
+      return { shouldExtract: events.length > 0, reason: events.length ? 'Durable evidence extracted.' : 'No durable evidence.', events }
+    })
+  }
+
+  private assertExtractionBudget(): void {
+    const budget = this.extractionBudgets.getStore()
+    if (budget && (budget.calls >= EXTRACTION_MAX_CALLS || Date.now() >= budget.deadline)) {
+      throw new Error('Event extraction shared call/time budget exhausted; original Block remains pending')
+    }
+  }
+
+  private async extractSlice(context: ExtractionContext, slice: ExtractionSlice, exactKeys: WeakMap<EventCardInput, string>) {
+    const validMessageIds = new Set(slice.messages.map((message) => message.id))
     const raw = object(await this.callStructured('extractor',
       `You are the StrataGate Event Extractor. Make the final extraction decision independently of the Summarizer's high-recall pre-screen. Extract durable, evidence-backed events from target.messages, then call ${STRUCTURED_TOOLS.extractor.name} exactly once. If none qualifies, set shouldExtract=false and events=[]; give a brief reason, not an Event body.
 
@@ -746,10 +792,21 @@ Preserve source certainty and attribution: distinguish a user statement or decis
 
 target.messages is a provenance-preserving derivation view of the target Block: message ids and conversational text are retained, while tool code and oversized tool payloads may be marked compacted. Use only retained tool names, evidence summaries, and excerpts; do not invent omitted details. Only target.messages may supply new facts, exact quotes, and sourceMessageIds. neighbors.previous and neighbors.next are context-only L2 summaries; timeline only helps identify historical relationships. Neither neighbors nor timeline nor an assistant recap of older memory can create a new Event. Require new human input or a new observable task/tool outcome from target.messages. Every sourceMessageIds entry must exactly match allowedSourceMessageIds and directly support the Event.
 
+When target.fragment is present, messages are a consecutive source slice, possibly part of one original message. beforeContextOnly and afterContextOnly are adjacent excerpts for resolving references, qualifiers and corrections only, never additional factual evidence or quote sources. Do not infer a completed sentence or tool result from a cut fragment. Preserve corrections, cancellations and uncertainty visible in the source; do not lower admission or merge independent facts to fit the output budget.
+
 Use project scope for repository decisions, user scope for stable preferences/identity, and session scope for temporary task state. temporal.eventType must use exactly one stable value: decision, release, task_completed, plan, change, cancellation, incident, meeting, collaboration, migration, or other. temporal.participants contains canonical entity names. Use ISO-8601 timestamps with the explicit +08:00 offset in temporal fields. Keep happened time separate from mentionedAt; when happened time is unknown omit it and set precision/basis to unknown. Do not return the result as text.`,
-      extractorPayload(context),
+      extractorPayload(context, slice),
+      (value) => {
+        const result = object(value)
+        if (result.shouldExtract !== true) return
+        const events = Array.isArray(result.events) ? result.events : []
+        if (!events.length || events.some(candidate => {
+          const event = object(candidate)
+          const ids = strings(event.sourceMessageIds)
+          return !text(event.title) || !text(event.summary) || !ids.length || ids.some(id => !validMessageIds.has(id))
+        })) throw new Error('Extraction requested events but returned empty/invalid evidence or source IDs; correct every event using allowedSourceMessageIds')
+      },
     ))
-    const exactKeys = new WeakMap<EventCardInput, string>()
     const candidates = (Array.isArray(raw.events) ? raw.events : []).map((candidate): EventCardInput | null => {
       const item = object(candidate)
       const sourceMessageIds = strings(item.sourceMessageIds).filter((id) => validMessageIds.has(id))
@@ -988,6 +1045,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
           retries: Math.max(0, (scope.calls ?? 0) - 1), operationMs: Date.now() - start })
         return result
       } catch (error) {
+        // Local preflight is not a failed model operation.
+        if (error instanceof ExtractionCapacityError && !scope.calls) throw error
         this.diagnostics?.record(scope, { operations: 1, operationsSucceeded: 0, operationsFailed: 1,
           retries: Math.max(0, (scope.calls ?? 0) - 1), operationMs: Date.now() - start }, { error })
         throw error
@@ -1053,7 +1112,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
         },
         maxTokens: kind === 'dreamingStep' ? TOPIC_OUTPUT_TOKEN_BUDGET : kind === 'profileMaintenance'
           ? Math.max(this.config.maxOutputTokens, Math.min(12_000, 512 + 2 * Array.from(JSON.stringify(payload)).length))
-          : isTopic ? TOPIC_OUTPUT_TOKEN_BUDGET : isGraph ? GRAPH_OUTPUT_TOKEN_BUDGET : this.config.maxOutputTokens,
+          : isTopic ? TOPIC_OUTPUT_TOKEN_BUDGET : isGraph ? GRAPH_OUTPUT_TOKEN_BUDGET
+            : kind === 'extractor' ? Math.max(EXTRACTION_OUTPUT_TOKENS, this.config.maxOutputTokens) : this.config.maxOutputTokens,
         sessionId: execution.sessionId,
         purpose: 'compaction',
       }
@@ -1075,6 +1135,16 @@ Use project scope for repository decisions, user scope for stable preferences/id
         request.messages = [{ ...message, content: [{ type: 'text', text: JSON.stringify({
           ...object(payload), outputTokenBudget: request.maxTokens,
         }) }] }]
+      }
+      if (kind === 'extractor') {
+        const window = this.contextWindows.get(routeKey) ?? 32_768
+        const input = estimateTokens(JSON.stringify({ system: request.system, tools: request.tools, messages: request.messages }))
+        const reserve = Math.min(request.maxTokens!, Math.max(256, Math.floor(window / 4)))
+        // Reserve the repair instruction on the FIRST attempt as well.
+        if (input + estimateTokens(JSON_RETRY_INSTRUCTION) > Math.min(EXTRACTION_INPUT_TOKENS, window - reserve - 1_024)) {
+          throw new ExtractionCapacityError('input')
+        }
+        request.maxTokens = Math.min(request.maxTokens!, Math.floor(window - input - 1_024))
       }
       if (isTopic) {
         const estimateInput = () => estimateTokens(JSON.stringify({ system: request.system, tools: request.tools, messages: request.messages }))
@@ -1099,6 +1169,18 @@ Use project scope for repository decisions, user scope for stable preferences/id
           reasoningOff: useOff ? 'requested-unverified' : offFallback ? 'fallback' : 'unavailable' })
       }
       try {
+        if (kind === 'extractor') {
+          this.assertExtractionBudget()
+          const budget = this.extractionBudgets.getStore()
+          if (budget) {
+            const reservation = estimateTokens(JSON.stringify({ system: request.system, tools: request.tools, messages: request.messages })) + request.maxTokens!
+            if (budget.reservedTokens + reservation > EXTRACTION_MAX_RESERVED_TOKENS) {
+              throw new Error('Event extraction shared token budget exhausted; original Block remains pending')
+            }
+            budget.calls += 1
+            budget.reservedTokens += reservation
+          }
+        }
         await this.consumeStructuredStream(request, assembler)
       } catch (error) {
         if (!noAdapterRetried && isNoAdapter(error)) {
@@ -1122,6 +1204,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
       }
       assertActive?.()
       const finish = assembler.finish
+      if (kind === 'extractor' && finish.kind === 'max-tokens') throw new ExtractionCapacityError('output')
       if (isTopic) topicDiagnostics.finishReason = finish.kind
       if (finish.kind === 'error' || finish.kind === 'aborted') {
         const failure = new Error(`StrataGate model call failed [${finish.failure.code}]: ${finish.failure.message}`)
@@ -1328,7 +1411,8 @@ Use project scope for repository decisions, user scope for stable preferences/id
     request: Parameters<typeof this.ctx.llm.stream>[0],
     assembler: BlockAssembler,
   ): Promise<void> {
-    const timeoutMs = this.config.structuredTaskTimeoutMs ?? DEFAULT_STRUCTURED_TIMEOUT_MS
+    const timeoutMs = Math.max(1, Math.min(this.config.structuredTaskTimeoutMs ?? DEFAULT_STRUCTURED_TIMEOUT_MS,
+      (this.extractionBudgets.getStore()?.deadline ?? Infinity) - Date.now()))
     const controller = new AbortController()
     const externalSignal = this.sessions.getStore()?.signal
     const aborted = new Promise<never>((_resolve, reject) => {

@@ -419,7 +419,6 @@ describe('Event Extractor v2 contracts', () => {
       { ...card, summary: '不要重复用户原话。', sourceMessageIds: ['msg_repeat'] },
       { ...card, scope: 'project', sourceMessageIds: ['msg_repeat'] },
       { ...card, temporal: { status: 'cancelled' }, sourceMessageIds: ['msg_repeat'] },
-      { ...card, sourceMessageIds: ['msg_neighbor'] },
     ] } }])
     const result = await bridge.run(session, () => bridge.extractor({ previous: null, target: block, next: null, timeline: [] }))
     expect(result.events).toHaveLength(4)
@@ -870,9 +869,8 @@ describe('DeepSeek Harness model JSON retries', () => {
       }] },
     }])
 
-    const result = await bridge.run(session, () => bridge.extractor({ previous: null, target, next: target, timeline: [] }))
-    expect(result.shouldExtract).toBe(false)
-    expect(result.events).toHaveLength(0)
+    await expect(bridge.run(session, () => bridge.extractor({ previous: null, target, next: target, timeline: [] })))
+      .rejects.toThrow('after 2 attempts')
   })
 
   it.each([false, true])('exposes only factual Event fields to the Element model (metadata=%s)', async (hasMetadata) => {
