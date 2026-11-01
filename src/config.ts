@@ -18,6 +18,11 @@ export interface Config {
   ingestSubagents?: boolean
   agentMemoryEnabled?: boolean
   agentMemoryRetrievalWeight?: number
+  embeddingUrl?: string
+  embeddingKey?: string
+  embeddingModel?: string
+  vectorWeight?: number
+  embeddingMinScore?: number
   provider?: string
   model?: string
   maxOutputTokens?: number
@@ -44,6 +49,11 @@ export interface ResolvedConfig {
   ingestSubagents: boolean
   agentMemoryEnabled?: boolean
   agentMemoryRetrievalWeight?: number
+  embeddingUrl?: string
+  embeddingKey?: string
+  embeddingModel?: string
+  vectorWeight?: number
+  embeddingMinScore?: number
   provider?: string
   model?: string
   maxOutputTokens: number
@@ -108,6 +118,21 @@ export const Config = z.object({
   agentMemoryRetrievalWeight: z.number().step(0.05).min(0).max(5).default(1)
     .description('主动记忆在检索中的占比权重')
     .comment('agent 记录与对话派生记忆分别独立排序后按权重融合：1 为平权，0 为不浮现 agent 记录，大于 1 则提升 agent 记录的排序权重。'),
+  embeddingUrl: z.string().default('')
+    .description('Embedding API 地址')
+    .comment('OpenAI 兼容接口，例如 https://api.siliconflow.cn/v1。留空 = 不启用语义检索，检索行为与未配置时完全一致。'),
+  embeddingKey: z.string().default('')
+    .description('Embedding API Key')
+    .comment('与 embeddingUrl、embeddingModel 配套；三者都填了才启用。'),
+  embeddingModel: z.string().default('')
+    .description('Embedding 模型名')
+    .comment('例如 BAAI/bge-m3。换模型后旧向量不会被删除，只是不再参与检索。'),
+  vectorWeight: z.number().step(0.1).min(0).max(5).default(1)
+    .description('向量召回在检索中的占比权重')
+    .comment('语义召回与关键词召回按权重融合：1 为平权，0 为不启用向量车道。'),
+  embeddingMinScore: z.number().step(0.05).min(0).max(1).default(0.3)
+    .description('向量召回的最低相似度')
+    .comment('余弦相似度低于该值的事件不进入语义召回结果；0 表示不设门槛。默认 0.3 高于随机文本对的相似度，避免「没找到」变成总要凑几条。'),
   provider: z.string(),
   model: z.string(),
   maxOutputTokens: z.natural().min(256).default(2_048),
@@ -158,6 +183,15 @@ export function resolveConfig(config: Config): ResolvedConfig {
     ingestSubagents: config.ingestSubagents ?? false,
     agentMemoryEnabled: config.agentMemoryEnabled ?? true,
     agentMemoryRetrievalWeight: Math.min(5, Math.max(0, config.agentMemoryRetrievalWeight ?? 1)),
+    ...(config.embeddingUrl !== undefined ? { embeddingUrl: config.embeddingUrl.trim() } : {}),
+    ...(config.embeddingKey !== undefined ? { embeddingKey: config.embeddingKey.trim() } : {}),
+    ...(config.embeddingModel !== undefined ? { embeddingModel: config.embeddingModel.trim() } : {}),
+    ...(config.vectorWeight !== undefined
+      ? { vectorWeight: Math.min(5, Math.max(0, config.vectorWeight)) }
+      : {}),
+    ...(config.embeddingMinScore !== undefined
+      ? { embeddingMinScore: Math.min(1, Math.max(0, config.embeddingMinScore)) }
+      : {}),
     ...(provider && model ? { provider, model } : {}),
     maxOutputTokens: Math.max(256, Math.floor(config.maxOutputTokens ?? 2_048)),
     structuredTaskTimeoutMs: Math.max(1_000, Math.floor(config.structuredTaskTimeoutMs ?? 120_000)),

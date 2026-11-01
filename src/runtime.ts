@@ -59,10 +59,11 @@ import type {
   ExternalMemoryDecisionContext,
 } from '@diqier/stratagate'
 import type { ResolvedConfig } from './config.js'
+import { EmbeddingBridge } from './embedding.js'
 import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
-import { DshMetadataStore, readGraphSettings, type GraphSettings } from './metadata.js'
+import { DshMetadataStore, readGraphSettings, VECTOR_SETTING_KEYS, type GraphSettings, type VectorSettingKey } from './metadata.js'
 import { EventDuplicateMaintenance, sourceContext } from './event-duplicate-maintenance.js'
 import { eventDuplicateMergeCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, validEventMergeDraft, type EventDuplicatePair, type EventMergeDraft } from '@diqier/stratagate'
 import { DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
@@ -166,6 +167,16 @@ export interface FeedbackDraft extends Required<Omit<FeedbackDraftInput, 'bodyMa
 const AUTO_EVENT_LIMIT = 4
 const AUTO_ELEMENT_LIMIT = 4
 const AUTO_MEMORY_TOKEN_BUDGET = 900
+
+/**
+ * The text an Event is embedded from. Title plus summary is what retrieval
+ * ranks on, so vectors must be built from the same fields; narrative and
+ * quotes are deliberately excluded to keep close Events from collapsing into
+ * one another in vector space.
+ */
+function eventTextForEmbedding(event: EventCard): string {
+  return `${event.title} ${event.summary}`
+}
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -390,6 +401,12 @@ export class StrataGateRuntime {
   private blockTurnSize: number
   private blockDecayLambda: number
   private agentMemoryRetrievalWeight: number
+  /** Host-side embedding bridge: every embedding HTTP call lives behind it. */
+  private readonly embedding: EmbeddingBridge
+  /** Event IDs currently being embedded, so one Event is never billed twice. */
+  private readonly vectorBackfillInFlight = new Set<string>()
+  /** Timestamp of the last successful vector write; see backfillEventVectors. */
+  private vectorBackfillLastRunAt = 0
   private graphMetadata: DshMetadataStore | undefined
   private readonly graphPreviews = new Map<string, { epoch: number; approved: Record<string, string[]>; count: number }>()
 
@@ -470,6 +487,7 @@ export class StrataGateRuntime {
     this.blockTurnSize = config.blockTurnSize
     this.blockDecayLambda = config.blockDecayLambda
     this.agentMemoryRetrievalWeight = config.agentMemoryRetrievalWeight ?? 1
+    this.embedding = new EmbeddingBridge(config)
     this.disposeAdaptersUpdated = this.models.onAdaptersUpdated(() => this.wakeModelWorkers())
     this.disposeWorkChanged = SqliteStorage.onBackgroundWorkChanged(config.database, () => this.wakeBackgroundWorker())
     this.scheduleBackgroundWorker(BACKGROUND_WORKER_INITIAL_DELAY_MS)
@@ -1017,6 +1035,7 @@ export class StrataGateRuntime {
       if (!query.trim() && !searchOptions.eventType && !searchOptions.participants?.length
         && !searchOptions.happenedFrom && !searchOptions.happenedTo) totalSourceEvents = eventIds.length
     }
+    const vectorRanking = query.trim() ? await this.computeVectorRanking(memory, query) : undefined
     const results = await memory.searchEvents(query, {
       ...searchOptions,
       ...(eventIds !== undefined ? { eventIds } : {}),
@@ -1024,6 +1043,7 @@ export class StrataGateRuntime {
       // passive pool by the configured weight; they arrive as ordinary event
       // results with the same evidence refs and reinforcement path.
       agentMemoryWeight: this.agentMemoryRetrievalWeight,
+      ...(vectorRanking ? { vectorRanking, vectorWeight: this.vectorWeight } : {}),
     })
     return this.batch(
       session,
@@ -1436,10 +1456,16 @@ export class StrataGateRuntime {
     const activationQuery = [currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
       .join('\n\n')
+    // Semantic lane: when embedding is unconfigured this is undefined and the
+    // search below behaves exactly as before (lexical only).
+    const vectorRanking = activationQuery
+      ? await this.computeVectorRanking(memory, activationQuery)
+      : undefined
     const eventHits = activationQuery
       ? await memory.searchEvents(activationQuery, {
           limit: 20,
           agentMemoryWeight: this.agentMemoryRetrievalWeight,
+          ...(vectorRanking ? { vectorRanking, vectorWeight: this.vectorWeight } : {}),
         })
       : []
     let graphResults: GraphNodeSearchResult[] = []
@@ -1477,6 +1503,118 @@ export class StrataGateRuntime {
       .slice(0, AUTO_ELEMENT_LIMIT)
 
     return renderActivatedMemory(longTermEvents, this.graphEnabled ? graphResults : [])
+  }
+
+  /**
+   * Compute the semantic ranking for one query against stored Event vectors.
+   * Returns Event IDs in descending similarity order, or undefined when
+   * embedding is not configured (retrieval then stays exactly lexical).
+   *
+   * The host computes the query embedding (in-memory cache) and the cosine
+   * similarities; core only receives the finished ranking.
+   *
+   * Two behaviors worth keeping: the whole vector table is read with ONE query
+   * per retrieval pass, and missing vectors trigger backfill regardless of
+   * whether anything scored — otherwise a fresh or legacy database, which has
+   * events but no vectors yet, could never start vectorizing at all.
+   */
+  private async computeVectorRanking(memory: StrataGate, query: string): Promise<string[] | undefined> {
+    if (!this.embedding.embeddingReady) return undefined
+    // A query with no actual content (whitespace, punctuation only) must not
+    // surface semantic neighbors: the lane is fused after the lexical gates, so
+    // it needs its own guard.
+    const queryTokens = query.trim().split(/[\s\p{P}\p{S}]+/u).filter(Boolean)
+    if (queryTokens.length === 0) return undefined
+    const queryVector = await this.embedding.embedQuery(query)
+    if (!queryVector) return undefined
+
+    const model = this.config.embeddingModel!.trim()
+    const activeEvents = memory.listAllEvents()
+      .filter((event) => event.status === 'active' || event.status === 'superseded')
+    if (activeEvents.length === 0) return undefined
+
+    const vectorMap = memory.listEventVectors(model)
+    const scored: Array<{ id: string; score: number }> = []
+    const missingVectorIds: string[] = []
+    for (const event of activeEvents) {
+      const stored = vectorMap.get(event.id)
+      if (stored) {
+        scored.push({ id: event.id, score: EmbeddingBridge.cosineSimilarity(queryVector, stored) })
+      } else {
+        missingVectorIds.push(event.id)
+      }
+    }
+    if (missingVectorIds.length > 0) void this.backfillEventVectors(memory, missingVectorIds)
+
+    // Absolute threshold, not `> 0`: measured random text pairs sit at a median
+    // of about -0.005 with a P95 near 0.05, so "above zero" would answer almost
+    // every query. 0.3 separates noise from real relevance and keeps "nothing
+    // relevant was found" a reachable outcome. 0 disables the threshold.
+    const minScore = this.config.embeddingMinScore ?? 0.3
+    const relevant = scored.filter(({ score }) => score > minScore)
+    if (relevant.length === 0) return undefined
+    relevant.sort((left, right) => right.score - left.score)
+    return relevant.slice(0, StrataGateRuntime.VECTOR_RANKING_TOP_K).map(({ id }) => id)
+  }
+
+  /** Cap on how many semantically ranked Events one retrieval pass may fuse. */
+  private static readonly VECTOR_RANKING_TOP_K = 50
+
+  private static readonly VECTOR_BACKFILL_COOLDOWN_MS = 30_000
+  private static readonly VECTOR_BACKFILL_BATCH_LIMIT = 20
+
+  /** Vectorize freshly written Events (fire-and-forget; never blocks a write). */
+  private async vectorizeNewEvents(memory: StrataGate, eventIds: string[]): Promise<void> {
+    if (!this.embedding.embeddingReady || eventIds.length === 0) return
+    // A new Event must not be held back by the backfill cooldown of an older
+    // sweep: reset it so this batch goes out immediately.
+    this.vectorBackfillLastRunAt = 0
+    await this.backfillEventVectors(memory, eventIds)
+  }
+
+  /**
+   * Compute and persist embeddings for Events that lack them. Fire-and-forget:
+   * the caller never awaits retrieval latency on it, and every failure keeps
+   * the old state so the next retrieval retries.
+   *
+   * In-flight tracking keeps one Event from being embedded twice concurrently;
+   * a batch cap bounds the cost of one sweep. The cooldown is armed ONLY after
+   * a successful write — arming it on entry meant a failed or hung API call
+   * still renewed the window, and since retrieval fires every few seconds the
+   * window was always fresh, so nothing was ever written again.
+   */
+  private async backfillEventVectors(memory: StrataGate, eventIds: string[]): Promise<void> {
+    try {
+      if (!this.embedding.embeddingReady) return
+      if (Date.now() - this.vectorBackfillLastRunAt < StrataGateRuntime.VECTOR_BACKFILL_COOLDOWN_MS) return
+      const model = this.config.embeddingModel!.trim()
+      const eventMap = new Map(memory.listAllEvents().map((event) => [event.id, event]))
+      const toEmbed = eventIds
+        .filter((id) => !this.vectorBackfillInFlight.has(id))
+        .map((id) => eventMap.get(id))
+        .filter((event): event is EventCard => event !== undefined)
+        .slice(0, StrataGateRuntime.VECTOR_BACKFILL_BATCH_LIMIT)
+      if (toEmbed.length === 0) return
+      for (const event of toEmbed) this.vectorBackfillInFlight.add(event.id)
+      try {
+        const vectors = await this.embedding.embedEvents(toEmbed.map(eventTextForEmbedding))
+        if (!vectors) return
+        let written = 0
+        for (let index = 0; index < toEmbed.length && index < vectors.length; index++) {
+          const event = toEmbed[index]!
+          const vector = vectors[index]!
+          if (!vector || vector.length === 0) continue
+          memory.setEventVector(event.id, model, vector.length, vector)
+          written += 1
+        }
+        if (written > 0) this.vectorBackfillLastRunAt = Date.now()
+      } finally {
+        for (const event of toEmbed) this.vectorBackfillInFlight.delete(event.id)
+      }
+    } catch (error) {
+      // Silent by contract: recall must never fail because embeddings failed.
+      this.onIngestError(error)
+    }
   }
 
   /**
@@ -2154,6 +2292,9 @@ export class StrataGateRuntime {
         : {}),
     }))
     await this.persistSuccessfulResponses(memory)
+    // A freshly recorded memory should be recallable semantically right away,
+    // not only after the next retrieval sweep notices it is missing.
+    if (result.recorded && result.eventId) void this.vectorizeNewEvents(memory, [result.eventId])
     return this.agentMemoryResultView(session, result)
   }
 
@@ -2293,6 +2434,22 @@ export class StrataGateRuntime {
       this.blockTurnSize = metadata.blockTurnSize() ?? this.config.blockTurnSize
       this.blockDecayLambda = metadata.blockDecayLambda() ?? this.config.blockDecayLambda
       this.agentMemoryRetrievalWeight = metadata.agentMemoryRetrievalWeight() ?? this.config.agentMemoryRetrievalWeight ?? 1
+      // Semantic-recall settings saved through the settings API win over the
+      // host config, exactly like the Block knobs above.
+      const storedEmbeddingUrl = metadata.vectorSetting('embeddingUrl')
+      if (storedEmbeddingUrl !== null) this.config.embeddingUrl = storedEmbeddingUrl
+      const storedEmbeddingKey = metadata.vectorSetting('embeddingKey')
+      if (storedEmbeddingKey !== null) this.config.embeddingKey = storedEmbeddingKey
+      const storedEmbeddingModel = metadata.vectorSetting('embeddingModel')
+      if (storedEmbeddingModel !== null) this.config.embeddingModel = storedEmbeddingModel
+      const storedVectorWeight = Number(metadata.vectorSetting('vectorWeight'))
+      if (metadata.vectorSetting('vectorWeight') !== null && Number.isFinite(storedVectorWeight)) {
+        this.config.vectorWeight = Math.min(5, Math.max(0, storedVectorWeight))
+      }
+      const storedMinScore = Number(metadata.vectorSetting('embeddingMinScore'))
+      if (metadata.vectorSetting('embeddingMinScore') !== null && Number.isFinite(storedMinScore)) {
+        this.config.embeddingMinScore = Math.min(1, Math.max(0, storedMinScore))
+      }
     } finally {
       metadata.close()
     }
@@ -2818,6 +2975,91 @@ export class StrataGateRuntime {
     } finally {
       if (owned) await memory.close()
     }
+  }
+
+  /** Effective vector-lane weight; 0 keeps the lane out of retrieval entirely. */
+  private get vectorWeight(): number {
+    return this.config.vectorWeight ?? 1
+  }
+
+  /**
+   * Settings-API read model for semantic recall. Returns the effective values
+   * (persisted settings already merged over host config), never secrets that
+   * are not already configured by the same user.
+   */
+  adminVectorSettings(): Record<string, unknown> {
+    return {
+      embeddingUrl: this.config.embeddingUrl ?? '',
+      embeddingKey: this.config.embeddingKey ?? '',
+      embeddingModel: this.config.embeddingModel ?? '',
+      vectorWeight: this.vectorWeight,
+      embeddingMinScore: this.config.embeddingMinScore ?? 0.3,
+      embeddingReady: this.embedding.embeddingReady,
+    }
+  }
+
+  /**
+   * Persist embedding settings and hot-swap them into the running bridge.
+   * Omitted fields keep their current value; an empty string clears a field,
+   * which switches semantic recall off again without touching stored vectors.
+   */
+  adminSetVectorSettings(input: {
+    embeddingUrl?: string
+    embeddingKey?: string
+    embeddingModel?: string
+    vectorWeight?: number
+    embeddingMinScore?: number
+  }): Record<string, unknown> {
+    const next: Partial<Record<VectorSettingKey, string>> = {}
+    const text = (value: string | undefined, label: string): string | undefined => {
+      if (value === undefined) return undefined
+      const trimmed = value.trim()
+      if (trimmed.length > 2_000) throw new TypeError(`${label} must not exceed 2000 characters`)
+      return trimmed
+    }
+    for (const key of ['embeddingUrl', 'embeddingKey', 'embeddingModel'] as const) {
+      const value = text(input[key], key)
+      if (value !== undefined) next[key] = value
+    }
+    if (input.vectorWeight !== undefined) {
+      if (!Number.isFinite(input.vectorWeight) || input.vectorWeight < 0 || input.vectorWeight > 5) {
+        throw new TypeError('vectorWeight must be a finite number between 0 and 5')
+      }
+      next.vectorWeight = String(input.vectorWeight)
+    }
+    if (input.embeddingMinScore !== undefined) {
+      if (!Number.isFinite(input.embeddingMinScore) || input.embeddingMinScore < 0 || input.embeddingMinScore > 1) {
+        throw new TypeError('embeddingMinScore must be a finite number between 0 and 1')
+      }
+      next.embeddingMinScore = String(input.embeddingMinScore)
+    }
+    if (Object.keys(next).length === 0) {
+      throw new TypeError('embeddingUrl, embeddingKey, embeddingModel, vectorWeight, or embeddingMinScore is required')
+    }
+    if (this.config.database !== ':memory:') {
+      const metadata = new DshMetadataStore(this.config.database)
+      try {
+        for (const key of VECTOR_SETTING_KEYS) {
+          const value = next[key]
+          if (value !== undefined) metadata.setVectorSetting(key, value)
+        }
+      } finally {
+        metadata.close()
+      }
+    }
+    // Hot swap: the bridge reads this config object, so the next call uses the
+    // new endpoint immediately — no restart, no rebuild of the runtime.
+    if (next.embeddingUrl !== undefined) this.config.embeddingUrl = next.embeddingUrl
+    if (next.embeddingKey !== undefined) this.config.embeddingKey = next.embeddingKey
+    if (next.embeddingModel !== undefined) this.config.embeddingModel = next.embeddingModel
+    if (next.vectorWeight !== undefined) this.config.vectorWeight = Number(next.vectorWeight)
+    if (next.embeddingMinScore !== undefined) this.config.embeddingMinScore = Number(next.embeddingMinScore)
+    return this.adminVectorSettings()
+  }
+
+  /** List models from the configured (or supplied) embedding endpoint. */
+  async adminListEmbeddingModels(override?: { url?: string; key?: string }): Promise<string[]> {
+    return this.embedding.listEmbeddingModels(override)
   }
 
   adminWorkspaceName(namespace: string): string | null {

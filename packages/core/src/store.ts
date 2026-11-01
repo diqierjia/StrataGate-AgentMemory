@@ -712,6 +712,39 @@ export class StrataGate {
     return [...this.events, ...this.agentEvents];
   }
 
+  /**
+   * Persist one embedding vector for an Event (the semantic-recall side table).
+   * Covers both pools, because the table has no foreign key to either one.
+   * A no-op when this space has no persistent storage or its adapter has no
+   * vector support, so callers never branch on storage kind.
+   */
+  setEventVector(eventId: string, model: string, dimension: number, vector: readonly number[]): void {
+    const storage = this.eventVectorStorage();
+    if (!storage?.setEventVector || !this.namespace) return;
+    storage.setEventVector(this.namespace, eventId, model, dimension, vector);
+  }
+
+  /**
+   * Every stored Event vector under one model in this namespace, keyed by
+   * event id (one query for a whole retrieval pass). Empty when unavailable.
+   */
+  listEventVectors(model: string): Map<string, number[]> {
+    const storage = this.eventVectorStorage();
+    if (!storage?.listEventVectors || !this.namespace) return new Map();
+    return storage.listEventVectors(this.namespace, model);
+  }
+
+  /** Event vectors are optional: adapters that cannot store them are skipped. */
+  private eventVectorStorage(): {
+    setEventVector?: (namespace: string, eventId: string, model: string, dimension: number, vector: readonly number[]) => void;
+    listEventVectors?: (namespace: string, model: string) => Map<string, number[]>;
+  } | undefined {
+    return this.storage as unknown as {
+      setEventVector?: (namespace: string, eventId: string, model: string, dimension: number, vector: readonly number[]) => void;
+      listEventVectors?: (namespace: string, model: string) => Map<string, number[]>;
+    } | undefined;
+  }
+
   private findEvent(id: string): EventCard | undefined {
     return this.events.find((event) => event.id === id) ?? this.agentEvents.find((event) => event.id === id);
   }
@@ -1630,6 +1663,28 @@ export class StrataGate {
       if (agent.length > 0) {
         rankings.push(agent);
         weights.push(agentWeight);
+      }
+    }
+    // Vector lane: the host layer pre-computes a similarity ranking (Event IDs
+    // in descending order) from stored embeddings and passes it in. Core only
+    // fuses it as one more lane — no embedding, no HTTP. Absent or empty, this
+    // block is skipped entirely and search is exactly the lexical behavior.
+    //
+    // This lane is built BEFORE the empty-result return below so that pure
+    // semantic recall (a query with no keyword overlap at all) is still
+    // reachable: fusing after the early exit would make vectors pointless for
+    // the exact case they exist for.
+    const vectorWeight = Math.max(0, options.vectorWeight ?? 1);
+    if (vectorWeight > 0 && options.vectorRanking !== undefined && options.vectorRanking.length > 0) {
+      const allEvents = new Map([...this.events, ...this.agentEvents].map((event) => [event.id, event]));
+      const vectorLane = options.vectorRanking
+        .map((id) => allEvents.get(id))
+        .filter((event): event is EventCard => event !== undefined
+          && (event.status === 'active' || event.status === 'superseded')
+          && (scopedIds === null || scopedIds.has(event.id)));
+      if (vectorLane.length > 0) {
+        rankings.push(vectorLane);
+        weights.push(vectorWeight);
       }
     }
     if (rankings.length === 0) return [];
