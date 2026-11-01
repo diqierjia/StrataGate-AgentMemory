@@ -55,6 +55,11 @@ export class EmbeddingBridge {
    * Returns null when embedding is not configured or the call fails, so the
    * caller writes nothing and retries later.
    */
+  /** True when rerank is configured (URL + key + model all present). */
+  get rerankReady(): boolean {
+    return Boolean(this.config.rerankUrl?.trim() && this.config.rerankKey?.trim() && this.config.rerankModel?.trim())
+  }
+
   async embedEvents(texts: string[]): Promise<number[][] | null> {
     if (!this.embeddingReady || texts.length === 0) return null
     try {
@@ -62,6 +67,60 @@ export class EmbeddingBridge {
     } catch {
       return null
     }
+  }
+
+  /**
+   * Rerank documents against a query. Returns one relevance score per document
+   * in input order (higher = more relevant), or null when rerank is not
+   * configured or the call fails — the caller then keeps its original order.
+   *
+   * Hard 5-second timeout: this runs on the passive-recall request path, so a
+   * slow rerank service must never delay the conversation. On timeout the
+   * request is aborted and null is returned silently.
+   */
+  async rerank(query: string, documents: string[]): Promise<number[] | null> {
+    if (!this.rerankReady || documents.length === 0 || !query.trim()) return null
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5_000)
+    try {
+      const response = await fetch(`${this.config.rerankUrl!.trim()}/rerank`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.config.rerankKey!.trim()}`,
+        },
+        body: JSON.stringify({
+          model: this.config.rerankModel!.trim(),
+          query,
+          documents,
+        }),
+        signal: controller.signal,
+      })
+      if (!response.ok) return null
+      const data = await response.json() as { results?: Array<{ index: number; relevance_score: number }> }
+      if (!data.results || data.results.length !== documents.length) return null
+      const scores = new Array<number>(documents.length).fill(0)
+      for (const { index, relevance_score } of data.results) {
+        if (Number.isInteger(index) && index >= 0 && index < documents.length && Number.isFinite(relevance_score)) {
+          scores[index] = relevance_score
+        }
+      }
+      return scores
+    } catch {
+      // Timeout (abort) or network error: fall back to the original order.
+      return null
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * List available models from the rerank endpoint (/models).
+   * Accepts optional {url, key} overrides for pre-save validation.
+   */
+  async listRerankModels(override?: { url?: string; key?: string }): Promise<string[]> {
+    return listEndpointModels((override?.url ?? this.config.rerankUrl ?? '').trim(),
+      (override?.key ?? this.config.rerankKey ?? '').trim())
   }
 
   /**

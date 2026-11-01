@@ -948,7 +948,8 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL): Promise<unk
   const rawTurnSize = url.searchParams.get('blockTurnSize')?.trim()
   const rawLambda = url.searchParams.get('blockDecayLambda')?.trim()
   const rawAgentWeight = url.searchParams.get('agentMemoryRetrievalWeight')?.trim()
-  const vectorParams = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore'] as const
+  const vectorParams = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore',
+    'rerankUrl', 'rerankKey', 'rerankModel'] as const
   const suppliedVectorParams = vectorParams.filter((name) => url.searchParams.has(name))
   if (rawTurnSize === undefined && rawLambda === undefined && rawAgentWeight === undefined && suppliedVectorParams.length === 0) {
     throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, agentMemoryRetrievalWeight, or an embedding setting is required')
@@ -990,6 +991,9 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL): Promise<unk
         ...(suppliedVectorParams.includes('embeddingModel') ? { embeddingModel: paramText('embeddingModel') } : {}),
         ...(suppliedVectorParams.includes('vectorWeight') ? { vectorWeight: Number(paramText('vectorWeight')) } : {}),
         ...(suppliedVectorParams.includes('embeddingMinScore') ? { embeddingMinScore: Number(paramText('embeddingMinScore')) } : {}),
+        ...(suppliedVectorParams.includes('rerankUrl') ? { rerankUrl: paramText('rerankUrl') } : {}),
+        ...(suppliedVectorParams.includes('rerankKey') ? { rerankKey: paramText('rerankKey') } : {}),
+        ...(suppliedVectorParams.includes('rerankModel') ? { rerankModel: paramText('rerankModel') } : {}),
       })
     } catch (error) {
       if (error instanceof TypeError || error instanceof RangeError) throw new AdminHttpError(400, error.message)
@@ -1922,13 +1926,16 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
     } else if (path === '/api/stratagate/models') {
       if (req.method !== 'GET') throw new AdminHttpError(405, 'StrataGate model listing requires GET')
       const kind = url.searchParams.get('kind') ?? 'embedding'
-      if (kind !== 'embedding') throw new AdminHttpError(400, 'Unsupported model list kind')
+      if (kind !== 'embedding' && kind !== 'rerank') throw new AdminHttpError(400, 'Unsupported model list kind')
       // Optional overrides let the settings form test credentials before saving.
       const override = {
         ...(url.searchParams.has('url') ? { url: url.searchParams.get('url') ?? '' } : {}),
         ...(url.searchParams.has('key') ? { key: url.searchParams.get('key') ?? '' } : {}),
       }
-      sendJson(res, 200, { kind, models: await runtime.adminListEmbeddingModels(override) })
+      const models = kind === 'rerank'
+        ? await runtime.adminListRerankModels(override)
+        : await runtime.adminListEmbeddingModels(override)
+      sendJson(res, 200, { kind, models })
     } else if (['/api/stratagate/daily', '/api/stratagate/daily/note', '/api/stratagate/daily/open-directory'].includes(path)) {
       const namespace = url.searchParams.get('namespace')?.trim() ?? ''
       if (!namespace) throw new AdminHttpError(400, 'namespace is required')

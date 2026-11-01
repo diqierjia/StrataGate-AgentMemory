@@ -23,6 +23,9 @@ export interface Config {
   embeddingModel?: string
   vectorWeight?: number
   embeddingMinScore?: number
+  rerankUrl?: string
+  rerankKey?: string
+  rerankModel?: string
   provider?: string
   model?: string
   maxOutputTokens?: number
@@ -54,6 +57,9 @@ export interface ResolvedConfig {
   embeddingModel?: string
   vectorWeight?: number
   embeddingMinScore?: number
+  rerankUrl?: string
+  rerankKey?: string
+  rerankModel?: string
   provider?: string
   model?: string
   maxOutputTokens: number
@@ -133,6 +139,15 @@ export const Config = z.object({
   embeddingMinScore: z.number().step(0.05).min(0).max(1).default(0.3)
     .description('向量召回的最低相似度')
     .comment('余弦相似度低于该值的事件不进入语义召回结果；0 表示不设门槛。默认 0.3 高于随机文本对的相似度，避免「没找到」变成总要凑几条。'),
+  rerankUrl: z.string().default('')
+    .description('Rerank API 地址')
+    .comment('与 embedding 独立配置，例如 https://api.siliconflow.cn/v1。留空 = 不精排，召回顺序与未配置时一致。'),
+  rerankKey: z.string().default('')
+    .description('Rerank API Key')
+    .comment('与 rerankUrl、rerankModel 配套；三者都填了才启用。'),
+  rerankModel: z.string().default('')
+    .description('Rerank 模型名')
+    .comment('例如 BAAI/bge-reranker-v2-m3。精排只作用于被动召回的候选，超时或报错时静默回退原顺序。'),
   provider: z.string(),
   model: z.string(),
   maxOutputTokens: z.natural().min(256).default(2_048),
@@ -192,6 +207,9 @@ export function resolveConfig(config: Config): ResolvedConfig {
     ...(config.embeddingMinScore !== undefined
       ? { embeddingMinScore: Math.min(1, Math.max(0, config.embeddingMinScore)) }
       : {}),
+    ...(config.rerankUrl !== undefined ? { rerankUrl: config.rerankUrl.trim() } : {}),
+    ...(config.rerankKey !== undefined ? { rerankKey: config.rerankKey.trim() } : {}),
+    ...(config.rerankModel !== undefined ? { rerankModel: config.rerankModel.trim() } : {}),
     ...(provider && model ? { provider, model } : {}),
     maxOutputTokens: Math.max(256, Math.floor(config.maxOutputTokens ?? 2_048)),
     structuredTaskTimeoutMs: Math.max(1_000, Math.floor(config.structuredTaskTimeoutMs ?? 120_000)),

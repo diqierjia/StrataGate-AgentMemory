@@ -28,13 +28,6 @@ export function readGraphSettings(filename: string): GraphSettings {
 export const TOPIC_BOOTSTRAP_WINDOW_MS = 10 * 60_000
 export const TOPIC_BOOTSTRAP_WINDOW_CALLS = 2
 
-/**
- * Embedding settings that the settings API can persist. They are all optional:
- * an empty value means "not configured", which keeps semantic recall off.
- */
-export const VECTOR_SETTING_KEYS = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore'] as const
-export type VectorSettingKey = typeof VECTOR_SETTING_KEYS[number]
-
 const METADATA_SCHEMA = `
 CREATE TABLE IF NOT EXISTS stratagate_dsh_settings (
   key TEXT PRIMARY KEY,
@@ -199,19 +192,6 @@ export class DshMetadataStore {
       throw new TypeError('agentMemoryRetrievalWeight must be a finite number between 0 and 5')
     }
     this.setSetting('agentMemoryRetrievalWeight', value)
-  }
-
-  /**
-   * Optional embedding settings, persisted next to the other database-wide
-   * knobs so they survive a restart without editing the host config. Stored
-   * under a `vector.` prefix so they never collide with the built-in keys.
-   */
-  vectorSetting(key: VectorSettingKey): string | null {
-    return this.settingValue(`vector.${key}`)
-  }
-
-  setVectorSetting(key: VectorSettingKey, value: string): void {
-    this.setSettingValue(`vector.${key}`, value)
   }
 
   lastFeedbackPromptAt(): string | null {

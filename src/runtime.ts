@@ -63,7 +63,7 @@ import { EmbeddingBridge } from './embedding.js'
 import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
-import { DshMetadataStore, readGraphSettings, VECTOR_SETTING_KEYS, type GraphSettings, type VectorSettingKey } from './metadata.js'
+import { DshMetadataStore, readGraphSettings, type GraphSettings } from './metadata.js'
 import { EventDuplicateMaintenance, sourceContext } from './event-duplicate-maintenance.js'
 import { eventDuplicateMergeCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, validEventMergeDraft, type EventDuplicatePair, type EventMergeDraft } from '@diqier/stratagate'
 import { DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
@@ -177,6 +177,16 @@ const AUTO_MEMORY_TOKEN_BUDGET = 900
 function eventTextForEmbedding(event: EventCard): string {
   return `${event.title} ${event.summary}`
 }
+
+/**
+ * Embedding / rerank settings the settings API can persist. All optional: an
+ * empty value means "not configured", which keeps semantic recall off.
+ * They live in the shared `stratagate_dsh_settings` table (same row shape and
+ * `vector.` prefix as the other runtime knobs), so they survive a restart.
+ */
+const VECTOR_SETTING_KEYS = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore',
+  'rerankUrl', 'rerankKey', 'rerankModel'] as const
+type VectorSettingKey = typeof VECTOR_SETTING_KEYS[number]
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -1502,7 +1512,34 @@ export class StrataGateRuntime {
       .filter((result) => !(result.provenanceEventIds ?? result.node.sourceEventIds).some((id) => currentEventIds.has(id)))
       .slice(0, AUTO_ELEMENT_LIMIT)
 
-    return renderActivatedMemory(longTermEvents, this.graphEnabled ? graphResults : [])
+    // Rerank: after de-duplication, before slot allocation, refine the
+    // candidates for the slots above. Passive recall only — an explicit tool
+    // search must stay deterministic. A 5-second hard timeout lives inside the
+    // bridge; on timeout or error the original fused order is kept untouched.
+    let rankedLongTermEvents = longTermEvents
+    if (this.embedding.rerankReady && activationQuery && longTermEvents.length > 1) {
+      const reranked = await this.rerankEvents(activationQuery, events
+        .filter((event) => !currentEventIds.has(event.id)))
+      if (reranked) rankedLongTermEvents = reranked.slice(0, AUTO_EVENT_LIMIT)
+    }
+
+    return renderActivatedMemory(rankedLongTermEvents, this.graphEnabled ? graphResults : [])
+  }
+
+  /**
+   * Rerank Events against the query. Returns the reordered candidates, or null
+   * on timeout/failure so the caller falls back to the fused order unchanged.
+   * Only the first 20 candidates are sent: the request stays small and the
+   * result only ever fills the handful of passive-recall slots.
+   */
+  private async rerankEvents(query: string, candidates: readonly EventCard[]): Promise<EventCard[] | null> {
+    if (!this.embedding.rerankReady || candidates.length < 2) return null
+    const top = candidates.slice(0, 20)
+    const scores = await this.embedding.rerank(query, top.map(eventTextForEmbedding))
+    if (!scores) return null
+    const indexed = top.map((event, index) => ({ event, score: scores[index] ?? 0 }))
+    indexed.sort((left, right) => right.score - left.score)
+    return indexed.map(({ event }) => event)
   }
 
   /**
@@ -2436,20 +2473,28 @@ export class StrataGateRuntime {
       this.agentMemoryRetrievalWeight = metadata.agentMemoryRetrievalWeight() ?? this.config.agentMemoryRetrievalWeight ?? 1
       // Semantic-recall settings saved through the settings API win over the
       // host config, exactly like the Block knobs above.
-      const storedEmbeddingUrl = metadata.vectorSetting('embeddingUrl')
+      const storedEmbeddingUrl = this.readVectorSetting('embeddingUrl')
       if (storedEmbeddingUrl !== null) this.config.embeddingUrl = storedEmbeddingUrl
-      const storedEmbeddingKey = metadata.vectorSetting('embeddingKey')
+      const storedEmbeddingKey = this.readVectorSetting('embeddingKey')
       if (storedEmbeddingKey !== null) this.config.embeddingKey = storedEmbeddingKey
-      const storedEmbeddingModel = metadata.vectorSetting('embeddingModel')
+      const storedEmbeddingModel = this.readVectorSetting('embeddingModel')
       if (storedEmbeddingModel !== null) this.config.embeddingModel = storedEmbeddingModel
-      const storedVectorWeight = Number(metadata.vectorSetting('vectorWeight'))
-      if (metadata.vectorSetting('vectorWeight') !== null && Number.isFinite(storedVectorWeight)) {
+      const savedVectorWeight = this.readVectorSetting('vectorWeight')
+      const storedVectorWeight = Number(savedVectorWeight)
+      if (savedVectorWeight !== null && Number.isFinite(storedVectorWeight)) {
         this.config.vectorWeight = Math.min(5, Math.max(0, storedVectorWeight))
       }
-      const storedMinScore = Number(metadata.vectorSetting('embeddingMinScore'))
-      if (metadata.vectorSetting('embeddingMinScore') !== null && Number.isFinite(storedMinScore)) {
+      const savedMinScore = this.readVectorSetting('embeddingMinScore')
+      const storedMinScore = Number(savedMinScore)
+      if (savedMinScore !== null && Number.isFinite(storedMinScore)) {
         this.config.embeddingMinScore = Math.min(1, Math.max(0, storedMinScore))
       }
+      const storedRerankUrl = this.readVectorSetting('rerankUrl')
+      if (storedRerankUrl !== null) this.config.rerankUrl = storedRerankUrl
+      const storedRerankKey = this.readVectorSetting('rerankKey')
+      if (storedRerankKey !== null) this.config.rerankKey = storedRerankKey
+      const storedRerankModel = this.readVectorSetting('rerankModel')
+      if (storedRerankModel !== null) this.config.rerankModel = storedRerankModel
     } finally {
       metadata.close()
     }
@@ -2995,6 +3040,10 @@ export class StrataGateRuntime {
       vectorWeight: this.vectorWeight,
       embeddingMinScore: this.config.embeddingMinScore ?? 0.3,
       embeddingReady: this.embedding.embeddingReady,
+      rerankUrl: this.config.rerankUrl ?? '',
+      rerankKey: this.config.rerankKey ?? '',
+      rerankModel: this.config.rerankModel ?? '',
+      rerankReady: this.embedding.rerankReady,
     }
   }
 
@@ -3009,6 +3058,9 @@ export class StrataGateRuntime {
     embeddingModel?: string
     vectorWeight?: number
     embeddingMinScore?: number
+    rerankUrl?: string
+    rerankKey?: string
+    rerankModel?: string
   }): Record<string, unknown> {
     const next: Partial<Record<VectorSettingKey, string>> = {}
     const text = (value: string | undefined, label: string): string | undefined => {
@@ -3017,7 +3069,7 @@ export class StrataGateRuntime {
       if (trimmed.length > 2_000) throw new TypeError(`${label} must not exceed 2000 characters`)
       return trimmed
     }
-    for (const key of ['embeddingUrl', 'embeddingKey', 'embeddingModel'] as const) {
+    for (const key of ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'rerankUrl', 'rerankKey', 'rerankModel'] as const) {
       const value = text(input[key], key)
       if (value !== undefined) next[key] = value
     }
@@ -3034,24 +3086,17 @@ export class StrataGateRuntime {
       next.embeddingMinScore = String(input.embeddingMinScore)
     }
     if (Object.keys(next).length === 0) {
-      throw new TypeError('embeddingUrl, embeddingKey, embeddingModel, vectorWeight, or embeddingMinScore is required')
+      throw new TypeError('embeddingUrl, embeddingKey, embeddingModel, vectorWeight, embeddingMinScore, rerankUrl, rerankKey, or rerankModel is required')
     }
-    if (this.config.database !== ':memory:') {
-      const metadata = new DshMetadataStore(this.config.database)
-      try {
-        for (const key of VECTOR_SETTING_KEYS) {
-          const value = next[key]
-          if (value !== undefined) metadata.setVectorSetting(key, value)
-        }
-      } finally {
-        metadata.close()
-      }
-    }
+    this.writeVectorSettings(next)
     // Hot swap: the bridge reads this config object, so the next call uses the
     // new endpoint immediately — no restart, no rebuild of the runtime.
     if (next.embeddingUrl !== undefined) this.config.embeddingUrl = next.embeddingUrl
     if (next.embeddingKey !== undefined) this.config.embeddingKey = next.embeddingKey
     if (next.embeddingModel !== undefined) this.config.embeddingModel = next.embeddingModel
+    if (next.rerankUrl !== undefined) this.config.rerankUrl = next.rerankUrl
+    if (next.rerankKey !== undefined) this.config.rerankKey = next.rerankKey
+    if (next.rerankModel !== undefined) this.config.rerankModel = next.rerankModel
     if (next.vectorWeight !== undefined) this.config.vectorWeight = Number(next.vectorWeight)
     if (next.embeddingMinScore !== undefined) this.config.embeddingMinScore = Number(next.embeddingMinScore)
     return this.adminVectorSettings()
@@ -3060,6 +3105,60 @@ export class StrataGateRuntime {
   /** List models from the configured (or supplied) embedding endpoint. */
   async adminListEmbeddingModels(override?: { url?: string; key?: string }): Promise<string[]> {
     return this.embedding.listEmbeddingModels(override)
+  }
+
+  /** List models from the configured (or supplied) rerank endpoint. */
+  async adminListRerankModels(override?: { url?: string; key?: string }): Promise<string[]> {
+    return this.embedding.listRerankModels(override)
+  }
+
+  /**
+   * Read one persisted embedding/rerank setting, or null when it was never
+   * saved. Kept next to the settings API instead of DshMetadataStore because
+   * this group is written by the settings API and read at startup only.
+   */
+  private readVectorSetting(key: VectorSettingKey): string | null {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const database = new DatabaseSync(this.config.database, { readOnly: true })
+    try {
+      const table = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stratagate_dsh_settings'").get()
+      if (!table) return null
+      const row = database.prepare('SELECT value FROM stratagate_dsh_settings WHERE key = ?')
+        .get(`vector.${key}`) as { value: string } | undefined
+      return row?.value ?? null
+    } catch {
+      return null
+    } finally {
+      database.close()
+    }
+  }
+
+  /** Persist the supplied embedding/rerank settings; omitted keys keep their value. */
+  private writeVectorSettings(values: Partial<Record<VectorSettingKey, string>>): void {
+    if (this.config.database === ':memory:') return
+    const database = new DatabaseSync(this.config.database)
+    try {
+      database.exec('PRAGMA busy_timeout = 5000')
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS stratagate_dsh_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT
+      `)
+      const statement = database.prepare(`
+        INSERT INTO stratagate_dsh_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `)
+      const now = new Date().toISOString()
+      for (const key of VECTOR_SETTING_KEYS) {
+        const value = values[key]
+        if (value !== undefined) statement.run(`vector.${key}`, value, now)
+      }
+    } finally {
+      database.close()
+    }
   }
 
   adminWorkspaceName(namespace: string): string | null {

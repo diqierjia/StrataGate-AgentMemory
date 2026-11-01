@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveConfig } from '../src/config.js'
 import { EmbeddingBridge } from '../src/embedding.js'
 import type { DshModelBridge } from '../src/llm.js'
-import { DshMetadataStore } from '../src/metadata.js'
+import { DatabaseSync } from 'node:sqlite'
 import { StrataGateRuntime } from '../src/runtime.js'
 import { handleAdminRequest, type WebResponse } from '../src/web.js'
 
@@ -125,18 +125,28 @@ describe('semantic recall settings', () => {
         embeddingUrl: 'http://embed.example/v1', embeddingKey: 'secret-key', embeddingModel: 'bge-m3',
         vectorWeight: 1.5, embeddingMinScore: 0.42, embeddingReady: true,
       })
+      const withRerank = first.adminSetVectorSettings({
+        rerankUrl: 'http://rerank.example/v1', rerankKey: 'rerank-key', rerankModel: 'bge-reranker',
+      })
+      expect(withRerank).toMatchObject({
+        rerankUrl: 'http://rerank.example/v1', rerankKey: 'rerank-key', rerankModel: 'bge-reranker', rerankReady: true,
+        embeddingUrl: 'http://embed.example/v1',
+      })
     } finally {
       await first.close()
     }
 
-    // Written, then read back through a brand-new store and a brand-new runtime.
-    const metadata = new DshMetadataStore(database)
+    // Written to the shared settings table, then read back by a brand-new runtime.
+    const database2 = new DatabaseSync(database, { readOnly: true })
     try {
-      expect(metadata.vectorSetting('embeddingUrl')).toBe('http://embed.example/v1')
-      expect(metadata.vectorSetting('embeddingModel')).toBe('bge-m3')
-      expect(metadata.vectorSetting('vectorWeight')).toBe('1.5')
+      const saved = new Map((database2.prepare('SELECT key, value FROM stratagate_dsh_settings').all() as Array<{ key: string; value: string }>)
+        .map(({ key, value }) => [key, value]))
+      expect(saved.get('vector.embeddingUrl')).toBe('http://embed.example/v1')
+      expect(saved.get('vector.embeddingModel')).toBe('bge-m3')
+      expect(saved.get('vector.vectorWeight')).toBe('1.5')
+      expect(saved.get('vector.rerankModel')).toBe('bge-reranker')
     } finally {
-      metadata.close()
+      database2.close()
     }
     const reopened = new StrataGateRuntime(resolveConfig({ database }), models)
     try {
@@ -233,6 +243,9 @@ describe('settings API and model listing routes', () => {
       const listed = await request(runtime, '/api/stratagate/models?kind=embedding')
       expect(listed.status).toBe(200)
       expect(listed.body).toEqual({ kind: 'embedding', models: ['bge-m3', 'bge-large'] })
+      runtime.adminSetVectorSettings({ rerankUrl: 'http://rerank.example/v1', rerankKey: 'k', rerankModel: 'bge-reranker' })
+      expect((await request(runtime, '/api/stratagate/models?kind=rerank')).body)
+        .toEqual({ kind: 'rerank', models: ['bge-m3', 'bge-large'] })
       expect((await request(runtime, '/api/stratagate/models?kind=nope')).status).toBe(400)
       expect((await request(runtime, '/api/stratagate/models', 'POST')).status).toBe(405)
     } finally {
