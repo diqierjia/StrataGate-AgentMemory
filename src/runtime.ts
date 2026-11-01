@@ -455,6 +455,10 @@ export class StrataGateRuntime {
     return this.adminGraphSettings()
   }
 
+  adminMemoryModelCatalog(provider?: string) {
+    return this.models.memoryModelCatalog(provider)
+  }
+
   constructor(
     private readonly config: ResolvedConfig,
     private readonly models: DshModelBridge,

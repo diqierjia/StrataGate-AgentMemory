@@ -1832,7 +1832,10 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
   try {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname.replace(/\/$/, '')
-    if (path === '/api/stratagate/duplicates') {
+    if (path === '/api/stratagate/models') {
+      if (req.method !== 'GET') throw new AdminHttpError(405, 'Memory models require GET')
+      sendJson(res, 200, await runtime.adminMemoryModelCatalog(url.searchParams.get('provider') || undefined))
+    } else if (path === '/api/stratagate/duplicates') {
       const namespace = url.searchParams.get('namespace')?.trim() ?? ''
       if (!namespace) throw new AdminHttpError(400, 'namespace is required')
       await requiredSnapshot(runtime, namespace)

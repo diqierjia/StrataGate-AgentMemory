@@ -1,6 +1,6 @@
 {
   "name": "stratagate-dsh",
-  "version": "0.3.34",
+  "version": "0.3.36",
   "description": "Recent conversations stay vivid. Older ones fade into summaries, not oblivion. StrataGate gives DeepSeek Harness six-layer, time-decaying memory, while lasting events and relationships settle into a knowledge graph. Bring your memories from other AIs with you—no need to start over.",
   "type": "module",
   "main": "./dist/index.js",
@@ -98,9 +98,9 @@
     "url": "git+https://github.com/diqierjia/StrataGate-AgentMemory.git"
   },
   "bugs": {
-    "url": "https://github.com/diqierjia/StrataGate-AgentMemory/issues"
+    "url": "https://gitee.com/diqier4123/StrataGate-AgentMemory/issues"
   },
-  "homepage": "https://github.com/diqierjia/StrataGate-AgentMemory#readme",
+  "homepage": "https://gitee.com/diqier4123/StrataGate-AgentMemory",
   "license": "MIT",
   "dshWorkshop": {
     "schema": "omdsh-workshop-package/v1",

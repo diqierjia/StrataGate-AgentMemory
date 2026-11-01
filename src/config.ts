@@ -2,6 +2,25 @@ import z from '@deepseek-ai/schemastery'
 
 export type NamespaceMode = 'project' | 'session' | 'global'
 export type StructuredReasoningEffortMode = 'auto' | 'force-off'
+export interface MemoryModelSelection {
+  mode: 'auto' | 'custom'
+  provider?: string
+  model?: string
+}
+
+const MemoryModelSelectionSchema = z.union([
+  z.object({ mode: z.const('auto').required() }),
+  z.object({ mode: z.const('custom').required(), provider: z.string().min(1).required(), model: z.string().min(1).required() }),
+])
+
+export function resolveMemoryModel(value: MemoryModelSelection | undefined): MemoryModelSelection | undefined {
+  if (value === undefined) return undefined
+  if (value.mode === 'auto') return { mode: 'auto' }
+  if (value.mode !== 'custom' || !value.provider?.trim() || !value.model?.trim()) {
+    throw new TypeError('记忆处理模型需要同时选择服务商和模型')
+  }
+  return { mode: 'custom', provider: value.provider.trim(), model: value.model.trim() }
+}
 
 export interface Config {
   dailyNotesEnabled?: boolean
@@ -20,6 +39,7 @@ export interface Config {
   agentMemoryRetrievalWeight?: number
   provider?: string
   model?: string
+  memoryModel?: MemoryModelSelection
   maxOutputTokens?: number
   structuredTaskTimeoutMs?: number
   structuredReasoningEffort?: StructuredReasoningEffortMode
@@ -46,6 +66,7 @@ export interface ResolvedConfig {
   agentMemoryRetrievalWeight?: number
   provider?: string
   model?: string
+  memoryModel?: MemoryModelSelection
   maxOutputTokens: number
   structuredTaskTimeoutMs?: number
   structuredReasoningEffort?: StructuredReasoningEffortMode
@@ -56,6 +77,7 @@ export interface ResolvedConfig {
 }
 
 export interface StructuredReasoningEffortSettings {
+  memoryModel?: MemoryModelSelection
   structuredReasoningEffort: StructuredReasoningEffortMode
   showStrataGateStatus: boolean
   showShortTermStatus: boolean
@@ -64,6 +86,7 @@ export interface StructuredReasoningEffortSettings {
 }
 
 export const StructuredReasoningEffortSettings: z<StructuredReasoningEffortSettings> = z.object({
+  memoryModel: MemoryModelSelectionSchema.description('记忆处理模型'),
   structuredReasoningEffort: z.union(['auto', 'force-off'] as const).default('auto')
     .description('记忆处理结构化调用的推理档位策略')
     .comment('auto：仅在模型明确支持 off 时使用；force-off：优先使用 off，不支持或能力检查失败时安全降级，并对同一模型只告警一次。'),
@@ -110,6 +133,7 @@ export const Config = z.object({
     .comment('agent 记录与对话派生记忆分别独立排序后按权重融合：1 为平权，0 为不浮现 agent 记录，大于 1 则提升 agent 记录的排序权重。'),
   provider: z.string(),
   model: z.string(),
+  memoryModel: volatileIfSupported(MemoryModelSelectionSchema.description('记忆处理模型')),
   maxOutputTokens: z.natural().min(256).default(2_048),
   structuredTaskTimeoutMs: z.natural().min(1_000).default(120_000),
   structuredReasoningEffort: volatileIfSupported(z.union(['auto', 'force-off'] as const).default('auto')),
@@ -136,6 +160,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
   const globalNamespace = config.globalNamespace?.trim() || 'global'
   const provider = config.provider?.trim()
   const model = config.model?.trim()
+  const memoryModel = resolveMemoryModel(liveConfigValue(config.memoryModel))
   if (!database) throw new TypeError('StrataGate database path must not be empty')
   if (Boolean(provider) !== Boolean(model)) {
     throw new TypeError('StrataGate provider and model must be configured together')
@@ -159,6 +184,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     agentMemoryEnabled: config.agentMemoryEnabled ?? true,
     agentMemoryRetrievalWeight: Math.min(5, Math.max(0, config.agentMemoryRetrievalWeight ?? 1)),
     ...(provider && model ? { provider, model } : {}),
+    ...(memoryModel ? { memoryModel } : {}),
     maxOutputTokens: Math.max(256, Math.floor(config.maxOutputTokens ?? 2_048)),
     structuredTaskTimeoutMs: Math.max(1_000, Math.floor(config.structuredTaskTimeoutMs ?? 120_000)),
     structuredReasoningEffort: liveConfigValue(config.structuredReasoningEffort) ?? 'auto',

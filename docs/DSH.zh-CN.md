@@ -248,6 +248,10 @@ config:
   # model: deepseek-chat
 ```
 
+在 StrataGate 的「更多 → 高级设置 → 宿主配置 → 记忆处理模型」中，可以选择「跟随聊天模型」或「单独指定模型」。指定时选择 DSH 已配置的服务商与模型，然后点击「保存模型设置」。配置由当前 DSH profile 保存，供其所有工作区使用；后续记忆压缩、事件提取、目录整理和 Dreaming 请求使用新选择，已经运行的调用继续完成，聊天主模型不变。跟随模式下，没有会话的后台任务使用 DSH 默认模型。
+
+未使用新设置时，原有 `provider/model` 配置继续生效；显式保存「跟随聊天模型」后覆盖旧的固定模型选择。指定模型不可用时不会自动改用主模型，任务沿用已有失败、重试和恢复机制。宜选择支持工具调用、上下文容量足够的模型；费用和速度取决于所选服务商及实际请求，不保证一定更低。
+
 Topic Projection 使用独立的 32,768 token 输出上限；若实际模型路由公布了 context window，会扣除估算输入和 1,024 token 余量后进一步降低上限。上下文无法容纳输入时报告 `provider-failed`，不归类成内容校验错误。宿主的 `defaultMaxTokens` 是普通默认值，不限制 Topic 请求，即使它设为 512 或 1,024 也不压低主题投影预算。当前 resolved-model 元数据没有公布经过验证的模型输出硬上限，未知 provider 限制仍可能导致调用失败。其他记忆任务继续使用原有预算策略。
 
 Topic 技术详情及 `/api/stratagate/overview` 的任务详情会区分 `max-tokens`、`schema-invalid`、`validation-failed`、`timeout`、`provider-failed`、`worker-failed` 和 `source-changed`。诊断仅记录安全校验规则、数量、估算 token、请求预算、finish reason、reasoning off 请求/回退状态和尝试次数，不记录原始聊天、Event/Topic 正文、完整模型响应或 reasoning。`requested-unverified` 表示发送了 off 请求，不能证明 provider 实际关闭了 reasoning；若仍观察到 reasoning，会明确标记。

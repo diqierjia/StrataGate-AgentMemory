@@ -1294,11 +1294,13 @@ describe('directory Dreaming persistence and source-only tools', () => {
     const ordinary = vi.fn(async () => 'must not run')
     ctx.tools.register(defineTool({ name: 'shell', description: 'unrelated host tool', parameters: {}, output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] }, execute: ordinary }))
     const requests: any[] = [], events: any[] = []
+    let selectedModel = 'fixture'
     ctx.on('session/event', (_session, event) => { events.push(event) })
     ctx.on('llm/stream', async function* (options) {
       requests.push(options)
       const call = requests.length
       if (call === 1) {
+        selectedModel = 'fast-memory'
         yield* nativeCall('shell', {}, 'denied-call')
       } else if (call <= 3) {
         yield { type: 'tool-call-delta', index: 0, id: `call-${call}`, name: 'dreaming_finish', argumentsDelta: '{"summary":"本批无需修改"}' } as any
@@ -1309,11 +1311,13 @@ describe('directory Dreaming persistence and source-only tools', () => {
       }
     })
     const runtime = runtimeFor(f.database, async () => { throw new Error('legacy loop must not run') })
-    runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: 'fixture', maxTokens: 32768 })))
+    runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: selectedModel, maxTokens: 32768 })))
     cleanups.push(async () => { await runtime.close() })
     await runtime.adminDreamingControl(f.namespace, 'start')
     await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'completed', completed: 2 } }), { timeout: 4000 })
     await vi.waitFor(() => expect(requests).toHaveLength(4))
+    expect(requests.map(request => request.model)).toEqual(['fixture', 'fast-memory', 'fast-memory', 'fast-memory'])
+    expect(requests.every(request => request.provider === 'fixture')).toBe(true)
     const status = await runtime.adminDreamingStatus(f.namespace) as any
     expect(status.run.sessionId).toMatch(/^stratagate-dreaming:/)
     expect(await runtime.adminDreamingSession(f.namespace, status.run.id)).toEqual({ sessionId: status.run.sessionId })

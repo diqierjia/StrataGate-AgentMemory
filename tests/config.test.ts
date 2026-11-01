@@ -45,6 +45,16 @@ describe('DeepSeek Harness plugin config', () => {
       .toThrow('provider and model must be configured together')
   })
 
+  it('accepts atomic model selections and rejects incomplete custom routes', () => {
+    expect(resolveConfig({ database: 'memory.db', memoryModel: { mode: 'auto' } }).memoryModel).toEqual({ mode: 'auto' })
+    expect(resolveConfig({ database: 'memory.db', memoryModel: { mode: 'custom', provider: ' cheap ', model: ' fast ' } }).memoryModel)
+      .toEqual({ mode: 'custom', provider: 'cheap', model: 'fast' })
+    for (const memoryModel of [{ mode: 'custom' as const }, { mode: 'custom' as const, provider: 'p', model: ' ' }]) {
+      expect(() => resolveConfig({ database: 'memory.db', memoryModel })).toThrow('同时选择')
+    }
+    expect(Config.dict?.memoryModel?.meta.volatile).toBe(true)
+  })
+
   it('exposes the Block decay coefficient and guidance in the plugin form', () => {
     const field = Config.dict?.blockDecayLambda
     expect(field?.meta).toMatchObject({

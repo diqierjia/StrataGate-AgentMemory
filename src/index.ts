@@ -129,7 +129,8 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
   const models = new DshModelBridge(ctx, resolved,
     isLiveConfigValue(config.structuredReasoningEffort)
       ? () => liveConfigValue(config.structuredReasoningEffort) ?? 'auto'
-      : undefined)
+      : undefined,
+    isLiveConfigValue(config.memoryModel) ? () => liveConfigValue(config.memoryModel) : undefined)
   const runtime = new StrataGateRuntime(resolved, models, (error) => {
     ctx.logger.error(`stratagate-memory ingestion failed: ${renderError(error)}`)
   }, async (session) => {
@@ -140,6 +141,7 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
   await runtime.syncConfiguredSettings()
 
   const effortEntry: EffortSettings = {
+    ...(resolved.memoryModel ? { memoryModel: resolved.memoryModel } : {}),
     structuredReasoningEffort: resolved.structuredReasoningEffort ?? 'auto',
     showStrataGateStatus: resolved.showStrataGateStatus ?? true,
     showShortTermStatus: resolved.showShortTermStatus ?? true,
@@ -156,7 +158,10 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     if (settings.installSection) {
       settings.installSection(ctx, STRATAGATE_SETTINGS_NAMESPACE, StructuredReasoningEffortSettings, effortEntry, {
         setSource: (current) => { effortSource = current },
-        onChange: () => models.setStructuredReasoningEffort(effortSource().structuredReasoningEffort),
+        onChange: () => {
+          models.setStructuredReasoningEffort(effortSource().structuredReasoningEffort)
+          models.setMemoryModel(effortSource().memoryModel)
+        },
       })
     } else if (settings.configure) {
       settingsCtx.effect(() => settings.configure!({ auto: false }, ctx.fiber))
