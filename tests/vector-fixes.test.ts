@@ -150,6 +150,8 @@ describe('② semantic lane honours structured filters', () => {
     expect(eventMatchesSearchFilters(alice, { participants: ['Bob'] })).toBe(false)
     expect(eventMatchesSearchFilters(alice, { eventType: 'decision' })).toBe(true)
     expect(eventMatchesSearchFilters(alice, { eventType: 'release' })).toBe(false)
+    expect(eventMatchesSearchFilters(alice, { eventIds: [alice.id] })).toBe(true)
+    expect(eventMatchesSearchFilters(alice, { eventIds: ['other-event'] })).toBe(false)
     expect(eventMatchesSearchFilters(alice, {})).toBe(true)
   })
 

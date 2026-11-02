@@ -1062,7 +1062,12 @@ export class StrataGateRuntime {
       if (!query.trim() && !searchOptions.eventType && !searchOptions.participants?.length
         && !searchOptions.happenedFrom && !searchOptions.happenedTo) totalSourceEvents = eventIds.length
     }
-    const vectorRanking = query.trim() ? await this.computeVectorRanking(memory, query, searchOptions) : undefined
+    const vectorRanking = query.trim()
+      ? await this.computeVectorRanking(memory, query, {
+          ...searchOptions,
+          ...(eventIds !== undefined ? { eventIds } : {}),
+        })
+      : undefined
     const results = await memory.searchEvents(query, {
       ...searchOptions,
       ...(eventIds !== undefined ? { eventIds } : {}),

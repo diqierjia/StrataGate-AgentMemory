@@ -349,6 +349,7 @@ function duplicateUndoDerived(snapshot: StrataGateSnapshot, ids: string[]): stri
  * lanes from drifting apart.
  */
 export function eventMatchesSearchFilters(event: EventCard, options: SearchOptions): boolean {
+  if (options.eventIds !== undefined && !options.eventIds.includes(event.id)) return false;
   const temporal = normalizeEventTemporal(event.temporal);
   const participants = (options.participants ?? []).map(normalizeSearchText).filter(Boolean);
   if (participants.length > 0 && !participants.every((person) =>
