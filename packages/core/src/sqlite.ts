@@ -462,6 +462,7 @@ CREATE TABLE IF NOT EXISTS event_vectors (
   model TEXT NOT NULL,
   dimension INTEGER NOT NULL,
   vector_json TEXT NOT NULL,
+  content_hash TEXT,
   created_at TEXT NOT NULL,
   PRIMARY KEY (namespace, event_id, model)
 ) STRICT;
@@ -2594,7 +2595,24 @@ export class SqliteStorage implements StorageAdapter {
       `);
       this.database.exec("DELETE FROM persistent_profile_maintenance_baseline WHERE NOT EXISTS (SELECT 1 FROM persistent_profile WHERE value <> '')");
     });
+    // Runs for every schema version, including the current one: event_vectors
+    // is a side table that is not part of the versioned snapshot shape, so no
+    // schema-version branch can carry this column. The check itself is a
+    // PRAGMA read, so an already-migrated database does no write here.
+    this.ensureEventVectorContentHashColumn();
     this.assertSchemaVersion();
+  }
+
+  /**
+   * event_vectors gained `content_hash` — the fingerprint of the text the
+   * vector was computed from. Without it a vector stayed "valid" forever after
+   * a card body was rewritten (edit / merge), so facts merged into a kept card
+   * were never semantically reachable.
+   */
+  private ensureEventVectorContentHashColumn(): void {
+    if (!this.hasColumn('event_vectors', 'content_hash')) {
+      this.database.exec('ALTER TABLE event_vectors ADD COLUMN content_hash TEXT');
+    }
   }
 
   private hasColumn(table: string, column: string): boolean {
@@ -2914,20 +2932,38 @@ export class SqliteStorage implements StorageAdapter {
    * deliberately has no foreign key, because an Event may live in the passive
    * `events` table or in the isolated `agent_events` table.
    */
-  setEventVector(namespace: string, eventId: string, model: string, dimension: number, vector: readonly number[]): void {
+  setEventVector(
+    namespace: string, eventId: string, model: string, dimension: number,
+    vector: readonly number[], contentHash?: string | null,
+  ): void {
     this.assertOpen();
     this.database.prepare(`
-      INSERT OR REPLACE INTO event_vectors (namespace, event_id, model, dimension, vector_json, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(namespace, eventId, model, dimension, JSON.stringify(vector), new Date().toISOString());
+      INSERT OR REPLACE INTO event_vectors (namespace, event_id, model, dimension, vector_json, content_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(namespace, eventId, model, dimension, JSON.stringify(vector), contentHash ?? null, new Date().toISOString());
+  }
+
+  /**
+   * Drop a stored vector. Used when a card body is rewritten (merge / edit):
+   * the old vector no longer describes the text, so it must not stay valid.
+   * Returns the number of deleted rows.
+   */
+  deleteEventVector(namespace: string, eventId: string, model?: string): number {
+    this.assertOpen();
+    const result = model === undefined
+      ? this.database.prepare('DELETE FROM event_vectors WHERE namespace = ? AND event_id = ?').run(namespace, eventId)
+      : this.database.prepare('DELETE FROM event_vectors WHERE namespace = ? AND event_id = ? AND model = ?').run(namespace, eventId, model);
+    return Number(result.changes);
   }
 
   /** Load one Event vector under a specific model, or null when absent. */
-  getEventVector(namespace: string, eventId: string, model: string): { dimension: number; vector: number[] } | null {
+  getEventVector(namespace: string, eventId: string, model: string): { dimension: number; vector: number[]; contentHash: string | null } | null {
     this.assertOpen();
+    const columns = this.hasColumn('event_vectors', 'content_hash')
+      ? 'dimension, vector_json, content_hash' : 'dimension, vector_json, NULL AS content_hash';
     const row = this.database.prepare(
-      'SELECT dimension, vector_json FROM event_vectors WHERE namespace = ? AND event_id = ? AND model = ?'
-    ).get(namespace, eventId, model) as { dimension: number; vector_json: string } | undefined;
+      `SELECT ${columns} FROM event_vectors WHERE namespace = ? AND event_id = ? AND model = ?`
+    ).get(namespace, eventId, model) as { dimension: number; vector_json: string; content_hash: string | null } | undefined;
     if (!row) return null;
     let vector: number[];
     try {
@@ -2935,7 +2971,7 @@ export class SqliteStorage implements StorageAdapter {
     } catch {
       return null;
     }
-    return Array.isArray(vector) ? { dimension: row.dimension, vector } : null;
+    return Array.isArray(vector) ? { dimension: row.dimension, vector, contentHash: row.content_hash ?? null } : null;
   }
 
   /**
@@ -2944,15 +2980,30 @@ export class SqliteStorage implements StorageAdapter {
    * lookups for a retrieval pass. Malformed rows are skipped silently.
    */
   listEventVectors(namespace: string, model: string): Map<string, number[]> {
-    this.assertOpen();
-    const rows = this.database.prepare(
-      'SELECT event_id, vector_json FROM event_vectors WHERE namespace = ? AND model = ?'
-    ).all(namespace, model) as Array<{ event_id: string; vector_json: string }>;
+    const records = this.listEventVectorRecords(namespace, model);
     const result = new Map<string, number[]>();
+    for (const [id, record] of records) result.set(id, record.vector);
+    return result;
+  }
+
+  /**
+   * Like listEventVectors but also returns the content fingerprint the vector
+   * was computed from. A row written before the fingerprint column existed has
+   * a null hash and is treated as stale by the read path, which forces a
+   * recompute instead of trusting a vector that may describe older text.
+   */
+  listEventVectorRecords(namespace: string, model: string): Map<string, { vector: number[]; contentHash: string | null }> {
+    this.assertOpen();
+    const columns = this.hasColumn('event_vectors', 'content_hash')
+      ? 'event_id, vector_json, content_hash' : 'event_id, vector_json, NULL AS content_hash';
+    const rows = this.database.prepare(
+      `SELECT ${columns} FROM event_vectors WHERE namespace = ? AND model = ?`
+    ).all(namespace, model) as Array<{ event_id: string; vector_json: string; content_hash: string | null }>;
+    const result = new Map<string, { vector: number[]; contentHash: string | null }>();
     for (const row of rows) {
       try {
         const parsed = JSON.parse(row.vector_json) as unknown;
-        if (Array.isArray(parsed)) result.set(row.event_id, parsed as number[]);
+        if (Array.isArray(parsed)) result.set(row.event_id, { vector: parsed as number[], contentHash: row.content_hash ?? null });
       } catch {
         // A malformed vector simply behaves like a missing one.
       }

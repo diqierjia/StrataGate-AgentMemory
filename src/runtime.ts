@@ -52,6 +52,9 @@ import {
   type StrataGateSnapshot,
   type MemoryTopic,
 } from '@diqier/stratagate'
+// Value import: the semantic lane filters with the same predicate the lexical
+// lanes use, so a vector hit cannot bypass the caller's structured filters.
+import { eventMatchesSearchFilters } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import type {
   AgentEventRecordResult,
@@ -342,6 +345,19 @@ interface SurfaceMaintenance {
   run?: Promise<void> | undefined
   failures: number
   checkpointLimit: number
+}
+
+/**
+ * Content fingerprint an embedding vector was computed from —
+ * sha256(title + '\0' + summary).
+ *
+ * Stored next to the vector in event_vectors.content_hash. A mismatch against
+ * the CURRENT card body means the vector describes text that has since been
+ * rewritten (edit / merge / consolidation), so it must not participate in
+ * scoring until it is re-embedded.
+ */
+export function eventContentHash(event: { title: string; summary: string }): string {
+  return createHash('sha256').update(`${event.title}\u0000${event.summary}`).digest('hex')
 }
 
 export class StrataGateRuntime {
@@ -1045,7 +1061,7 @@ export class StrataGateRuntime {
       if (!query.trim() && !searchOptions.eventType && !searchOptions.participants?.length
         && !searchOptions.happenedFrom && !searchOptions.happenedTo) totalSourceEvents = eventIds.length
     }
-    const vectorRanking = query.trim() ? await this.computeVectorRanking(memory, query) : undefined
+    const vectorRanking = query.trim() ? await this.computeVectorRanking(memory, query, searchOptions) : undefined
     const results = await memory.searchEvents(query, {
       ...searchOptions,
       ...(eventIds !== undefined ? { eventIds } : {}),
@@ -1555,7 +1571,16 @@ export class StrataGateRuntime {
    * whether anything scored — otherwise a fresh or legacy database, which has
    * events but no vectors yet, could never start vectorizing at all.
    */
-  private async computeVectorRanking(memory: StrataGate, query: string): Promise<string[] | undefined> {
+  private async computeVectorRanking(
+    memory: StrataGate,
+    query: string,
+    filters?: SearchOptions,
+  ): Promise<string[] | undefined> {
+    // vectorWeight 0 means "no semantic ranking at all". Returning before any
+    // HTTP call matters: otherwise a query embedding (and the backfill sweep it
+    // triggers) is billed and awaited for a lane whose result is then thrown
+    // away.
+    if ((this.config.vectorWeight ?? 1) <= 0) return undefined
     if (!this.embedding.embeddingReady) return undefined
     // A query with no actual content (whitespace, punctuation only) must not
     // surface semantic neighbors: the lane is fused after the lexical gates, so
@@ -1568,15 +1593,23 @@ export class StrataGateRuntime {
     const model = this.config.embeddingModel!.trim()
     const activeEvents = memory.listAllEvents()
       .filter((event) => event.status === 'active' || event.status === 'superseded')
+      // Structured filters belong to every lane. The host hands this lane bare
+      // Event ids, so without this predicate a semantically similar Event with
+      // the wrong participants / type / date range would still be fused in.
+      .filter((event) => filters === undefined || eventMatchesSearchFilters(event, filters))
     if (activeEvents.length === 0) return undefined
 
-    const vectorMap = memory.listEventVectors(model)
+    const records = memory.listEventVectorRecords(model)
     const scored: Array<{ id: string; score: number }> = []
     const missingVectorIds: string[] = []
     for (const event of activeEvents) {
-      const stored = vectorMap.get(event.id)
-      if (stored) {
-        scored.push({ id: event.id, score: EmbeddingBridge.cosineSimilarity(queryVector, stored) })
+      const record = records.get(event.id)
+      // A vector whose fingerprint no longer matches the current body describes
+      // text that has since been rewritten (edit / merge). Scoring it would
+      // keep answering with the old wording and never surface merged-in facts,
+      // so it counts as missing and is re-embedded instead.
+      if (record && record.contentHash === eventContentHash(event)) {
+        scored.push({ id: event.id, score: EmbeddingBridge.cosineSimilarity(queryVector, record.vector) })
       } else {
         missingVectorIds.push(event.id)
       }
@@ -1622,6 +1655,9 @@ export class StrataGateRuntime {
    */
   private async backfillEventVectors(memory: StrataGate, eventIds: string[]): Promise<void> {
     try {
+      // Same gate as the ranking lane: with no vector weight nothing consumes
+      // these vectors, so the requests must not be issued at all.
+      if ((this.config.vectorWeight ?? 1) <= 0) return
       if (!this.embedding.embeddingReady) return
       if (Date.now() - this.vectorBackfillLastRunAt < StrataGateRuntime.VECTOR_BACKFILL_COOLDOWN_MS) return
       const model = this.config.embeddingModel!.trim()
@@ -1641,7 +1677,7 @@ export class StrataGateRuntime {
           const event = toEmbed[index]!
           const vector = vectors[index]!
           if (!vector || vector.length === 0) continue
-          memory.setEventVector(event.id, model, vector.length, vector)
+          memory.setEventVector(event.id, model, vector.length, vector, eventContentHash(event))
           written += 1
         }
         if (written > 0) this.vectorBackfillLastRunAt = Date.now()
@@ -3099,6 +3135,12 @@ export class StrataGateRuntime {
     if (next.rerankModel !== undefined) this.config.rerankModel = next.rerankModel
     if (next.vectorWeight !== undefined) this.config.vectorWeight = Number(next.vectorWeight)
     if (next.embeddingMinScore !== undefined) this.config.embeddingMinScore = Number(next.embeddingMinScore)
+    // Cached query vectors were computed by the previous endpoint/model
+    // identity. Serving them to the new model would compare vectors from two
+    // different spaces, so a changed identity drops the whole cache.
+    if (next.embeddingUrl !== undefined || next.embeddingKey !== undefined || next.embeddingModel !== undefined) {
+      this.embedding.invalidateQueryCache()
+    }
     return this.adminVectorSettings()
   }
 

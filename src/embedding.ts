@@ -29,17 +29,39 @@ export class EmbeddingBridge {
    * for one call, not one per turn. Returns null when embedding is not
    * configured, the query is blank, or the call fails.
    */
+  /**
+   * Cache identity: the endpoint and model the vector was computed with. Two
+   * different models (or the same model behind a different endpoint) produce
+   * incompatible vectors, so the query text alone is not a usable cache key —
+   * switching models would otherwise keep serving the previous model's vector.
+   */
+  private cacheIdentity(): string {
+    return `${this.config.embeddingUrl?.trim() ?? ''}|${this.config.embeddingModel?.trim() ?? ''}`
+  }
+
+  /** Drop every cached query vector (called when embedding settings change). */
+  invalidateQueryCache(): void {
+    this.queryVectorCache.clear()
+    this.queryVectorCacheOrder.length = 0
+  }
+
   async embedQuery(query: string): Promise<number[] | null> {
     if (!this.embeddingReady || !query.trim()) return null
-    const cached = this.queryVectorCache.get(query)
+    const identity = this.cacheIdentity()
+    const key = `${identity}\u0000${query}`
+    const cached = this.queryVectorCache.get(key)
     if (cached) return cached
     try {
       const vector = await this.callEmbeddingApi([query])
       if (!vector || vector.length === 0) return null
       const first = vector[0]
       if (!first || first.length === 0) return null
-      this.queryVectorCache.set(query, first)
-      this.queryVectorCacheOrder.push(query)
+      // The settings may have changed while the request was in flight: the
+      // caller still gets its vector, but it must not poison the cache of the
+      // new identity (a later query would then get a stale-model vector).
+      if (this.cacheIdentity() !== identity) return first
+      this.queryVectorCache.set(key, first)
+      this.queryVectorCacheOrder.push(key)
       if (this.queryVectorCacheOrder.length > EmbeddingBridge.QUERY_CACHE_LIMIT) {
         const evicted = this.queryVectorCacheOrder.shift()
         if (evicted !== undefined) this.queryVectorCache.delete(evicted)
