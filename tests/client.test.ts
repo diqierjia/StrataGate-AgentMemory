@@ -1187,7 +1187,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("return '证据不足，继续检索'")
   })
 
-  it('keeps the project brand, mascot, usage count, and archived GitHub markup', () => {
+  it('keeps the project brand, mascot, usage count, and Gitee project link', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const buildSource = readFileSync(new URL('../scripts/build-client.mjs', import.meta.url), 'utf8')
     expect(source).toContain("'StrataGate'")
@@ -1197,7 +1197,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'v' + overview.pluginVersion")
     expect(source).toContain('给 StrataGate 点个 🌟')
     expect(source).toContain('参与开发 · Issue / PR →')
-    expect(source).toContain("https://github.com/diqierjia/StrataGate-AgentMemory")
+    expect(source).toContain("https://gitee.com/diqier4123/StrataGate-AgentMemory")
     expect(source).toContain("rel: 'noopener noreferrer'")
     expect(source).toContain("const STRATAGATE_CLIENT_VERSION = '__STRATAGATE_CLIENT_VERSION__'")
     expect(buildSource).toContain("readFileSync(new URL('package.json', root), 'utf8')")
