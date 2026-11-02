@@ -1735,9 +1735,16 @@ export class StrataGate {
           && (event.status === 'active' || event.status === 'superseded')
           && (scopedIds === null || scopedIds.has(event.id))
           && eventMatchesSearchFilters(event, options));
-      if (vectorLane.length > 0) {
-        rankings.push(vectorLane);
+      const agentEventIds = new Set(this.agentEvents.map(({ id }) => id));
+      const passiveVectorLane = vectorLane.filter(({ id }) => !agentEventIds.has(id));
+      const agentVectorLane = vectorLane.filter(({ id }) => agentEventIds.has(id));
+      if (passiveVectorLane.length > 0) {
+        rankings.push(passiveVectorLane);
         weights.push(vectorWeight);
+      }
+      if (agentWeight > 0 && agentVectorLane.length > 0) {
+        rankings.push(agentVectorLane);
+        weights.push(vectorWeight * agentWeight);
       }
     }
     if (rankings.length === 0) return [];

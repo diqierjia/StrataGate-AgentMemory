@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { eventMatchesSearchFilters, type EventCard, type StrataGate } from '@diqier/stratagate'
+import { eventMatchesSearchFilters, StrataGate, type EventCard } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import { resolveConfig } from '../src/config.js'
 import { EmbeddingBridge } from '../src/embedding.js'
@@ -153,6 +153,20 @@ describe('② semantic lane honours structured filters', () => {
     expect(eventMatchesSearchFilters(alice, {})).toBe(true)
   })
 
+  it('honours agentMemoryWeight=0 in the semantic lane', async () => {
+    const memory = (await StrataGate.open({ database: ':memory:', namespace: 'weight-fix' }))
+    try {
+      const recorded = await memory.recordAgentEvent({ content: 'Preference: pnpm is the package manager.', category: 'preference', threadId: 'old' })
+      expect(await memory.searchEvents('no lexical overlap', {
+        agentMemoryWeight: 0,
+        vectorRanking: [recorded.eventId!],
+        vectorWeight: 1,
+      })).toEqual([])
+    } finally {
+      await memory.close()
+    }
+  })
+
   it('applies the happened range', () => {
     const dated = card({ temporal: { happenedStart: '2026-03-01', happenedEnd: '2026-03-02' } })
     expect(eventMatchesSearchFilters(dated, { happenedFrom: '2026-02-01', happenedTo: '2026-04-01' })).toBe(true)
@@ -209,5 +223,34 @@ describe('④ query-vector cache is keyed by endpoint and model', () => {
     bridge.invalidateQueryCache()
     await bridge.embedQuery('same text')
     expect(fetchSpy).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('⑤ vector backfill keeps text and fingerprint consistent', () => {
+  it('does not publish an old vector with a new body hash', async () => {
+    const { runtime, memory } = await fixture()
+    try {
+      const recorded = await runtime.recordAgentMemory?.(
+        { ...session, id: 'vector-fixes-session', header: session.header } as unknown as Session,
+        'Preference: the team uses pnpm as its package manager.', 'preference',
+      ) as { eventId?: string } | undefined
+      runtime.adminSetVectorSettings(embeddingConfig)
+      let resolveEmbedding: ((response: Response) => void) | undefined
+      vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { input?: string[] }
+        if (body.input) return await new Promise<Response>((resolve) => { resolveEmbedding = resolve })
+        return { ok: true, json: async () => ({ data: [{ embedding: [1, 0, 0] }] }) } as unknown as Response
+      }))
+      const pending = (runtime as unknown as { backfillEventVectors: (memory: StrataGate, ids: string[]) => Promise<void> })
+        .backfillEventVectors(memory, [recorded!.eventId!])
+      for (let index = 0; index < 5 && !resolveEmbedding; index++) await new Promise((resolve) => setTimeout(resolve, 0))
+      const event = memory.listAllEvents().find(({ id }) => id === recorded!.eventId!)!
+      event.summary = 'The team switched to npm.'
+      resolveEmbedding!({ ok: true, json: async () => ({ data: [{ embedding: [1, 0, 0] }] }) } as unknown as Response)
+      await pending
+      expect(memory.listEventVectorRecords(MODEL).has(event.id)).toBe(false)
+    } finally {
+      await runtime.close()
+    }
   })
 })

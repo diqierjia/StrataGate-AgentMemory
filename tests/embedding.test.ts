@@ -122,14 +122,14 @@ describe('semantic recall settings', () => {
         embeddingMinScore: 0.42,
       })
       expect(saved).toMatchObject({
-        embeddingUrl: 'http://embed.example/v1', embeddingKey: 'secret-key', embeddingModel: 'bge-m3',
+        embeddingUrl: 'http://embed.example/v1', embeddingKey: '********', embeddingKeyConfigured: true, embeddingModel: 'bge-m3',
         vectorWeight: 1.5, embeddingMinScore: 0.42, embeddingReady: true,
       })
       const withRerank = first.adminSetVectorSettings({
         rerankUrl: 'http://rerank.example/v1', rerankKey: 'rerank-key', rerankModel: 'bge-reranker',
       })
       expect(withRerank).toMatchObject({
-        rerankUrl: 'http://rerank.example/v1', rerankKey: 'rerank-key', rerankModel: 'bge-reranker', rerankReady: true,
+        rerankUrl: 'http://rerank.example/v1', rerankKey: '********', rerankKeyConfigured: true, rerankModel: 'bge-reranker', rerankReady: true,
         embeddingUrl: 'http://embed.example/v1',
       })
     } finally {
@@ -152,7 +152,7 @@ describe('semantic recall settings', () => {
     try {
       await reopened.syncConfiguredSettings()
       expect(reopened.adminVectorSettings()).toMatchObject({
-        embeddingUrl: 'http://embed.example/v1', embeddingKey: 'secret-key', embeddingModel: 'bge-m3',
+        embeddingUrl: 'http://embed.example/v1', embeddingKey: '********', embeddingKeyConfigured: true, embeddingModel: 'bge-m3',
         vectorWeight: 1.5, embeddingMinScore: 0.42, embeddingReady: true,
       })
       // Clearing a field is a real write, not a no-op.
@@ -200,7 +200,7 @@ describe('semantic recall settings', () => {
 })
 
 describe('settings API and model listing routes', () => {
-  async function request(runtime: StrataGateRuntime, url: string, method = 'GET'): Promise<{ status: number; body: any }> {
+  async function request(runtime: StrataGateRuntime, url: string, method = 'GET', body?: unknown): Promise<{ status: number; body: any }> {
     const headers: Record<string, string> = {}
     let text = ''
     const response: WebResponse = {
@@ -208,7 +208,7 @@ describe('settings API and model listing routes', () => {
       setHeader: (name, value) => { headers[name] = value },
       end: (body) => { text = body },
     }
-    await handleAdminRequest(runtime, { method, url }, response)
+    await handleAdminRequest(runtime, { method, url, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, response)
     return { status: response.statusCode, body: text ? JSON.parse(text) : null }
   }
 
@@ -217,13 +217,15 @@ describe('settings API and model listing routes', () => {
     const runtime = new StrataGateRuntime(resolveConfig({ database: join(root, 'memory.db') }), models)
     try {
       const saved = await request(runtime,
-        '/api/stratagate/settings?embeddingUrl=http%3A%2F%2Fembed.example%2Fv1&embeddingKey=k&embeddingModel=bge-m3&vectorWeight=1.2&embeddingMinScore=0.35',
-        'PATCH')
+        '/api/stratagate/settings', 'PATCH',
+        { embeddingUrl: 'http://embed.example/v1', embeddingKey: 'k', embeddingModel: 'bge-m3', vectorWeight: 1.2, embeddingMinScore: 0.35 })
       expect(saved.status).toBe(200)
       expect(saved.body.vectorSettings).toMatchObject({
-        embeddingUrl: 'http://embed.example/v1', embeddingKey: 'k', embeddingModel: 'bge-m3',
+        embeddingUrl: 'http://embed.example/v1', embeddingKey: '********', embeddingKeyConfigured: true, embeddingModel: 'bge-m3',
         vectorWeight: 1.2, embeddingMinScore: 0.35, embeddingReady: true,
       })
+      expect(JSON.stringify(saved.body)).not.toContain('"k"')
+      expect((await request(runtime, '/api/stratagate/settings?embeddingKey=k', 'PATCH')).status).toBe(400)
       const read = await request(runtime, '/api/stratagate/settings?embeddingUrl=')
       expect(read.status).toBe(405)
       expect((await request(runtime, '/api/stratagate/settings', 'PATCH')).status).toBe(400)
@@ -246,8 +248,11 @@ describe('settings API and model listing routes', () => {
       runtime.adminSetVectorSettings({ rerankUrl: 'http://rerank.example/v1', rerankKey: 'k', rerankModel: 'bge-reranker' })
       expect((await request(runtime, '/api/stratagate/models?kind=rerank')).body)
         .toEqual({ kind: 'rerank', models: ['bge-m3', 'bge-large'] })
+      expect((await request(runtime, '/api/stratagate/models?kind=embedding&key=k')).status).toBe(400)
+      expect((await request(runtime, '/api/stratagate/models', 'POST', { kind: 'embedding', url: 'http://embed.example/v1', key: 'k' })).body)
+        .toEqual({ kind: 'embedding', models: ['bge-m3', 'bge-large'] })
       expect((await request(runtime, '/api/stratagate/models?kind=nope')).status).toBe(400)
-      expect((await request(runtime, '/api/stratagate/models', 'POST')).status).toBe(405)
+      expect((await request(runtime, '/api/stratagate/models', 'PUT')).status).toBe(405)
     } finally {
       await runtime.close()
     }

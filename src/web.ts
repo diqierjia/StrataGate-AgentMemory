@@ -936,7 +936,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
     graphSettings: runtime.adminGraphSettings?.() ?? { enabled: false, paused: false, legacy: false, noticeSeen: true, everEnabled: false },
     // Semantic-recall settings are read back through the same PATCH endpoint
     // that writes them, so the panel never has to guess the effective values.
-    vectorSettings: runtime.adminVectorSettings?.() ?? { embeddingUrl: '', embeddingKey: '', embeddingModel: '', vectorWeight: 1, embeddingMinScore: 0.3, embeddingReady: false },
+    vectorSettings: runtime.adminVectorSettings?.() ?? { embeddingUrl: '', embeddingKey: '', embeddingKeyConfigured: false, embeddingModel: '', vectorWeight: 1, embeddingMinScore: 0.3, embeddingReady: false, rerankUrl: '', rerankKey: '', rerankKeyConfigured: false, rerankModel: '', rerankReady: false },
     dataDirectory: runtime.adminDataDirectory?.() ?? null,
     pluginVersion: STRATAGATE_DSH_VERSION,
     harnessVersion: installedPackageVersion(['@deepseek-ai/dsh', '@deepseek-ai/dsh-session']),
@@ -944,13 +944,43 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
   }
 }
 
-async function updateSettings(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
+async function jsonBody(req: WebRequest, label: string, limit = 16 * 1024): Promise<Record<string, unknown>> {
+  let suppliedBody = req.body
+  if (suppliedBody === undefined && typeof req[Symbol.asyncIterator] === 'function') {
+    const chunks: Buffer[] = []
+    let size = 0
+    for await (const chunk of req as AsyncIterable<Uint8Array | string>) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += value.length
+      if (size > limit) throw new AdminHttpError(413, `${label} exceeds ${limit} bytes`)
+      chunks.push(value)
+    }
+    suppliedBody = Buffer.concat(chunks).toString('utf8')
+  }
+  let body: unknown = suppliedBody
+  if (typeof body === 'string') {
+    if (!body.trim()) return {}
+    try { body = JSON.parse(body) } catch { throw new AdminHttpError(400, `${label} must be valid JSON`) }
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new AdminHttpError(400, `${label} must be a JSON object`)
+  }
+  return body as Record<string, unknown>
+}
+
+async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequest): Promise<unknown> {
   const rawTurnSize = url.searchParams.get('blockTurnSize')?.trim()
   const rawLambda = url.searchParams.get('blockDecayLambda')?.trim()
   const rawAgentWeight = url.searchParams.get('agentMemoryRetrievalWeight')?.trim()
   const vectorParams = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore',
     'rerankUrl', 'rerankKey', 'rerankModel'] as const
-  const suppliedVectorParams = vectorParams.filter((name) => url.searchParams.has(name))
+  const queryVectorParams = vectorParams.filter((name) => url.searchParams.has(name))
+  if (queryVectorParams.length > 0) {
+    throw new AdminHttpError(400, 'Embedding settings must be sent in a JSON body; credentials in the URL are not accepted')
+  }
+  const hasBody = req.body !== undefined || typeof req[Symbol.asyncIterator] === 'function'
+  const body = hasBody ? await jsonBody(req, 'Embedding settings') : {}
+  const suppliedVectorParams = vectorParams.filter((name) => Object.hasOwn(body, name))
   if (rawTurnSize === undefined && rawLambda === undefined && rawAgentWeight === undefined && suppliedVectorParams.length === 0) {
     throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, agentMemoryRetrievalWeight, or an embedding setting is required')
   }
@@ -983,14 +1013,25 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL): Promise<unk
   if (lambda !== undefined) result.blockDecayLambda = await runtime.adminSetBlockDecayLambda(lambda)
   if (agentWeight !== undefined) result.agentMemoryRetrievalWeight = runtime.adminSetAgentMemoryRetrievalWeight(agentWeight)
   if (suppliedVectorParams.length > 0) {
-    const paramText = (name: string): string => (url.searchParams.get(name) ?? '').trim()
+    const paramText = (name: string): string => {
+      const value = body[name]
+      if (typeof value !== 'string') throw new AdminHttpError(400, `${name} must be a string`)
+      return value.trim()
+    }
+    const paramNumber = (name: string): number => {
+      const value = body[name]
+      if (typeof value !== 'number' && typeof value !== 'string') throw new AdminHttpError(400, `${name} must be a number`)
+      const parsed = Number(value)
+      if (!Number.isFinite(parsed)) throw new AdminHttpError(400, `${name} must be a finite number`)
+      return parsed
+    }
     try {
       result.vectorSettings = runtime.adminSetVectorSettings({
         ...(suppliedVectorParams.includes('embeddingUrl') ? { embeddingUrl: paramText('embeddingUrl') } : {}),
         ...(suppliedVectorParams.includes('embeddingKey') ? { embeddingKey: paramText('embeddingKey') } : {}),
         ...(suppliedVectorParams.includes('embeddingModel') ? { embeddingModel: paramText('embeddingModel') } : {}),
-        ...(suppliedVectorParams.includes('vectorWeight') ? { vectorWeight: Number(paramText('vectorWeight')) } : {}),
-        ...(suppliedVectorParams.includes('embeddingMinScore') ? { embeddingMinScore: Number(paramText('embeddingMinScore')) } : {}),
+        ...(suppliedVectorParams.includes('vectorWeight') ? { vectorWeight: paramNumber('vectorWeight') } : {}),
+        ...(suppliedVectorParams.includes('embeddingMinScore') ? { embeddingMinScore: paramNumber('embeddingMinScore') } : {}),
         ...(suppliedVectorParams.includes('rerankUrl') ? { rerankUrl: paramText('rerankUrl') } : {}),
         ...(suppliedVectorParams.includes('rerankKey') ? { rerankKey: paramText('rerankKey') } : {}),
         ...(suppliedVectorParams.includes('rerankModel') ? { rerankModel: paramText('rerankModel') } : {}),
@@ -1922,15 +1963,24 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
       sendJson(res, 200, await runtime.adminGraphControl(url.searchParams.get('action') ?? '', url.searchParams.get('token') ?? undefined))
     } else if (path === '/api/stratagate/settings') {
       if (req.method !== 'PATCH') throw new AdminHttpError(405, 'StrataGate settings require PATCH')
-      sendJson(res, 200, await updateSettings(runtime, url))
+      sendJson(res, 200, await updateSettings(runtime, url, req))
     } else if (path === '/api/stratagate/models') {
-      if (req.method !== 'GET') throw new AdminHttpError(405, 'StrataGate model listing requires GET')
-      const kind = url.searchParams.get('kind') ?? 'embedding'
+      if (req.method !== 'GET' && req.method !== 'POST') throw new AdminHttpError(405, 'StrataGate model listing requires GET or POST')
+      if (req.method === 'GET' && (url.searchParams.has('url') || url.searchParams.has('key'))) {
+        throw new AdminHttpError(400, 'Model credentials must be sent in a JSON body; credentials in the URL are not accepted')
+      }
+      const body = req.method === 'POST' ? await jsonBody(req, 'Model listing') : {}
+      const kindValue = req.method === 'POST' ? body.kind : url.searchParams.get('kind')
+      const kind = typeof kindValue === 'string' && kindValue ? kindValue : 'embedding'
       if (kind !== 'embedding' && kind !== 'rerank') throw new AdminHttpError(400, 'Unsupported model list kind')
-      // Optional overrides let the settings form test credentials before saving.
+      if (req.method === 'POST' && (body.url !== undefined && typeof body.url !== 'string'
+        || body.key !== undefined && typeof body.key !== 'string')) {
+        throw new AdminHttpError(400, 'Model url and key must be strings')
+      }
+      // Optional body overrides let the settings form test credentials before saving.
       const override = {
-        ...(url.searchParams.has('url') ? { url: url.searchParams.get('url') ?? '' } : {}),
-        ...(url.searchParams.has('key') ? { key: url.searchParams.get('key') ?? '' } : {}),
+        ...(typeof body.url === 'string' ? { url: body.url } : {}),
+        ...(typeof body.key === 'string' ? { key: body.key } : {}),
       }
       const models = kind === 'rerank'
         ? await runtime.adminListRerankModels(override)

@@ -190,6 +190,7 @@ function eventTextForEmbedding(event: EventCard): string {
 const VECTOR_SETTING_KEYS = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore',
   'rerankUrl', 'rerankKey', 'rerankModel'] as const
 type VectorSettingKey = typeof VECTOR_SETTING_KEYS[number]
+const VECTOR_SECRET_MASK = '********'
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -1670,14 +1671,23 @@ export class StrataGateRuntime {
       if (toEmbed.length === 0) return
       for (const event of toEmbed) this.vectorBackfillInFlight.add(event.id)
       try {
-        const vectors = await this.embedding.embedEvents(toEmbed.map(eventTextForEmbedding))
+        // Capture the exact text and fingerprint sent to the provider. Events
+        // can be merged while the request is in flight; writing an old vector
+        // with the new body's hash would make stale data look fresh forever.
+        const work = toEmbed.map((event) => ({
+          event,
+          text: eventTextForEmbedding(event),
+          contentHash: eventContentHash(event),
+        }))
+        const vectors = await this.embedding.embedEvents(work.map(({ text }) => text))
         if (!vectors) return
         let written = 0
-        for (let index = 0; index < toEmbed.length && index < vectors.length; index++) {
-          const event = toEmbed[index]!
+        for (let index = 0; index < work.length && index < vectors.length; index++) {
+          const { event, contentHash } = work[index]!
           const vector = vectors[index]!
           if (!vector || vector.length === 0) continue
-          memory.setEventVector(event.id, model, vector.length, vector, eventContentHash(event))
+          if (eventContentHash(event) !== contentHash) continue
+          memory.setEventVector(event.id, model, vector.length, vector, contentHash)
           written += 1
         }
         if (written > 0) this.vectorBackfillLastRunAt = Date.now()
@@ -3069,15 +3079,19 @@ export class StrataGateRuntime {
    * are not already configured by the same user.
    */
   adminVectorSettings(): Record<string, unknown> {
+    const embeddingKeyConfigured = Boolean(this.config.embeddingKey?.trim())
+    const rerankKeyConfigured = Boolean(this.config.rerankKey?.trim())
     return {
       embeddingUrl: this.config.embeddingUrl ?? '',
-      embeddingKey: this.config.embeddingKey ?? '',
+      embeddingKey: embeddingKeyConfigured ? VECTOR_SECRET_MASK : '',
+      embeddingKeyConfigured,
       embeddingModel: this.config.embeddingModel ?? '',
       vectorWeight: this.vectorWeight,
       embeddingMinScore: this.config.embeddingMinScore ?? 0.3,
       embeddingReady: this.embedding.embeddingReady,
       rerankUrl: this.config.rerankUrl ?? '',
-      rerankKey: this.config.rerankKey ?? '',
+      rerankKey: rerankKeyConfigured ? VECTOR_SECRET_MASK : '',
+      rerankKeyConfigured,
       rerankModel: this.config.rerankModel ?? '',
       rerankReady: this.embedding.rerankReady,
     }
@@ -3103,6 +3117,7 @@ export class StrataGateRuntime {
       if (value === undefined) return undefined
       const trimmed = value.trim()
       if (trimmed.length > 2_000) throw new TypeError(`${label} must not exceed 2000 characters`)
+      if ((label === 'embeddingKey' || label === 'rerankKey') && trimmed === VECTOR_SECRET_MASK) return undefined
       return trimmed
     }
     for (const key of ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'rerankUrl', 'rerankKey', 'rerankModel'] as const) {
