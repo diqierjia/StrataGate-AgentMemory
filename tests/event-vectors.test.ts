@@ -117,7 +117,10 @@ describe('Event vector storage', () => {
       } finally {
         check.close()
       }
-      expect(storage.getEventVector('ns', passiveId, 'm')).toEqual({ dimension: 2, vector: [1, 0] })
+      // The rebuilt row predates the fingerprint column, so it has none. That is
+      // itself meaningful: the read path treats a hash-less row as stale and
+      // re-embeds it rather than trusting text it can no longer verify.
+      expect(storage.getEventVector('ns', passiveId, 'm')).toEqual({ dimension: 2, vector: [1, 0], contentHash: null })
 
       // The whole point of the rebuild: the other pool now works too.
       expect(() => storage.setEventVector('ns', agentId, 'm', 2, [0, 1])).not.toThrow()
