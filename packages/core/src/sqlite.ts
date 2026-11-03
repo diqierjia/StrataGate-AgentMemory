@@ -447,6 +447,26 @@ CREATE TABLE IF NOT EXISTS agent_event_sources (
   FOREIGN KEY (namespace, message_id) REFERENCES messages(namespace, id)
 ) STRICT;
 
+-- Optional embedding vectors for semantic Event recall. A side table: it never
+-- touches the Event rows and never joins a snapshot save. Vectors are computed
+-- by the host layer and persisted here; model/dimension columns let several
+-- embedding models coexist, and queries filter by the configured model, so
+-- stale vectors from a previously used model are simply invisible.
+-- event_id deliberately carries NO FOREIGN KEY: a vector may belong to the
+-- passive events table OR the isolated agent_events table, and SQLite cannot
+-- retarget one constraint across both. Integrity is enforced by
+-- cleanupOrphanEventVectors (dual-pool orphan sweep) on every open.
+CREATE TABLE IF NOT EXISTS event_vectors (
+  namespace TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dimension INTEGER NOT NULL,
+  vector_json TEXT NOT NULL,
+  content_hash TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (namespace, event_id, model)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS elements (
   namespace TEXT NOT NULL,
   id TEXT NOT NULL,
@@ -2510,6 +2530,8 @@ export class SqliteStorage implements StorageAdapter {
         }
         this.database.exec(THREAD_INDEXES);
         this.rebuildLegacyElementSourceForeignKeys();
+        this.rebuildLegacyEventVectorForeignKeys();
+        this.cleanupOrphanEventVectors();
         this.enableRawSearchFts();
         this.database.prepare("INSERT INTO stratagate_graph_policy_migrations (id, completed_at) VALUES (1, ?) ON CONFLICT (id) DO NOTHING").run(nowUtc8());
         // Match normalizeSnapshot's ready-clock -> sealed-clock cutover. Keep
@@ -2555,6 +2577,8 @@ export class SqliteStorage implements StorageAdapter {
         this.database.prepare("INSERT INTO stratagate_graph_policy_migrations (id, completed_at) VALUES (1, ?) ON CONFLICT (id) DO NOTHING").run(nowUtc8());
         this.database.exec(THREAD_INDEXES);
         this.rebuildLegacyElementSourceForeignKeys();
+        this.rebuildLegacyEventVectorForeignKeys();
+        this.cleanupOrphanEventVectors();
         this.enableRawSearchFts();
       });
     }
@@ -2571,7 +2595,24 @@ export class SqliteStorage implements StorageAdapter {
       `);
       this.database.exec("DELETE FROM persistent_profile_maintenance_baseline WHERE NOT EXISTS (SELECT 1 FROM persistent_profile WHERE value <> '')");
     });
+    // Runs for every schema version, including the current one: event_vectors
+    // is a side table that is not part of the versioned snapshot shape, so no
+    // schema-version branch can carry this column. The check itself is a
+    // PRAGMA read, so an already-migrated database does no write here.
+    this.ensureEventVectorContentHashColumn();
     this.assertSchemaVersion();
+  }
+
+  /**
+   * event_vectors gained `content_hash` — the fingerprint of the text the
+   * vector was computed from. Without it a vector stayed "valid" forever after
+   * a card body was rewritten (edit / merge), so facts merged into a kept card
+   * were never semantically reachable.
+   */
+  private ensureEventVectorContentHashColumn(): void {
+    if (!this.hasColumn('event_vectors', 'content_hash')) {
+      this.database.exec('ALTER TABLE event_vectors ADD COLUMN content_hash TEXT');
+    }
   }
 
   private hasColumn(table: string, column: string): boolean {
@@ -2666,6 +2707,64 @@ export class SqliteStorage implements StorageAdapter {
         ALTER TABLE agent_events_rebuild RENAME TO agent_events;
       `);
     }
+  }
+
+  /**
+   * An early build of the embedding side table declared
+   * `FOREIGN KEY (namespace, event_id) REFERENCES events(namespace, id)`, which
+   * only covers the passive pool. Vectors may also belong to the isolated
+   * agent_events pool, and SQLite cannot retarget one constraint across both,
+   * so writing a vector for an agent-recorded Event always failed with
+   * "FOREIGN KEY constraint failed" (measured: passive events fully
+   * vectorized, agent events never). Tables still carrying that constraint are
+   * rebuilt in place — same columns, same rows, same row order — without it,
+   * exactly like rebuildLegacyElementSourceForeignKeys. Idempotent: a database
+   * already free of the constraint is a no-op.
+   */
+  private rebuildLegacyEventVectorForeignKeys(): void {
+    const row = this.database.prepare(`
+      SELECT sql FROM sqlite_master
+      WHERE type = 'table' AND name = 'event_vectors'
+    `).get() as { sql: string } | undefined;
+    if (!row || typeof row.sql !== 'string' || !row.sql.includes('REFERENCES events')) return;
+    // The rebuild runs inside migrate()'s immediate transaction; deferred
+    // enforcement lets the create/copy/drop/rename sequence pass as long as
+    // the final state is consistent, which it is because rows are unchanged.
+    this.database.exec('PRAGMA defer_foreign_keys = ON');
+    this.database.exec(`
+      CREATE TABLE event_vectors_rebuild (
+        namespace TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dimension INTEGER NOT NULL,
+        vector_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (namespace, event_id, model)
+      ) STRICT;
+      INSERT INTO event_vectors_rebuild (namespace, event_id, model, dimension, vector_json, created_at)
+        SELECT namespace, event_id, model, dimension, vector_json, created_at FROM event_vectors;
+      DROP TABLE event_vectors;
+      ALTER TABLE event_vectors_rebuild RENAME TO event_vectors;
+    `);
+  }
+
+  /**
+   * With the cross-pool foreign key gone, an orphaned vector (its Event exists
+   * in NEITHER the passive pool NOR agent_events) is no longer cascade-deleted.
+   * This idempotent sweep removes those rows; a vector whose Event exists in
+   * EITHER pool is preserved. Runs on every open, like the other rebuilds.
+   */
+  private cleanupOrphanEventVectors(): void {
+    this.database.exec(`
+      DELETE FROM event_vectors
+      WHERE NOT EXISTS (
+        SELECT 1 FROM events
+        WHERE events.namespace = event_vectors.namespace AND events.id = event_vectors.event_id
+      ) AND NOT EXISTS (
+        SELECT 1 FROM agent_events
+        WHERE agent_events.namespace = event_vectors.namespace AND agent_events.id = event_vectors.event_id
+      )
+    `);
   }
 
   private enableRawSearchFts(): void {
@@ -2825,5 +2924,99 @@ export class SqliteStorage implements StorageAdapter {
     this.assertOpen();
     return this.database.prepare('SELECT namespace, revision FROM memory_spaces ORDER BY namespace')
       .all() as unknown as NamespaceRevision[];
+  }
+
+  /**
+   * Persist one embedding vector for an Event (semantic recall side table).
+   * Works for both pools: the row is keyed by (namespace, event_id, model) and
+   * deliberately has no foreign key, because an Event may live in the passive
+   * `events` table or in the isolated `agent_events` table.
+   */
+  setEventVector(
+    namespace: string, eventId: string, model: string, dimension: number,
+    vector: readonly number[], contentHash?: string | null,
+  ): void {
+    this.assertOpen();
+    this.database.prepare(`
+      INSERT OR REPLACE INTO event_vectors (namespace, event_id, model, dimension, vector_json, content_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(namespace, eventId, model, dimension, JSON.stringify(vector), contentHash ?? null, new Date().toISOString());
+  }
+
+  /**
+   * Drop a stored vector. Used when a card body is rewritten (merge / edit):
+   * the old vector no longer describes the text, so it must not stay valid.
+   * Returns the number of deleted rows.
+   */
+  deleteEventVector(namespace: string, eventId: string, model?: string): number {
+    this.assertOpen();
+    const result = model === undefined
+      ? this.database.prepare('DELETE FROM event_vectors WHERE namespace = ? AND event_id = ?').run(namespace, eventId)
+      : this.database.prepare('DELETE FROM event_vectors WHERE namespace = ? AND event_id = ? AND model = ?').run(namespace, eventId, model);
+    return Number(result.changes);
+  }
+
+  /** Load one Event vector under a specific model, or null when absent. */
+  getEventVector(namespace: string, eventId: string, model: string): { dimension: number; vector: number[]; contentHash: string | null } | null {
+    this.assertOpen();
+    const columns = this.hasColumn('event_vectors', 'content_hash')
+      ? 'dimension, vector_json, content_hash' : 'dimension, vector_json, NULL AS content_hash';
+    const row = this.database.prepare(
+      `SELECT ${columns} FROM event_vectors WHERE namespace = ? AND event_id = ? AND model = ?`
+    ).get(namespace, eventId, model) as { dimension: number; vector_json: string; content_hash: string | null } | undefined;
+    if (!row) return null;
+    let vector: number[];
+    try {
+      vector = JSON.parse(row.vector_json) as number[];
+    } catch {
+      return null;
+    }
+    return Array.isArray(vector) ? { dimension: row.dimension, vector, contentHash: row.content_hash ?? null } : null;
+  }
+
+  /**
+   * Load every Event vector under one model in a namespace as a Map keyed by
+   * event id. One query and one JSON.parse per row replaces N single-row
+   * lookups for a retrieval pass. Malformed rows are skipped silently.
+   */
+  listEventVectors(namespace: string, model: string): Map<string, number[]> {
+    const records = this.listEventVectorRecords(namespace, model);
+    const result = new Map<string, number[]>();
+    for (const [id, record] of records) result.set(id, record.vector);
+    return result;
+  }
+
+  /**
+   * Like listEventVectors but also returns the content fingerprint the vector
+   * was computed from. A row written before the fingerprint column existed has
+   * a null hash and is treated as stale by the read path, which forces a
+   * recompute instead of trusting a vector that may describe older text.
+   */
+  listEventVectorRecords(namespace: string, model: string): Map<string, { vector: number[]; contentHash: string | null }> {
+    this.assertOpen();
+    const columns = this.hasColumn('event_vectors', 'content_hash')
+      ? 'event_id, vector_json, content_hash' : 'event_id, vector_json, NULL AS content_hash';
+    const rows = this.database.prepare(
+      `SELECT ${columns} FROM event_vectors WHERE namespace = ? AND model = ?`
+    ).all(namespace, model) as Array<{ event_id: string; vector_json: string; content_hash: string | null }>;
+    const result = new Map<string, { vector: number[]; contentHash: string | null }>();
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.vector_json) as unknown;
+        if (Array.isArray(parsed)) result.set(row.event_id, { vector: parsed as number[], contentHash: row.content_hash ?? null });
+      } catch {
+        // A malformed vector simply behaves like a missing one.
+      }
+    }
+    return result;
+  }
+
+  /** Event IDs that already carry a vector under one model in a namespace. */
+  listEventVectorIds(namespace: string, model: string): Set<string> {
+    this.assertOpen();
+    const rows = this.database.prepare(
+      'SELECT event_id FROM event_vectors WHERE namespace = ? AND model = ?'
+    ).all(namespace, model) as Array<{ event_id: string }>;
+    return new Set(rows.map(({ event_id }) => event_id));
   }
 }

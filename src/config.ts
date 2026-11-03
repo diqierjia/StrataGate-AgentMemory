@@ -37,6 +37,14 @@ export interface Config {
   ingestSubagents?: boolean
   agentMemoryEnabled?: boolean
   agentMemoryRetrievalWeight?: number
+  embeddingUrl?: string
+  embeddingKey?: string
+  embeddingModel?: string
+  vectorWeight?: number
+  embeddingMinScore?: number
+  rerankUrl?: string
+  rerankKey?: string
+  rerankModel?: string
   provider?: string
   model?: string
   memoryModel?: MemoryModelSelection
@@ -64,6 +72,14 @@ export interface ResolvedConfig {
   ingestSubagents: boolean
   agentMemoryEnabled?: boolean
   agentMemoryRetrievalWeight?: number
+  embeddingUrl?: string
+  embeddingKey?: string
+  embeddingModel?: string
+  vectorWeight?: number
+  embeddingMinScore?: number
+  rerankUrl?: string
+  rerankKey?: string
+  rerankModel?: string
   provider?: string
   model?: string
   memoryModel?: MemoryModelSelection
@@ -131,6 +147,30 @@ export const Config = z.object({
   agentMemoryRetrievalWeight: z.number().step(0.05).min(0).max(5).default(1)
     .description('主动记忆在检索中的占比权重')
     .comment('agent 记录与对话派生记忆分别独立排序后按权重融合：1 为平权，0 为不浮现 agent 记录，大于 1 则提升 agent 记录的排序权重。'),
+  embeddingUrl: z.string().default('')
+    .description('Embedding API 地址')
+    .comment('OpenAI 兼容接口，例如 https://api.siliconflow.cn/v1。留空 = 不启用语义检索，检索行为与未配置时完全一致。'),
+  embeddingKey: z.string().default('')
+    .description('Embedding API Key')
+    .comment('与 embeddingUrl、embeddingModel 配套；三者都填了才启用。'),
+  embeddingModel: z.string().default('')
+    .description('Embedding 模型名')
+    .comment('例如 BAAI/bge-m3。换模型后旧向量不会被删除，只是不再参与检索。'),
+  vectorWeight: z.number().step(0.1).min(0).max(5).default(1)
+    .description('向量召回在检索中的占比权重')
+    .comment('语义召回与关键词召回按权重融合：1 为平权，0 为不启用向量车道。'),
+  embeddingMinScore: z.number().step(0.05).min(0).max(1).default(0.3)
+    .description('向量召回的最低相似度')
+    .comment('余弦相似度低于该值的事件不进入语义召回结果；0 表示不设门槛。默认 0.3 高于随机文本对的相似度，避免「没找到」变成总要凑几条。'),
+  rerankUrl: z.string().default('')
+    .description('Rerank API 地址')
+    .comment('与 embedding 独立配置，例如 https://api.siliconflow.cn/v1。留空 = 不精排，召回顺序与未配置时一致。'),
+  rerankKey: z.string().default('')
+    .description('Rerank API Key')
+    .comment('与 rerankUrl、rerankModel 配套；三者都填了才启用。'),
+  rerankModel: z.string().default('')
+    .description('Rerank 模型名')
+    .comment('例如 BAAI/bge-reranker-v2-m3。精排只作用于被动召回的候选，超时或报错时静默回退原顺序。'),
   provider: z.string(),
   model: z.string(),
   memoryModel: volatileIfSupported(MemoryModelSelectionSchema.description('记忆处理模型')),
@@ -183,6 +223,18 @@ export function resolveConfig(config: Config): ResolvedConfig {
     ingestSubagents: config.ingestSubagents ?? false,
     agentMemoryEnabled: config.agentMemoryEnabled ?? true,
     agentMemoryRetrievalWeight: Math.min(5, Math.max(0, config.agentMemoryRetrievalWeight ?? 1)),
+    ...(config.embeddingUrl !== undefined ? { embeddingUrl: config.embeddingUrl.trim() } : {}),
+    ...(config.embeddingKey !== undefined ? { embeddingKey: config.embeddingKey.trim() } : {}),
+    ...(config.embeddingModel !== undefined ? { embeddingModel: config.embeddingModel.trim() } : {}),
+    ...(config.vectorWeight !== undefined
+      ? { vectorWeight: Math.min(5, Math.max(0, config.vectorWeight)) }
+      : {}),
+    ...(config.embeddingMinScore !== undefined
+      ? { embeddingMinScore: Math.min(1, Math.max(0, config.embeddingMinScore)) }
+      : {}),
+    ...(config.rerankUrl !== undefined ? { rerankUrl: config.rerankUrl.trim() } : {}),
+    ...(config.rerankKey !== undefined ? { rerankKey: config.rerankKey.trim() } : {}),
+    ...(config.rerankModel !== undefined ? { rerankModel: config.rerankModel.trim() } : {}),
     ...(provider && model ? { provider, model } : {}),
     ...(memoryModel ? { memoryModel } : {}),
     maxOutputTokens: Math.max(256, Math.floor(config.maxOutputTokens ?? 2_048)),

@@ -338,6 +338,35 @@ function duplicateUndoDerived(snapshot: StrataGateSnapshot, ids: string[]): stri
     .filter(value => value.sourceEventIds.some(id => ids.includes(id))).sort((a, b) => a.id.localeCompare(b.id))));
 }
 
+/**
+ * Structured filters (participants / event type / happened range) that every
+ * retrieval lane must honour.
+ *
+ * The lexical lanes apply these while ranking. The semantic lane, however,
+ * receives bare Event ids from the host: without this predicate a vector hit
+ * would bypass the user's filters and mix Events with the wrong participants,
+ * type or date range into the result. Sharing one predicate keeps the two
+ * lanes from drifting apart.
+ */
+export function eventMatchesSearchFilters(event: EventCard, options: SearchOptions): boolean {
+  if (options.eventIds !== undefined && !options.eventIds.includes(event.id)) return false;
+  const temporal = normalizeEventTemporal(event.temporal);
+  const participants = (options.participants ?? []).map(normalizeSearchText).filter(Boolean);
+  if (participants.length > 0 && !participants.every((person) =>
+    (temporal.participants ?? []).some((candidate) => fuzzySearchMatch(candidate, person)))) return false;
+  const eventType = normalizeSearchText(options.eventType ?? '');
+  if (eventType && !(fuzzySearchMatch(temporal.eventType ?? '', eventType)
+    || fuzzySearchMatch(`${event.title} ${event.summary} ${event.tags.join(' ')}`, eventType))) return false;
+  if (options.happenedFrom || options.happenedTo) {
+    const from = options.happenedFrom ? Date.parse(options.happenedFrom) : Number.NEGATIVE_INFINITY;
+    const to = options.happenedTo ? Date.parse(options.happenedTo) : Number.POSITIVE_INFINITY;
+    const start = Date.parse(temporal.happenedStart ?? temporal.happenedEnd ?? '');
+    const end = Date.parse(temporal.happenedEnd ?? temporal.happenedStart ?? '');
+    if (!(Number.isFinite(start) && Number.isFinite(end) && start <= to && end >= from)) return false;
+  }
+  return true;
+}
+
 export class StrataGate {
   private blockTurnSizeValue: number;
   private blockDecayLambdaValue: number;
@@ -710,6 +739,63 @@ export class StrataGate {
   /** Both pools in one read-only view — the merge point for retrieval and graph work. */
   listAllEvents(): readonly EventCard[] {
     return [...this.events, ...this.agentEvents];
+  }
+
+  /**
+   * Persist one embedding vector for an Event (the semantic-recall side table).
+   * Covers both pools, because the table has no foreign key to either one.
+   * A no-op when this space has no persistent storage or its adapter has no
+   * vector support, so callers never branch on storage kind.
+   */
+  setEventVector(eventId: string, model: string, dimension: number, vector: readonly number[], contentHash?: string | null): void {
+    const storage = this.eventVectorStorage();
+    if (!storage?.setEventVector || !this.namespace) return;
+    storage.setEventVector(this.namespace, eventId, model, dimension, vector, contentHash);
+  }
+
+  /** Drop one stored vector (body rewrite / merge invalidation). Returns deleted rows. */
+  deleteEventVector(eventId: string, model?: string): number {
+    const storage = this.eventVectorStorage();
+    if (!storage?.deleteEventVector || !this.namespace) return 0;
+    return storage.deleteEventVector(this.namespace, eventId, model);
+  }
+
+  /**
+   * Every stored Event vector under one model in this namespace, keyed by
+   * event id (one query for a whole retrieval pass). Empty when unavailable.
+   */
+  listEventVectors(model: string): Map<string, number[]> {
+    const records = this.listEventVectorRecords(model);
+    const result = new Map<string, number[]>();
+    for (const [id, record] of records) result.set(id, record.vector);
+    return result;
+  }
+
+  /**
+   * Same rows as listEventVectors, plus the content fingerprint each vector was
+   * computed from. A row whose fingerprint no longer matches the current card
+   * body describes text that has since been rewritten (edit / merge), so the
+   * caller must treat it as missing and re-embed rather than score it.
+   */
+  listEventVectorRecords(model: string): Map<string, { vector: number[]; contentHash: string | null }> {
+    const storage = this.eventVectorStorage();
+    if (!storage?.listEventVectorRecords || !this.namespace) return new Map();
+    return storage.listEventVectorRecords(this.namespace, model);
+  }
+
+  /** Event vectors are optional: adapters that cannot store them are skipped. */
+  private eventVectorStorage(): {
+    setEventVector?: (namespace: string, eventId: string, model: string, dimension: number, vector: readonly number[], contentHash?: string | null) => void;
+    listEventVectors?: (namespace: string, model: string) => Map<string, number[]>;
+    listEventVectorRecords?: (namespace: string, model: string) => Map<string, { vector: number[]; contentHash: string | null }>;
+    deleteEventVector?: (namespace: string, eventId: string, model?: string) => number;
+  } | undefined {
+    return this.storage as unknown as {
+      setEventVector?: (namespace: string, eventId: string, model: string, dimension: number, vector: readonly number[], contentHash?: string | null) => void;
+      listEventVectors?: (namespace: string, model: string) => Map<string, number[]>;
+      listEventVectorRecords?: (namespace: string, model: string) => Map<string, { vector: number[]; contentHash: string | null }>;
+      deleteEventVector?: (namespace: string, eventId: string, model?: string) => number;
+    } | undefined;
   }
 
   private findEvent(id: string): EventCard | undefined {
@@ -1632,6 +1718,36 @@ export class StrataGate {
         weights.push(agentWeight);
       }
     }
+    // Vector lane: the host layer pre-computes a similarity ranking (Event IDs
+    // in descending order) from stored embeddings and passes it in. Core only
+    // fuses it as one more lane — no embedding, no HTTP. Absent or empty, this
+    // block is skipped entirely and search is exactly the lexical behavior.
+    //
+    // This lane is built BEFORE the empty-result return below so that pure
+    // semantic recall (a query with no keyword overlap at all) is still
+    // reachable: fusing after the early exit would make vectors pointless for
+    // the exact case they exist for.
+    const vectorWeight = Math.max(0, options.vectorWeight ?? 1);
+    if (vectorWeight > 0 && options.vectorRanking !== undefined && options.vectorRanking.length > 0) {
+      const allEvents = new Map([...this.events, ...this.agentEvents].map((event) => [event.id, event]));
+      const vectorLane = options.vectorRanking
+        .map((id) => allEvents.get(id))
+        .filter((event): event is EventCard => event !== undefined
+          && (event.status === 'active' || event.status === 'superseded')
+          && (scopedIds === null || scopedIds.has(event.id))
+          && eventMatchesSearchFilters(event, options));
+      const agentEventIds = new Set(this.agentEvents.map(({ id }) => id));
+      const passiveVectorLane = vectorLane.filter(({ id }) => !agentEventIds.has(id));
+      const agentVectorLane = vectorLane.filter(({ id }) => agentEventIds.has(id));
+      if (passiveVectorLane.length > 0) {
+        rankings.push(passiveVectorLane);
+        weights.push(vectorWeight);
+      }
+      if (agentWeight > 0 && agentVectorLane.length > 0) {
+        rankings.push(agentVectorLane);
+        weights.push(vectorWeight * agentWeight);
+      }
+    }
     if (rankings.length === 0) return [];
     const ranked = rrfRank(rankings, weights).slice(offset, offset + limit).map(({ item: event, score }) => ({ event, score }));
     if (ranked.length > 0 && options.trackRetrieval !== false) {
@@ -2302,7 +2418,7 @@ export class StrataGate {
   async reviewDuplicateEvents(pair: EventDuplicatePair, keepId: string, mode: 'merge' | 'select',
     prepareUndo: (undo: DuplicateReviewUndo) => void, draft?: EventMergeDraft, origin: 'automatic' | 'manual' = 'automatic'): Promise<boolean> {
     if (draft !== undefined && !validEventMergeDraft(draft)) throw new TypeError('Invalid merged memory draft');
-    return this.commitMutation(() => {
+    const applied = await this.commitMutation(() => {
       const before = this.exportSnapshot();
       const ok = mode === 'select' ? this.selectDuplicateEventInMemory(pair, keepId)
         : this.archiveDuplicateEventInMemory(pair, keepId, true, true, draft, origin === 'manual');
@@ -2326,6 +2442,13 @@ export class StrataGate {
       } catch (error) { this.restoreSnapshot(before); throw error; }
       return true;
     });
+    // A merge rewrites the kept card's body (merged title/summary), so its
+    // stored vector now describes older text and the merged-in facts would stay
+    // semantically unreachable. The drop runs outside the mutation; if it fails,
+    // the read-path fingerprint check still refuses the stale vector and
+    // re-embeds it.
+    if (applied && mode === 'merge') this.deleteEventVector(keepId);
+    return applied;
   }
 
   /** Restore only this operation's changed records. Unrelated writes and original evidence survive. */

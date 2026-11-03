@@ -52,6 +52,9 @@ import {
   type StrataGateSnapshot,
   type MemoryTopic,
 } from '@diqier/stratagate'
+// Value import: the semantic lane filters with the same predicate the lexical
+// lanes use, so a vector hit cannot bypass the caller's structured filters.
+import { eventMatchesSearchFilters } from '@diqier/stratagate'
 import { SqliteStorage } from '@diqier/stratagate/sqlite'
 import type {
   AgentEventRecordResult,
@@ -59,6 +62,7 @@ import type {
   ExternalMemoryDecisionContext,
 } from '@diqier/stratagate'
 import type { ResolvedConfig } from './config.js'
+import { EmbeddingBridge } from './embedding.js'
 import { TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
@@ -166,6 +170,27 @@ export interface FeedbackDraft extends Required<Omit<FeedbackDraftInput, 'bodyMa
 const AUTO_EVENT_LIMIT = 4
 const AUTO_ELEMENT_LIMIT = 4
 const AUTO_MEMORY_TOKEN_BUDGET = 900
+
+/**
+ * The text an Event is embedded from. Title plus summary is what retrieval
+ * ranks on, so vectors must be built from the same fields; narrative and
+ * quotes are deliberately excluded to keep close Events from collapsing into
+ * one another in vector space.
+ */
+function eventTextForEmbedding(event: EventCard): string {
+  return `${event.title} ${event.summary}`
+}
+
+/**
+ * Embedding / rerank settings the settings API can persist. All optional: an
+ * empty value means "not configured", which keeps semantic recall off.
+ * They live in the shared `stratagate_dsh_settings` table (same row shape and
+ * `vector.` prefix as the other runtime knobs), so they survive a restart.
+ */
+const VECTOR_SETTING_KEYS = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore',
+  'rerankUrl', 'rerankKey', 'rerankModel'] as const
+type VectorSettingKey = typeof VECTOR_SETTING_KEYS[number]
+const VECTOR_SECRET_MASK = '********'
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -323,6 +348,19 @@ interface SurfaceMaintenance {
   checkpointLimit: number
 }
 
+/**
+ * Content fingerprint an embedding vector was computed from —
+ * sha256(title + '\0' + summary).
+ *
+ * Stored next to the vector in event_vectors.content_hash. A mismatch against
+ * the CURRENT card body means the vector describes text that has since been
+ * rewritten (edit / merge / consolidation), so it must not participate in
+ * scoring until it is re-embedded.
+ */
+export function eventContentHash(event: { title: string; summary: string }): string {
+  return createHash('sha256').update(`${event.title}\u0000${event.summary}`).digest('hex')
+}
+
 export class StrataGateRuntime {
   readonly dailyNotes: DailyNotes
   private readonly dailySnapshots = new Map<string, Promise<string>>()
@@ -390,6 +428,12 @@ export class StrataGateRuntime {
   private blockTurnSize: number
   private blockDecayLambda: number
   private agentMemoryRetrievalWeight: number
+  /** Host-side embedding bridge: every embedding HTTP call lives behind it. */
+  private readonly embedding: EmbeddingBridge
+  /** Event IDs currently being embedded, so one Event is never billed twice. */
+  private readonly vectorBackfillInFlight = new Set<string>()
+  /** Timestamp of the last successful vector write; see backfillEventVectors. */
+  private vectorBackfillLastRunAt = 0
   private graphMetadata: DshMetadataStore | undefined
   private readonly graphPreviews = new Map<string, { epoch: number; approved: Record<string, string[]>; count: number }>()
 
@@ -474,6 +518,7 @@ export class StrataGateRuntime {
     this.blockTurnSize = config.blockTurnSize
     this.blockDecayLambda = config.blockDecayLambda
     this.agentMemoryRetrievalWeight = config.agentMemoryRetrievalWeight ?? 1
+    this.embedding = new EmbeddingBridge(config)
     this.disposeAdaptersUpdated = this.models.onAdaptersUpdated(() => this.wakeModelWorkers())
     this.disposeWorkChanged = SqliteStorage.onBackgroundWorkChanged(config.database, () => this.wakeBackgroundWorker())
     this.scheduleBackgroundWorker(BACKGROUND_WORKER_INITIAL_DELAY_MS)
@@ -1021,6 +1066,12 @@ export class StrataGateRuntime {
       if (!query.trim() && !searchOptions.eventType && !searchOptions.participants?.length
         && !searchOptions.happenedFrom && !searchOptions.happenedTo) totalSourceEvents = eventIds.length
     }
+    const vectorRanking = query.trim()
+      ? await this.computeVectorRanking(memory, query, {
+          ...searchOptions,
+          ...(eventIds !== undefined ? { eventIds } : {}),
+        })
+      : undefined
     const results = await memory.searchEvents(query, {
       ...searchOptions,
       ...(eventIds !== undefined ? { eventIds } : {}),
@@ -1028,6 +1079,7 @@ export class StrataGateRuntime {
       // passive pool by the configured weight; they arrive as ordinary event
       // results with the same evidence refs and reinforcement path.
       agentMemoryWeight: this.agentMemoryRetrievalWeight,
+      ...(vectorRanking ? { vectorRanking, vectorWeight: this.vectorWeight } : {}),
     })
     return this.batch(
       session,
@@ -1440,10 +1492,16 @@ export class StrataGateRuntime {
     const activationQuery = [currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
       .join('\n\n')
+    // Semantic lane: when embedding is unconfigured this is undefined and the
+    // search below behaves exactly as before (lexical only).
+    const vectorRanking = activationQuery
+      ? await this.computeVectorRanking(memory, activationQuery)
+      : undefined
     const eventHits = activationQuery
       ? await memory.searchEvents(activationQuery, {
           limit: 20,
           agentMemoryWeight: this.agentMemoryRetrievalWeight,
+          ...(vectorRanking ? { vectorRanking, vectorWeight: this.vectorWeight } : {}),
         })
       : []
     let graphResults: GraphNodeSearchResult[] = []
@@ -1480,7 +1538,175 @@ export class StrataGateRuntime {
       .filter((result) => !(result.provenanceEventIds ?? result.node.sourceEventIds).some((id) => currentEventIds.has(id)))
       .slice(0, AUTO_ELEMENT_LIMIT)
 
-    return renderActivatedMemory(longTermEvents, this.graphEnabled ? graphResults : [])
+    // Rerank: after de-duplication, before slot allocation, refine the
+    // candidates for the slots above. Passive recall only — an explicit tool
+    // search must stay deterministic. A 5-second hard timeout lives inside the
+    // bridge; on timeout or error the original fused order is kept untouched.
+    let rankedLongTermEvents = longTermEvents
+    if (this.embedding.rerankReady && activationQuery && longTermEvents.length > 1) {
+      const reranked = await this.rerankEvents(activationQuery, events
+        .filter((event) => !currentEventIds.has(event.id)))
+      if (reranked) rankedLongTermEvents = reranked.slice(0, AUTO_EVENT_LIMIT)
+    }
+
+    return renderActivatedMemory(rankedLongTermEvents, this.graphEnabled ? graphResults : [])
+  }
+
+  /**
+   * Rerank Events against the query. Returns the reordered candidates, or null
+   * on timeout/failure so the caller falls back to the fused order unchanged.
+   * Only the first 20 candidates are sent: the request stays small and the
+   * result only ever fills the handful of passive-recall slots.
+   */
+  private async rerankEvents(query: string, candidates: readonly EventCard[]): Promise<EventCard[] | null> {
+    if (!this.embedding.rerankReady || candidates.length < 2) return null
+    const top = candidates.slice(0, 20)
+    const scores = await this.embedding.rerank(query, top.map(eventTextForEmbedding))
+    if (!scores) return null
+    const indexed = top.map((event, index) => ({ event, score: scores[index] ?? 0 }))
+    indexed.sort((left, right) => right.score - left.score)
+    return indexed.map(({ event }) => event)
+  }
+
+  /**
+   * Compute the semantic ranking for one query against stored Event vectors.
+   * Returns Event IDs in descending similarity order, or undefined when
+   * embedding is not configured (retrieval then stays exactly lexical).
+   *
+   * The host computes the query embedding (in-memory cache) and the cosine
+   * similarities; core only receives the finished ranking.
+   *
+   * Two behaviors worth keeping: the whole vector table is read with ONE query
+   * per retrieval pass, and missing vectors trigger backfill regardless of
+   * whether anything scored — otherwise a fresh or legacy database, which has
+   * events but no vectors yet, could never start vectorizing at all.
+   */
+  private async computeVectorRanking(
+    memory: StrataGate,
+    query: string,
+    filters?: SearchOptions,
+  ): Promise<string[] | undefined> {
+    // vectorWeight 0 means "no semantic ranking at all". Returning before any
+    // HTTP call matters: otherwise a query embedding (and the backfill sweep it
+    // triggers) is billed and awaited for a lane whose result is then thrown
+    // away.
+    if ((this.config.vectorWeight ?? 1) <= 0) return undefined
+    if (!this.embedding.embeddingReady) return undefined
+    // A query with no actual content (whitespace, punctuation only) must not
+    // surface semantic neighbors: the lane is fused after the lexical gates, so
+    // it needs its own guard.
+    const queryTokens = query.trim().split(/[\s\p{P}\p{S}]+/u).filter(Boolean)
+    if (queryTokens.length === 0) return undefined
+    const queryVector = await this.embedding.embedQuery(query)
+    if (!queryVector) return undefined
+
+    const model = this.config.embeddingModel!.trim()
+    const activeEvents = memory.listAllEvents()
+      .filter((event) => event.status === 'active' || event.status === 'superseded')
+      // Structured filters belong to every lane. The host hands this lane bare
+      // Event ids, so without this predicate a semantically similar Event with
+      // the wrong participants / type / date range would still be fused in.
+      .filter((event) => filters === undefined || eventMatchesSearchFilters(event, filters))
+    if (activeEvents.length === 0) return undefined
+
+    const records = memory.listEventVectorRecords(model)
+    const scored: Array<{ id: string; score: number }> = []
+    const missingVectorIds: string[] = []
+    for (const event of activeEvents) {
+      const record = records.get(event.id)
+      // A vector whose fingerprint no longer matches the current body describes
+      // text that has since been rewritten (edit / merge). Scoring it would
+      // keep answering with the old wording and never surface merged-in facts,
+      // so it counts as missing and is re-embedded instead.
+      if (record && record.contentHash === eventContentHash(event)) {
+        scored.push({ id: event.id, score: EmbeddingBridge.cosineSimilarity(queryVector, record.vector) })
+      } else {
+        missingVectorIds.push(event.id)
+      }
+    }
+    if (missingVectorIds.length > 0) void this.backfillEventVectors(memory, missingVectorIds)
+
+    // Absolute threshold, not `> 0`: measured random text pairs sit at a median
+    // of about -0.005 with a P95 near 0.05, so "above zero" would answer almost
+    // every query. 0.3 separates noise from real relevance and keeps "nothing
+    // relevant was found" a reachable outcome. 0 disables the threshold.
+    const minScore = this.config.embeddingMinScore ?? 0.3
+    const relevant = scored.filter(({ score }) => score > minScore)
+    if (relevant.length === 0) return undefined
+    relevant.sort((left, right) => right.score - left.score)
+    return relevant.slice(0, StrataGateRuntime.VECTOR_RANKING_TOP_K).map(({ id }) => id)
+  }
+
+  /** Cap on how many semantically ranked Events one retrieval pass may fuse. */
+  private static readonly VECTOR_RANKING_TOP_K = 50
+
+  private static readonly VECTOR_BACKFILL_COOLDOWN_MS = 30_000
+  private static readonly VECTOR_BACKFILL_BATCH_LIMIT = 20
+
+  /** Vectorize freshly written Events (fire-and-forget; never blocks a write). */
+  private async vectorizeNewEvents(memory: StrataGate, eventIds: string[]): Promise<void> {
+    if (!this.embedding.embeddingReady || eventIds.length === 0) return
+    // A new Event must not be held back by the backfill cooldown of an older
+    // sweep: reset it so this batch goes out immediately.
+    this.vectorBackfillLastRunAt = 0
+    await this.backfillEventVectors(memory, eventIds)
+  }
+
+  /**
+   * Compute and persist embeddings for Events that lack them. Fire-and-forget:
+   * the caller never awaits retrieval latency on it, and every failure keeps
+   * the old state so the next retrieval retries.
+   *
+   * In-flight tracking keeps one Event from being embedded twice concurrently;
+   * a batch cap bounds the cost of one sweep. The cooldown is armed ONLY after
+   * a successful write — arming it on entry meant a failed or hung API call
+   * still renewed the window, and since retrieval fires every few seconds the
+   * window was always fresh, so nothing was ever written again.
+   */
+  private async backfillEventVectors(memory: StrataGate, eventIds: string[]): Promise<void> {
+    try {
+      // Same gate as the ranking lane: with no vector weight nothing consumes
+      // these vectors, so the requests must not be issued at all.
+      if ((this.config.vectorWeight ?? 1) <= 0) return
+      if (!this.embedding.embeddingReady) return
+      if (Date.now() - this.vectorBackfillLastRunAt < StrataGateRuntime.VECTOR_BACKFILL_COOLDOWN_MS) return
+      const model = this.config.embeddingModel!.trim()
+      const eventMap = new Map(memory.listAllEvents().map((event) => [event.id, event]))
+      const toEmbed = eventIds
+        .filter((id) => !this.vectorBackfillInFlight.has(id))
+        .map((id) => eventMap.get(id))
+        .filter((event): event is EventCard => event !== undefined)
+        .slice(0, StrataGateRuntime.VECTOR_BACKFILL_BATCH_LIMIT)
+      if (toEmbed.length === 0) return
+      for (const event of toEmbed) this.vectorBackfillInFlight.add(event.id)
+      try {
+        // Capture the exact text and fingerprint sent to the provider. Events
+        // can be merged while the request is in flight; writing an old vector
+        // with the new body's hash would make stale data look fresh forever.
+        const work = toEmbed.map((event) => ({
+          event,
+          text: eventTextForEmbedding(event),
+          contentHash: eventContentHash(event),
+        }))
+        const vectors = await this.embedding.embedEvents(work.map(({ text }) => text))
+        if (!vectors) return
+        let written = 0
+        for (let index = 0; index < work.length && index < vectors.length; index++) {
+          const { event, contentHash } = work[index]!
+          const vector = vectors[index]!
+          if (!vector || vector.length === 0) continue
+          if (eventContentHash(event) !== contentHash) continue
+          memory.setEventVector(event.id, model, vector.length, vector, contentHash)
+          written += 1
+        }
+        if (written > 0) this.vectorBackfillLastRunAt = Date.now()
+      } finally {
+        for (const event of toEmbed) this.vectorBackfillInFlight.delete(event.id)
+      }
+    } catch (error) {
+      // Silent by contract: recall must never fail because embeddings failed.
+      this.onIngestError(error)
+    }
   }
 
   /**
@@ -2158,6 +2384,9 @@ export class StrataGateRuntime {
         : {}),
     }))
     await this.persistSuccessfulResponses(memory)
+    // A freshly recorded memory should be recallable semantically right away,
+    // not only after the next retrieval sweep notices it is missing.
+    if (result.recorded && result.eventId) void this.vectorizeNewEvents(memory, [result.eventId])
     return this.agentMemoryResultView(session, result)
   }
 
@@ -2297,6 +2526,30 @@ export class StrataGateRuntime {
       this.blockTurnSize = metadata.blockTurnSize() ?? this.config.blockTurnSize
       this.blockDecayLambda = metadata.blockDecayLambda() ?? this.config.blockDecayLambda
       this.agentMemoryRetrievalWeight = metadata.agentMemoryRetrievalWeight() ?? this.config.agentMemoryRetrievalWeight ?? 1
+      // Semantic-recall settings saved through the settings API win over the
+      // host config, exactly like the Block knobs above.
+      const storedEmbeddingUrl = this.readVectorSetting('embeddingUrl')
+      if (storedEmbeddingUrl !== null) this.config.embeddingUrl = storedEmbeddingUrl
+      const storedEmbeddingKey = this.readVectorSetting('embeddingKey')
+      if (storedEmbeddingKey !== null) this.config.embeddingKey = storedEmbeddingKey
+      const storedEmbeddingModel = this.readVectorSetting('embeddingModel')
+      if (storedEmbeddingModel !== null) this.config.embeddingModel = storedEmbeddingModel
+      const savedVectorWeight = this.readVectorSetting('vectorWeight')
+      const storedVectorWeight = Number(savedVectorWeight)
+      if (savedVectorWeight !== null && Number.isFinite(storedVectorWeight)) {
+        this.config.vectorWeight = Math.min(5, Math.max(0, storedVectorWeight))
+      }
+      const savedMinScore = this.readVectorSetting('embeddingMinScore')
+      const storedMinScore = Number(savedMinScore)
+      if (savedMinScore !== null && Number.isFinite(storedMinScore)) {
+        this.config.embeddingMinScore = Math.min(1, Math.max(0, storedMinScore))
+      }
+      const storedRerankUrl = this.readVectorSetting('rerankUrl')
+      if (storedRerankUrl !== null) this.config.rerankUrl = storedRerankUrl
+      const storedRerankKey = this.readVectorSetting('rerankKey')
+      if (storedRerankKey !== null) this.config.rerankKey = storedRerankKey
+      const storedRerankModel = this.readVectorSetting('rerankModel')
+      if (storedRerankModel !== null) this.config.rerankModel = storedRerankModel
     } finally {
       metadata.close()
     }
@@ -2821,6 +3074,156 @@ export class StrataGateRuntime {
       return result
     } finally {
       if (owned) await memory.close()
+    }
+  }
+
+  /** Effective vector-lane weight; 0 keeps the lane out of retrieval entirely. */
+  private get vectorWeight(): number {
+    return this.config.vectorWeight ?? 1
+  }
+
+  /**
+   * Settings-API read model for semantic recall. Returns the effective values
+   * (persisted settings already merged over host config), never secrets that
+   * are not already configured by the same user.
+   */
+  adminVectorSettings(): Record<string, unknown> {
+    const embeddingKeyConfigured = Boolean(this.config.embeddingKey?.trim())
+    const rerankKeyConfigured = Boolean(this.config.rerankKey?.trim())
+    return {
+      embeddingUrl: this.config.embeddingUrl ?? '',
+      embeddingKey: embeddingKeyConfigured ? VECTOR_SECRET_MASK : '',
+      embeddingKeyConfigured,
+      embeddingModel: this.config.embeddingModel ?? '',
+      vectorWeight: this.vectorWeight,
+      embeddingMinScore: this.config.embeddingMinScore ?? 0.3,
+      embeddingReady: this.embedding.embeddingReady,
+      rerankUrl: this.config.rerankUrl ?? '',
+      rerankKey: rerankKeyConfigured ? VECTOR_SECRET_MASK : '',
+      rerankKeyConfigured,
+      rerankModel: this.config.rerankModel ?? '',
+      rerankReady: this.embedding.rerankReady,
+    }
+  }
+
+  /**
+   * Persist embedding settings and hot-swap them into the running bridge.
+   * Omitted fields keep their current value; an empty string clears a field,
+   * which switches semantic recall off again without touching stored vectors.
+   */
+  adminSetVectorSettings(input: {
+    embeddingUrl?: string
+    embeddingKey?: string
+    embeddingModel?: string
+    vectorWeight?: number
+    embeddingMinScore?: number
+    rerankUrl?: string
+    rerankKey?: string
+    rerankModel?: string
+  }): Record<string, unknown> {
+    const next: Partial<Record<VectorSettingKey, string>> = {}
+    const text = (value: string | undefined, label: string): string | undefined => {
+      if (value === undefined) return undefined
+      const trimmed = value.trim()
+      if (trimmed.length > 2_000) throw new TypeError(`${label} must not exceed 2000 characters`)
+      if ((label === 'embeddingKey' || label === 'rerankKey') && trimmed === VECTOR_SECRET_MASK) return undefined
+      return trimmed
+    }
+    for (const key of ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'rerankUrl', 'rerankKey', 'rerankModel'] as const) {
+      const value = text(input[key], key)
+      if (value !== undefined) next[key] = value
+    }
+    if (input.vectorWeight !== undefined) {
+      if (!Number.isFinite(input.vectorWeight) || input.vectorWeight < 0 || input.vectorWeight > 5) {
+        throw new TypeError('vectorWeight must be a finite number between 0 and 5')
+      }
+      next.vectorWeight = String(input.vectorWeight)
+    }
+    if (input.embeddingMinScore !== undefined) {
+      if (!Number.isFinite(input.embeddingMinScore) || input.embeddingMinScore < 0 || input.embeddingMinScore > 1) {
+        throw new TypeError('embeddingMinScore must be a finite number between 0 and 1')
+      }
+      next.embeddingMinScore = String(input.embeddingMinScore)
+    }
+    if (Object.keys(next).length === 0) {
+      throw new TypeError('embeddingUrl, embeddingKey, embeddingModel, vectorWeight, embeddingMinScore, rerankUrl, rerankKey, or rerankModel is required')
+    }
+    this.writeVectorSettings(next)
+    // Hot swap: the bridge reads this config object, so the next call uses the
+    // new endpoint immediately — no restart, no rebuild of the runtime.
+    if (next.embeddingUrl !== undefined) this.config.embeddingUrl = next.embeddingUrl
+    if (next.embeddingKey !== undefined) this.config.embeddingKey = next.embeddingKey
+    if (next.embeddingModel !== undefined) this.config.embeddingModel = next.embeddingModel
+    if (next.rerankUrl !== undefined) this.config.rerankUrl = next.rerankUrl
+    if (next.rerankKey !== undefined) this.config.rerankKey = next.rerankKey
+    if (next.rerankModel !== undefined) this.config.rerankModel = next.rerankModel
+    if (next.vectorWeight !== undefined) this.config.vectorWeight = Number(next.vectorWeight)
+    if (next.embeddingMinScore !== undefined) this.config.embeddingMinScore = Number(next.embeddingMinScore)
+    // Cached query vectors were computed by the previous endpoint/model
+    // identity. Serving them to the new model would compare vectors from two
+    // different spaces, so a changed identity drops the whole cache.
+    if (next.embeddingUrl !== undefined || next.embeddingKey !== undefined || next.embeddingModel !== undefined) {
+      this.embedding.invalidateQueryCache()
+    }
+    return this.adminVectorSettings()
+  }
+
+  /** List models from the configured (or supplied) embedding endpoint. */
+  async adminListEmbeddingModels(override?: { url?: string; key?: string }): Promise<string[]> {
+    return this.embedding.listEmbeddingModels(override)
+  }
+
+  /** List models from the configured (or supplied) rerank endpoint. */
+  async adminListRerankModels(override?: { url?: string; key?: string }): Promise<string[]> {
+    return this.embedding.listRerankModels(override)
+  }
+
+  /**
+   * Read one persisted embedding/rerank setting, or null when it was never
+   * saved. Kept next to the settings API instead of DshMetadataStore because
+   * this group is written by the settings API and read at startup only.
+   */
+  private readVectorSetting(key: VectorSettingKey): string | null {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const database = new DatabaseSync(this.config.database, { readOnly: true })
+    try {
+      const table = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stratagate_dsh_settings'").get()
+      if (!table) return null
+      const row = database.prepare('SELECT value FROM stratagate_dsh_settings WHERE key = ?')
+        .get(`vector.${key}`) as { value: string } | undefined
+      return row?.value ?? null
+    } catch {
+      return null
+    } finally {
+      database.close()
+    }
+  }
+
+  /** Persist the supplied embedding/rerank settings; omitted keys keep their value. */
+  private writeVectorSettings(values: Partial<Record<VectorSettingKey, string>>): void {
+    if (this.config.database === ':memory:') return
+    const database = new DatabaseSync(this.config.database)
+    try {
+      database.exec('PRAGMA busy_timeout = 5000')
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS stratagate_dsh_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT
+      `)
+      const statement = database.prepare(`
+        INSERT INTO stratagate_dsh_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `)
+      const now = new Date().toISOString()
+      for (const key of VECTOR_SETTING_KEYS) {
+        const value = values[key]
+        if (value !== undefined) statement.run(`vector.${key}`, value, now)
+      }
+    } finally {
+      database.close()
     }
   }
 
