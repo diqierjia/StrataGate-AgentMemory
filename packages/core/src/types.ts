@@ -564,6 +564,15 @@ export interface SearchOptions {
    * the conversation-derived pool (1 = equal footing, 0 = never surfaced).
    */
   agentMemoryWeight?: number;
+  /**
+   * Event IDs in descending semantic-similarity order, computed by the host
+   * layer from stored embeddings. Core never embeds text or makes network
+   * calls; it only fuses this as one additional ranking lane. Omitted or
+   * empty means pure lexical retrieval, which is the default behavior.
+   */
+  vectorRanking?: string[];
+  /** Relative weight of the vector lane when it fuses with the lexical lanes. */
+  vectorWeight?: number;
   /** Disable retrieval bookkeeping for read-only previews. */
   trackRetrieval?: boolean;
 }
