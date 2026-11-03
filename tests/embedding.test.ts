@@ -225,6 +225,11 @@ describe('settings API and model listing routes', () => {
         vectorWeight: 1.2, embeddingMinScore: 0.35, embeddingReady: true,
       })
       expect(JSON.stringify(saved.body)).not.toContain('"k"')
+      const overview = await request(runtime, '/api/stratagate/overview')
+      expect(overview.status).toBe(200)
+      expect(overview.body.namespaces).toEqual([])
+      expect(overview.body.vectorSettings).toMatchObject({ embeddingModel: 'bge-m3', embeddingKey: '********', embeddingReady: true })
+      expect((await request(runtime, '/api/stratagate/dashboard')).status).toBe(200)
       expect((await request(runtime, '/api/stratagate/settings?embeddingKey=k', 'PATCH')).status).toBe(400)
       const read = await request(runtime, '/api/stratagate/settings?embeddingUrl=')
       expect(read.status).toBe(405)

@@ -187,8 +187,11 @@ describe('StrataGate admin routes', () => {
     expect(result.status).toBe(200)
     expect(result.body).toEqual(catalog)
     expect(adminMemoryModelCatalog).toHaveBeenCalledWith('cheap')
+    expect((await request('/api/stratagate/models', 'GET', target)).body).toEqual(catalog)
+    expect(adminMemoryModelCatalog).toHaveBeenLastCalledWith(undefined)
+    expect((await request('/api/stratagate/models?key=secret', 'GET', target)).status).toBe(400)
     expect((await request('/api/stratagate/models', 'POST', target)).status).toBe(405)
-    expect(adminMemoryModelCatalog).toHaveBeenCalledTimes(1)
+    expect(adminMemoryModelCatalog).toHaveBeenCalledTimes(2)
   })
   it('uses sealed coordinates for 75 blocks with 10 pending and agrees with core through recovery and expansion', async () => {
     const failures = new Set([1, 6, 13, 22, 31, 40, 49, 58, 67, 75].map(String))

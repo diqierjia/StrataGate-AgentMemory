@@ -3202,6 +3202,10 @@ export class StrataGateRuntime {
   /** Persist the supplied embedding/rerank settings; omitted keys keep their value. */
   private writeVectorSettings(values: Partial<Record<VectorSettingKey, string>>): void {
     if (this.config.database === ':memory:') return
+    // A settings save can be the first write on a new installation. Open the
+    // normal storage adapter first so the file gets the supported schema
+    // before the settings metadata table is added.
+    this.profileStore()
     const database = new DatabaseSync(this.config.database)
     try {
       database.exec('PRAGMA busy_timeout = 5000')

@@ -501,6 +501,7 @@ window.__ModuleLoader__.load({
       .sg-model-settings{margin-bottom:12px;padding:16px;min-width:0}.sg-model-heading{margin:0 0 4px;font-size:15px;font-weight:650;line-height:1.4}.sg-model-intro{margin:0;color:var(--sg-muted);font-size:13px;line-height:1.5}
       .sg-model-modes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:14px 0 10px}.sg-model-mode{display:flex;align-items:flex-start;gap:9px;min-width:0;padding:11px;border:1px solid var(--sg-border);border-radius:9px;cursor:pointer;background:var(--sg-surface);transition:background-color var(--sg-fast) var(--sg-ease),border-color var(--sg-fast) var(--sg-ease)}.sg-model-mode:hover{border-color:var(--sg-accent)}.sg-model-mode.selected{border-color:var(--sg-accent);background:color-mix(in srgb,var(--sg-accent) 6%,var(--sg-surface))}.sg-model-mode:has(input:disabled){cursor:default;opacity:.65}.sg-model-mode input{flex:0 0 auto;width:16px;height:16px;margin:2px 0 0;accent-color:var(--sg-accent)}.sg-model-mode-copy{display:grid;gap:2px;min-width:0}.sg-model-mode-title{font-size:14px;font-weight:600}.sg-model-mode-description{font-size:12px;line-height:1.45;color:var(--sg-muted)}
       .sg-model-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 8px;padding:12px;border-radius:9px;background:var(--sg-soft)}.sg-model-field{display:grid;align-content:start;gap:5px;min-width:0;font-size:12px;font-weight:550}.sg-model-settings select{min-width:0;width:100%;max-width:100%;height:38px;background:var(--sg-surface);font-size:13px;font-weight:400}.sg-model-draft-note{margin:0 0 9px;color:var(--sg-muted);font-size:12px;line-height:1.5}.sg-model-save-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--sg-border);padding-top:10px;margin-top:12px}.sg-model-saved{display:flex;align-items:baseline;flex-wrap:wrap;gap:5px 8px;min-width:0;font-size:12px;color:var(--sg-muted)}.sg-model-saved strong{font-weight:550;color:var(--sg-text);overflow-wrap:anywhere}.sg-model-pending{color:var(--sg-warn);font-size:12px}.sg-model-save-row .sg-save-button{flex:0 0 auto;margin:0}.sg-model-settings p{overflow-wrap:anywhere}
+      .sg-retrieval-fields{display:grid;gap:9px;margin-top:14px;min-width:0}.sg-retrieval-settings input{box-sizing:border-box;width:100%;min-width:0;max-width:100%;padding:9px 10px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);font:inherit;font-weight:400}.sg-retrieval-settings input:focus-visible{outline:2px solid var(--sg-accent);outline-offset:2px}.sg-retrieval-settings input:disabled{opacity:.6}.sg-retrieval-fields .sg-setting-note,.sg-retrieval-fields .sg-status-feedback{margin:0}.sg-retrieval-actions{display:flex;flex-wrap:wrap;gap:8px;min-width:0}.sg-retrieval-actions:empty{display:none}.sg-retrieval-tuning{margin-top:14px;font-size:12px}.sg-retrieval-tuning>summary{cursor:pointer;color:var(--sg-muted)}.sg-retrieval-tuning .sg-model-fields{margin-top:9px}
       @container sg-memory (max-width:480px){.sg-model-settings{padding:14px}.sg-model-modes,.sg-model-fields{grid-template-columns:minmax(0,1fr)}.sg-model-modes{margin-top:14px}.sg-model-save-row{align-items:stretch;flex-direction:column;gap:12px}.sg-model-save-row .sg-save-button{width:100%}}
       .sg-result-count{margin:0 0 9px;color:var(--sg-muted);font-size:12px}.sg-result-event{padding:8px 0;border-bottom:1px solid var(--sg-border)}.sg-result-event:last-child{border-bottom:0}.sg-pipeline{display:flex;flex-direction:column}.sg-stage{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:9px 0;border-bottom:1px solid var(--sg-border)}.sg-stage:last-child{border-bottom:0}.sg-stage-value{font-size:12px}.sg-stage-value.done{color:var(--sg-good)}.sg-stage-value.processing{color:var(--sg-accent)}.sg-stage-value.failed{color:var(--sg-danger)}.sg-stage-value.waiting{color:var(--sg-muted)}.sg-lambda-control{display:flex;align-items:center;justify-content:flex-end;gap:7px}.sg-number-input,.sg-effort-select{padding:4px 5px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface)}.sg-number-input{width:82px;text-align:right}.sg-effort-button{padding:4px 6px;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer;font-size:12px}.sg-effort-button:hover{background:var(--sg-soft);color:var(--sg-accent)}.sg-setting-switch{position:relative;width:38px;height:22px;padding:0;border:1px solid color-mix(in srgb,var(--sg-muted) 58%,var(--sg-border));border-radius:999px;background:color-mix(in srgb,var(--sg-muted) 18%,var(--sg-surface));cursor:pointer;box-shadow:inset 0 1px 2px color-mix(in srgb,var(--sg-text) 12%,transparent)}.sg-setting-switch:before{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--sg-muted);box-shadow:0 1px 2px color-mix(in srgb,var(--sg-text) 22%,transparent);transition:transform var(--sg-fast) var(--sg-ease),background-color var(--sg-fast) var(--sg-ease)}.sg-setting-switch[aria-checked="true"]{border-color:var(--sg-accent);background:var(--sg-accent);box-shadow:none}.sg-setting-switch[aria-checked="true"]:before{background:#fff;transform:translateX(16px)}.sg-setting-switch:disabled{cursor:not-allowed;opacity:.5}.sg-setting-note{margin:7px 0 11px;color:var(--sg-muted);font-size:12px}.sg-display-settings{display:grid;gap:2px}.sg-display-setting{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:14px;padding:13px 0;border-bottom:1px solid var(--sg-border)}.sg-display-setting.child{padding-left:18px}.sg-display-setting-copy{display:grid;gap:4px}.sg-display-setting-title{font-size:13px;font-weight:680}.sg-display-setting-description{max-width:62ch;color:var(--sg-muted);font-size:11px;line-height:1.5}.sg-display-disabled{opacity:.58}.sg-settings-group{margin-top:24px;padding-top:18px;border-top:1px solid var(--sg-border)}.sg-settings-group:first-of-type{margin-top:0;padding-top:0;border-top:0}.sg-settings-group-title{margin:0;font-size:15px;letter-spacing:-.01em}.sg-settings-group-copy{margin:4px 0 11px;color:var(--sg-muted);font-size:12px}.sg-settings-panel{padding:2px 13px 12px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-storage-card{padding:13px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-storage-label{display:block;margin-bottom:6px;font-size:13px;font-weight:700}.sg-storage-path{display:block;width:100%;padding:9px 10px;border-radius:7px;background:var(--sg-soft);color:var(--sg-text);font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sg-storage-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}.sg-storage-button{padding:6px 9px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);cursor:pointer;font-size:12px;font-weight:650}.sg-storage-button:hover{border-color:color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));color:var(--sg-accent);transform:translateY(-1px)}.sg-storage-button:disabled{cursor:not-allowed;opacity:.5}.sg-storage-feedback{min-height:18px;margin:7px 0 -3px;color:var(--sg-good);font-size:12px}.sg-storage-feedback.failed{color:var(--sg-danger)}.sg-settings-menu{margin-top:10px}.sg-setting-suggestion{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;margin:4px 0 10px;border-radius:7px;background:var(--sg-soft);font-size:12px}.sg-save-button{align-self:flex-end;padding:7px 12px;margin-top:12px;border:0;border-radius:6px;background:var(--sg-accent);color:white;cursor:pointer}.sg-save-button:disabled{opacity:.5;cursor:not-allowed}.sg-safe-note{padding:11px 12px;margin-bottom:12px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-weight:650}.sg-error-note{margin:8px 0 0;color:var(--sg-muted);font-size:12px}.sg-job-list{display:grid;gap:10px}.sg-job{padding:12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface)}.sg-job-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.sg-job-title{margin:0;font-size:14px}.sg-job-meta{display:grid;grid-template-columns:112px minmax(0,1fr);gap:5px 10px;margin:11px 0;color:var(--sg-muted);font-size:12px}.sg-job-meta dd,.sg-job-meta dt{min-width:0;margin:0}.sg-job-meta dd{color:var(--sg-text);overflow-wrap:anywhere}.sg-job-error{max-height:150px;margin:9px 0;padding:9px;overflow:auto;border-radius:6px;background:var(--sg-danger-soft);color:var(--sg-danger)}.sg-job-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}.sg-job-actions .sg-save-button{margin-top:0}.sg-status-feedback{margin:9px 0 0;color:var(--sg-muted);font-size:12px}.sg-status-feedback.failed{color:var(--sg-danger)}
       .sg-process-summary{padding:12px 13px;margin-bottom:14px;border-radius:8px;background:var(--sg-soft);color:var(--sg-text)}.sg-process-summary strong{display:block;font-size:13px}.sg-process-summary span{display:block;margin-top:2px;font-size:12px}.sg-process-groups{display:grid;gap:14px}.sg-process-group{overflow:hidden;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-surface)}.sg-process-group-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;border-bottom:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-soft) 65%,transparent)}.sg-process-group-title{margin:0;font-size:14px;font-weight:730}.sg-process-group-count{color:var(--sg-muted);font-size:11px}.sg-process-card{padding:13px}.sg-process-card+.sg-process-card{border-top:1px solid var(--sg-border)}.sg-process-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-process-range{font-weight:700}.sg-process-state{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:680}.sg-process-state.processing{color:var(--sg-accent)}.sg-process-state.waiting{color:var(--sg-muted)}.sg-process-state.failed{color:var(--sg-warn)}.sg-process-stages{display:grid;gap:7px;margin-top:12px}.sg-process-stage{display:grid;grid-template-columns:18px minmax(0,1fr) auto;align-items:center;gap:7px;color:var(--sg-muted);font-size:12px}.sg-process-stage-name{color:var(--sg-text)}.sg-process-stage-state.done{color:var(--sg-good)}.sg-process-stage-state.processing{color:var(--sg-accent)}.sg-process-stage-state.failed{color:var(--sg-danger)}.sg-process-stage-state.waiting,.sg-process-stage-state.skipped{color:var(--sg-muted)}.sg-process-tech{margin-top:12px;padding-top:9px;border-top:1px solid var(--sg-border)}.sg-process-tech>summary{color:var(--sg-muted);font-size:11px;cursor:pointer}.sg-process-job{padding:10px 0}.sg-process-job+.sg-process-job{border-top:1px solid var(--sg-border)}.sg-process-job-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}.sg-process-job-meta{margin-top:5px;color:var(--sg-muted);font-size:11px}.sg-process-job .sg-job-error{font-size:11px}.sg-process-job-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px}.sg-process-job-actions .sg-save-button{margin:0}.sg-process-footer{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:15px}.sg-process-footer .sg-quiet-button{padding:7px 9px;border-radius:6px;color:var(--sg-accent)}.sg-process-footer .sg-status-feedback{margin:0}
@@ -5025,7 +5026,128 @@ window.__ModuleLoader__.load({
         feedback.text ? h('p', { className: 'sg-status-feedback ' + feedback.kind, role: feedback.kind === 'failed' ? 'alert' : 'status' }, feedback.text) : null)
     }
 
-    function SettingsPage({ selected, graphSettings, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }) {
+    function RetrievalModelSettings({ kind, settings, writable, onSaved }) {
+      const embedding = kind === 'embedding'
+      const title = embedding ? '向量检索' : '结果精排（Rerank）'
+      const prefix = embedding ? 'embedding' : 'rerank'
+      const urlKey = prefix + 'Url', secretKey = prefix + 'Key', modelKey = prefix + 'Model'
+      const [saved, setSaved] = React.useState(settings || null)
+      const [draft, setDraft] = React.useState({})
+      const [models, setModels] = React.useState([])
+      const [listing, setListing] = React.useState(false)
+      const [listFeedback, setListFeedback] = React.useState('')
+      const [saving, setSaving] = React.useState(false)
+      const [reading, setReading] = React.useState(false)
+      const [feedback, setFeedback] = React.useState({ kind: '', text: '' })
+      const lookup = React.useRef(0)
+      React.useEffect(() => { if (settings) setSaved(settings) }, [settings])
+      React.useEffect(() => () => { lookup.current += 1 }, [])
+      React.useEffect(() => {
+        if (feedback.kind !== 'done') return
+        const timer = window.setTimeout(() => setFeedback({ kind: '', text: '' }), 4500)
+        return () => window.clearTimeout(timer)
+      }, [feedback])
+      const value = key => draft[key] ?? saved?.[key] ?? ''
+      const url = String(value(urlKey)).trim().replace(/\/+$/, '')
+      const keyEdited = Object.hasOwn(draft, secretKey)
+      const keyConfigured = keyEdited ? Boolean(draft[secretKey].trim()) : saved?.[prefix + 'KeyConfigured'] === true
+      let urlValid = !url
+      try { urlValid = ['http:', 'https:'].includes(new URL(url).protocol) } catch {}
+      const numericValid = !embedding || ['vectorWeight', 'embeddingMinScore'].every(key => {
+        const raw = draft[key] ?? saved?.[key] ?? (key === 'vectorWeight' ? 1 : 0.3)
+        return String(raw).trim() !== '' && Number.isFinite(Number(raw)) && Number(raw) >= 0 && Number(raw) <= (key === 'vectorWeight' ? 5 : 1)
+      })
+      const changed = Object.keys(draft).some(key => key === secretKey || String(draft[key]) !== String(saved?.[key] ?? ''))
+      const disabled = !saved || writable !== true || saving || reading
+      const edit = (key, next) => {
+        setDraft(current => ({ ...current, [key]: next }))
+        setFeedback({ kind: '', text: '' })
+        if (key === urlKey || key === secretKey) {
+          lookup.current += 1; setModels([]); setListing(false); setListFeedback('')
+        }
+      }
+      const listModels = async () => {
+        if (disabled || listing || !url || !urlValid || !keyConfigured) return
+        const request = ++lookup.current
+        setListing(true); setModels([]); setListFeedback('')
+        try {
+          const result = await api('models', null, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, url, ...(keyEdited ? { key: draft[secretKey].trim() } : {}) }) })
+          if (request !== lookup.current) return
+          const ids = Array.isArray(result.models) ? result.models.filter(id => typeof id === 'string' && id) : []
+          setModels(ids)
+          setListFeedback(ids.length ? '已读取模型列表。请选择对应类型的模型，也可手动填写。' : '未能读取模型列表，可重试或手动填写模型名称。')
+        } catch {
+          if (request === lookup.current) setListFeedback('未能读取模型列表，可重试或手动填写模型名称。')
+        } finally { if (request === lookup.current) setListing(false) }
+      }
+      const save = async () => {
+        if (disabled || !changed || !urlValid || !numericValid) return
+        const patch = {}
+        for (const key of Object.keys(draft)) {
+          patch[key] = key === 'vectorWeight' || key === 'embeddingMinScore' ? Number(draft[key])
+            : key === urlKey ? url : draft[key].trim()
+        }
+        setSaving(true); setFeedback({ kind: '', text: '' })
+        lookup.current += 1; setListing(false)
+        try {
+          const result = await api('settings', null, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+          if (!result.vectorSettings || typeof result.vectorSettings[prefix + 'Ready'] !== 'boolean') throw new Error('Missing saved settings')
+          setSaved(result.vectorSettings); setDraft({})
+          onSaved?.(result.vectorSettings)
+          setFeedback({ kind: 'done', text: '配置已保存。' })
+        } catch {
+          setFeedback({ kind: 'failed', text: '未能确认保存，输入已保留。请重新读取配置后核对，或重试保存。' })
+        } finally { setSaving(false) }
+      }
+      const readSaved = async () => {
+        if (saving || reading) return
+        setReading(true)
+        try {
+          const result = await api('overview')
+          if (!result.vectorSettings || typeof result.vectorSettings[prefix + 'Ready'] !== 'boolean') throw new Error('Missing saved settings')
+          setSaved(result.vectorSettings); onSaved?.(result.vectorSettings)
+          setFeedback({ kind: 'done', text: '已重新读取保存的配置；未保存输入已保留。' })
+        } catch { setFeedback({ kind: 'failed', text: '未能读取保存的配置，输入已保留，请重试。' }) }
+        finally { setReading(false) }
+      }
+      const ready = saved?.[prefix + 'Ready'] === true
+      const active = ready && (!embedding || Number(saved.vectorWeight) > 0)
+      const status = !saved ? '尚未读取配置' : active ? '已配置 · ' + saved[modelKey]
+        : ready && embedding ? '已停用（向量检索占比为 0）' : saved[urlKey] ? '配置未完整，暂未启用' : '未启用'
+      return h('div', { className: 'sg-settings-panel sg-model-settings sg-retrieval-settings', 'data-kind': kind },
+        h('h4', { className: 'sg-model-heading' }, title),
+        h('p', { className: 'sg-model-intro' }, embedding ? '按语义查找相关事件，补充关键词检索。' : '对已找回的候选重新排序，可独立于向量检索配置。'),
+        h('p', { className: 'sg-setting-note' }, '填写地址、密钥和模型后启用；清空地址并保存即可停用。启用后会向服务商发送' + (embedding ? '检索文本和事件标题、摘要' : '检索文本和候选事件内容') + '，可能产生 API 费用。'),
+        h('div', { className: 'sg-retrieval-fields' },
+          h('label', { className: 'sg-model-field' }, 'API 地址', h('input', { type: 'url', value: value(urlKey), disabled, placeholder: 'https://你的服务地址/v1', 'aria-label': title + ' API 地址', spellCheck: false, onChange: event => edit(urlKey, event.target.value) })),
+          h('p', { className: 'sg-setting-note' }, '使用 OpenAI 兼容接口的基础地址，无需填写 ' + (embedding ? '/embeddings' : '/rerank') + '。'),
+          !urlValid ? h('p', { className: 'sg-status-feedback failed', role: 'alert' }, '请填写以 http:// 或 https:// 开头的有效地址。') : null,
+          h('label', { className: 'sg-model-field' }, 'API Key', h('input', { type: 'password', value: draft[secretKey] ?? '', disabled, placeholder: keyEdited && !draft[secretKey] ? '保存后清除密钥' : saved?.[prefix + 'KeyConfigured'] ? '已保存密钥，未修改时保留' : '填写 API Key', 'aria-label': title + ' API Key', autoComplete: 'new-password', spellCheck: false, onChange: event => edit(secretKey, event.target.value) })),
+          h('div', { className: 'sg-retrieval-actions' }, saved?.[prefix + 'KeyConfigured'] ? h('button', { type: 'button', className: 'sg-quiet-button', disabled, onClick: () => edit(secretKey, '') }, '清除已保存密钥') : null,
+            keyEdited ? h('button', { type: 'button', className: 'sg-quiet-button', disabled, onClick: () => {
+              setDraft(current => { const next = { ...current }; delete next[secretKey]; return next })
+              lookup.current += 1; setModels([]); setListing(false); setListFeedback(''); setFeedback({ kind: '', text: '' })
+            } }, '撤销密钥修改') : null),
+          keyEdited && !draft[secretKey].trim() ? h('p', { className: 'sg-setting-note' }, '保存后将清除密钥并停用此功能。') : null,
+          h('label', { className: 'sg-model-field' }, '模型名称', h('input', { type: 'text', value: value(modelKey), disabled, list: 'sg-' + kind + '-models', placeholder: '填写模型名称或从列表选择', 'aria-label': title + '模型名称', autoComplete: 'off', spellCheck: false, onChange: event => edit(modelKey, event.target.value) })),
+          h('datalist', { id: 'sg-' + kind + '-models' }, models.map(id => h('option', { key: id, value: id }))),
+          h('div', { className: 'sg-retrieval-actions' }, h('button', { type: 'button', className: 'sg-storage-button', disabled: disabled || listing || !url || !urlValid || !keyConfigured, onClick: () => void listModels() }, listing ? '正在读取…' : '读取模型列表')),
+          listFeedback ? h('p', { className: 'sg-status-feedback', role: 'status' }, listFeedback) : null),
+        embedding ? h('details', { className: 'sg-retrieval-tuning' }, h('summary', null, '检索参数'),
+          h('div', { className: 'sg-model-fields' },
+            h('label', { className: 'sg-model-field' }, '向量检索占比', h('input', { type: 'number', min: 0, max: 5, step: 0.1, value: draft.vectorWeight ?? saved?.vectorWeight ?? 1, disabled, 'aria-label': '向量检索占比', onChange: event => edit('vectorWeight', event.target.value) })),
+            h('label', { className: 'sg-model-field' }, '最低相似度', h('input', { type: 'number', min: 0, max: 1, step: 0.05, value: draft.embeddingMinScore ?? saved?.embeddingMinScore ?? 0.3, disabled, 'aria-label': '最低相似度', onChange: event => edit('embeddingMinScore', event.target.value) }))),
+          h('p', { className: 'sg-setting-note' }, '占比默认 1，与关键词检索平权；0 停用向量检索。最低相似度默认 0.3，范围 0–1。'),
+          !numericValid ? h('p', { className: 'sg-status-feedback failed', role: 'alert' }, '占比需为 0–5 的数字，最低相似度需为 0–1 的数字。') : null) : null,
+        h('div', { className: 'sg-model-save-row' }, h('div', { className: 'sg-model-saved' }, h('span', { className: 'sg-model-active-label' }, '已保存配置'), h('strong', null, status), changed ? h('span', { className: 'sg-model-pending' }, '有未保存修改') : null),
+          h('button', { type: 'button', className: 'sg-save-button', disabled: disabled || !changed || !urlValid || !numericValid, onClick: () => void save() }, saving ? '保存中…' : '保存' + (embedding ? '向量检索设置' : '精排设置'))),
+        h('p', { className: 'sg-setting-note' }, '保存不验证连接或检索效果。' + (embedding ? '已有事件的向量会在后续检索时逐步补齐。' : '')),
+        !saved || writable !== true ? h('p', { className: 'sg-status-feedback' }, !saved ? '检索配置尚未读取，请重新读取。' : '当前检索配置为只读。') : null,
+        feedback.text ? h('p', { className: 'sg-status-feedback ' + feedback.kind, role: feedback.kind === 'failed' ? 'alert' : 'status' }, feedback.text) : null,
+        !saved || feedback.kind === 'failed' ? h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving || reading, onClick: () => void readSaved() }, reading ? '正在读取…' : '重新读取配置') : null)
+    }
+
+    function SettingsPage({ selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       const [agentWeight, setAgentWeight] = React.useState(String(selected.agentMemoryRetrievalWeight ?? 1))
@@ -5085,6 +5207,8 @@ window.__ModuleLoader__.load({
           h('p', { className: 'sg-settings-group-copy' }, '适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。设置保存在当前记忆数据库中，不会自动同步到其他设备或安装。'),
           h(GraphSettingsPanel, { state: graphSettings, refresh }),
           h(DailyNotesSettings, { usePluginSettings, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }),
+          h(RetrievalModelSettings, { kind: 'embedding', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
+          h(RetrievalModelSettings, { kind: 'rerank', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
           h('div', { className: 'sg-settings-panel sg-pipeline' },
             h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
             h('p', { className: 'sg-setting-note' }, '1 轮是一次用户提问和 AI 完整回复。轮数越小，Block 生成越频繁，也会让相同长度的对话衰减得更快；已有 Block 不会重新切分，尚未封存的内容按新阈值继续处理。'),
@@ -5404,12 +5528,13 @@ window.__ModuleLoader__.load({
           .catch(reportError)
           .finally(() => setSavingSettings(false))
       }
+      const onRetrievalSettingsSaved = vectorSettings => setOverview(current => ({ ...current, vectorSettings }))
       const moreBack = () => setView({ name: 'root' })
 
       let content = null
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
+      else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
@@ -5422,7 +5547,7 @@ window.__ModuleLoader__.load({
       else if (view.name === 'audit') content = h(AuditPage, { audit: data.audit, auditPage: data.pagination?.audit, namespace, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'raw') content = h(RawPage, { data, selected, onBack: view.back ? goBack : moreBack, backLabel: view.back?.name === 'settings' ? '高级设置' : '更多' })
       else if (view.name === 'display') content = h(DisplayPage, { onBack: moreBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry })
-      else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
+      else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
       else if (view.name === 'support') content = h(SupportPage, { key: namespace, namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
