@@ -1965,6 +1965,18 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
       if (req.method !== 'PATCH') throw new AdminHttpError(405, 'StrataGate settings require PATCH')
       sendJson(res, 200, await updateSettings(runtime, url, req))
     } else if (path === '/api/stratagate/models') {
+      // Keep the existing memory-processing model picker separate from the
+      // endpoint-based embedding/rerank model lists.
+      if (req.method === 'GET' && !url.searchParams.has('kind')) {
+        if (url.searchParams.has('url') || url.searchParams.has('key')) {
+          throw new AdminHttpError(400, 'Model credentials must be sent in a JSON body; credentials in the URL are not accepted')
+        }
+        sendJson(res, 200, await runtime.adminMemoryModelCatalog(url.searchParams.get('provider') || undefined))
+        return
+      }
+      if (req.method === 'POST' && req.body === undefined && typeof req[Symbol.asyncIterator] !== 'function') {
+        throw new AdminHttpError(405, 'Memory models require GET; embedding/rerank listing requires a JSON body')
+      }
       if (req.method !== 'GET' && req.method !== 'POST') throw new AdminHttpError(405, 'StrataGate model listing requires GET or POST')
       if (req.method === 'GET' && (url.searchParams.has('url') || url.searchParams.has('key'))) {
         throw new AdminHttpError(400, 'Model credentials must be sent in a JSON body; credentials in the URL are not accepted')

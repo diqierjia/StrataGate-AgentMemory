@@ -36,7 +36,7 @@ import type {
 } from '@diqier/stratagate'
 import { EVENT_DUPLICATE_REVIEW_RULES, TOPIC_OVERVIEW_MAX_CHARACTERS, validateTopicOverviewText, TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
 import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, validateProfile, type PersistentProfile } from '@diqier/stratagate'
-import type { ResolvedConfig, StructuredReasoningEffortMode } from './config.js'
+import { resolveMemoryModel, type MemoryModelSelection, type ResolvedConfig, type StructuredReasoningEffortMode } from './config.js'
 import { dshMessageSource } from './dsh-compatibility.js'
 import { ModelJsonResponseError, parseJsonResponse } from './json-response.js'
 import { ExtractionCapacityError, mergeExtractionEvents, splitExtractionSlice, type ExtractionSlice } from './extraction-batches.js'
@@ -661,10 +661,13 @@ export class DshModelBridge {
   private readonly warnedOffFallbackRoutes = new Set<string>()
   private readonly adaptersUpdatedListeners = new Set<() => void>()
   private structuredReasoningEffort: StructuredReasoningEffortMode
+  private memoryModel: MemoryModelSelection | undefined
 
   constructor(private readonly ctx: Context, private readonly config: ResolvedConfig,
-    private readonly liveStructuredReasoningEffort?: () => StructuredReasoningEffortMode) {
+    private readonly liveStructuredReasoningEffort?: () => StructuredReasoningEffortMode,
+    private readonly liveMemoryModel?: () => MemoryModelSelection | undefined) {
     this.structuredReasoningEffort = config.structuredReasoningEffort ?? 'auto'
+    this.memoryModel = config.memoryModel
     this.ctx.on?.('llm/adapters-updated', () => {
       this.offCapabilities.clear()
       this.contextWindows.clear()
@@ -690,6 +693,25 @@ export class DshModelBridge {
 
   setStructuredReasoningEffort(mode: StructuredReasoningEffortMode): void {
     this.structuredReasoningEffort = mode
+  }
+
+  setMemoryModel(value: MemoryModelSelection | undefined): void {
+    this.memoryModel = resolveMemoryModel(value)
+    for (const listener of this.adaptersUpdatedListeners) listener()
+  }
+
+  memoryModelSelection(): MemoryModelSelection {
+    // An explicit auto choice also overrides the old provider/model pair.
+    const selected = resolveMemoryModel(this.liveMemoryModel ? this.liveMemoryModel() : this.memoryModel)
+    return selected ?? (this.config.provider && this.config.model
+      ? { mode: 'custom', provider: this.config.provider, model: this.config.model } : { mode: 'auto' })
+  }
+
+  async memoryModelCatalog(provider?: string) {
+    const providers = this.ctx.llm.listProviders().map(({ id, name }) => ({ id, name }))
+    if (provider && !providers.some(item => item.id === provider)) throw new Error('服务商当前不可用，请检查 DSH 的 API 配置或重新选择')
+    const models = provider ? (await this.ctx.llm.listModels(provider)).map(({ id, name }) => ({ id, name })) : []
+    return { selection: this.memoryModelSelection(), providers, models }
   }
 
   private currentStructuredReasoningEffort(): StructuredReasoningEffortMode {
@@ -1449,8 +1471,9 @@ Use project scope for repository decisions, user scope for stable preferences/id
 
   private resolveRoute(session?: Session): { provider: string; model: string } {
     const request = session?.requestHeader()?.config
-    if (this.config.provider && this.config.model) {
-      return { provider: this.config.provider, model: this.config.model }
+    const selected = this.memoryModelSelection()
+    if (selected.mode === 'custom') {
+      return { provider: selected.provider!, model: selected.model! }
     }
     if (request) return { provider: request.provider, model: request.model }
     const fallback = this.ctx.agentDefaultModel.currentSelection()

@@ -4,6 +4,8 @@
 
 # StrataGate
 
+Project documentation and issue reports are available on [Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory); the package's GitHub repository field is retained for tool compatibility.
+
 ### Recent conversations stay detailed. Older memories grow more concise.
 
 StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent conversations stay detailed, older conversations become concise, and original records remain available when needed. Lasting information becomes Events, the knowledge graph represents current state, and the topic directory helps the agent discover what has been remembered and find its sources.

@@ -252,12 +252,14 @@ describe('DSH plugin composition', () => {
       first = await mount()
       const settings = first.get('settings') as unknown as { update(ns: string, value: object): Promise<void>; get(ns: string): unknown }
       await settings.update(plugin.STRATAGATE_SETTINGS_NAMESPACE, {
+        memoryModel: { mode: 'custom', provider: 'cheap', model: 'fast' },
         showStrataGateStatus: false,
         showShortTermStatus: false,
         showRetrievalStatus: false,
         showSidebarEntry: false,
       })
       expect(settings.get(plugin.STRATAGATE_SETTINGS_NAMESPACE)).toMatchObject({
+        memoryModel: { mode: 'custom', provider: 'cheap', model: 'fast' },
         showStrataGateStatus: false,
         showShortTermStatus: false,
         showRetrievalStatus: false,
@@ -268,6 +270,7 @@ describe('DSH plugin composition', () => {
 
       restarted = await mount()
       expect((restarted.get('settings') as unknown as { get(ns: string): unknown }).get(plugin.STRATAGATE_SETTINGS_NAMESPACE)).toMatchObject({
+        memoryModel: { mode: 'custom', provider: 'cheap', model: 'fast' },
         showStrataGateStatus: false,
         showShortTermStatus: false,
         showRetrievalStatus: false,

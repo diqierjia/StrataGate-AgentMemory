@@ -4,6 +4,7 @@ import type { EventCard, ExtractionContext, GraphProjectionContext, MemoryBlock,
 import { describe, expect, it, vi } from 'vitest'
 import { ModelJsonResponseError, parseJsonResponse } from '../src/json-response.js'
 import { DshModelBridge } from '../src/llm.js'
+import type { MemoryModelSelection, ResolvedConfig } from '../src/config.js'
 import { DiagnosticsRecorder } from '../src/diagnostics.js'
 import { emptyProfile, estimateTokens, StrataGate, TopicProjectionError, TOPIC_OVERVIEW_MAX_CHARACTERS } from '@diqier/stratagate'
 
@@ -220,7 +221,7 @@ describe('Graph canonical-name provenance compatibility (#113)', () => {
 })
 
 function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?: string; reasoning?: string; error?: string; finish?: 'stop' | 'max-tokens' | 'tool-calls'; toolArguments?: string; stall?: boolean; providerFinish?: 'error' | 'aborted'; usage?: { inputTokens: number; outputTokens: number; totalTokens: number } }>,
-  setup: { resolveModelInfo?: () => Promise<any>; timeoutMs?: number } = {}): {
+  setup: { resolveModelInfo?: () => Promise<any>; timeoutMs?: number; config?: Partial<ResolvedConfig>; liveMemoryModel?: () => MemoryModelSelection | undefined } = {}): {
   bridge: DshModelBridge
   session: Session
   calls: ReturnType<typeof vi.fn>
@@ -263,13 +264,60 @@ function modelBridge(responses: Array<{ text?: string; tool?: unknown; toolName?
     ingestSubagents: false,
     maxOutputTokens: 256,
     ...(setup.timeoutMs ? { structuredTaskTimeoutMs: setup.timeoutMs } : {}),
-  })
+    ...setup.config,
+  }, undefined, setup.liveMemoryModel)
   const session = {
     id: 'json-test',
     requestHeader: () => ({ config: { provider: 'test', model: 'test', reasoningEffort: 'low' as never } }),
   } as unknown as Session
   return { bridge, session, calls }
 }
+
+describe('independent memory model routing', () => {
+  const summary = { l0Title: 'ok', l0Tags: [], l1Summary: 'valid', l2Keypoints: [], shouldExtract: false }
+  const messages = [{ id: 'memory-source', role: 'user' as const, content: '记住项目使用 SQLite。', createdAt: '2026-11-01T00:00:00Z' }]
+
+  it('uses a custom route for session and detached work, and returns to session/default on explicit auto', async () => {
+    const { bridge, session, calls } = modelBridge(Array.from({ length: 5 }, () => ({ tool: summary })), {
+      config: { provider: 'legacy', model: 'old' },
+    })
+    await bridge.run(session, () => bridge.summarizer(messages))
+    expect(calls.mock.calls.at(-1)![0]).toMatchObject({ provider: 'legacy', model: 'old' })
+    bridge.setMemoryModel({ mode: 'custom', provider: 'cheap', model: 'fast' })
+    await bridge.run(session, () => bridge.summarizer(messages))
+    await bridge.runDetached('worker', () => bridge.summarizer(messages))
+    expect(calls.mock.calls.slice(1).every(([request]) => request.provider === 'cheap' && request.model === 'fast')).toBe(true)
+    expect(session.requestHeader()!.config).toMatchObject({ provider: 'test', model: 'test' })
+    expect(bridge.dreamingModelOptions()).toEqual({ provider: 'cheap', model: 'fast' })
+    bridge.setMemoryModel({ mode: 'auto' })
+    await bridge.run(session, () => bridge.summarizer(messages))
+    expect(calls.mock.calls.at(-1)![0]).toMatchObject({ provider: 'test', model: 'test' })
+    await bridge.runDetached('worker', () => bridge.summarizer(messages))
+    expect(calls.mock.calls.at(-1)![0]).toMatchObject({ provider: 'default-provider', model: 'default-model' })
+  })
+
+  it('reads live host settings on subsequent calls and never falls back after a custom provider failure', async () => {
+    let selection: MemoryModelSelection = { mode: 'custom', provider: 'cheap', model: 'fast' }
+    const { bridge, session, calls } = modelBridge([{ error: 'provider unavailable' }, { tool: summary }], { liveMemoryModel: () => selection })
+    await expect(bridge.run(session, () => bridge.summarizer(messages))).rejects.toThrow('provider unavailable')
+    expect(calls).toHaveBeenCalledTimes(1)
+    expect(calls.mock.calls[0]![0]).toMatchObject({ provider: 'cheap', model: 'fast' })
+    selection = { mode: 'custom', provider: 'other', model: 'quick' }
+    await bridge.run(session, () => bridge.summarizer(messages))
+    expect(calls.mock.calls[1]![0]).toMatchObject({ provider: 'other', model: 'quick' })
+  })
+
+  it('lists configured providers/models without exposing their other configuration', async () => {
+    const listModels = vi.fn(async () => [{ id: 'fast', name: 'Fast', apiKey: 'secret' }])
+    const { bridge } = modelBridge([])
+    const ctx = (bridge as any).ctx
+    ctx.llm.listProviders = () => [{ id: 'cheap', name: 'Cheap', apiKey: 'secret' }]
+    ctx.llm.listModels = listModels
+    expect(await bridge.memoryModelCatalog('cheap')).toEqual({ selection: { mode: 'auto' }, providers: [{ id: 'cheap', name: 'Cheap' }], models: [{ id: 'fast', name: 'Fast' }] })
+    await expect(bridge.memoryModelCatalog('missing')).rejects.toThrow('服务商当前不可用')
+    expect(listModels).toHaveBeenCalledTimes(1)
+  })
+})
 
 // Mocked model outputs exercise prompt/schema contracts and normalization;
 describe('Dreaming model actions', () => {

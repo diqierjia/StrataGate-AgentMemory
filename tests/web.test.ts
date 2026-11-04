@@ -179,6 +179,20 @@ async function request(url: string, method = 'GET', targetRuntime = runtime, bod
 }
 
 describe('StrataGate admin routes', () => {
+  it('serves the configured memory model catalog through a read-only endpoint', async () => {
+    const catalog = { selection: { mode: 'auto' }, providers: [{ id: 'cheap', name: 'Cheap' }], models: [{ id: 'fast', name: 'Fast' }] }
+    const adminMemoryModelCatalog = vi.fn(async () => catalog)
+    const target = { adminMemoryModelCatalog } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/models?provider=cheap', 'GET', target)
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual(catalog)
+    expect(adminMemoryModelCatalog).toHaveBeenCalledWith('cheap')
+    expect((await request('/api/stratagate/models', 'GET', target)).body).toEqual(catalog)
+    expect(adminMemoryModelCatalog).toHaveBeenLastCalledWith(undefined)
+    expect((await request('/api/stratagate/models?key=secret', 'GET', target)).status).toBe(400)
+    expect((await request('/api/stratagate/models', 'POST', target)).status).toBe(405)
+    expect(adminMemoryModelCatalog).toHaveBeenCalledTimes(2)
+  })
   it('uses sealed coordinates for 75 blocks with 10 pending and agrees with core through recovery and expansion', async () => {
     const failures = new Set([1, 6, 13, 22, 31, 40, 49, 58, 67, 75].map(String))
     const memory = StrataGate.inMemory({ blockTurnSize: 1, summarizer: async (messages) => {

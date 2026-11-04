@@ -186,10 +186,21 @@ export class DshDreamingSessions implements DreamingHost {
         return result as never
       },
     }))
+    // Snapshot before assembly and apply the same route to the durable request.
+    // A settings change during a call affects the next assembly, never its stream.
+    let assembledModel: ReturnType<typeof this.modelOptions> | undefined
     scoped.on('system-prompt/assemble', async (_assembly, _context, next) => {
+      const selected = this.modelOptions()
       const assembled = await next()
+      assembledModel = selected
       return { ...assembled, sections: [{ name: 'stratagate:dreaming', text: this.systemPrompt(), interpolate: false }], contexts: [],
-        tools: modelTools }
+        variables: { ...assembled.variables, provider: selected.provider, model: selected.model }, tools: modelTools }
+    })
+    scoped.on('agent/request', async (_payload, next) => {
+      const resolved = await next()
+      const selected = assembledModel ?? this.modelOptions()
+      const { reasoningEffort: _effort, ...request } = resolved
+      return { ...request, provider: selected.provider, model: selected.model }
     })
     scoped.on('agent/pre-step', async (_payload, next) => {
       await binding.accounting
