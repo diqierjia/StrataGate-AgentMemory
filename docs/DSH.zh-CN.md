@@ -298,7 +298,7 @@ Topic Projection 优先将全部本批 Event 完整分配到章节和小节。�
 
 运行时仍要求核心 DSH 包来自同一个版本；从 `0.2.0` 预发布版起，也要求 Session Format 包与核心版本一致。新版宿主的 Cordis 保持 `4.0.x`（从 `4.0.4` 起）、Schemastery 保持 `3.18.x`（从 `3.18.4` 起），早期宿主保留其原有依赖族。启动时先检查工具注册、系统提示词、模型调用和默认模型选择接口，再迁移会话或打开数据库；迁移模块加载后，先验证编解码器、迁移阶段和恢复校验入口。接口缺失时给出具体名称并停止操作。方法存在不保证行为完全兼容，迁移仍保留严格内容校验、原始代际不变与恢复收据；连续版本范围也不代表已实测其中每个版本。
 
-开发依赖固定为 DSH `0.2.0-rc.2`，保证核心检查可复现；当前宿主 smoke 版本记录在 `dshWorkshop.compatibility.currentVersion`（本文撰写时为 `0.2.1-rc.5`）。`dshWorkshop.compatibility.dshVersions` 记录历史回归宿主，不是安装白名单；安装兼容性由 peer 版本范围声明。Pull Request 检查最老边界、最后一个 0.1 宿主、0.2 迁移边界和当前宿主；普通发布只 smoke 当前宿主，完整历史矩阵每天运行，高风险发布可手动选择。可通过 `DSH_VERSION=目标版本 node scripts/run-dsh-compatibility.mjs` 验证范围内的新宿主。账号恢复后 GitHub CI 与 Roadmap 同步已恢复。
+开发依赖固定为 DSH `0.2.0-rc.2`，保证核心检查可复现；当前宿主 smoke 版本记录在 `dshWorkshop.compatibility.currentVersion`（本文撰写时为 `0.2.1-rc.5`）。`dshWorkshop.compatibility.dshVersions` 记录历史回归宿主，不是安装白名单；安装兼容性由 peer 版本范围声明。Pull Request 检查最老边界、最后一个 0.1 宿主和当前宿主；0.2 迁移边界因 Windows 测试对时序和文件锁敏感，保留在历史矩阵中。普通发布只 smoke 当前宿主，完整历史矩阵每天运行，高风险发布可手动选择。可通过 `DSH_VERSION=目标版本 node scripts/run-dsh-compatibility.mjs` 验证范围内的新宿主。账号恢复后 GitHub CI 与 Roadmap 同步已恢复。
 
 DSH 核心包现在都是由宿主提供的可选 peer。若某个 profile 曾在本地安装这些 peer，升级后、启动前运行 `dsh plugin --profile <名称> exec stratagate-dsh-repair`。该命令只会把已知 DSH 运行时包移动到 profile 内的 `.stratagate-runtime-backups` 并写入恢复收据，不会删除包或触碰会话数据。启动时 bootstrap 还会把 StrataGate 自身的 DSH 导入定向到宿主维护的共享模块回退目录，再检查实际解析出的 DSH 核心族；未知宿主会立即给出明确错误并停止，而不是让正文区域空白。对于受支持的 DSH `0.1.5`、`0.1.6`、`0.1.7` 和 `0.2.0`，含已废弃 `stratagate/memory-citations` 事件的 v0 会话会先复制成经过校验的 v1 代际，再由宿主继续其迁移链；原始 v0 日志不会被修改，并写入 `stratagate-legacy-citations-v1.json` 记录源/目标哈希和恢复说明。
 
