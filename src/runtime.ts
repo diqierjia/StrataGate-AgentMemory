@@ -95,6 +95,7 @@ const DRAIN_BASE_BACKOFF_MS = 2_000
 const DRAIN_MAX_BACKOFF_MS = 60_000
 const BACKGROUND_WORKER_INITIAL_DELAY_MS = 250
 const BACKGROUND_WORKER_INTERVAL_MS = 3_000
+const SURFACE_MAINTENANCE_MAX_ATTEMPTS = 3
 
 function graphProjectionCanRun(
   job: { status: string; attempts: number; nextRetryAt?: string | null },
@@ -346,6 +347,7 @@ interface SurfaceMaintenance {
   run?: Promise<void> | undefined
   failures: number
   checkpointLimit: number
+  blockedAt?: string
 }
 
 /**
@@ -1734,18 +1736,9 @@ export class StrataGateRuntime {
     if (endTurn === null || hostCompactionActive(session)) return false
     const sourceEventSeqs = sources ?? sealedSurfaceSeqs(session, endTurn, block)
     if (!sourceEventSeqs) return false
-    const start = sourceEventSeqs[0]
-    const end = sourceEventSeqs.at(-1)
-    if (start === undefined || end === undefined) return false
     const selected = selectCompressedBlockSurface(session, sourceEventSeqs, block, context)
     if (!selected) return false
-    session.append('user/message', createUserMessage({
-      content: [{ type: 'text', text: selected }],
-      source: dshMessageSource(),
-    }), {
-      surfaceOp: dshReplaceSurfaceOp(start, end),
-      sourceEventSeqs,
-    })
+    appendBlockSurface(session, block.id, selected, sourceEventSeqs)
     this.surfaceFlushPending.add(session)
     levels.set(block.id, checkpointLevel(selected) ?? context.level)
     return true
@@ -1811,13 +1804,7 @@ export class StrataGateRuntime {
       )
       if (!text) continue
       if (node.text !== text) {
-        session.append('user/message', createUserMessage({
-          content: [{ type: 'text', text }],
-          source: dshMessageSource(),
-        }), {
-          surfaceOp: dshReplaceSurfaceOp(node.seq, node.seq),
-          sourceEventSeqs: [node.seq],
-        })
+        appendBlockSurface(session, block.id, text, [node.seq])
         this.surfaceFlushPending.add(session)
         changed = true
       }
@@ -1842,12 +1829,14 @@ export class StrataGateRuntime {
     const node = current.get(block.id)
     const endTurn = node ? null : dshTurnAtBlockEnd(session, block)
     const seqs = node ? [node.seq] : endTurn === null ? null : sealedSurfaceSeqs(session, endTurn, block)
-    if (!seqs?.length) return { status: 'blocked', reason: 'source-unavailable', message: '这段历史已被整理，无法在这里切换层级。可以让助手查找这段历史。' }
+    if (!seqs?.length || !safeBlockSurfaceRange(session, block.id, seqs)) return {
+      status: 'blocked', reason: 'source-unavailable',
+      message: '这段历史已被整理，或夹有需要保留的系统、工具或插件内容，无法在这里切换层级。可以让助手查找这段历史。',
+    }
     const relief: SurfaceRelief[] = []
     const window = session.requestContext?.()?.contextWindow
     if (node?.text !== text && typeof window === 'number' && Number.isInteger(window) && window > 0) {
-      const start = seqs[0]!
-      const end = seqs.at(-1)!
+      const replaced = new Set(seqs)
       let before = 0
       let removed = 0
       for (const seq of session.surface.nodes) {
@@ -1855,7 +1844,7 @@ export class StrataGateRuntime {
         const message = event && session.deriveEventMessage(event)
         const tokens = message ? estimateTokens(JSON.stringify(message)) : 0
         before += tokens
-        if (seq >= start && seq <= end) removed += tokens
+        if (replaced.has(seq)) removed += tokens
       }
       const header = session.requestHeader?.()
       const reserved = (header?.config.maxTokens ?? 0) + (header?.tools?.length ? estimateTokens(JSON.stringify(header.tools)) : 0)
@@ -1871,7 +1860,7 @@ export class StrataGateRuntime {
           && candidate.lastLiftedBy !== 'user').sort((a, b) => a.sequence - b.sequence)
         for (const candidate of candidates) {
           const checkpoint = current.get(candidate.id)
-          if (!checkpoint || checkpoint.seq >= start && checkpoint.seq <= end) continue
+          if (!checkpoint || replaced.has(checkpoint.seq)) continue
           const level = checkpointLevel(checkpoint.text)
           if (level === undefined || level === 0) continue
           const original = this.cachedCheckpointTokens(session, checkpoint)
@@ -1920,20 +1909,13 @@ export class StrataGateRuntime {
     }
     const { text, seqs, relief } = plan
     for (const replacement of relief) {
-      session.append('user/message', createUserMessage({
-        content: [{ type: 'text', text: replacement.text }], source: dshMessageSource(),
-      }), { surfaceOp: dshReplaceSurfaceOp(replacement.seq, replacement.seq), sourceEventSeqs: [replacement.seq] })
+      appendBlockSurface(session, replacement.id, replacement.text, [replacement.seq])
       levels.set(replacement.id, replacement.level)
       this.surfaceFlushPending.add(session)
     }
     const node = currentBlockSurfaceMessages(session).get(block.id)
     if (node?.text !== text) {
-      const start = seqs[0]
-      const end = seqs.at(-1)
-      if (start === undefined || end === undefined) return false
-      session.append('user/message', createUserMessage({
-        content: [{ type: 'text', text }], source: dshMessageSource(),
-      }), { surfaceOp: dshReplaceSurfaceOp(start, end), sourceEventSeqs: seqs })
+      appendBlockSurface(session, block.id, text, seqs)
       this.surfaceFlushPending.add(session)
     }
     levels.set(block.id, context.level)
@@ -2118,12 +2100,16 @@ export class StrataGateRuntime {
     }
     state.dirty = true
     state.generation += 1
+    if (state.blockedAt !== undefined && state.blockedAt !== surfaceMaintenanceInput(state)) {
+      delete state.blockedAt
+      state.failures = 0
+    }
     this.scheduleSurfaceMaintenance(state)
   }
 
   private scheduleSurfaceMaintenance(state: SurfaceMaintenance, delay = 25): void {
     if (this.closed || this.surfaceMaintenance.get(String(state.session.id)) !== state
-      || !state.dirty || state.busy || state.timer || state.run || this.surfaceAssemblyReaders.get(state.session)) return
+      || !state.dirty || state.blockedAt !== undefined || state.busy || state.timer || state.run || this.surfaceAssemblyReaders.get(state.session)) return
     state.timer = setTimeout(() => {
       state.timer = undefined
       void this.runSurfaceMaintenance(state.session)
@@ -2138,7 +2124,7 @@ export class StrataGateRuntime {
     if (state.run) return state.run
     if (state.timer) clearTimeout(state.timer)
     state.timer = undefined
-    if (!state.dirty || state.busy || this.surfaceAssemblyReaders.get(session) || hostTurnActive(session) || hostCompactionActive(session)) return
+    if (!state.dirty || state.blockedAt !== undefined || state.busy || this.surfaceAssemblyReaders.get(session) || hostTurnActive(session) || hostCompactionActive(session)) return
     const generation = state.generation
     const run = (async () => {
       // Finish only this conversation's queued ingestion, then calculate from live state.
@@ -2176,6 +2162,14 @@ export class StrataGateRuntime {
       if (error instanceof StorageConflictError) {
         // Retry against the durable head, never replay an old mutation plan.
         await state.memory.reloadFromStorage().catch((reloadError: unknown) => this.onIngestError(reloadError))
+      }
+      // A rejected operation cannot become valid by replaying it forever. Keep
+      // the work pending, but wake it only when its actual inputs have changed.
+      if (state.generation !== generation) {
+        // An older in-flight save must not suspend newly dirtied work.
+        state.failures = 0
+      } else if (surfaceFailureIsPermanent(error) || state.failures >= SURFACE_MAINTENANCE_MAX_ATTEMPTS) {
+        state.blockedAt = surfaceMaintenanceInput(state)
       }
       this.onIngestError(error)
     }).finally(() => {
@@ -4009,8 +4003,11 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
         start: open.start,
         end: event.seq,
         nodes: currentSurface.filter((seq) => {
-          if (seq > open!.start && seq < event.seq) return true
           const current = session.eventAt(seq)
+          // The host assembles system/developer messages inside turns too.
+          // They are live instructions, never raw conversation owned by a Block.
+          if (!replaceableBlockEvent(current, block.id)) return false
+          if (seq > open!.start && seq < event.seq) return true
           return current?.type === 'tool/result'
             && current.surfaceOp !== 'append'
             && current.sourceEventSeqs?.some((source) => source > open!.start && source < event.seq)
@@ -4044,7 +4041,50 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
   const startIndex = currentSurface.indexOf(start)
   const endIndex = currentSurface.indexOf(end)
   if (startIndex < 0 || endIndex < startIndex) return null
-  return currentSurface.slice(startIndex, endIndex + 1)
+  const range = currentSurface.slice(startIndex, endIndex + 1)
+  // Excluding protected nodes from the candidate list is insufficient: a
+  // native replacement shadows the WHOLE contiguous range between its ends.
+  return safeBlockSurfaceRange(session, block.id, range) ? range : null
+}
+
+function replaceableBlockEvent(event: SessionEvent | undefined, blockId: string): boolean {
+  if (event?.type === 'assistant/message' || event?.type === 'tool/result') return true
+  return event?.type === 'user/message'
+    && (event.data.source.kind === 'user' || blockSurfaceMessage(event)?.id === blockId)
+}
+
+/** Shared write boundary for sealing, decay, user selection and capacity relief. */
+function safeBlockSurfaceRange(session: Session, blockId: string, seqs: readonly SessionSeq[]): boolean {
+  if (seqs.length === 0) return false
+  const start = session.surface.nodes.indexOf(seqs[0]!)
+  return start >= 0 && seqs.every((seq, index) => session.surface.nodes[start + index] === seq
+    && replaceableBlockEvent(session.eventAt(seq), blockId))
+}
+
+function appendBlockSurface(session: Session, blockId: string, text: string, seqs: SessionSeq[]): void {
+  if (!safeBlockSurfaceRange(session, blockId, seqs)) {
+    throw Object.assign(new Error('StrataGate surface replacement no longer owns its complete source range'), { retryable: false })
+  }
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text }], source: dshMessageSource(),
+  }), {
+    surfaceOp: dshReplaceSurfaceOp(seqs[0]!, seqs.at(-1)!), sourceEventSeqs: seqs,
+  })
+}
+
+function surfaceMaintenanceInput(state: SurfaceMaintenance): string {
+  return `${state.memory.storageRevision}:${surfaceCheckpointLimit(state.session)}:${state.session.surface.nodes.join(',')}`
+}
+
+function surfaceFailureIsPermanent(error: unknown): boolean {
+  const seen = new Set<unknown>()
+  for (let current = error; current && typeof current === 'object' && !seen.has(current);) {
+    seen.add(current)
+    const failure = current as { retryable?: unknown; message?: unknown; cause?: unknown }
+    if (failure.retryable === false || typeof failure.message === 'string' && /^surface replace:/.test(failure.message)) return true
+    current = failure.cause
+  }
+  return false
 }
 
 function checkpointLevel(text: string): BlockLevel | undefined {
