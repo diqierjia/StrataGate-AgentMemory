@@ -1,0 +1,5 @@
+# Local validation databases and runtime state must never enter the package.
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.log

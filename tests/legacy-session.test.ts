@@ -10,6 +10,7 @@ import {
   migrateLegacyCitationSessions,
   prepareLegacyCitationGeneration,
   scanZstdFrames,
+  assertDshMigrationContract,
 } from '../src/legacy-session.js'
 
 const fixturePath = join(import.meta.dirname, 'fixtures', 'legacy-session-v0', 'session.jsonl')
@@ -39,6 +40,24 @@ function conversationText(events: readonly any[]): string[] {
 }
 
 describe('legacy stratagate/memory-citations migration', () => {
+  it.each([
+    ['releasedV0SessionFormatCodec', 'createDecoder'],
+    ['releasedV1SessionFormatCodec', 'decodeHeader'],
+    ['releasedV1SessionFormatCodec', 'createDecoder'],
+    ['sessionFormatV0ToV1', 'migrateHeader'],
+    ['sessionFormatV0ToV1', 'createStage'],
+    ['sessionFormatV0ToV1', 'validateTargetHeader'],
+  ] as const)('refuses a changed %s.%s contract before migration', (name, method) => {
+    const changed = { ...modules, [name]: { ...modules[name], [method]: undefined } }
+    expect(() => assertDshMigrationContract(changed)).toThrow(`${name}.${method}`)
+  })
+
+  it('requires the released artifact validator', () => {
+    expect(() => assertDshMigrationContract({ ...modules, restoreReleasedV1Artifact: undefined }))
+      .toThrow('sessionFormat.restoreReleasedV1Artifact')
+    expect(() => assertDshMigrationContract(modules)).not.toThrow()
+  })
+
   it('validates the published V1 generation without changing conversation content', async () => {
     const source = platformFixture(await readFile(fixturePath))
     const originalHash = digest(source)

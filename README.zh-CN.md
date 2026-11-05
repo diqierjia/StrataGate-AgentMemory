@@ -4,15 +4,17 @@
 
 # StrataGate
 
+项目源码、版本发布和问题反馈请前往 [GitHub](https://github.com/diqierjia/StrataGate-AgentMemory)；[Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory) 保留为同步仓库。
+
 ### 近期对话保留细节，远期记忆逐渐简化。
 
 StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细节，较早对话逐渐简化，需要时可以找回原文；重要信息整理为长期事件，知识图谱表达当前状态，主题目录帮助 Agent 了解记过哪些内容，并按需查找来源。
 
 <p align="center">
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml"><img src="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/stargazers"><img src="https://img.shields.io/github/stars/diqierjia/StrataGate-AgentMemory?style=social&amp;label=Stars" alt="GitHub stars" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-08-16%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD&amp;color=blue" alt="npm 累计下载量（截至 2026-10-26）" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-09-27%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 2026-09-27 至 2026-10-26 下载量" /></a>
 </p>
 
 [English](README.md) · [DeepSeek Harness 插件说明](docs/DSH.zh-CN.md) · [架构说明](docs/ARCHITECTURE.md) · [完整评测](docs/EVALUATION.md)
@@ -23,43 +25,24 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 
 ---
 
-<div align="center">
+## 社区
 
-<h3 align="center">社区与下载</h3>
+可在 [dshfind](https://dshfind.com) 浏览本插件及其他 DeepSeek Harness 插件。
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <a href="https://dshfind.com/zh/plugins/diqierjia/StrataGate-AgentMemory?ref=badge">
-        <img src="https://dshfind.com/api/card/diqierjia/StrataGate-AgentMemory?lang=zh" alt="StrataGate 的 dshfind 收录、评分与累计下载" width="350" />
-      </a>
-    </td>
-    <td align="center">
-      <strong>npm 下载统计</strong><br /><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD" alt="npm 累计下载量" /></a><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 近 30 天下载量" /></a>
-    </td>
-  </tr>
-</table>
-
-<p align="center">
-  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome DSH Plugin" /></a>
-  <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E6%AC%A2%E8%BF%8E%E8%B4%A1%E7%8C%AE-brightgreen.svg" alt="欢迎贡献" /></a>
-</p>
-
-</div>
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![欢迎贡献](https://img.shields.io/badge/%E6%AC%A2%E8%BF%8E%E8%B4%A1%E7%8C%AE-brightgreen.svg)](CONTRIBUTING.zh-CN.md)
 
 ---
 
 ## 为什么选择 StrataGate？
 
-1. **短期记忆：随对话推进逐渐模糊，需要时重新展开。**
+1. **会话记忆：随对话推进逐渐模糊，需要时重新展开。**
 
    (1) **近期详细，远期简略。** 同一段对话保存为 L0–L5 六种详细程度的视图。随着后续对话积累，较早的记忆逐渐从完整对话变为关键事实、简短摘要和标题索引，减少历史内容对上下文的占用。→ [分层记忆](#layered-memory)
 
    (2) **展示变简，原始记录保留。** 完整的 L5 原始消息与工具记录始终保存。需要核对细节时，Agent 可以按需展开，找回当时的原话和上下文。→ [分层记忆](#layered-memory)
 
-   ![短期记忆动画：Block 从 L5 逐渐简化到 L0，留在上下文中，并在需要时展开](docs/assets/short-term-memory-explainer-zh.gif)
+   ![会话记忆动画：Block 从 L5 逐渐简化到 L0，留在上下文中，并在需要时展开](docs/assets/short-term-memory-explainer-zh.gif)
 
 2. **长期记忆：事件保留历史，图谱整理现状，主题目录帮助查找。**
 
@@ -93,7 +76,7 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 dsh plugin --profile web add stratagate-dsh
 ```
 
-支持整个 DSH `0.2.0` 版本族：全部 Alpha、Beta、RC 和正式版（`>=0.2.0-0 <0.2.1-0`），同时保留此前支持的宿主版本。同属 `0.2.0` 的新版本无需因版本声明而等待插件更新。
+支持的 DSH 版本为 `0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0`，覆盖完整的 `0.2.x` 版本族及其预发布版。关键宿主接口验证完成前，不支持 DSH `0.3.x`。
 
 重启该 profile，之后照常使用 DSH 即可。StrataGate 会自动记录主 Agent 已完成的对话，在后台生成可搜索的记忆，并在 **DSH 设置 → StrataGate-AgentMemory** 中提供记忆界面。
 
@@ -128,18 +111,22 @@ DSH_HOME/stratagate/memory.db
 
 | 机制 | 变化的内容 | 保留的内容 |
 | --- | --- | --- |
-| 短期记忆简化 | 旧 Block 默认使用哪个 L0–L5 视图 | L5 原始对话与工具记录 |
+| 会话记忆简化 | 旧 Block 默认使用哪个 L0–L5 视图 | L5 原始对话与工具记录 |
 | 长期权重衰减 | Event 在后续召回中的优先级 | Event 历史及其来源 |
 
 两者都随对话进度变化：短期按就绪 Block 距离计算，长期按对话轮次计算。放置几天本身不会触发这两种衰减。
 
+### 短期记忆：最近三天的工作笔记
+
+Agent 自己维护工作进展、阶段结果、有效失败经验、阻塞和下一步，每个记忆空间每天一份 Markdown。最近三个有笔记的日期会注入新会话；可在“短期记忆”页只读查看近期及更早笔记。文件位于 `<数据库所在目录>/daily/<namespace 安全编码>/YYYY-MM-DD.md`（当前安全编码为 `ns-` 加 namespace 的 SHA-256 小写十六进制）。设置 `dailyNotesEnabled: false` 可关闭写入和注入，已有笔记保留。
+
 <a id="layered-memory"></a>
 
-### 1. 短期记忆：随对话推进逐渐简化，需要时重新展开
+### 1. 会话记忆：随对话推进逐渐简化，需要时重新展开
 
 近期讨论通常需要保留完整细节，较早的对话则可以先以简短形式留在上下文中。StrataGate 为同一段对话保存多种详细程度的视图，并随着后续对话积累，逐渐减少旧对话默认呈现的内容。
 
-![图 2：StrataGate 短期记忆——L0–L5 分层视图、展示衰减与按需展开](docs/assets/41fc676096d0a13337a1c03aaf8f499b.png)
+![图 2：StrataGate 会话记忆——L0–L5 分层视图、展示衰减与按需展开](docs/assets/stratagate-short-term-memory-layers.png)
 
 **同一段对话，保存为六种详细程度。**
 
@@ -210,7 +197,7 @@ Block 的展示变化由指数衰减控制：
 
 ### 2. 长期记忆：事件保留历史，图谱整理现状，主题目录帮助查找
 
-短期记忆保留讨论上下文，长期记忆把有后续用途的信息整理出来。下面用项目从 npm 改用 pnpm 的示例，说明三种视图如何分工：
+会话记忆保留讨论上下文，长期记忆把有后续用途的信息整理出来。下面用项目从 npm 改用 pnpm 的示例，说明三种视图如何分工：
 
 ![图 3：长期记忆——Event 保留选型历史，Graph 展示当前使用 pnpm 和 CI 待验证的状态，Topic 整理主题脉络并链接来源](docs/assets/stratagate-long-term-memory-views-zh.png)
 
@@ -322,7 +309,7 @@ Block 的展示变化由指数衰减控制：
 
 长期记忆也会随对话推进而衰减。这里变化的是 Event 的权重，它参与后续召回和排序；与短期 Block 不同，Event 不会因此逐级切换 L0–L5 展示层。
 
-![图 4：StrataGate 长期记忆权重——自然衰减、仅检索不强化与采用后强化](docs/assets/cecc9d191a4b9bf22a479623e2ebdc1d.png)
+![图 4：StrataGate 长期记忆权重——自然衰减、仅检索不强化与采用后强化](docs/assets/stratagate-long-term-memory-weight.png)
 
 未被用于答案的 Event 权重随对话轮次逐渐降低，可能影响后续召回的排序，但历史记录仍然保留。
 
@@ -421,7 +408,7 @@ LoCoMo 中有一道题询问 Caroline 在什么时候进行了学校演讲。检
 
 两边使用相同的问题、顺序、答案模型、Judge 模型、评审提示词、解析器和评审次数，并分别重新构建记忆。记忆抽取、检索实现、embedding 使用方式和回答上下文存在差异，因此这里比较的是两套完整系统配置。
 
-这组结果仅覆盖 `conv-26`，不代表完整 LoCoMo 成绩，也不能单独证明短期记忆衰减、知识图谱或证据门中某一项机制带来的收益。各组件的独立作用仍需通过消融实验检验。
+这组结果仅覆盖 `conv-26`，不代表完整 LoCoMo 成绩，也不能单独证明会话记忆衰减、知识图谱或证据门中某一项机制带来的收益。各组件的独立作用仍需通过消融实验检验。
 
 完整协议、逐题结果及评审波动见 [评测文档](docs/EVALUATION.md)，汇总数据见 [机器可读评测结果](benchmarks/locomo-conv26-r8-final.json)。
 
@@ -495,13 +482,11 @@ npm run build
 
 欢迎各种形式的贡献：修复问题、完善文档、增加集成，或探索更好的记忆与检索方案都可以。
 
-请先阅读 [`CONTRIBUTING.zh-CN.md`](CONTRIBUTING.zh-CN.md)，其中包含 monorepo 开发环境、检查与测试命令、适合参与的方向，以及提交 Pull Request 的建议。如果还不确定一个想法是否适合项目，建议先[创建 Issue](https://github.com/diqierjia/StrataGate-AgentMemory/issues)，再投入较大的改动。
+请先阅读 [`CONTRIBUTING.zh-CN.md`](CONTRIBUTING.zh-CN.md)，其中包含 monorepo 开发环境、检查与测试命令、适合参与的方向，以及提交 Pull Request 的建议。如果还不确定一个想法是否适合项目，建议先[创建 Issue](https://gitee.com/diqier4123/StrataGate-AgentMemory/issues)，再投入较大的改动。
 
 ## 贡献者
 
-<a href="https://github.com/diqierjia/StrataGate-AgentMemory/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=diqierjia/StrataGate-AgentMemory" alt="StrataGate 贡献者" />
-</a>
+[在 Gitee 查看贡献者](https://gitee.com/diqier4123/StrataGate-AgentMemory/contributors?ref=main)。
 
 ## 许可证
 

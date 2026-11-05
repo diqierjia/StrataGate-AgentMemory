@@ -9,10 +9,9 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
 const version = process.env.DSH_VERSION
-const supported020 = version && /^0\.2\.0(?:[-+]|$)/.test(version)
-  && evaluatePluginCompatibility(manifest, {}, version) === undefined
-if (!version || (!manifest.dshWorkshop.compatibility.dshVersions.includes(version) && !supported020)) {
-  throw new Error(`DSH_VERSION must be a recorded verification host (${manifest.dshWorkshop.compatibility.dshVersions.join(', ')}) or any DSH 0.2.0 version (>=0.2.0-0 <0.2.1-0)`)
+const supported = version && evaluatePluginCompatibility(manifest, {}, version) === undefined
+if (!version || (!manifest.dshWorkshop.compatibility.dshVersions.includes(version) && !supported)) {
+  throw new Error('DSH_VERSION must be a recorded legacy verification host or satisfy the declared DSH compatibility range below 0.3.0-0; prereleases within that range are included')
 }
 
 function run(command, args, cwd, env = {}) {

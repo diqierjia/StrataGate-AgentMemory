@@ -177,7 +177,8 @@ describe('read-only Topic Directory admin data', () => {
     directory.retry(failedJob, snapshot.events, new Date(clock).toISOString()); snapshot.memoryTopicState = directory.snapshot();
     expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'running', failedEvents: 0,
       sectionBackfill: { pendingRelations: 1, failedRelations: 0 } });
-    const contextA = directory.claim(snapshot.events, new Date(clock).toISOString(), 'bootstrap')!;
+    expect(directory.claim(snapshot.events, new Date(clock).toISOString(), 'bootstrap')).toBeNull();
+    const contextA = directory.claim(snapshot.events, new Date(clock).toISOString(), 'incremental')!;
     directory.complete(contextA.jobId, repair(contextA), snapshot.events, new Date(clock).toISOString());
     snapshot.memoryTopicState = directory.snapshot();
     expect((await request(fakeRuntime(snapshot))).body.bootstrap).toMatchObject({ status: 'completed', total: 1, completed: 1, failedEvents: 0,

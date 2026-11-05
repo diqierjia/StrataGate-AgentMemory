@@ -1,6 +1,6 @@
 {
   "name": "stratagate-dsh",
-  "version": "0.3.7",
+  "version": "0.3.40",
   "description": "Recent conversations stay vivid. Older ones fade into summaries, not oblivion. StrataGate gives DeepSeek Harness six-layer, time-decaying memory, while lasting events and relationships settle into a knowledge graph. Bring your memories from other AIs with you—no need to start over.",
   "type": "module",
   "main": "./dist/index.js",
@@ -25,7 +25,13 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh-CN.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.zh-CN.md",
     "docs",
+    "benchmarks/locomo-conv26-r8-final.json",
+    "packages/core/examples/basic.ts",
+    "packages/core/src/blocks.ts",
+    "packages/core/src/weights.ts",
     "screenshots.json",
     "CHANGELOG.md",
     "LICENSE"
@@ -92,9 +98,9 @@
     "url": "git+https://github.com/diqierjia/StrataGate-AgentMemory.git"
   },
   "bugs": {
-    "url": "https://github.com/diqierjia/StrataGate-AgentMemory/issues"
+    "url": "https://gitee.com/diqier4123/StrataGate-AgentMemory/issues"
   },
-  "homepage": "https://github.com/diqierjia/StrataGate-AgentMemory#readme",
+  "homepage": "https://gitee.com/diqier4123/StrataGate-AgentMemory",
   "license": "MIT",
   "dshWorkshop": {
     "schema": "omdsh-workshop-package/v1",
@@ -151,21 +157,22 @@
     "access": "public"
   },
   "engines": {
+    "dsh": "0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0",
     "node": "^22.19.0 || >=24.0.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.2 || ~4.0.4",
-    "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-llm": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-native-command": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-session": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-session-format": "0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-session-format-catalog": "0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-session-format-v0-to-v1": "0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-settings": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
-    "@deepseek-ai/dsh-tools": "0.1.2-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1 || >=0.1.7-rc.1 <0.1.8-0 || >=0.2.0-0 <0.2.1-0",
+    "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-native-command": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-session": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-session-format": ">=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-session-format-catalog": ">=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-session-format-v0-to-v1": ">=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-settings": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-tools": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
     "@deepseek-ai/schemastery": "3.18.2 || ~3.18.4"
   },
   "peerDependenciesMeta": {
@@ -226,6 +233,7 @@
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/schemastery": "3.18.4",
     "@types/node": "^22.0.0",
+    "@types/semver": "^7.8.0",
     "cytoscape": "^3.34.1",
     "cytoscape-fcose": "^2.2.0",
     "esbuild": "^0.28.2",
@@ -236,7 +244,8 @@
   },
   "dependencies": {
     "ngraph.graph": "^20.1.2",
-    "ngraph.leiden": "^0.3.0"
+    "ngraph.leiden": "^0.3.0",
+    "semver": "^7.8.5"
   },
   "directories": {
     "doc": "docs",

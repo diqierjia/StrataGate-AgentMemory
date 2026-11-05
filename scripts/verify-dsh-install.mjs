@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
+import { satisfies } from 'semver'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
@@ -54,7 +55,7 @@ function seedSessions(dshHome) {
   }
 }
 
-async function smokeWeb(cli, root, env, version) {
+async function smokeWeb(cli, root, env, version, sidebarCheck) {
   const output = []
   const child = spawn(process.execPath, [cli, '--profile', 'web', '--port', '0', '--no-open'], {
     cwd: root,
@@ -104,7 +105,8 @@ async function smokeWeb(cli, root, env, version) {
     assert(overviewResponse.status === 200, `${version}: StrataGate admin probe returned HTTP ${overviewResponse.status}\n${output.join('').replace(/token=[A-Za-z0-9_-]+/g, 'token=<redacted>')}`)
     const overview = await overviewResponse.json()
     assert(overview?.readonly === true, `${version}: StrataGate admin probe omitted its read-only contract`)
-    assert(overview?.pluginVersion === expectedPluginVersion, `${version}: StrataGate admin probe reported plugin ${overview?.pluginVersion ?? '<missing>'}`)
+    const checkedPluginVersion = sidebarCheck?.pluginVersion ?? expectedPluginVersion
+    assert(overview?.pluginVersion === checkedPluginVersion, `${version}: StrataGate admin probe reported plugin ${overview?.pluginVersion ?? '<missing>'}`)
     assert(Array.isArray(overview?.namespaces), `${version}: StrataGate admin probe omitted namespaces`)
 
     const call = async (method, args) => {
@@ -119,6 +121,24 @@ async function smokeWeb(cli, root, env, version) {
       assert(envelope.rpcId === rpcId, `${version}: ${method} returned a mismatched RPC id`)
       assert(envelope.result?.ok === true, `${version}: ${method} failed: ${JSON.stringify(envelope.result?.error)}\n${output.join('').replace(/token=[A-Za-z0-9_-]+/g, 'token=<redacted>')}`)
       return envelope.result.value
+    }
+
+    if (sidebarCheck) {
+      const settings = await call('settings/describe', {})
+      const section = settings.namespaces.find(section => section.ns === 'stratagate-memory')
+      assert(settings.writable && section, `${version}: writable StrataGate settings were not exposed`)
+      assert(section.value.showSidebarEntry === sidebarCheck.expected, `${version}: sidebar preference did not survive restart: ${section.value.showSidebarEntry}`)
+      if (sidebarCheck.write !== undefined) {
+        const saved = await call('settings/mutate', {
+          ns: section.ns,
+          ops: [{ op: 'set', path: ['showSidebarEntry'], value: sidebarCheck.write }],
+          expectedRevision: section.revision,
+        })
+        assert(saved.value.showSidebarEntry === sidebarCheck.write, `${version}: sidebar preference write was not applied`)
+        const probe = await fetch(`${origin}/api/stratagate/overview`, { headers: { cookie } })
+        assert(probe.ok && (await probe.json()).pluginVersion === checkedPluginVersion, `${version}: sidebar preference write disabled the memory service`)
+      }
+      console.log(`Verified sidebar setting on DSH ${version}: loaded ${sidebarCheck.expected}, saved ${sidebarCheck.write ?? 'unchanged'}, memory service available.`)
     }
 
     const listed = await call('session/list', { _request: {} })
@@ -201,7 +221,7 @@ try {
     // The prerelease CLI uses caret ranges. Pin its complete internal tree to
     // the version StrataGate actually supports, so a later rc cannot silently
     // change the host under this compatibility check.
-    const hostManifest = JSON.parse(readFileSync(join(packageRoot, 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8'))
+    const hostManifest = JSON.parse(run(npm, ['view', `@deepseek-ai/dsh@${version}`, '--json'], root))
     const internalVersion = version === '0.1.5-rc.1' ? '0.1.5-rc.2' : version
     const localInternalNames = readdirSync(join(packageRoot, 'node_modules', '@deepseek-ai'))
       .filter(name => name.startsWith('dsh-'))
@@ -213,9 +233,9 @@ try {
     const overrides = Object.fromEntries([...new Set([...Object.keys(hostManifest.dependencies ?? {}), ...localInternalNames, ...legacyTransitiveNames])]
       .filter(name => name.startsWith('@deepseek-ai/dsh-'))
       .map(name => [name, internalVersion]))
-    const modernHost = /^(?:0\.1\.7|0\.2\.0)(?:[-+]|$)/.test(version)
-    overrides['@deepseek-ai/cordis'] = modernHost ? '4.0.4' : '4.0.2'
-    overrides['@deepseek-ai/schemastery'] = modernHost ? '3.18.4' : '3.18.2'
+    const modernHost = satisfies(version, '>=0.1.7-rc.1', { includePrerelease: true })
+    overrides['@deepseek-ai/cordis'] = modernHost ? hostManifest.dependencies['@deepseek-ai/cordis'] : '4.0.2'
+    overrides['@deepseek-ai/schemastery'] = modernHost ? hostManifest.dependencies['@deepseek-ai/schemastery'] : '3.18.2'
     const freshManifestPath = join(root, 'package.json')
     const freshManifest = JSON.parse(readFileSync(freshManifestPath, 'utf8'))
     freshManifest.overrides = overrides
@@ -277,7 +297,22 @@ try {
 
     const config = run(process.execPath, [cli, '--profile', 'web', '--dump-config'], root, dshEnv)
     assert(config.includes("sessionRoot: !!js dshHomePath('sessions')"), `${version}: sessionRoot was not wired to the host DSH_HOME`)
-    await smokeWeb(cli, root, dshEnv, version)
+    const verifySidebar = process.env.STRATAGATE_VERIFY_SIDEBAR === '1'
+    await smokeWeb(cli, root, dshEnv, version, verifySidebar ? { expected: false, write: true } : undefined)
+    if (verifySidebar) {
+      await smokeWeb(cli, root, dshEnv, version, { expected: true, write: false })
+      await smokeWeb(cli, root, dshEnv, version, { expected: false })
+      if (process.env.STRATAGATE_VERIFY_SIDEBAR_BASELINE) {
+        const baseline = resolve(packageRoot, process.env.STRATAGATE_VERIFY_SIDEBAR_BASELINE)
+        assert(existsSync(baseline), `Sidebar upgrade baseline does not exist: ${baseline}`)
+        run(process.execPath, [cli, 'plugin', '--profile', 'web', 'add', baseline], root, dshEnv)
+        await smokeWeb(cli, root, dshEnv, version, { expected: false, write: true, pluginVersion: process.env.STRATAGATE_VERIFY_SIDEBAR_BASELINE_VERSION })
+        run(process.execPath, [cli, 'plugin', '--profile', 'web', 'add', tarball], root, dshEnv)
+        await smokeWeb(cli, root, dshEnv, version, { expected: true, write: false })
+        await smokeWeb(cli, root, dshEnv, version, { expected: false })
+        console.log(`Verified sidebar upgrade to ${expectedPluginVersion}: saved on/off choices preserved.`)
+      }
+    }
     if (version === '0.1.6-alpha.1' || modernHost) {
       await verifyPluginFailureIsDetected(cli, root, dshEnv, version, profile)
     }

@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ResolvedConfig } from '../src/config.js'
 import type { DshModelBridge } from '../src/llm.js'
 import { feedbackDraftUrl, StrataGateRuntime } from '../src/runtime.js'
-import { registerMemoryTools } from '../src/tools.js'
+import { AGENT_FEEDBACK_ENABLED, registerMemoryTools } from '../src/tools.js'
 
 const fakeModels = {
   run: async <T>(_session: Session, operation: () => Promise<T>): Promise<T> => operation(),
@@ -31,6 +31,11 @@ const session = {
   snapshotEvents: () => [],
   eventAt: () => undefined,
 } as unknown as Session
+
+async function enableGraph(runtime: StrataGateRuntime) {
+  const preview = await runtime.adminGraphControl('preview') as { token: string }
+  await runtime.adminGraphControl('enable', preview.token)
+}
 
 function turnEvents(turn = 1): SessionEvent[] {
   const offset = (turn - 1) * 4
@@ -122,6 +127,7 @@ describe('DSH runtime ingestion', () => {
     })
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database, namespace, blockTurnSize: 1,
         graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
       })
@@ -152,6 +158,7 @@ describe('DSH runtime ingestion', () => {
         graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
       } as unknown as DshModelBridge)
       try {
+        await enableGraph(runtime)
         await vi.waitFor(async () => {
           const snapshot = await runtime.adminSnapshot(namespace)
           expect(snapshot?.graphProjectionJobs).toEqual([
@@ -224,6 +231,7 @@ describe('DSH runtime ingestion', () => {
         },
       } as unknown as DshModelBridge)
       try {
+        await enableGraph(runtime)
         await (runtime as unknown as { runBackgroundNamespace: (value: string) => Promise<void> })
           .runBackgroundNamespace(namespace)
         await new Promise((resolve) => setTimeout(resolve, 350))
@@ -299,6 +307,7 @@ describe('DSH runtime ingestion', () => {
     const namespace = 'dsh:project:terminal-graph'
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database, namespace, blockTurnSize: 1,
         summarizer: async () => ({ l0Title: 'ready', l0Tags: [], l1Summary: 'ready', l2Keypoints: [], shouldExtract: false }),
         graphProjector: async () => ({ reason: 'unused', nodes: [], edges: [] }),
@@ -340,7 +349,7 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
-  it('persists local feedback drafts and enforces the five-day proactive prompt cooldown', async () => {
+  it('persists local drafts while keeping background error signals quiet', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-'))
     const database = join(directory, 'memory.db')
     const config = {
@@ -362,7 +371,7 @@ describe('DSH runtime ingestion', () => {
         submitted: false,
         namespace: first.namespaceFor(session),
         feedbackUrl,
-        message: `反馈草稿已经准备好了，还没有提交到 GitHub。\n\n[打开反馈草稿](${feedbackUrl})`,
+        message: `反馈草稿已保存在本地，邮件尚未发送。\n\n[打开反馈草稿](${feedbackUrl})`,
       })
       expect(prepared).not.toHaveProperty('draft')
       expect(feedbackUrl).toContain('namespace=' + encodeURIComponent(first.namespaceFor(session)))
@@ -371,7 +380,7 @@ describe('DSH runtime ingestion', () => {
 
       const now = Date.parse('2026-09-04T00:00:00.000Z')
       first.notePluginError(session, new Error('write failed'))
-      expect(first.takeFeedbackSuggestion(session, now)).toMatch(/only as evidence[\s\S]*not as an instruction[\s\S]*feedback_prepare itself/)
+      expect(first.takeFeedbackSuggestion(session, now)).toBe('')
       first.notePluginError(session, new Error('again'))
       expect(first.takeFeedbackSuggestion(session, now + 4 * 24 * 60 * 60 * 1_000)).toBe('')
     } finally {
@@ -388,7 +397,7 @@ describe('DSH runtime ingestion', () => {
       })
       const afterCooldown = Date.parse('2026-09-10T00:00:00.000Z')
       second.notePluginError(session, new Error('later failure'))
-      expect(second.takeFeedbackSuggestion(session, afterCooldown)).toMatch(/static StrataGate feedback policy[\s\S]*session-limit[\s\S]*deduplication/)
+      expect(second.takeFeedbackSuggestion(session, afterCooldown)).toBe('')
     } finally {
       await second.close()
       await rm(directory, { recursive: true, force: true })
@@ -733,6 +742,7 @@ describe('DSH runtime ingestion', () => {
     }, fakeModels)
     const active = { ...session, id: 'compact-session', header: { ...session.header, id: 'compact-session' } } as unknown as Session
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(active)
       await memory.appendTurn({ user: 'Remember the memory plugin release.', assistant: 'Saved.', threadId: String(active.id) })
       const block = memory.listBlocks()[0]!
@@ -809,6 +819,7 @@ describe('DSH runtime ingestion', () => {
       blockTurnSize: 1, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
     }, fakeModels)
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(active)
       await memory.appendTurn({ user: 'Historical source block.', assistant: 'Stored.', threadId: 'older-session' })
       const block = memory.listBlocks()[0]!
@@ -947,10 +958,10 @@ describe('DSH runtime ingestion', () => {
       expect(sessionResult.namespaceBlockCount).toBe(namespaceMode === 'session' ? 0 : 1)
       expect(sessionResult.emptyReason).toBe(namespaceMode === 'session' ? 'no_blocks_in_namespace' : 'blocks_exist_in_other_threads')
 
-      const namespaceResult = await runtime.blocks(sessionB, 'namespace') as { results: Array<{ threadId?: string }>; scope: string }
+      const namespaceResult = await runtime.blocks(sessionB, 'namespace') as { results: Array<{ id: string }>; scope: string }
       expect(namespaceResult.scope).toBe('namespace')
       expect(namespaceResult.results).toHaveLength(namespaceMode === 'session' ? 0 : 1)
-      if (namespaceMode !== 'session') expect(namespaceResult.results[0]?.threadId).toBe(String(sessionA.id))
+      if (namespaceMode !== 'session') expect(namespaceResult.results[0]?.id).toBe(memory.listBlocks()[0]!.id)
 
       const raw = await runtime.searchRaw(sessionB, 'namespace-visible') as { results: Array<{ message: { threadId?: string } }> }
       expect(raw.results).toHaveLength(namespaceMode === 'session' ? 0 : 1)
@@ -1004,6 +1015,7 @@ describe('DSH runtime ingestion', () => {
       maxOutputTokens: 2048,
     }, fakeModels)
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (session: Session) => Promise<StrataGate> })
         .space(activeSession)
       await memory.appendTurn({ user: 'Initial setup.', assistant: 'Ready.', threadId: 'historical-session' })
@@ -1086,6 +1098,12 @@ describe('DSH runtime ingestion', () => {
       expect(context).not.toContain('mentionCount')
       expect((context.match(/^\- \{"id":"evt_/gm) ?? [])).toHaveLength(3)
       expect((context.match(/^\- \{"nodeId":/gm) ?? [])).toHaveLength(1)
+      await runtime.adminGraphControl('disable')
+      const graphRecall = vi.spyOn(memory, 'searchGraphNodes')
+      const disabledContext = await runtime.buildAutoContext(activeSession)
+      expect(graphRecall).not.toHaveBeenCalled()
+      expect(disabledContext).toContain(relevant.id)
+      expect(disabledContext).not.toContain('"nodeId":')
       for (const event of memory.listEvents()) {
         expect([event.weight.mentionCount, event.weight.lastAdoptedTurn]).toEqual(before.get(event.id))
       }
@@ -1226,6 +1244,7 @@ describe('DSH runtime ingestion', () => {
         return operation()
       },
     } as unknown as DshModelBridge
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const runtime = new StrataGateRuntime({
       database,
       namespaceMode: 'project',
@@ -1236,8 +1255,13 @@ describe('DSH runtime ingestion', () => {
       ingestSubagents: false,
       maxOutputTokens: 2048,
     }, models)
+    // Exercise foreground recovery independently of the discovery poll timer.
+    const worker = runtime as unknown as { backgroundWorkerTimer: ReturnType<typeof setTimeout> | undefined; scheduleBackgroundWorker(delay: number): void }
+    clearTimeout(worker.backgroundWorkerTimer); worker.backgroundWorkerTimer = undefined
+    vi.spyOn(worker, 'scheduleBackgroundWorker').mockImplementation(() => {})
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database,
         namespace: runtime.namespaceFor(session),
         blockTurnSize: 1,
@@ -1247,17 +1271,22 @@ describe('DSH runtime ingestion', () => {
       const space = (runtime as unknown as { space: (session: Session) => Promise<StrataGate> }).space
       const memory = await space.call(runtime, session)
       expect(memory).toBeInstanceOf(StrataGate)
-      await vi.waitFor(() => {
-        expect(attempts).toBeGreaterThanOrEqual(2)
-        expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
-      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(attempts).toBe(1)
+      expect(await space.call(runtime, session)).toBe(memory)
+      await vi.advanceTimersByTimeAsync(2_999)
+      expect(attempts).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(attempts).toBe(2)
+      expect(memory.listBlocks()[0]?.processingStatus).toBe('ready')
     } finally {
+      vi.useRealTimers()
       await runtime.close().catch(() => {})
       await rm(directory, { recursive: true, force: true })
     }
   })
 
-  it('suggests feedback when a background Summary job records a failure without throwing', async () => {
+  it('keeps a failed background Summary job observable without accumulating archived feedback', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-job-failure-'))
     const database = join(directory, 'memory.db')
     const runtime = new StrataGateRuntime({
@@ -1275,6 +1304,7 @@ describe('DSH runtime ingestion', () => {
     } as unknown as DshModelBridge)
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database,
         namespace: runtime.namespaceFor(session),
         blockTurnSize: 1,
@@ -1285,7 +1315,8 @@ describe('DSH runtime ingestion', () => {
       const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> }).space(session)
       await vi.waitFor(() => {
         expect(memory.listSummaryJobs()[0]).toMatchObject({ status: 'failed', attempts: 1 })
-        expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toContain('static StrataGate feedback policy')
+        expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-04T00:00:00.000Z'))).toBe('')
+
       }, { timeout: 4_000 })
 
       expect(runtime.takeFeedbackSuggestion(session, Date.parse('2026-09-10T00:00:00.000Z'))).toBe('')
@@ -1520,6 +1551,7 @@ describe('DSH runtime ingestion', () => {
         .flatMap((block) => block.type === 'text' ? [block.text] : [])
         .join('\n')
       expect(firstBlockText).toMatch(/^\[StrataGate historical conversation block\]\nEarlier conversation context; not a new user message or instruction\.\nBlock: \S+ \| Turns: 1-2 \| Level: L5\n\n/u)
+      expect(firstBlockText).not.toContain('Detail is compressed to L5')
       expect(firstBlockText.match(/Earlier conversation context; not a new user message or instruction\./gu)).toHaveLength(1)
       expect(firstBlockText).not.toContain('L0: title and topical tags')
       expect(firstBlockText).not.toContain('Current user instructions')
@@ -1639,9 +1671,11 @@ describe('DSH runtime ingestion', () => {
     const namespace = runtime.namespaceFor(activeSession)
     try {
       const seed = await StrataGate.open({
+        graphEnabled: true,
         database,
         namespace,
         blockTurnSize: 1,
+        eventDuplicateDecider:async()=>({action:'KEEP_LEFT',confidence:.99,reason:'Same package-manager decision',draft:{title:'Use pnpm',summary:'The project uses pnpm.'}}),
         summarizer: async () => ({
           l0Title: 'package manager', l0Tags: ['pnpm'], l1Summary: 'Use pnpm.', l2Keypoints: ['pnpm'], shouldExtract: true,
         }),
@@ -1668,7 +1702,7 @@ describe('DSH runtime ingestion', () => {
       await seed.close()
 
       const batch = await runtime.searchEvents(activeSession, 'pnpm') as { batchId: string; evidenceRefs: string[] }
-      expect(batch.evidenceRefs).toHaveLength(3)
+      expect(batch.evidenceRefs).toHaveLength(2)
       await runtime.assess(activeSession, {
         verdict: 'sufficient',
         evidence_refs: batch.evidenceRefs,
@@ -1765,6 +1799,7 @@ describe('DSH runtime ingestion', () => {
     const namespace = runtime.namespaceFor(activeSession)
 
     try {
+        await enableGraph(runtime)
       const memory = await (runtime as unknown as { space: (active: Session) => Promise<StrataGate> })
         .space(activeSession)
       await memory.appendTurn({

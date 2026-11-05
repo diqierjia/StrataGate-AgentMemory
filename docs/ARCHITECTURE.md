@@ -4,6 +4,10 @@ StrataGate separates source preservation, derived memory, retrieval control, and
 
 ## System boundaries
 
+Knowledge Graph processing is optional and defaults off for new and upgraded databases. DSH persists the installation policy in its existing settings table; Core persists namespace defaults using additive columns without deleting graph data. A durable epoch fences claims, provider retries, lease renewals and late commits. Event ingestion can still commit when Graph is disabled during extraction, but cannot enqueue new Graph work. Ordinary retrieval, topics, Profile and Dreaming remain independent.
+
+Historical Graph processing requires a preview and explicit confirmation of a finite Event ID list. Existing bounded batches, leases and retry budgets remain in effect; pause/resume does not reset spent attempts. Read-only admin browsing does not migrate the database. The additive Graph policy alone does not protect against older binaries ignoring the switch; the schema-14 Block coordinate upgrade additionally prevents pre-14 binaries from opening an upgraded database. See [Graph policy details](knowledge-graph.md).
+
 ```mermaid
 flowchart TB
     subgraph Source["Source layer"]
@@ -51,21 +55,23 @@ Hosts may attach a `threadId` to each turn. Open tails, Block boundaries, neighb
 When the boundary is reached:
 
 1. One atomic sealing transaction moves the source messages into permanent L5 and writes deterministic L4 and L3.
-2. The sealed Block is marked model-pending. It is provenance, but it is excluded from decay and cannot replace native conversation history.
+2. The sealed Block is marked model-pending. It reserves its position in the per-thread sealed timeline, but cannot be injected or replace native conversation history until ready.
 3. A background summarizer produces and validates L0-L2 plus a conservative `shouldExtract` decision.
 4. Event extraction completes with either validated Events or an explicit valid empty result.
-5. Only then is the Block marked ready: its pointer starts at L5, it may replace native history, and it decays toward L0 as newer ready Blocks enter the same thread.
+5. Only then is the Block marked ready and may replace native history. Its L5 anchor remains at its original sealed position, so its target layer already reflects any newer sealed Blocks. Completing derivation never advances the timeline or resets an anchor.
 
 The block weight is:
 
 ```text
 w(age) = exp(-lambda_block * age)
 
-age = latest ready Block position - pointer anchor Block position
+age = max(0, latest sealed Block position - pointer anchor Block position)
 lambda_block = 0.30 by default
 ```
 
 Open-tail turns do not change Block age. The weight selects how many levels to drop from the pointer anchor. Expanding a block to L3 anchors the pointer at L3 and at the latest sealed Block position; it does not silently jump to L5. Hosts may configure `lambda_block`; smaller values decay more slowly, and values above `0.4` are not recommended.
+
+Schema 14 unifies the core and panel on this sealed timeline, including pending Blocks. At upgrade, legacy ready anchors are shifted by the thread's current pending count. This preserves their pre-upgrade elapsed decay exactly; historical pending membership cannot be reconstructed from the old numeric anchors. Pending anchors already use sealed positions and stay unchanged. Snapshot and SQLite migrations apply the same conversion once; no summaries, raw messages, explicit lift metadata, or injected surface levels are regenerated or reset.
 
 ## Deterministic L3 policy
 
@@ -264,7 +270,7 @@ External model calls are never made inside a database transaction:
 The adapter preserves these invariants:
 
 - blocks and L5 messages are append-only, including when every derived task fails;
-- model-pending Blocks are excluded from decay and native-history replacement;
+- model-pending Blocks reserve sealed positions but are excluded from context injection and native-history replacement;
 - card provenance references an existing source block and message set;
 - search hits do not increment adoption state;
 - supersession retains the old event;

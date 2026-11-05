@@ -133,7 +133,7 @@ describe('Issue #119 writer-open recovery', () => {
         expect(JSON.stringify(settled)).not.toContain('PRIVATE');
         const retry = await memory.retryTopicProjection(settled.at(-1)!.id);
         await memory.close(); memory = await open();
-        const claim = (await memory.claimNextTopicProjection('bootstrap'))!;
+        const claim = (await memory.claimNextTopicProjection('incremental'))!;
         expect(claim.jobId).toBe(retry.jobId);
         expect(memory.listTopicProjectionJobs().at(-1)!.attempts).toBe(1);
         await memory.completeTopicProjection(claim.jobId, result(claim));

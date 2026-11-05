@@ -4,15 +4,17 @@
 
 # StrataGate
 
+Project source, releases, and issues are available on [GitHub](https://github.com/diqierjia/StrataGate-AgentMemory). [Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory) remains a synchronized repository.
+
 ### Recent conversations stay detailed. Older memories grow more concise.
 
 StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent conversations stay detailed, older conversations become concise, and original records remain available when needed. Lasting information becomes Events, the knowledge graph represents current state, and the topic directory helps the agent discover what has been remembered and find its sources.
 
 <p align="center">
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml"><img src="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/stargazers"><img src="https://img.shields.io/github/stars/diqierjia/StrataGate-AgentMemory?style=social&amp;label=Stars" alt="GitHub stars" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-08-16%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=total%20downloads&amp;color=blue" alt="Total npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-09-27%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=last%2030%20days&amp;color=brightgreen" alt="npm downloads from 2026-09-27 to 2026-10-26" /></a>
 </p>
 
 [中文说明](README.zh-CN.md) · [DeepSeek Harness guide](docs/DSH.md) · [Architecture](docs/ARCHITECTURE.md) · [Full evaluation](docs/EVALUATION.md)
@@ -23,43 +25,24 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent convers
 
 ---
 
-<div align="center">
+## Community
 
-<h3 align="center">Community &amp; downloads</h3>
+Browse this plugin and other DeepSeek Harness plugins on [dshfind](https://dshfind.com).
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <a href="https://dshfind.com/en/plugins/diqierjia/StrataGate-AgentMemory?ref=badge">
-        <img src="https://dshfind.com/api/card/diqierjia/StrataGate-AgentMemory?lang=en" alt="StrataGate on dshfind: rating and cumulative downloads" width="350" />
-      </a>
-    </td>
-    <td align="center">
-      <strong>npm downloads</strong><br /><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=total%20downloads" alt="Total npm downloads" /></a><br />
-      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=last%2030%20days&amp;color=brightgreen" alt="npm downloads in the last 30 days" /></a>
-    </td>
-  </tr>
-</table>
-
-<p align="center">
-  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome DSH Plugin" /></a>
-  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/contributions-welcome-brightgreen.svg" alt="Contributions welcome" /></a>
-</p>
-
-</div>
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![Contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
 ## Why StrataGate?
 
-1. **Short-term memory: details fade as the conversation progresses and expand when needed.**
+1. **Session memory: details fade as the conversation progresses and expand when needed.**
 
    (1) **Recent history stays detailed; older history becomes concise.** Each conversation block has six views, L0–L5, with different levels of detail. As more conversation accumulates, older memories gradually shift from full dialogue to key facts, short summaries, and title indexes, reducing the context occupied by history. → [Layered memory](#layered-memory)
 
    (2) **Views shrink while original records remain.** Complete L5 source messages and tool records are preserved. When details need checking, the agent can expand a memory to recover the original wording and context. → [Layered memory](#layered-memory)
 
-   ![Short-term memory animation: a Block becomes concise down to L0, stays in context, and expands when needed](docs/assets/short-term-memory-explainer-en.gif)
+   ![Session memory animation: a Block becomes concise down to L0, stays in context, and expands when needed](docs/assets/short-term-memory-explainer-en.gif)
 
 2. **Long-term memory: Events preserve history, the graph organizes current state, and the topic directory helps find relevant records.**
 
@@ -93,7 +76,7 @@ If DeepSeek Harness is already installed, add StrataGate to the profile you use:
 dsh plugin --profile web add stratagate-dsh
 ```
 
-DSH compatibility includes the complete `0.2.0` version family: all Alpha, Beta, RC, and stable releases (`>=0.2.0-0 <0.2.1-0`), alongside the previously supported hosts. A new `0.2.0` prerelease does not require a plugin update just to declare its version.
+DSH compatibility is `0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0`. This includes the complete `0.2.x` line and its prereleases. DSH `0.3.x` is not supported until its host interfaces have been verified.
 
 Restart that profile, then keep using DSH normally. StrataGate will capture completed main-agent turns, build searchable memory in the background, and expose its Memory UI under **DSH Settings → StrataGate-AgentMemory**.
 
@@ -126,18 +109,22 @@ The directory and overviews are built from existing Events in background batches
 
 | Mechanism | What changes | What remains |
 | --- | --- | --- |
-| Short-term simplification | Which L0–L5 view an older Block displays by default | Original L5 conversations and tool records |
+| Session memory simplification | Which L0–L5 view an older Block displays by default | Original L5 conversations and tool records |
 | Long-term weight decay | An Event's priority in later recall | Event history and its sources |
 
-Both follow conversation progress: short-term decay uses ready-Block distance, while long-term decay uses turn distance. Elapsed days alone do not trigger either form of decay.
+Both follow conversation progress: session memory decay uses ready-Block distance, while long-term decay uses turn distance. Elapsed days alone do not trigger either form of decay.
+
+### Short-term memory: recent daily notes
+
+The Agent maintains its own working notes: progress, stage results, useful failures, blockers, and next steps. Each memory namespace has one Markdown file per day at `<database directory>/daily/<safe namespace encoding>/YYYY-MM-DD.md` (currently `ns-` followed by the lowercase SHA-256 hash of the namespace). Notes from the three most recent dates with entries are injected into new sessions. The Short-term memory page provides read-only access to recent and older notes. Set `dailyNotesEnabled: false` to stop writing and injection while retaining existing files.
 
 <a id="layered-memory"></a>
 
-### 1. Short-term memory: gradually condense older conversations and expand them when needed
+### 1. Session memory: gradually condense older conversations and expand them when needed
 
 Recent discussions usually need their full detail. Older conversations can remain in context as concise views. StrataGate stores several levels of detail for the same conversation block and gradually reduces what older Blocks display by default as more conversation accumulates.
 
-![Figure 2: Short-term memory—L0–L5 views, display decay, and on-demand expansion](docs/assets/stratagate-short-term-memory-en.png)
+![Figure 2: Session memory—L0–L5 views, display decay, and on-demand expansion](docs/assets/stratagate-short-term-memory-en.png)
 
 **One conversation block, six levels of detail.**
 
@@ -154,7 +141,7 @@ Each fully processed Block contains these views:
 | L4 | Near-verbatim dialogue without internal messages | Remove system messages; only trim outer whitespace and add role labels to user and assistant text; retain names and summaries for recognized tool records |
 | L5 | Source messages and tool records | Verify provenance and specific details |
 
-The model summarizes L0–L2. Fixed rules generate L3/L4: L3 removes standalone fillers and repeated long content, while L4 stays near-verbatim; both compact recognized tool records. Short-term decay advances with subsequent ready Blocks, not elapsed days.
+The model summarizes L0–L2. Fixed rules generate L3/L4: L3 removes standalone fillers and repeated long content, while L4 stays near-verbatim; both compact recognized tool records. Session memory decay advances with subsequent ready Blocks, not elapsed days.
 
 <details>
 <summary>Exact pruning rules, decay formula, and level thresholds</summary>
@@ -208,7 +195,7 @@ Older conversations can therefore remain lightweight during ordinary use while r
 
 ### 2. Long-term memory: Events preserve history, the graph organizes current state, and topics help find relevant records
 
-Short-term memory retains a discussion's context. Long-term memory organizes information with future value. The example below shows a project switching from npm to pnpm and the three views of that change:
+Session memory retains a discussion's context. Long-term memory organizes information with future value. The example below shows a project switching from npm to pnpm and the three views of that change:
 
 ![Figure 3: Long-term memory—Events preserve the choice history, the graph shows pnpm in use with CI verification pending, and topics organize context with source links](docs/assets/stratagate-long-term-memory-views-en.png)
 
@@ -318,7 +305,7 @@ References must belong to the selected retrieval batch. Accepting `sufficient` r
 
 ### 4. Retrieval hits do not automatically reinforce memory: repeated adoption means slower future decay
 
-Long-term memories also decay as conversations progress. Here, the changing quantity is an Event's weight, which participates in later recall and ranking. Unlike a short-term Block, an Event does not move through L0–L5 display levels as its weight decays.
+Long-term memories also decay as conversations progress. Here, the changing quantity is an Event's weight, which participates in later recall and ranking. Unlike a session memory Block, an Event does not move through L0–L5 display levels as its weight decays.
 
 ![Figure 4: Long-term memory weights—natural decay, retrieval without reinforcement, and adoption-based reinforcement](docs/assets/stratagate-long-term-weight-en.png)
 
@@ -418,7 +405,7 @@ Each system generated answers, and each answer received **10 independent Judge e
 
 Both systems used the same questions, order, answer model, Judge model, evaluation prompt, parser, and evaluation count, and each rebuilt its memory. Memory extraction, retrieval implementation, embedding use, and answer context differed, so this compares two complete system configurations.
 
-These results cover only `conv-26`, not the full LoCoMo dataset. They do not isolate the benefits of short-term decay, the knowledge graph, or the evidence gate. Individual contributions still require ablation experiments.
+These results cover only `conv-26`, not the full LoCoMo dataset. They do not isolate the benefits of session memory decay, the knowledge graph, or the evidence gate. Individual contributions still require ablation experiments.
 
 See the [evaluation document](docs/EVALUATION.md) for the full protocol, per-question results, and Judge variation, and the [machine-readable results](benchmarks/locomo-conv26-r8-final.json) for summary data.
 
@@ -491,13 +478,11 @@ See the [architecture guide](docs/ARCHITECTURE.md) for core API integration, per
 
 Contributions are welcome—whether you are fixing a bug, improving documentation, adding an integration, or exploring a better memory and retrieval strategy.
 
-To get started, read [`CONTRIBUTING.md`](CONTRIBUTING.md). It explains how to set up the monorepo, run checks and tests, choose a useful area to work on, and prepare a focused pull request. If you are unsure whether an idea fits the project, [open an issue](https://github.com/diqierjia/StrataGate-AgentMemory/issues) before investing in a large change.
+To get started, read [`CONTRIBUTING.md`](CONTRIBUTING.md). It explains how to set up the monorepo, run checks and tests, choose a useful area to work on, and prepare a focused pull request. If you are unsure whether an idea fits the project, [open an issue](https://gitee.com/diqier4123/StrataGate-AgentMemory/issues) before investing in a large change.
 
 ## Contributors
 
-<a href="https://github.com/diqierjia/StrataGate-AgentMemory/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=diqierjia/StrataGate-AgentMemory" alt="StrataGate contributors" />
-</a>
+[View contributors on Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory/contributors?ref=main).
 
 ## License
 

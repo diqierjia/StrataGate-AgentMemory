@@ -3,6 +3,7 @@ import { bm25Rank, weightedSearchTokens } from './search.js';
 import type { EventCard } from './types.js';
 import { TopicProjectionError, safeTopicDiagnostics, validateTopicOverviewText, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
 import { uniqueTopicOverviewEntries, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
+import { updateDreaming, type DreamingCommand, type DreamingRun } from './dreaming.js';
 
 export const MEMORY_TOPIC_PROJECTOR_VERSION = 3;
 export const TOPIC_BATCH_LIMIT = 12;
@@ -11,7 +12,7 @@ export const TOPIC_MAX_ATTEMPTS = 3;
 // One writer-open recovery cycle for Issue #119, independent of prose rebuilds.
 export const TOPIC_RECOVERY_VERSION = 2;
 export const TOPIC_LEASE_MS = 5 * 60_000;
-export type MemoryTopicOverviewKind = 'history' | 'decision' | 'change' | 'open-question' | 'scope';
+export type MemoryTopicOverviewKind = 'history' | 'decision' | 'change' | 'open-question' | 'scope' | 'experience';
 
 export interface MemoryTopicOverview {
   kind: MemoryTopicOverviewKind;
@@ -22,12 +23,15 @@ export interface MemoryTopicOverview {
 }
 
 export interface MemoryTopicSection {
+  /** Optional stable navigation identity assigned on a Dreaming edit. */
+  id?: string;
   title: string;
   /** Directory membership, independent of overview evidence. */
   sourceEventIds: string[];
 }
 
 export interface MemoryTopic {
+  sectionAliases?: Record<string, string>;
   id: string;
   title: string;
   description: string;
@@ -109,6 +113,8 @@ export interface TopicProjectionJob {
   overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   /** Bounded binary split ancestry; manual retry starts a fresh cycle. */
   splitDepth?: number;
+  /** One explicit user retry attempt, consumed atomically when claimed. */
+  manualAttemptPending?: boolean;
 }
 
 export type TopicProjectionMode = 'all' | 'incremental' | 'bootstrap';
@@ -125,6 +131,7 @@ export interface TopicBootstrapState {
 }
 
 export interface MemoryTopicState {
+  dreaming?: DreamingRun;
   topics: StoredMemoryTopic[];
   jobs: TopicProjectionJob[];
   projectedVersions: Record<string, string>;
@@ -167,7 +174,7 @@ const unique = (ids: readonly string[]): string[] => [...new Set(ids)];
 const bounded = (value: string, size: number): string => [...value].slice(0, size).join('');
 
 const SECTION_TITLES: Record<MemoryTopicOverviewKind, string> = {
-  history: '发展脉络', decision: '关键设计决策', change: '重要变化', 'open-question': '尚未解决的问题', scope: '主题范围',
+  history: '发展脉络', decision: '关键设计决策', change: '重要变化', 'open-question': '尚未解决的问题', scope: '主题范围', experience: '经验',
 };
 /** One display-label rule for model routing and the book view. */
 export function memoryTopicSectionTitle(part: MemoryTopicOverview): string {
@@ -241,6 +248,7 @@ function topicView(topic: StoredMemoryTopic, events: ReadonlyMap<string, EventCa
     sourceEventIds: ids,
     overview,
     sections: valid ? memoryTopicMembershipSections(topic) : [],
+    ...(valid && topic.sectionAliases ? { sectionAliases: structuredClone(topic.sectionAliases) } : {}),
     createdAt: topic.createdAt,
     updatedAt: topic.updatedAt,
     coverage: { totalEvents: ids.length, summarizedEvents: summarized.size, omittedEvents: ids.length - summarized.size },
@@ -263,6 +271,10 @@ function compactEvent(event: EventCard): EventCard {
 /** A rebuildable directory: all writes are invoked inside the owner's transaction. */
 export class MemoryTopicDirectory {
   private state: MemoryTopicState = { topics: [], jobs: [], projectedVersions: {} };
+
+  dreaming(command: DreamingCommand, events: readonly EventCard[], now: string): DreamingRun {
+    return updateDreaming(this.state, events, command, now);
+  }
 
   restore(state?: MemoryTopicState): void {
     this.state = state ? structuredClone(state) : { topics: [], jobs: [], projectedVersions: {} };
@@ -304,6 +316,13 @@ export class MemoryTopicDirectory {
   jobs(): TopicProjectionJob[] {
     // Internal model inputs are never an admin/read surface for memory content.
     return structuredClone(this.state.jobs.map((job) => ({ ...job, context: null })));
+  }
+
+  renewLease(id: string, attempts: number, claimedAt: string, until: string | null): boolean {
+    const job = this.state.jobs.find((job) => job.id === id);
+    if (!job || job.status !== 'running' || job.attempts !== attempts || job.updatedAt !== claimedAt) return false;
+    job.leaseUntil = until;
+    return true;
   }
 
   bootstrap(): TopicBootstrapState | null {
@@ -492,9 +511,7 @@ export class MemoryTopicDirectory {
     }
   }
 
-  private pendingWork(events: readonly EventCard[]): Array<{ event: EventCard; sectionBackfillTopicId?: string }> {
-    const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
-    const versions = sourceVersions(sources);
+  private pendingWork(events: readonly EventCard[], versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])))): Array<{ event: EventCard; sectionBackfillTopicId?: string }> {
     const dirtyIds = new Set(this.state.topics.filter((topic) => topic.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION
       || Object.entries(topic.dependencyVersions ?? topic.sourceVersions).some(([id, version]) => versions.get(id) !== version))
       .flatMap((topic) => topic.sourceEventIds));
@@ -529,20 +546,57 @@ export class MemoryTopicDirectory {
     return mode === 'all' || ids.some((id) => this.isBootstrap(id, versions.get(id)!, sectionBackfillTopicId) === (mode === 'bootstrap'));
   }
 
+  private jobMatchesMode(job: TopicProjectionJob, versions: ReadonlyMap<string, string>, mode: TopicProjectionMode): boolean {
+    // Use the immediately runnable lane for one user-authorized attempt. The
+    // ordinary historical allowance still owns all subsequent automatic tries.
+    return job.manualAttemptPending === true ? mode !== 'bootstrap'
+      : this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId);
+  }
+
   hasPending(events: readonly EventCard[], now: number, mode: TopicProjectionMode = 'all'): boolean {
     const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
     const versions = sourceVersions(sources);
+    return this.hasPendingWithVersions(events, versions, now, mode);
+  }
+
+  private dreamingReservesDirectory(): boolean {
+    return !!this.state.dreaming && ['running', 'pausing', 'paused'].includes(this.state.dreaming.status);
+  }
+
+  private hasPendingWithVersions(events: readonly EventCard[], versions: ReadonlyMap<string, string>, now: number, mode: TopicProjectionMode): boolean {
+    if (this.dreamingReservesDirectory()) return false;
     const running = this.state.jobs.find((job) => job.status === 'running');
     if (running) return Date.parse(running.leaseUntil ?? running.updatedAt) <= now
       || !jobInputsCurrent(running, versions);
-    return this.pendingWork(events).some(({ event, sectionBackfillTopicId }) => this.matchesMode([event.id], versions, mode, sectionBackfillTopicId)) || this.state.jobs.some((job) =>
+    return this.pendingWork(events, versions).some(({ event, sectionBackfillTopicId }) => this.matchesMode([event.id], versions, mode, sectionBackfillTopicId)) || this.state.jobs.some((job) =>
       !job.superseded && job.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION && job.attempts < TOPIC_MAX_ATTEMPTS
       && ((job.status === 'pending' && (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= now)) || (job.status === 'failed'
         && job.nextRetryAt !== null && Date.parse(job.nextRetryAt) <= now))
-      && jobInputsCurrent(job, versions) && this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId));
+      && jobInputsCurrent(job, versions) && this.jobMatchesMode(job, versions, mode));
+  }
+
+  /** Derived wake time, using exactly the claim eligibility rules, including work without a Job. */
+  nextWakeTimes(events: readonly EventCard[], now: number): { incremental: number | null; bootstrap: number | null } {
+    const versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])));
+    const times = new Set([now]);
+    for (const job of this.state.jobs) {
+      const time = Date.parse(job.status === 'running' ? job.leaseUntil ?? job.updatedAt : job.nextRetryAt ?? '');
+      if (Number.isFinite(time) && time > now) times.add(time);
+    }
+    const result: { incremental: number | null; bootstrap: number | null } = { incremental: null, bootstrap: null };
+    for (const time of [...times].sort((a, b) => a - b)) {
+      for (const mode of ['incremental', 'bootstrap'] as const) {
+        if (result[mode] === null && this.hasPendingWithVersions(events, versions, time, mode)) result[mode] = time === now ? 0 : time;
+      }
+      if (result.incremental !== null && result.bootstrap !== null) break;
+    }
+    return result;
   }
 
   claim(events: readonly EventCard[], now: string, mode: TopicProjectionMode = 'all'): TopicProjectionContext | null {
+    // Durable namespace-level arbitration, also checked inside the commit so
+    // another process cannot claim work after the user starts Dreaming.
+    if (this.dreamingReservesDirectory()) return null;
     if (this.state.bootstrap?.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION) {
       throw new Error('Topic Bootstrap must be initialized at writer open before claiming work.');
     }
@@ -555,11 +609,12 @@ export class MemoryTopicDirectory {
     const eligible = this.state.jobs.filter((job) => !job.superseded && job.attempts < TOPIC_MAX_ATTEMPTS
       && ((job.status === 'pending' && (job.nextRetryAt === null || Date.parse(job.nextRetryAt) <= Date.parse(now))) || (job.status === 'failed' && job.nextRetryAt !== null
         && Date.parse(job.nextRetryAt) <= Date.parse(now)))
-      && jobInputsCurrent(job, versions) && this.matchesMode(job.sourceEventIds, versions, mode, job.sectionBackfillTopicId))
-      .sort((a, b) => Number(this.isBootstrap(a.sourceEventIds[0]!, versions.get(a.sourceEventIds[0]!)!, a.sectionBackfillTopicId))
+      && jobInputsCurrent(job, versions) && this.jobMatchesMode(job, versions, mode))
+      .sort((a, b) => Number(b.manualAttemptPending === true) - Number(a.manualAttemptPending === true)
+        || Number(this.isBootstrap(a.sourceEventIds[0]!, versions.get(a.sourceEventIds[0]!)!, a.sectionBackfillTopicId))
         - Number(this.isBootstrap(b.sourceEventIds[0]!, versions.get(b.sourceEventIds[0]!)!, b.sectionBackfillTopicId)))[0];
     let job = eligible;
-    if (job && this.isBootstrap(job.sourceEventIds[0]!, versions.get(job.sourceEventIds[0]!)!, job.sectionBackfillTopicId)
+    if (job && !job.manualAttemptPending && this.isBootstrap(job.sourceEventIds[0]!, versions.get(job.sourceEventIds[0]!)!, job.sectionBackfillTopicId)
       && mode === 'all' && this.pendingWork(events).some(({ event, sectionBackfillTopicId }) =>
         !this.isBootstrap(event.id, versions.get(event.id)!, sectionBackfillTopicId))) job = undefined;
     if (job?.status === 'failed') {
@@ -664,6 +719,7 @@ export class MemoryTopicDirectory {
       ])]);
     job.dependencyVersions = Object.fromEntries(dependencyIds.map((id) => [id, versions.get(id)!]));
     job.diagnostics = undefined;
+    delete job.manualAttemptPending;
     job.status = 'running'; job.attempts += 1; job.lastError = null; job.nextRetryAt = null; job.updatedAt = now;
     if (this.state.bootstrap.status === 'pending' && this.matchesMode(job.sourceEventIds, versions, 'bootstrap', job.sectionBackfillTopicId)) {
       this.state.bootstrap.status = 'running';
@@ -676,6 +732,9 @@ export class MemoryTopicDirectory {
     const job = this.requireJob(id);
     if (job.status === 'completed') return { topicIds: [...job.topicIds] };
     if (job.status !== 'running' || !job.context) throw new Error(`Topic projection ${id} is not running`);
+    if (this.dreamingReservesDirectory() && !this.state.dreaming?.waitingForProjection) {
+      throw new TopicProjectionError('source-changed', 'Dreaming owns the directory; late projection result rejected.');
+    }
     if (Date.parse(job.leaseUntil ?? job.updatedAt) <= Date.parse(now)) throw new TopicProjectionError('source-changed', 'Topic projection lease expired; stale result rejected.');
     const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
     const versions = sourceVersions(sources);
@@ -795,6 +854,7 @@ export class MemoryTopicDirectory {
       for (const part of inherited) if (memoryTopicOverviewMatchesSection(part, titles)
         && !overview.some((current) => digest(current) === digest(part))) overview.push(structuredClone(part));
       proposals.push({ id: topicId, title: job.sectionBackfillTopicId ? existing!.title : proposal.title.trim(),
+        ...(existing?.sectionAliases ? { sectionAliases: structuredClone(existing.sectionAliases) } : {}),
         description: job.sectionBackfillTopicId ? existing!.description : proposal.description.trim(),
         sourceEventIds: membership, overview, sections: finalSections,
         sourceVersions: Object.fromEntries(membership.map((eventId) => [eventId, versions.get(eventId)!])),
@@ -902,6 +962,7 @@ export class MemoryTopicDirectory {
       throw new Error('Topic retry conflict: failure is no longer current or retryable.');
     }
     const job = this.requeue(previous, ids, versions, now);
+    job.manualAttemptPending = true;
     this.synchronize(events, now);
     return { jobId: job.id, status: 'pending' };
   }

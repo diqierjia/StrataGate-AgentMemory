@@ -61,13 +61,16 @@ describe('StrataGate lifecycle', () => {
   });
 
   it('seals blocks, completes extraction, searches, and records adoption separately', async () => {
-    const memory = StrataGate.inMemory({ blockTurnSize: 1, summarizer, extractor, idFactory: ids() });
+    const memory = StrataGate.inMemory({ blockTurnSize: 1, summarizer, extractor, idFactory: ids(),
+      eventDuplicateDecider:async()=>({action:'KEEP_LEFT',confidence:.99,reason:'Same preference',draft:{title:'Prefers concise answers',summary:'The user asked for concise answers.'}}) });
     const first = await memory.appendTurn({ user: 'Please keep answers concise.', assistant: 'Understood.' });
     expect(first.sealedBlock).not.toBeNull();
     expect(first.extractedEvents).toHaveLength(1);
 
     const second = await memory.appendTurn({ user: 'What did I ask?', assistant: 'Let me check.' });
-    expect(second.extractedEvents).toHaveLength(1);
+    expect(second.extractedEvents).toHaveLength(0);
+    expect(memory.listEvents().filter(card=>card.status==='active')).toHaveLength(1);
+    expect(memory.listExtractionJobs().every(({ status }) => status === 'succeeded')).toBe(true);
     const result = await memory.searchEvents('concise writing preference');
     expect(result[0]?.event.title).toBe('Prefers concise answers');
 

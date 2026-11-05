@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
-import { describe, expect, it } from 'vitest'
+import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
+import { describe, expect, it, vi } from 'vitest'
 
-function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string, unknown> = {}) {
-  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string, unknown> = {}, legacyGitHub?: boolean) {
+  let source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  if (legacyGitHub !== undefined) source = source.replace('const GITHUB_FEEDBACK_ENABLED = false', 'const GITHUB_FEEDBACK_ENABLED = ' + legacyGitHub)
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
-    "    exports.__test = { feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, MemoryStatusAlert, taskStatus, ProfilePage, SettingsPage, SupportPage, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  )
+    "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, ProfilePage, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
+  ).replace('exports.__test = {', 'exports.__test = { DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -41,6 +43,12 @@ function elementProps(tree: unknown): any[] {
   return props.concat(tree.slice(2).flatMap(elementProps))
 }
 
+function buttonProps(tree: any, label: string): any {
+  if (!Array.isArray(tree)) return undefined
+  if (tree[0] === 'button' && tree.slice(2).includes(label)) return tree[1]
+  return tree.map((child) => buttonProps(child, label)).find(Boolean)
+}
+
 function deepElementProps(tree: unknown): any[] {
   const props: any[] = []
   const visit = (value: unknown) => {
@@ -53,7 +61,197 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
-  it('registers its settings section through the DSH module loader', () => {
+  it('separates preview from applying a layer and allows replacing a pending selection with the current layer', () => {
+    const { BlockLayerPanel, LayerPreview, visibleBlockLevel } = loadSupportHelpers()
+    const onExpand = vi.fn()
+    const panel = BlockLayerPanel({ block: { currentLevel: 4 }, detail: { layers: [] } })
+    expect(JSON.stringify(panel)).toContain('预览不会改变助手可见的内容')
+    expect(JSON.stringify(panel)).toContain('助手可见：L4')
+    expect(onExpand).not.toHaveBeenCalled()
+    const layer = LayerPreview({ layer: { level: 0 }, currentLevel: 4, allowExpand: true, onExpand })
+    buttonProps(layer, '让助手参考 L0').onClick({ stopPropagation() {} })
+    expect(onExpand).toHaveBeenCalledWith(0)
+    const current = { layer: { level: 4 }, currentLevel: 4, allowExpand: true, onExpand }
+    expect(buttonProps(LayerPreview(current), '让助手参考 L4')).toBeUndefined()
+    expect(JSON.stringify(LayerPreview(current))).toContain('助手可见')
+    expect(buttonProps(LayerPreview({ ...current, pendingSelection: true }), '让助手参考 L4')).toBeDefined()
+    expect(buttonProps(LayerPreview({ ...current, pendingSelection: true, busy: true }), '让助手参考 L4').disabled).toBe(true)
+    expect(buttonProps(LayerPreview({ ...current, currentLevel: 0, allowExpand: false }), '让助手参考 L4')).toBeUndefined()
+    expect(visibleBlockLevel({ currentLevel: 4, surfaceLevelKnown: false })).toBeNull()
+    expect(visibleBlockLevel({ currentLevel: 4, surfaceLevelKnown: true })).toBe(4)
+    const waiting = BlockLayerPanel({ block: { currentLevel: 0 }, detail: { layers: [{ level: 4 }] }, expandingLevel: -1, selectionBusy: true, onExpand })
+    expect(deepElementProps(waiting).find(props => props.layer)?.busy).toBe(true)
+  })
+
+  it('explains waiting and failure next to the Block, retaining the actual available layer', () => {
+    const { BlockSelectionFeedback } = loadSupportHelpers()
+    const block = { currentLevel: 0, targetLevel: 4, surfaceLevelKnown: true }
+    const waiting = BlockSelectionFeedback({ block: { ...block, surfaceSync: { status: 'pending', message: '已保存选择，打开这段对话后生效。' } } })
+    expect(JSON.stringify(waiting)).toContain('已选择 L4。已保存选择，打开这段对话后生效。 助手当前可见 L0。')
+    const blocked = BlockSelectionFeedback({ block: { ...block, surfaceSync: { status: 'blocked', message: '当前模型预计放不下，请选更简略的层级。' } } })
+    expect(deepElementProps(blocked).some(props => props.role === 'alert')).toBe(true)
+    expect(JSON.stringify(blocked)).toContain('助手当前可见 L0')
+    expect(JSON.stringify(blocked)).toContain('请选更简略的层级')
+    expect(BlockSelectionFeedback({ block: { ...block, surfaceSync: { status: 'applied' } } })).toBeNull()
+    const unknown = BlockSelectionFeedback({ block: { ...block, surfaceLevelKnown: false }, feedback: { status: 'pending', message: '暂时无法确认应用结果，请刷新后查看。' } })
+    expect(JSON.stringify(unknown)).toContain('助手可见的层级尚未确认')
+  })
+
+  it.each(['applied', 'pending', 'blocked', 'rejected', 'interrupted', 'refresh-failed'])('refreshes the actual state and reports a %s expansion response', async (status) => {
+    const hooks: any[] = []
+    let cursor = 0
+    const react = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState(initial: any) {
+        const index = cursor++
+        if (!(index in hooks)) hooks[index] = typeof initial === 'function' ? initial() : initial
+        return [hooks[index], (value: any) => { hooks[index] = typeof value === 'function' ? value(hooks[index]) : value }]
+      },
+      useRef(initial: unknown) { const index = cursor++; return hooks[index] ??= { current: initial } },
+      useEffect: () => {},
+    }
+    const fetch = vi.fn(async (url: string, options: any) => {
+      if (status === 'interrupted' && options?.method === 'PATCH') throw new TypeError('Failed to fetch')
+      return {
+        ok: status !== 'rejected' || options?.method !== 'PATCH', status: 409,
+        json: async () => url.includes('/sources') ? { layers: [] } : status === 'rejected' ? { error: '容量不足' }
+          : { surfaceSync: { status: status === 'refresh-failed' ? 'applied' : status, message: status + ' 的真实状态' } },
+      }
+    })
+    const { ShortTermPage, BlockSelectionFeedback } = loadSupportHelpers([], { react, fetch })
+    const block = { id: 'block-1', currentLevel: 0, targetLevel: 4, surfaceLevelKnown: true, sequence: 1, surfaceSync: undefined as unknown }
+    const refresh = vi.fn(async () => {
+      if (status === 'refresh-failed' && refresh.mock.calls.length === 1) throw new Error('read failed')
+      if (!['rejected', 'interrupted'].includes(status)) block.surfaceSync = { status: status === 'refresh-failed' ? 'applied' : status, message: status + ' 的真实状态' }
+      if (status === 'applied' || status === 'refresh-failed') block.currentLevel = 4
+    })
+    const props = { blocks: [block], conversations: [], namespace: 'test', activeThreadId: 'thread-1', refresh }
+    const render = () => { cursor = 0; return ShortTermPage(props) }
+    const toggle = deepElementProps(render()).find((item) => item.className === 'sg-block-toggle')!
+    toggle.onClick()
+    const expand = deepElementProps(render()).find((item) => typeof item.onExpand === 'function')!
+    await Promise.all([expand.onExpand(4), expand.onExpand(4)])
+    expect(fetch.mock.calls.filter(([, options]) => options?.method === 'PATCH')).toHaveLength(1)
+    const feedbackProps = deepElementProps(render()).find(item => item.block && 'feedback' in item)!
+    const text = JSON.stringify(BlockSelectionFeedback(feedbackProps))
+    expect(refresh).toHaveBeenCalledTimes(1)
+    if (status === 'rejected') expect(text).toContain('暂时无法应用 L4。容量不足')
+    else if (status === 'applied') expect(text).toContain('已应用 L4，供助手后续回复参考')
+    else if (status === 'interrupted' || status === 'refresh-failed') {
+      expect(text).toContain('暂时无法确认应用结果')
+      expect(text).not.toContain('暂时无法应用')
+      await buttonProps(BlockSelectionFeedback(feedbackProps), '刷新状态').onClick()
+      expect(refresh).toHaveBeenCalledTimes(2)
+      const refreshed = deepElementProps(render()).find(item => item.block && 'feedback' in item)!
+      expect(refreshed.feedback).toBeNull()
+    }
+    else expect(text).toContain(status + ' 的真实状态')
+    if (status !== 'applied') expect(text).toContain(status === 'interrupted' || status === 'refresh-failed' ? '上次确认助手可见 L0' : '助手当前可见 L0')
+  })
+
+  it('shows projection drain status and requires restart instead of offering resume for a conflicted Dreaming', () => {
+    const baseRun = { id: 'review', sessionId: null, status: 'running', waitingForProjection: true,
+      activity: '等待当前后台目录整理完成，随后开始 Dreaming', completed: 0, total: 2 }
+    const globals = { react: {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState: (initial: unknown) => [initial, () => {}], useRef: (current: unknown) => ({ current }),
+      useEffect: () => {}, useCallback: (callback: unknown) => callback,
+    } }
+    const { DreamingPanel } = loadSupportHelpers([], globals)
+    const waiting = DreamingPanel({ namespace: 'test', initialRun: baseRun, active: true, available: true })
+    expect(JSON.stringify(waiting)).toContain('Dreaming 正在准备…')
+    expect(JSON.stringify(waiting)).toContain('等待当前后台目录整理完成')
+    expect(buttonProps(waiting, '暂停')).toBeDefined()
+    expect(buttonProps(waiting, '终止')).toBeDefined()
+    const conflicted = DreamingPanel({ namespace: 'test', initialRun: { ...baseRun, status: 'paused', replanRequired: true,
+      reason: '请终止本轮后重新开始；已保存的修改会保留' }, active: true, available: true })
+    expect(buttonProps(conflicted, '继续')).toBeUndefined()
+    expect(buttonProps(conflicted, '终止')).toBeDefined()
+    expect(JSON.stringify(conflicted)).toContain('请终止本轮后重新开始')
+    const paused = DreamingPanel({ namespace: 'test', initialRun: { ...baseRun, status: 'paused', replanRequired: false }, active: true, available: true })
+    expect(buttonProps(paused, '继续')).toBeDefined()
+  })
+
+  it('preserves feedback navigation from workspace A to B with one dashboard request', async () => {
+    // Run the production MemoryPage and dependency-aware hook effects across
+    // renders. Requests stay pending during the namespace transition.
+    const hooks: any[] = []
+    const effects: Array<() => void> = []
+    const requests: Array<{ namespace: string; signal: AbortSignal; resolve: (value: unknown) => void }> = []
+    const same = (a: any[] | undefined, b: any[]) => a && a.length === b.length && a.every((value, i) => Object.is(value, b[i]))
+    let cursor = 0
+    let dirty = true
+    const react = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState(initial: any) {
+        const index = cursor++
+        if (!(index in hooks)) hooks[index] = typeof initial === 'function' ? initial() : initial
+        return [hooks[index], (value: any) => {
+          const next = typeof value === 'function' ? value(hooks[index]) : value
+          if (!Object.is(hooks[index], next)) { hooks[index] = next; dirty = true }
+        }]
+      },
+      useRef(initial: unknown) { const index = cursor++; return hooks[index] ??= { current: initial } },
+      useCallback(callback: unknown, deps: any[]) {
+        const index = cursor++
+        if (!same(hooks[index]?.deps, deps)) hooks[index] = { deps, callback }
+        return hooks[index].callback
+      },
+      useEffect(effect: () => (() => void) | undefined, deps: any[]) {
+        const index = cursor++
+        if (same(hooks[index]?.deps, deps)) return
+        const previous = hooks[index]
+        hooks[index] = { deps }
+        effects.push(() => { previous?.cleanup?.(); hooks[index].cleanup = effect() })
+      },
+    }
+    const { MemoryPage, SupportPage } = loadSupportHelpers([], {
+      react, AbortController,
+      document: { hidden: true, addEventListener() {}, removeEventListener() {} },
+      window: { location: { search: '' } },
+      fetch: (url: string, options: any) => new Promise(resolve => requests.push({
+        namespace: new URL(url, 'http://localhost').searchParams.get('namespace') || 'A', signal: options.signal,
+        resolve: data => resolve({ ok: true, status: 200, headers: { get: () => null }, json: async () => data }),
+      })),
+    })
+    let navigationState: unknown
+    let tree: any
+    const workspaces: unknown[] = []
+    const sessionState = { byId: {} }
+    const pump = () => {
+      let attempts = 0
+      while (dirty) {
+        expect(++attempts).toBeLessThan(20)
+        dirty = false; cursor = 0
+        tree = MemoryPage({ navigationState, useWorkspaces: (select: any) => select({ items: workspaces }), useSessions: (select: any) => select(sessionState) })
+        effects.splice(0).forEach(effect => effect())
+      }
+      return tree
+    }
+    const settle = async () => { for (let i = 0; i < 12; i++) { await Promise.resolve(); pump() } }
+    const dashboard = (namespace: string) => ({ namespace, overview: { namespaces: [{ namespace: 'A' }, { namespace: 'B' }] },
+      data: { conversations: [], events: [], blocks: [], graph: { nodes: [], edges: [] }, audit: [] } })
+    const supports = () => {
+      const found: any[] = []
+      const visit = (value: any) => { if (!Array.isArray(value)) return; if (value[0] === SupportPage) found.push(value[1]); value.forEach(visit) }
+      visit(tree); return found
+    }
+    pump(); requests[0]!.resolve(dashboard('A')); await settle()
+    navigationState = { view: 'feedback', namespace: 'B' }; dirty = true; pump()
+    expect(requests.filter(request => request.namespace === 'B')).toHaveLength(1)
+    expect(requests.at(-1)?.signal.aborted).toBe(false)
+    requests.at(-1)!.resolve(dashboard('B')); await settle()
+    expect(supports()).toMatchObject([{ namespace: 'B' }])
+    navigationState = { view: 'feedback', namespace: 'B' }; dirty = true; pump()
+    expect(requests.filter(request => request.namespace === 'B')).toHaveLength(2)
+    requests.at(-1)!.resolve(dashboard('B')); await settle()
+    expect(supports()).toMatchObject([{ namespace: 'B' }])
+    deepElementProps(tree).find(props => props['aria-label'] === '当前工作区').onChange({ target: { value: 'A' } })
+    pump(); requests.at(-1)!.resolve(dashboard('A')); await settle()
+    expect(supports()).toEqual([])
+  })
+
+  it('registers its settings section through the DSH module loader', async () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     let definition: any
     runInNewContext(source, {
@@ -77,7 +275,8 @@ describe('StrataGate Web client contract', () => {
         registrations.push({ metadata, render })
       },
     }
-    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'uiConversation' ? { events: { register: () => {} } } : undefined })
+    const selectPanel = vi.fn()
+    plugin.apply({ get: (name: string) => name === 'slots' ? slots : name === 'layout' ? { selectPanel } : name === 'configForms' ? { get: () => ({ set: async () => true }) } : name === 'uiConversation' ? { events: { register: () => {} } } : undefined })
     const tail = registrations.find(({ metadata }) => metadata.name === 'conversation.chat.turnTail')
     const registration = registrations.find(({ metadata }) => metadata.name === 'settings.section')
     expect(registrations[0].metadata.name).toBe('settings.section')
@@ -85,6 +284,86 @@ describe('StrataGate Web client contract', () => {
     expect(registration.metadata).toMatchObject({ name: 'settings.section', id: 'stratagate-memory' })
     expect(registration.metadata.label()).toBe('StrataGate-AgentMemory')
     expect(typeof registration.render).toBe('function')
+    const panel = registrations.find(({ metadata }) => metadata.name === 'main' && metadata.key === 'stratagate-memory')
+    const sidebar = registrations.find(({ metadata }) => metadata.name === 'sidebar.panellist' && metadata.id === 'stratagate-memory')
+    const prompt = registrations.find(({ metadata }) => metadata.name === 'shell.overlay' && metadata.id === 'stratagate.sidebar-placement-prompt')
+    expect(panel).toBeDefined()
+    expect(sidebar).toBeUndefined()
+    expect(prompt).toBeUndefined()
+    const close = vi.fn()
+    await registration.render({ close })[1].onChooseSidebar()
+    expect(selectPanel).toHaveBeenCalledWith('stratagate-memory')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('dismisses the compact sidebar placement prompt and remembers the selected action', async () => {
+    const values = new Map<string, string>()
+    const { SidebarPlacementPrompt } = loadSupportHelpers([], {
+      localStorage: {
+        getItem: (key: string) => values.get(key) || null,
+        setItem: (key: string, value: string) => values.set(key, value),
+      },
+    })
+    let selected = 0
+    const first = SidebarPlacementPrompt({ usePluginSettings: (select: any) => select({ value: { showSidebarEntry: false }, writable: true }), onChooseSidebar: () => { selected += 1; return true } })
+    expect(JSON.stringify(first)).toContain('从左侧栏快速打开记忆')
+    await buttonProps(first, '放到左侧栏').onClick()
+    await Promise.resolve()
+    expect(selected).toBe(1)
+    expect(values.get('stratagate-dsh.sidebar-prompt.v1')).toBe('sidebar')
+
+    expect(values.get('stratagate-dsh.sidebar-prompt.v1')).toBe('sidebar')
+  })
+
+  it('reconciles the real sidebar registry from accepted settings and cleans up the subscription', async () => {
+    const registry = new SlotCore()
+    registry.register({ name: 'root', children: { 'settings.section': { kind: 'list', scope: 'root' }, main: { kind: 'keyed', scope: 'root' }, 'sidebar.panellist': { kind: 'list', scope: 'root' } } } as any, () => null)
+    let snapshot = { status: 'loading', value: { showSidebarEntry: true } }
+    let listener: (() => void) | undefined
+    const stop = vi.fn(() => { listener = undefined })
+    const disposers = new Map<string, (() => void)>()
+    const layout = { activePanelId: 'stratagate-memory', selectPanel: vi.fn() }
+    let accepted = true
+    const form = {
+      getSnapshot: () => snapshot,
+      subscribe: (callback: () => void) => { listener = callback; return stop },
+      set: vi.fn(async (_field: string, value: boolean) => {
+        if (!accepted) return false
+        snapshot = { status: 'ready', value: { showSidebarEntry: value } }; listener?.(); return true
+      }),
+    }
+    const { apply } = loadSupportHelpers()
+    apply({ get: (name: string) => name === 'slots' ? {
+      inject: (key: string, callback: () => (() => void)) => { disposers.set(key, callback()) },
+      register: (options: any, component: any) => registry.register(options, component),
+    } : name === 'configForms' ? { get: () => form } : name === 'layout' ? layout : undefined })
+    const entries = () => registry.entriesOfSlot('sidebar.panellist')
+    expect(entries()).toHaveLength(0)
+    snapshot = { status: 'ready', value: {} as { showSidebarEntry: boolean } }; listener?.()
+    expect(entries()).toHaveLength(0)
+    snapshot = { status: 'ready', value: { showSidebarEntry: false } }; listener?.()
+    expect(entries()).toHaveLength(0)
+    snapshot = { status: 'ready', value: { showSidebarEntry: true } }; listener?.()
+    expect(entries()).toHaveLength(1)
+    listener?.(); expect(entries()).toHaveLength(1)
+    const section: any = registry.entriesOfSlot('settings.section')[0]
+    const close = vi.fn()
+    const page = section.component({ close })
+    accepted = false
+    expect(await page[1].onChooseSidebar()).toBe(false)
+    expect(close).not.toHaveBeenCalled()
+    expect(layout.selectPanel).not.toHaveBeenCalled()
+    accepted = true
+    expect(await section.inject().setSidebarEntry(false)).toBe(true)
+    expect(entries()).toHaveLength(0)
+    expect(layout.selectPanel).toHaveBeenCalledWith(null)
+    expect(registry.entriesOfSlot('main')).toHaveLength(1)
+    expect(await page[1].onChooseSidebar()).toBe(true)
+    expect(entries()).toHaveLength(1)
+    expect(close).toHaveBeenCalledOnce()
+    disposers.get('sidebar.panellist')!()
+    expect(stop).toHaveBeenCalledOnce()
+    expect(entries()).toHaveLength(0)
   })
 
   it.each(['get', 'event', 'inject', 'register'] as const)('keeps Settings available when chat %s setup fails', (failure) => {
@@ -187,20 +466,77 @@ describe('StrataGate Web client contract', () => {
     }
     const dispose = installFeedbackLinkNavigation(ctx, documentRef, location)
     let prevented = false
-    listener({ target, button: 0, preventDefault: () => { prevented = true } })
+    let stopped = false
+    listener({ target, button: 0, preventDefault: () => { prevented = true }, stopPropagation: () => { stopped = true } })
     expect(prevented).toBe(true)
+    expect(stopped).toBe(true)
     expect(openSectionCalls).toEqual([[
       'stratagate-memory',
       { view: 'feedback', namespace: 'dsh:project:test' },
     ]])
     expect(location.assigned).toBe('')
-    listener({ target, preventDefault: () => { prevented = true } })
+    listener({ target, preventDefault: () => { prevented = true }, stopPropagation: () => {} })
     expect(openSectionCalls).toHaveLength(2)
     expect(feedbackLinkTarget({ parentElement: target }, location)).toMatchObject({ anchor, url: { href } })
     expect(navigateToFeedback({ get: () => undefined }, new URL(href), location)).toBe('http')
     expect(location.assigned).toBe(href)
     dispose()
     expect(removed).toBe(true)
+  })
+
+  it('opens Feedback through the real DSH shared settings shell when settingsNavigation is absent', () => {
+    const { navigateToFeedback } = loadSupportHelpers()
+    const calls: string[] = []
+    const shared = { actions: { openSection: (id: string) => calls.push(id) } }
+    const registry = new SlotCore()
+    registry.register({ name: 'root', children: { 'sidebar.settings': { kind: 'single', scope: 'root' } } } as any, () => null)
+    registry.register({ name: 'sidebar.settings', store: { create: () => shared } } as any, () => null)
+    const ctx = { get: (name: string) => name === 'slots' ? registry : undefined }
+    const route = new URL('http://127.0.0.1:19387/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest')
+    expect(navigateToFeedback(ctx, route, { assign: () => { throw new Error('must stay in current app') } })).toBe('host')
+    expect(calls).toEqual(['stratagate-memory'])
+  })
+
+  it('recognizes the Desktop-owned HTTP feedback endpoint across the dsh-app origin', () => {
+    const { feedbackLinkTarget } = loadSupportHelpers()
+    const desktop = { href: 'dsh-app://app/', origin: 'dsh-app://app' }
+    const href = 'http://127.0.0.1:19387/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest'
+    const target = (url: string) => ({ closest: () => ({ getAttribute: () => url }) })
+    expect(feedbackLinkTarget(target(href), desktop, 'http://127.0.0.1:19387')).not.toBeNull()
+    expect(feedbackLinkTarget(target(href), desktop)).toBeNull()
+    expect(feedbackLinkTarget(target(href), desktop, 'http://127.0.0.1:19388')).toBeNull()
+    expect(feedbackLinkTarget(target(href.replace('127.0.0.1:19387', 'example.com')), desktop, 'http://example.com')).toBeNull()
+    expect(feedbackLinkTarget(target(href.replace('/?', '/other?')), desktop, 'http://127.0.0.1:19387')).toBeNull()
+    expect(feedbackLinkTarget(target(href.replace('127.0.0.1', 'user@127.0.0.1')), desktop, 'http://127.0.0.1:19387')).toBeNull()
+  })
+
+  it.each(['owned', 'different-server', 'boot-error', 'disposed'])('handles an early Desktop feedback click with %s boot', async (mode) => {
+    let release: (value: unknown) => void = () => {}
+    let reject: (reason: unknown) => void = () => {}
+    const ready = vi.fn(() => new Promise((resolve, fail) => { release = resolve; reject = fail }))
+    const { installFeedbackLinkNavigation } = loadSupportHelpers([], { window: { dshDesktopBoot: { ready } } })
+    let listener: (event: any) => void = () => {}
+    const documentRef = { addEventListener: (_name: string, value: any) => { listener = value }, removeEventListener: vi.fn() }
+    const openSection = vi.fn()
+    const ctx = { get: (name: string) => name === 'settingsNavigation' ? { openSection } : undefined }
+    const location = { href: 'dsh-app://app/', origin: 'dsh-app://app', assign: vi.fn() }
+    const href = 'http://127.0.0.1:19387/?settings=stratagate-memory&stratagateView=feedback&namespace=dsh%3Aproject%3Atest'
+    const anchor = { getAttribute: () => href, click: vi.fn() }
+    const target = { closest: () => anchor }
+    const dispose = installFeedbackLinkNavigation(ctx, documentRef, location)
+    const event = { target, button: 0, preventDefault: vi.fn(), stopPropagation: vi.fn() }
+    listener(event)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.stopPropagation).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce())
+    if (mode === 'disposed') dispose()
+    if (mode === 'boot-error') reject(new Error('boot unavailable'))
+    else release({ streamBaseUrl: mode === 'different-server' ? 'http://127.0.0.1:19388' : 'http://127.0.0.1:19387' })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(openSection).toHaveBeenCalledTimes(mode === 'owned' ? 1 : 0)
+    expect(anchor.click).toHaveBeenCalledTimes(['different-server', 'boot-error'].includes(mode) ? 1 : 0)
+    expect(location.assign).not.toHaveBeenCalled()
+    if (mode !== 'disposed') dispose()
   })
 
   it('accepts Feedback route state from the Settings host without reading localized DOM controls', () => {
@@ -372,7 +708,7 @@ describe('StrataGate Web client contract', () => {
       ['showRetrievalStatus', false],
     ])
     expect(source).toContain('function ShortTermMemoryTurnStatus({ matched, sessionId, useSession, useSessions, useWorkspaces })')
-    expect(source).toContain('短期记忆块 · ')
+    expect(source).toContain('会话记忆 · ')
     expect(source).toContain('正在压缩…')
     expect(source).toContain('已压缩为 L')
     expect(source).toContain("api('sources', { namespace, blockId: block.id }, { signal: controller.signal })")
@@ -851,7 +1187,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("return '证据不足，继续检索'")
   })
 
-  it('shows the unified project brand, mascot, usage count, and GitHub Star link', () => {
+  it('keeps the project brand, mascot, usage count, and Gitee project link', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const buildSource = readFileSync(new URL('../scripts/build-client.mjs', import.meta.url), 'utf8')
     expect(source).toContain("'StrataGate'")
@@ -861,16 +1197,167 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'v' + overview.pluginVersion")
     expect(source).toContain('给 StrataGate 点个 🌟')
     expect(source).toContain('参与开发 · Issue / PR →')
-    expect(source).toContain("https://github.com/diqierjia/StrataGate-AgentMemory")
+    expect(source).toContain("https://gitee.com/diqier4123/StrataGate-AgentMemory")
     expect(source).toContain("rel: 'noopener noreferrer'")
     expect(source).toContain("const STRATAGATE_CLIENT_VERSION = '__STRATAGATE_CLIENT_VERSION__'")
     expect(buildSource).toContain("readFileSync(new URL('package.json', root), 'utf8')")
     expect(buildSource).toContain(".replaceAll('__STRATAGATE_CLIENT_VERSION__', packageVersion)")
   })
 
+  it('replaces the header community links with email contact and preserves the dormant Star link', () => {
+    const { HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED } = loadSupportHelpers()
+    expect(GITHUB_FEEDBACK_ENABLED).toBe(false)
+    const tree = HeaderCommunityLinks()
+    const hrefs = elementProps(tree).map((props) => props.href).filter(Boolean)
+    expect(hrefs).toHaveLength(0)
+    expect(elementProps(tree).find((props) => props['aria-controls'] === 'sg-contact-author-panel')['aria-expanded']).toBe(false)
+    expect(JSON.stringify(tree)).toContain('联系作者')
+    expect(JSON.stringify(tree)).not.toContain('GitHub')
+    expect(JSON.stringify(tree)).not.toContain('Issue / PR')
+    expect(JSON.stringify(tree)).not.toContain('点个')
+    const archived = loadSupportHelpers([], {}, true).HeaderCommunityLinks()
+    expect(elementProps(archived).filter((props) => props.href)).toHaveLength(2)
+    expect(JSON.stringify(archived)).toContain('给 StrataGate 点个')
+  })
+
+  it.each(['available', 'missing', 'rejected'])('shows contact details and handles %s clipboard without requiring a mail application', async (clipboardState) => {
+    const values: any[] = []
+    let stateIndex = 0
+    const copied: string[] = [], composed: string[] = []
+    const React = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState: (initial: unknown) => {
+        const index = stateIndex++
+        if (!(index in values)) values[index] = initial
+        return [values[index], (value: any) => { values[index] = typeof value === 'function' ? value(values[index]) : value }]
+      },
+      useEffect: () => {}, useRef: (initial: unknown) => ({ current: initial }),
+    }
+    const clipboard = clipboardState === 'missing' ? undefined : { writeText: async (value: string) => {
+      if (clipboardState === 'rejected') throw new Error('permission denied')
+      copied.push(value)
+    } }
+    const { HeaderCommunityLinks } = loadSupportHelpers([], { react: React, navigator: { clipboard }, window: { location: { set href(value: string) { composed.push(value) } } } })
+    const render = () => { stateIndex = 0; return HeaderCommunityLinks() }
+    const button = (tree: any, label: string): any => {
+      if (!Array.isArray(tree)) return undefined
+      if (tree[0] === 'button' && tree.slice(2).includes(label)) return tree[1]
+      return tree.slice(2).map((child) => button(child, label)).find(Boolean)
+    }
+    let tree = render()
+    expect(JSON.stringify(tree)).not.toContain('jiahongcheng61@gmail.com')
+    button(tree, '联系作者 →').onClick()
+    tree = render()
+    expect(JSON.stringify(tree)).toContain('jiahongcheng61@gmail.com')
+    expect(elementProps(tree).find((props) => props['aria-label'] === '联系作者')).toBeDefined()
+    expect(composed).toEqual([])
+    await button(tree, '复制邮箱').onClick()
+    tree = render()
+    expect(copied).toEqual(clipboardState === 'available' ? ['jiahongcheng61@gmail.com'] : [])
+    expect(JSON.stringify(tree)).toContain(clipboardState === 'available' ? '邮箱已复制' : '手动复制')
+    button(tree, '打开邮件应用').onClick()
+    tree = render()
+    expect(new URL(composed[0]!).pathname).toBe('jiahongcheng61@gmail.com')
+    expect(JSON.stringify(tree)).toContain('若没有打开，请复制邮箱')
+    expect(JSON.stringify(tree)).not.toContain('邮件已发送')
+    elementProps(tree).find((props) => props['aria-label'] === '关闭联系方式').onClick()
+    expect(JSON.stringify(render())).not.toContain('jiahongcheng61@gmail.com')
+    button(render(), '联系作者 →').onClick()
+    expect(JSON.stringify(render())).not.toContain('已尝试打开邮件应用')
+  })
+
+  it('keeps contact details and manual fallback visible when desktop mail navigation throws', () => {
+    const values: any[] = [true, '']
+    let stateIndex = 0
+    const React = {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState: () => { const index = stateIndex++; return [values[index], (value: any) => { values[index] = value }] },
+      useEffect: () => {}, useRef: () => ({ current: null }),
+    }
+    const { HeaderCommunityLinks } = loadSupportHelpers([], { react: React, window: { location: { set href(_value: string) { throw new Error('unsupported protocol') } } } })
+    const tree = HeaderCommunityLinks()
+    // Find the mail button by its callback rather than depending on layout indexes.
+    const buttons = (value: any): any[] => Array.isArray(value) ? (value[0] === 'button' && value.includes('打开邮件应用') ? [value] : value.slice(2).flatMap(buttons)) : []
+    expect(() => buttons(tree)[0][1].onClick()).not.toThrow()
+    stateIndex = 0
+    const updated = JSON.stringify(HeaderCommunityLinks())
+    expect(updated).toContain('未能打开邮件应用，请复制邮箱')
+    expect(updated).toContain('jiahongcheng61@gmail.com')
+  })
+
+  it('encodes an email subject while keeping the report out of the mailto URL', async () => {
+    const { feedbackEmailUrl, copyReportAndComposeEmail, EMAIL_BODY_HINT } = loadSupportHelpers()
+    const title = '中文 & ? #\r\n另一个标题'
+    const url = new URL(feedbackEmailUrl(title))
+    expect(url.protocol).toBe('mailto:')
+    expect(url.pathname).toBe('jiahongcheng61@gmail.com')
+    expect(url.searchParams.get('subject')).toBe('StrataGate 反馈：中文 & ? # 另一个标题')
+    expect(url.searchParams.get('body')).toBe(EMAIL_BODY_HINT)
+    expect([...url.searchParams.keys()].sort()).toEqual(['body', 'subject'])
+    const report = 'private report ' + 'x'.repeat(20_000)
+    const calls: string[] = []
+    let resolveCopy: (() => void) | undefined
+    const pending = copyReportAndComposeEmail(report, { writeText: (value: string) => {
+      expect(value).toBe(report)
+      calls.push('copy')
+      return new Promise<void>((resolve) => { resolveCopy = resolve })
+    } }, (target: string) => {
+      expect(target).not.toContain('private report')
+      expect(target.length).toBeLessThan(1000)
+      calls.push('compose')
+    }, title)
+    expect(calls).toEqual(['copy', 'compose'])
+    resolveCopy!()
+    expect(await pending).toEqual({ copied: true, composeRequested: true, error: '' })
+  })
+
+  it.each(['missing', 'throws', 'rejects'])('retains a manual report fallback when the clipboard %s', async (failure) => {
+    const { copyReportAndComposeEmail, handleFeedbackEmailResult } = loadSupportHelpers()
+    const clipboard = failure === 'missing' ? null : { writeText: () => {
+      if (failure === 'throws') throw new Error('clipboard denied')
+      return Promise.reject(new Error('clipboard denied'))
+    } }
+    let composed = ''
+    const result = await copyReportAndComposeEmail('retained report', clipboard, (url: string) => { composed = url })
+    expect(result).toMatchObject({ copied: false, composeRequested: true })
+    expect(composed).toMatch(/^mailto:jiahongcheng61@gmail\.com/)
+    let expanded = false
+    let error = '保存反馈草稿失败：disk full'
+    handleFeedbackEmailResult(result, {
+      setPreviewOpen: (value: boolean) => { expanded = value },
+      setError: (update: (current: string) => string) => { error = update(error) },
+    })
+    expect(expanded).toBe(true)
+    expect(error).toContain('disk full')
+    expect(error).toContain('报告仍保留在预览中')
+    expect(error).toContain('jiahongcheng61@gmail.com')
+  })
+
+  it('keeps the copied report and offers the email address when mail application launch fails', async () => {
+    const { copyReportAndComposeEmail, handleFeedbackEmailResult } = loadSupportHelpers()
+    const result = await copyReportAndComposeEmail('report', { writeText: async () => {} }, () => { throw new Error('no mail app') })
+    expect(result).toEqual({ copied: true, composeRequested: false, error: '' })
+    let status = ''
+    handleFeedbackEmailResult(result, { setStatus: (value: string) => { status = value } })
+    expect(status).toContain('复制邮箱自行发送')
+    expect(status).not.toContain('已发送')
+  })
+
+  it('copies the visible feedback email address without opening a mail application', async () => {
+    const copied: string[] = []
+    const { SupportPage } = loadSupportHelpers([false, false, false, '', '', '', '问题', false, false, false, 2, { text: '报告', title: '' }], {
+      navigator: { clipboard: { writeText: async (value: string) => { copied.push(value) } } },
+    })
+    const tree = SupportPage({ namespace: '', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
+    const button = buttonProps(tree, '复制邮箱')
+    expect(button).toBeDefined()
+    await button!.onClick()
+    expect(copied).toEqual(['jiahongcheng61@gmail.com'])
+  })
+
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus })')
+    expect(source).toContain('function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })')
     expect(source).toContain("settingsScope.bind({ namespace: 'stratagate-memory' })")
     expect(source).toContain("pluginSettingsScope.set('structuredReasoningEffort', mode)")
     expect(source).toContain("pluginSettingsScope.unset('structuredReasoningEffort')")
@@ -890,27 +1377,40 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the memory-first three-part information architecture', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("'/' + run.total + ' 批次'")
+    expect(source).toContain('Dreaming 整理进度（批次）')
     expect(source).toContain("const [section, setSection] = React.useState('short')")
-    expect(source).toContain("[['profile', '常驻画像'], ['short', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
+    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
     expect(source).toContain('块衰减总览')
     expect(source).toContain('开放块 · 未封存')
     expect(source).toContain('距最新封存块')
     expect(source).toContain('分层内容预览')
-    expect(source).toContain('展开到这一层')
+    expect(source).toContain('让助手参考 L')
     expect(source).toContain("api('blocks/expand'")
-    expect(source).toContain('用户展开')
-    expect(source).toContain('Agent 展开')
-    expect(source).toContain('曾展开')
+    expect(source).toContain('助手可见层级')
+    expect(source).not.toContain('用户展开')
+    expect(source).not.toContain('Agent 展开')
     expect(source).toContain('当前对话：')
     expect(source).toContain('Block 分布滑轨')
     expect(source).toContain('L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。')
     expect(source).toContain('document.body.appendChild(popover)')
-    expect(source).toContain('setOpenMenuLevel')
+    expect(source).toContain('BlockSelectionFeedback')
     expect(source).toContain('完整内容')
     expect(source).toContain("React.useState('topics')")
     expect(source).toContain('主题目录')
     expect(source).toContain('知识图谱')
     expect(source).toContain('事件时间线')
+    expect(source).toContain('由于知识图谱功能与事件记录和主题目录有部分重复')
+    expect(source).toContain('额外消耗token维护实体关系')
+    expect(source).toContain('长期记忆页面点击“＋”')
+    expect(source).toContain('已经生成的图谱数据会保留')
+    expect(source).not.toContain('后续新功能会优先投入其他记忆能力')
+    expect(source).toContain('.sg-long-tabs{position:relative;z-index:30;')
+    expect(source).toContain('.sg-graph-menu{position:relative;z-index:31;')
+    expect(source).toContain('.sg-graph-menu-popover{position:absolute;z-index:32;')
+    expect(source).toContain("if (!graphMenuRef.current?.contains(event.target)) setGraphMenuOpen(false)")
+    expect(source).toContain('border:1px solid color-mix(in srgb,var(--sg-muted) 58%,var(--sg-border))')
+    expect(source).toContain('background:color-mix(in srgb,var(--sg-muted) 18%,var(--sg-surface))')
     expect(source).toContain("{ '今天': [], '本周': [], '更早': [] }")
     expect(source).toContain('发生时间未知')
     expect(source).toContain('记忆状态')
@@ -932,7 +1432,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("h(EventMemoryDetails, { event: detailedEvent")
     expect(source).toContain("onPointerDown: (event) => event.stopPropagation()")
     expect(source).toContain("onOpenGraphNode: (namespace, nodeId) => navigateToGraphNode(ctx, namespace, nodeId)")
-    expect(source).toContain('正在更新知识图谱 · ')
+    expect(source).toContain('当前图谱尚未更新完整。')
     expect(source).toContain('搜索记忆、人物、项目、概念')
     expect(source).not.toContain("['overview', '概览']")
     expect(source).not.toContain('sg-stats')
@@ -942,7 +1442,7 @@ describe('StrataGate Web client contract', () => {
   it('keeps exactly the four requested primary entries in More and nests diagnostics under Advanced', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const moreSource = source.slice(source.indexOf('function MoreHome'), source.indexOf('function DisplayPage'))
-    expect(moreSource).toContain("['display', '◐', '界面与显示', '控制短期记忆块、检索状态等前端提示']")
+    expect(moreSource).toContain("['display', '◐', '界面与显示', '控制会话记忆、检索状态等前端提示']")
     expect(moreSource).toContain("['import', '⇄', '导入其他 AI 的记忆', '将其他 AI 的历史记忆导入 StrataGate']")
     expect(moreSource).toContain("['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断']")
     expect(moreSource).toContain("['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助']")
@@ -952,21 +1452,24 @@ describe('StrataGate Web client contract', () => {
     expect(moreSource).not.toContain("['audit'")
     expect(moreSource).not.toContain("['raw'")
     const displaySource = source.slice(source.indexOf('function DisplayPage'), source.indexOf('function redactedJson'))
-    expect(displaySource).toContain('控制 StrataGate 在聊天界面中显示的信息。设置对所有工作区生效。')
+    expect(displaySource).toContain('控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')
     expect(displaySource).toContain('关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。')
-    expect(displaySource).toContain("title: '短期记忆块'")
+    expect(displaySource).toContain("title: '会话记忆状态'")
     expect(displaySource).toContain("title: '记忆检索状态'")
     expect(displaySource).toContain('disabled: !showStrataGateStatus')
     const settingsSource = source.slice(source.indexOf('function SettingsPage'), source.indexOf('function MemoryPage'))
     expect(settingsSource).toContain("['system', '✓', '系统状态'")
     expect(settingsSource).toContain("['audit', '↗', '使用记录'")
     expect(settingsSource).toContain("['raw', '{}', '查看原始数据'")
-    expect(settingsSource).toContain("'记忆配置'")
+    expect(settingsSource).toContain("'StrataGate 安装级设置'")
     expect(settingsSource).toContain("'数据与存储'")
-    expect(settingsSource).toContain("'运行与诊断'")
-    expect(settingsSource).toContain("'Schema、模型与项目配置'")
-    expect(settingsSource).toContain("'数据目录与原始数据'")
-    expect(settingsSource).toContain("'系统状态、使用记录与后台任务'")
+    expect(settingsSource).toContain("'当前工作区运行与诊断'")
+    expect(settingsSource).toContain('适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。')
+    expect(settingsSource).toContain("'宿主配置'")
+    expect(settingsSource).toContain("'当前工作区信息'")
+    expect(settingsSource).toContain("'保存全局设置'")
+    expect(settingsSource).toContain('数据目录属于当前安装；原始数据查看当前选中的工作区。')
+    expect(settingsSource).toContain('当前选中工作区的系统状态、使用记录与后台任务')
     expect(settingsSource).toContain("['status', '↻', '后台任务'")
     expect(settingsSource).toContain("api('storage/open-directory', {}, { method: 'POST' })")
     expect(settingsSource).toContain('navigator.clipboard.writeText(dataDirectory)')
@@ -1060,7 +1563,7 @@ describe('StrataGate Web client contract', () => {
     const state: unknown[] = []
     const refs: Array<{ current: unknown }> = []
     const effects: Array<() => () => void> = []
-    const timers = new Map<number, () => void>()
+    const timers = new Map<number, { callback: () => void; delay: number }>()
     const writes: Array<{ field: string; value: string; expectedValue: string; expectedRevision: number }> = []
     let stateIndex = 0
     let refIndex = 0
@@ -1090,7 +1593,7 @@ describe('StrataGate Web client contract', () => {
     }
     const { ProfilePage } = loadSupportHelpers([], {
       react, document, AbortController,
-      window: { setTimeout: (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id }, clearTimeout: (id: number) => timers.delete(id) },
+      window: { setTimeout: (callback: () => void, delay: number) => { const id = ++nextTimer; timers.set(id, { callback, delay }); return id }, clearTimeout: (id: number) => timers.delete(id) },
       fetch: async (_url: string, options: { method?: string; body?: string } = {}) => {
         if (options.method === 'PATCH') {
           const body = JSON.parse(options.body || '{}') as { field: string; value: string; expectedValue: string; expectedRevision: number }
@@ -1106,7 +1609,7 @@ describe('StrataGate Web client contract', () => {
     })
     const render = () => { stateIndex = 0; refIndex = 0; return ProfilePage() }
     const flush = () => new Promise((resolve) => setImmediate(resolve))
-    const tick = async () => { const next = timers.entries().next().value as [number, () => void]; expect(next).toBeDefined(); timers.delete(next[0]); next[1](); await flush() }
+    const tick = async () => { await flush(); const next = [...timers].find(([, timer]) => timer.delay === 5000)!; expect(next).toBeDefined(); timers.delete(next[0]); next[1].callback(); await flush() }
     render()
     const cleanup = effects[0]!()
     mounted = true
@@ -1140,7 +1643,7 @@ describe('StrataGate Web client contract', () => {
     expect(JSON.stringify(tree)).toContain('Français')
     expect(JSON.stringify(tree)).toContain('该项刚刚在其他位置更新')
     expect(deepElementProps(tree).find((props) => props.className === 'sg-save-button')?.disabled).toBe(true)
-    deepElementProps(tree).find((props) => props.className === 'sg-profile-action' && props.onClick && !props.disabled && props.type === 'button')?.onClick?.()
+    buttonProps(tree, '放弃草稿并载入最新内容')!.onClick()
     await flush()
     tree = render()
     expect(deepElementProps(tree).find((props) => props.id === 'sg-profile-responsePreferences')?.value).toBe('B')
@@ -1163,7 +1666,7 @@ describe('StrataGate Web client contract', () => {
     expect(deepElementProps(tree).find((props) => props.id === 'sg-profile-reasoningLanguage')?.value).toBe('日语')
     expect(JSON.stringify(tree)).toContain('该项刚刚在其他位置更新')
     expect(deepElementProps(tree).find((props) => props.className === 'sg-save-button')?.disabled).toBe(true)
-    deepElementProps(tree).find((props) => props.className === 'sg-profile-action' && props.onClick && !props.disabled && props.type === 'button')?.onClick?.()
+    buttonProps(tree, '放弃草稿并载入最新内容')!.onClick()
     await flush()
     expect(deepElementProps(render()).find((props) => props.id === 'sg-profile-reasoningLanguage')?.value).toBe('English')
     deepElementProps(render()).find((props) => props.id === 'sg-profile-reasoningLanguage')!.onChange({ target: { value: '日语' } })
@@ -1186,7 +1689,7 @@ describe('StrataGate Web client contract', () => {
     expect(server.homeCity).toBe('')
     document.hidden = true
     onVisibilityChange()
-    expect(timers.size).toBe(0)
+    expect([...timers.values()].filter((timer) => timer.delay === 5000)).toHaveLength(0)
     document.hidden = false
     onVisibilityChange()
     await flush()
@@ -1407,8 +1910,8 @@ describe('StrataGate Web client contract', () => {
     expect([...importance.values()].every(({ radius }: { radius: number }) => radius >= 30 && radius <= 54)).toBe(true)
   })
 
-  it('keeps all feedback data local and puts only the paste hint in Feedback Issue URLs', () => {
-    const { SupportPage, ISSUE_URL, ISSUE_BODY_HINT } = loadSupportHelpers()
+  it('keeps all feedback data local and puts only the paste hint in email links', () => {
+    const { SupportPage, FEEDBACK_EMAIL, EMAIL_BODY_HINT } = loadSupportHelpers([false, false, false, '', '', '', '问题', false, false, false, 2, { text: '报告', title: '' }])
     const privateChat = 'private chat content'
     const logContent = 'diagnostic log content'
     const graphContent = 'private graph state'
@@ -1424,14 +1927,14 @@ describe('StrataGate Web client contract', () => {
       onBack: () => {},
     })
     const hrefs = elementProps(tree).map((props) => props.href).filter(Boolean)
-    expect(hrefs.length).toBeGreaterThanOrEqual(3)
-    const issueLinks = hrefs.filter((href) => href.startsWith(ISSUE_URL))
-    expect(issueLinks).toHaveLength(2)
-    const feedbackIssue = issueLinks.find((href) => href !== ISSUE_URL)!
-    expect(new URL(feedbackIssue).searchParams.get('body')).toBe(ISSUE_BODY_HINT)
-    expect(ISSUE_BODY_HINT).toContain('Ctrl+V / ⌘V')
-    expect(ISSUE_BODY_HINT).not.toContain('<!--')
-    expect(ISSUE_BODY_HINT).not.toContain('-->')
+    expect(hrefs).toHaveLength(0)
+    expect(JSON.stringify(tree)).toContain(FEEDBACK_EMAIL)
+    expect(JSON.stringify(tree)).toContain('尚未发送')
+    expect(hrefs.every((href) => href.startsWith('mailto:' + FEEDBACK_EMAIL))).toBe(true)
+    for (const href of hrefs) expect(new URL(href).searchParams.get('body')).toBe(EMAIL_BODY_HINT)
+    expect(JSON.stringify(tree)).not.toContain('GitHub')
+    expect(JSON.stringify(tree)).not.toContain('AI 帮我填')
+    expect(JSON.stringify(tree)).not.toContain('提交 PR')
     for (const href of hrefs) {
       expect(href).not.toContain(privateChat)
       expect(href).not.toContain(logContent)
@@ -1445,7 +1948,7 @@ describe('StrataGate Web client contract', () => {
     const props = elementProps(tree)
     expect(props.find((value) => value['aria-label'] === '本地反馈报告预览')).toBeUndefined()
     expect(props.some((value) => value.disabled === true && value.children === undefined)).toBe(true)
-    expect(JSON.stringify(tree)).toContain('请先描述问题，或使用 AI 帮你填写。')
+    expect(JSON.stringify(tree)).toContain('有了问题描述后，即可检查报告。')
     expect(FEEDBACK_AI_PROMPT).toContain('feedback_prepare')
     expect(FEEDBACK_AI_PROMPT).toContain('不要猜测')
     expect(feedbackDraftMarkdown({
@@ -1470,6 +1973,7 @@ describe('StrataGate Web client contract', () => {
     const { SupportPage, FEEDBACK_AI_PROMPT } = loadSupportHelpers(
       [false, false, false, '', '', '', '', false, true],
       { navigator: { clipboard: { writeText: async (value: string) => { copied = value } } } },
+      true, // Exercise the preserved GitHub UI only in this isolated test.
     )
     const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
     const serialized = JSON.stringify(tree)
@@ -1514,6 +2018,28 @@ describe('StrataGate Web client contract', () => {
     expect(memory).toContain('## 贡献意愿')
     expect(memory).toContain('我愿意尝试修复并提交 PR')
     expect(memory).not.toContain('must-not-leak')
+  })
+
+  it.each(['frontend', 'job'])('keeps %s error text out of default reports and redacts opted-in logs', (origin) => {
+    const { buildSupportReport } = loadSupportHelpers()
+    const error = 'private-error-body owner@example.net C:\\Users\\private\\memory.db /home/private/memory.db https://private.example.net/x?q=secret sk-private123456789 token=private-token'
+    const input = {
+      problemContent: '记忆处理异常',
+      recentError: origin === 'frontend' ? error : '',
+      selected: { failedJobDetails: origin === 'job' ? [{ kind: 'summary', lastError: error, lastErrorFull: error }] : [] },
+      diagnostics: { records: [{ id: 'diag_test', stage: 'summarizer', category: 'storage', at: '2026-10-16T00:00:00Z', detail: error }] },
+    }
+    const report = buildSupportReport(input)
+    expect(report).not.toContain('private-error-body')
+    expect(report).toContain('summarizer')
+    expect(report).toContain('2026-10-16T00:00:00Z')
+    expect(report).toContain('storage')
+    const logs = buildSupportReport({ ...input, includeLogs: true })
+    expect(logs).toContain('private-error-body')
+    for (const privateValue of ['owner@example.net', 'C:\\Users\\private\\memory.db', '/home/private/memory.db', 'https://private.example.net', 'sk-private123456789', 'private-token']) {
+      expect(report).not.toContain(privateValue)
+      expect(logs).not.toContain(privateValue)
+    }
   })
 
   it('redacts nested sensitive values without breaking the attached JSON or recent errors', () => {
@@ -1624,34 +2150,33 @@ describe('StrataGate Web client contract', () => {
     expect(popupBlocked).toEqual({ copied: true, opened: false, error: '' })
   })
 
-  it('starts the Issue action immediately instead of waiting for the local draft save', async () => {
-    let resolveSave: ((value: unknown) => void) | undefined
+  it('keeps copying and email activation separate while draft saving is pending', async () => {
     const calls: string[] = []
     const { SupportPage } = loadSupportHelpers(
-      [false, false, false, '', '', '', '## 问题描述\n\nLocal failure', false],
+      [false, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false, 2, { text: 'reviewed report', title: 'feedback' }],
       {
-        fetch: () => new Promise((resolve) => { resolveSave = resolve }),
+        fetch: () => new Promise(() => {}),
         navigator: { clipboard: { writeText: () => { calls.push('copy'); return Promise.resolve() } } },
-        window: { open: () => { calls.push('open'); return {} } },
+        window: { location: { set href(url: string) { expect(url).toMatch(/^mailto:jiahongcheng61@gmail\.com/); calls.push('compose') } } },
       },
     )
     const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
     const button = elementProps(tree).find((props) => props.className === 'sg-primary-link')
     expect(button).toBeDefined()
-    button!.onClick()
-    expect(calls).toEqual(['copy', 'open'])
-    resolveSave!({ ok: true, json: async () => ({}) })
-    await Promise.resolve()
-    await Promise.resolve()
+    await button!.onClick()
+    expect(calls).toEqual(['copy'])
+    const mailButton = buttonProps(tree, '尝试打开邮件应用')
+    expect(mailButton).toBeUndefined()
+    expect(calls).toEqual(['copy'])
   })
 
-  it('shows the report only on demand and reuses the exact preview for copy and download', async () => {
-    const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false])
+  it('shows the complete reviewed report and reuses the exact preview for copy and download', async () => {
+    const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false, 2, { text: 'reviewed report', title: '' }])
     const closedTree = closedHelpers.SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
-    expect(elementProps(closedTree).find((props) => props['aria-label'] === '本地反馈报告预览')).toBeUndefined()
-    expect(elementProps(closedTree).find((props) => props.children === undefined && props['aria-expanded'] === false)).toBeDefined()
+    expect(elementProps(closedTree).find((props) => props['aria-label'] === '本地反馈报告预览')?.value).toBe('reviewed report')
 
-    const { copyReportAndOpenIssue, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true])
+    const report = '## 问题描述\n\nLocal failure\n\n## 诊断日志\nlocal-only-error'
+    const { copyReportAndComposeEmail, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true, 2, { text: report, title: '' }])
     let objectUrlCalls = 0
     let revokeCalls = 0
     let clickCalls = 0
@@ -1670,14 +2195,14 @@ describe('StrataGate Web client contract', () => {
 
     const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
     const preview = elementProps(tree).find((props) => props['aria-label'] === '本地反馈报告预览')?.value
-    expect(JSON.stringify(tree)).toContain('将复制的内容')
+    expect(JSON.stringify(tree)).toContain('完整报告')
     expect(preview).toContain('## 诊断日志')
     expect(preview).toContain('local-only-error')
     expect(objectUrlCalls).toBe(0)
     expect(clickCalls).toBe(0)
     expect(openCalls).toBe(0)
 
-    await copyReportAndOpenIssue(preview, { writeText: async (value: string) => { copied.push(value) } }, () => { openCalls += 1; return null })
+    await copyReportAndComposeEmail(preview, { writeText: async (value: string) => { copied.push(value) } }, () => { openCalls += 1 })
     const blob = downloadSupportReport(preview, documentRef, urlRef)
     expect(copied).toEqual([preview])
     expect(await blob.text()).toBe(preview)
@@ -1694,8 +2219,8 @@ describe('StrataGate Web client contract', () => {
   it('keeps failures reassuring and exposes related Block settings under More', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain('lastErrorFull')
-    expect(source).toContain('可查看详情并手动重试。')
-    expect(source).toContain('原始对话已保存，不会丢失')
+    expect(source).toContain('这段对话的摘要暂不可用。')
+    expect(source).not.toContain('原始对话已保存，不会丢失')
     expect(source).toContain('没有记录技术错误。')
     expect(source).toContain("['raw', '{}', '查看原始数据'")
     expect(source).toContain("['audit', '↗', '使用记录'")
@@ -1722,78 +2247,96 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'提交反馈'")
   })
 
-  it('uses one actionable status bar for background processing and retryable failures', () => {
+  it('has no global background task banner and retains dashboard read/error handling', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('function MemoryStatusAlert')
-    expect(source).toContain('sg-memory-alert')
-    expect(source).toContain("'正在压缩 ' + status.blockSummary.processing + ' 个短期记忆块'")
-    expect(source).toContain("'正在更新知识图谱 · ' + graphProgress")
-    expect(source).toContain("'知识图谱更新未完成 · ' + graphProgress")
-    expect(source).toContain("migrationState === 'failed' ? '查看详情并手动重试。' : '查看详情。'")
-    expect(source).toContain('可查看详情并手动重试。')
-    expect(source).not.toContain('sg-processing-alert')
-    expect(source).not.toContain('正在触发记忆整理')
-    expect(source.match(/h\(MemoryStatusAlert/g)).toHaveLength(1)
-    expect(source).toContain("view.name === 'status' ? null : h(MemoryStatusAlert")
-    expect(source).toContain("'aria-live': 'polite'")
-    expect(source).toContain('processingJobs')
-    expect(source).toContain('processingJobDetails')
+    expect(source).not.toContain('function MemoryStatusAlert')
+    expect(source).not.toContain('h(MemoryStatusAlert')
     expect(source).toContain("'/api/stratagate/dashboard'")
     expect(source).toContain("'If-None-Match'")
-    expect(source).toContain("document.addEventListener('visibilitychange'")
     expect(source).toContain('pollFast ? 2500 : 30000')
-    expect(source).not.toContain('window.setInterval')
-    expect(source).toContain("status === 'waiting'")
+    expect(source).toContain('setError(')
   })
 
-  it('renders separate product states for summary, extraction, and graph work', () => {
-    const { MemoryStatusAlert, taskStatus } = loadSupportHelpers()
-    const empty = { processing: 0, retryable: 0, terminalFailed: 0, completed: 0, blocked: 0 }
-    const overview = (overrides: any = {}) => ({
-      taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: empty },
-      graphMigration: { projected: 136, total: 136, state: 'complete', complete: true },
-      ...overrides,
-    })
-    const render = (value: any) => JSON.stringify(MemoryStatusAlert({ overview: value, onOpen: () => {} }))
+  it('distinguishes terminal summary failure from scheduled retries', () => {
+    const { summaryUnavailable } = loadSupportHelpers()
+    expect(summaryUnavailable({ summaryJob: { status: 'failed', attempts: 1, nextRetryAt: '2026-10-22T00:00:00Z' } })).toBe(false)
+    expect(summaryUnavailable({ summaryJob: { status: 'failed', attempts: 3, nextRetryAt: null } })).toBe(true)
+    expect(summaryUnavailable({ summaryJob: { state: 'retryable', status: 'failed' } })).toBe(false)
+    expect(summaryUnavailable({ summaryJob: { state: 'terminal-failed', status: 'failed' } })).toBe(true)
+    expect(summaryUnavailable({ summaryJob: { status: 'succeeded' } })).toBe(false)
+  })
 
-    expect(render(overview({ taskStatus: { blockSummary: { ...empty, processing: 3 }, eventExtraction: empty, graphProjection: empty } })))
-      .toContain('正在压缩 3 个短期记忆块')
-    expect(render(overview({ taskStatus: { blockSummary: { ...empty, terminalFailed: 2 }, eventExtraction: empty, graphProjection: empty } })))
-      .toContain('2 个短期记忆块压缩失败')
-    expect(render(overview({ taskStatus: { blockSummary: empty, eventExtraction: { ...empty, processing: 1 }, graphProjection: empty } })))
-      .toContain('正在提取长期记忆')
-    expect(render(overview({ taskStatus: { blockSummary: empty, eventExtraction: { ...empty, terminalFailed: 1 }, graphProjection: empty } })))
-      .toContain('1 个长期记忆提取失败')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 0, state: 'processing', complete: false }, taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: { ...empty, processing: 1 } } })))
-      .toContain('正在更新知识图谱 · 64/136 Events')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 8, state: 'failed', complete: false }, taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: { ...empty, terminalFailed: 8 } } })))
-      .toContain('知识图谱有 8 批更新失败 · 已完成 64/136 Events')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 3, state: 'processing', complete: false }, taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: { ...empty, processing: 1, terminalFailed: 3 } } })))
-      .toContain('知识图谱更新中 · 64/136 Events，3 批失败')
-    expect(render(overview({ graphMigration: { projected: 64, total: 136, failed: 0, state: 'incomplete', complete: false } })))
-      .toContain('知识图谱更新未完成 · 64/136 Events')
-    expect(MemoryStatusAlert({ overview: overview(), onOpen: () => {} })).toBeNull()
-
-    const emptyOverview = {
-      events: 0,
-      taskStatus: { blockSummary: empty, eventExtraction: empty, graphProjection: empty },
-      graphMigration: { projected: 0, total: 0, state: 'incomplete', complete: false },
+  it('offers raw conversation only with confirmed readable source data, without default retry', () => {
+    const { SummaryUnavailable } = loadSupportHelpers()
+    for (const rawAvailable of [false, true]) {
+      const tree = SummaryUnavailable({ namespace: 'workspace-a', block: { id: 'a', rawAvailable } })
+      expect(JSON.stringify(tree)).toContain('这段对话的摘要暂不可用。')
+      expect(Boolean(buttonProps(tree, '查看原始对话'))).toBe(rawAvailable)
+      expect(JSON.stringify(tree)).not.toMatch(/重新压缩|重试任务/)
     }
-    expect(MemoryStatusAlert({ overview: emptyOverview, onOpen: () => {} })).toBeNull()
-    expect(MemoryStatusAlert({ overview: { ...emptyOverview, graphMigration: undefined }, onOpen: () => {} })).toBeNull()
+  })
 
-    const issueStatus = {
-      blockSummary: empty,
-      eventExtraction: { ...empty, terminalFailed: 1 },
-      graphProjection: { ...empty, terminalFailed: 8 },
+  it('keeps transient source reads retryable, hides unavailable sources, and provides an explicit collapse', () => {
+    const props = { namespace: 'workspace-a', block: { id: 'a', rawAvailable: true } }
+    const temporary = loadSupportHelpers([null, { kind: 'temporary', text: '暂时无法读取这段对话的原文。' }, false, false])
+    expect(buttonProps(temporary.SummaryUnavailable(props), '重新读取原文')).toBeDefined()
+    const unavailable = loadSupportHelpers([null, { kind: 'unavailable', text: '当前没有可读取的原文。' }, false, false])
+    expect(buttonProps(unavailable.SummaryUnavailable(props), '查看原始对话')).toBeUndefined()
+    expect(buttonProps(unavailable.SummaryUnavailable(props), '重新读取原文')).toBeUndefined()
+    const expanded = loadSupportHelpers([{ messages: [{ id: 'm1', content: '真实来源', role: 'user' }] }, null, false, true])
+    const tree = expanded.SummaryUnavailable(props)
+    expect(buttonProps(tree, '收起原始对话')?.['aria-expanded']).toBe(true)
+    expect(JSON.stringify(tree)).toContain('真实来源')
+  })
+
+  it.each([true, false, undefined])('reports diagnostic source readability from evidence (%s)', (rawAvailable) => {
+    const { ProcessingStatus } = loadSupportHelpers()
+    const tree = ProcessingStatus({ namespace: 'workspace-a', blocks: [], conversations: [], refresh: async () => null,
+      overview: { processingJobDetails: [], failedJobDetails: [{ id: 'b1', kind: 'block-summary', status: 'failed',
+        state: 'terminal-failed', attempts: 3, blockDetails: [{ id: 'b1', threadId: 't1', rawAvailable }] }] } })
+    const text = JSON.stringify(tree)
+    expect(text).toContain(rawAvailable === true ? '当前可读取' : rawAvailable === false ? '当前无可读取原文' : '无法确认是否可读取')
+    expect(text).not.toContain('保存原始对话')
+    expect(text).toContain('后台任务')
+  })
+
+  it.each(['graph', 'timeline'])('keeps the empty long-term %s view quiet while preserving actual graph work', (mode) => {
+    const render = (migration: any) => {
+      let stateIndex = 0
+      const React = {
+        createContext: (value: unknown) => ({ Provider: 'provider', value }),
+        createElement: (...args: unknown[]) => args,
+        Fragment: 'fragment',
+        useState: (initial: any) => [stateIndex++ === 0 ? mode : typeof initial === 'function' ? initial() : initial, () => {}],
+        useEffect: () => {},
+        useRef: (initial: unknown) => ({ current: initial }),
+        useMemo: (factory: () => unknown) => factory(),
+      }
+      const { LongTermPage } = loadSupportHelpers([], { react: React })
+      return JSON.stringify(LongTermPage({
+        events: [], eventPage: { total: 0, offset: 0, limit: 40 },
+        graphSettings: { enabled: true }, graph: { nodes: [], edges: [], migration }, project: '', query: '', setQuery: () => {}, namespace: '',
+      }))
     }
-    const issueAlert = render(overview({ taskStatus: issueStatus, graphMigration: { projected: 64, total: 136, failed: 8, state: 'failed', complete: false } }))
-    expect(issueAlert).toContain('1 个长期记忆提取失败')
-    expect(issueAlert).toContain('知识图谱有 8 批更新失败 · 已完成 64/136 Events')
-    expect(issueAlert).not.toContain('对话片段尚未整理完成')
-    expect(issueAlert).not.toContain('正在升级长期记忆')
-    expect(issueAlert).not.toContain('批待重试')
+    expect(render(null)).not.toContain('sg-migration')
+    expect(render({ projected: 0, total: 0, state: 'incomplete', complete: false })).not.toContain('sg-migration')
+    expect(render({ projected: 0, total: 0, state: 'complete', complete: true })).not.toContain('sg-migration')
+    const notice = '当前图谱尚未更新完整。'
+    for (const migration of [
+      { projected: 0, total: 1, state: 'incomplete' },
+      { projected: 0, total: 0, processing: 1 },
+      { projected: 0, total: 0, failed: 1 },
+    ]) {
+      expect(render(migration).includes(notice)).toBe(mode === 'graph')
+      expect(render(migration)).not.toMatch(/Graph Projection|Events|失败批次|立即重试/)
+    }
+    expect(render({ projected: 1, total: 1, complete: true })).not.toContain(notice)
+    expect(render({ state: 'processing' })).not.toContain(notice)
+    expect(render({ state: 'failed' })).not.toContain(notice)
+  })
 
+  it('keeps diagnostic task states separate and scheduled retries nonterminal', () => {
+    const { taskStatus } = loadSupportHelpers()
     expect(taskStatus({
       processingJobDetails: [{ kind: 'graph-projection', id: 'g1', state: 'processing' }],
       failedJobDetails: [{ kind: 'graph-projection', id: 'g2', state: 'terminal-failed', attempts: 3, nextRetryAt: null }],
@@ -1811,9 +2354,10 @@ describe('StrataGate Web client contract', () => {
     expect(statusSource).toContain("{ method: 'POST' }")
     expect(statusSource).toContain('重试此任务')
     expect(statusSource).toContain('正在处理…')
-    expect(statusSource).toContain('短期记忆压缩详情')
-    expect(statusSource).toContain('保存原始对话')
-    expect(statusSource).toContain('压缩短期记忆块')
+    expect(statusSource).toContain('后台任务')
+    expect(statusSource).toContain('原始对话')
+    expect(statusSource).not.toContain("['保存原始对话', { kind: 'done'")
+    expect(statusSource).toContain('压缩会话记忆')
     expect(statusSource).toContain('提取长期记忆')
     expect(statusSource).toContain('更新知识图谱')
     expect(statusSource).toContain('const extractionJobs = item.jobs.filter')
@@ -1879,7 +2423,7 @@ describe('StrataGate Web client contract', () => {
     expect(rendered).toContain('知识图谱更新')
   })
 
-  it('uses the clicked stage for detail titles and only exposes terminal retry actions', () => {
+  it('uses a comprehensive diagnostic title and only exposes terminal retry actions', () => {
     const { ProcessingStatus } = loadSupportHelpers()
     const details = [{ id: 'blk-1', sourceId: 'blk-1', sequence: 1, title: '测试块', threadId: 'thread-1', turnRange: [1, 4], shouldExtract: true }]
     const job = (kind: string, state: string, nextRetryAt: string | null) => ({
@@ -1892,14 +2436,14 @@ describe('StrataGate Web client contract', () => {
       onBack: () => {}, refresh: async () => null,
     })
     const summaryRetryable = JSON.stringify(ProcessingStatus(props('summary', [job('block-summary', 'retryable', '2026-09-19T00:01:00.000Z')])))
-    expect(summaryRetryable).toContain('短期记忆压缩详情')
+    expect(summaryRetryable).toContain('后台任务')
     expect(summaryRetryable).toContain('计划自动重试')
     expect(summaryRetryable).not.toContain('重试此任务')
     const extractionTerminal = JSON.stringify(ProcessingStatus(props('extraction', [job('event-extraction', 'terminal-failed', null)])))
-    expect(extractionTerminal).toContain('长期记忆提取详情')
+    expect(extractionTerminal).toContain('后台任务')
     expect(extractionTerminal).toContain('重试此任务')
     const graphTerminal = JSON.stringify(ProcessingStatus(props('graph', [job('graph-projection', 'terminal-failed', null)])))
-    expect(graphTerminal).toContain('知识图谱提取详情')
+    expect(graphTerminal).toContain('后台任务')
     expect(graphTerminal).toContain('提取长期记忆')
     expect(graphTerminal).toContain('已完成')
     expect(graphTerminal).toContain('更新失败，可重试')
@@ -1935,8 +2479,74 @@ describe('StrataGate Web client contract', () => {
     }))
     expect(recovered).toContain('帮我试用最新版')
     expect(recovered).toContain('第 13–18 轮')
-    expect(recovered).toContain('压缩短期记忆块')
+    expect(recovered).toContain('压缩会话记忆')
     expect(recovered).toContain('处理中')
     expect(recovered).not.toContain('任务仍在整理，具体会话暂不可用')
+  })
+})
+
+
+describe('daily notes client', () => {
+  it('keeps the default session page and five untruncated navigation labels', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("React.useState('short')")
+    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
+    expect(source).toContain('repeat(5,1fr)')
+    expect(source).toContain('会话记忆详情')
+    expect(source).toContain('会话记忆状态')
+    expect(source).toContain('完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。')
+  })
+  it('renders safe React Markdown, retaining unknown syntax and literal HTML', () => {
+    const { renderDailyMarkdown } = loadSupportHelpers()
+    const output = JSON.stringify(renderDailyMarkdown('# 2026-10-28\n## 事项\n当前：进展 `file.ts`\n已完成：验证通过\n- 列表\n### 未知语法\n<script>alert(1)</script>\n```\n# 不应丢失的标题'))
+    expect(output).not.toContain('# 2026-10-28')
+    for (const text of ['h4', '事项', 'sg-daily-status', ' done', 'ul', 'li', 'code', 'file.ts', '### 未知语法', '<script>alert(1)</script>', '# 不应丢失的标题', '```']) expect(output).toContain(text)
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const daily = source.slice(source.indexOf('function dailyInline'), source.indexOf('function ShortTermPage'))
+    expect(daily).not.toContain('dangerouslySetInnerHTML')
+    expect(daily).toContain('abort.abort()')
+    expect(daily).not.toContain('setInterval')
+  })
+  it('calculates relative dates without timezone or daylight-saving shifts', () => {
+    const { dailyRelative } = loadSupportHelpers()
+    expect(dailyRelative('2026-10-28', '2026-10-28')).toBe('今天')
+    expect(dailyRelative('2026-10-27', '2026-10-28')).toBe('昨天')
+    expect(dailyRelative('2026-09-28', '2026-10-28')).toBe('30 天前')
+    expect(dailyRelative('2026-10-29', '2026-10-28')).toBe('1 天后')
+  })
+  it('distinguishes empty, failed list, failed note and disabled states', () => {
+    const empty = { dates: [], injectedDates: [], enabled: true, today: '2026-10-28' }
+    const tree = (index: unknown, error = '', selected = '', note = { loading: false, date: selected, markdown: '', error: '' }) => loadSupportHelpers([index, false, error, selected, note]).DailyNotesPage({ namespace: 'n' })
+    expect(JSON.stringify(tree(empty))).toContain('还没有笔记')
+    expect(JSON.stringify(tree(empty))).toContain('Agent 推进工作时会自动记录。')
+    const failed = JSON.stringify(tree(null, 'permission denied'))
+    expect(failed).toContain('暂时无法读取笔记'); expect(failed).toContain('重新读取'); expect(failed).toContain('alert'); expect(failed).not.toContain('还没有笔记')
+    const index = { ...empty, enabled: false, dates: ['2026-10-28'], injectedDates: ['2026-10-28'] }
+    const disabled = JSON.stringify(tree(index, '', '2026-10-28'))
+    expect(disabled).toContain('已关闭，不再写入，也不会带入新会话。'); expect(disabled).toContain('已暂停注入')
+    const noteFailed = JSON.stringify(tree(index, '', '2026-10-28', { loading: false, date: '2026-10-28', markdown: '', error: 'file denied' }))
+    expect(noteFailed).toContain('暂时无法读取笔记'); expect(noteFailed).not.toContain('还没有笔记')
+  })
+  it('binds confirmed DSH settings values without optimistic updates', async () => {
+    const { DailyNotesSettings } = loadSupportHelpers()
+    const enabled = vi.fn(async () => true)
+    const timezone = vi.fn(async () => true)
+    const days = vi.fn(async () => true)
+    const tree = DailyNotesSettings({ usePluginSettings: (select: any) => select({ writable: true, value: { dailyNotesEnabled: false, dailyNotesTimeZone: 'UTC', dailyNotesInjectionDays: 7 } }), setDailyEnabled: enabled, setDailyTimeZone: timezone, setDailyInjectionDays: days })
+    const props = deepElementProps(tree)
+    const toggle = props.find(prop => prop.role === 'switch')
+    expect(toggle['aria-checked']).toBe(false)
+    toggle.onClick(); await Promise.resolve(); expect(enabled).toHaveBeenCalledWith(true)
+    const select = props.find(prop => prop['aria-label'] === '笔记时区')
+    expect(select.value).toBe('UTC'); select.onChange({ target: { value: '' } }); await Promise.resolve(); expect(timezone).toHaveBeenCalledWith('')
+    const daySelect = props.find(prop => prop['aria-label'] === '带入新会话的天数')
+    expect(daySelect.value).toBe(7)
+    daySelect.onChange({ target: { value: '14' } }); await Promise.resolve()
+    expect(days).toHaveBeenCalledWith(14)
+    expect(daySelect.value).toBe(7)
+    expect(JSON.stringify(tree)).toContain('已有笔记保留')
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("pluginSettingsScope.set('dailyNotesEnabled', enabled)")
+    expect(source).toContain("pluginSettingsScope.unset('dailyNotesTimeZone')")
   })
 })

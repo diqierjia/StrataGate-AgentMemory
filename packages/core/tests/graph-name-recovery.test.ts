@@ -12,7 +12,7 @@ async function legacyFixture() {
   const options: PersistentStrataGateOptions = {
     storage, namespace: 'graph:113', blockTurnSize: 1, now: () => now,
     summarizer: async () => ({ l0Title: 'seed', l0Tags: [], l1Summary: 'seed', l2Keypoints: [], shouldExtract: false }),
-    graphProjector: async (context) => {
+    graphEnabled: true, graphProjector: async (context) => {
       calls.push(context);
       const event = context.events[0]!;
       return { reason: 'recovered', nodes: [{ ref: event.id, name: event.title, type: 'project',
@@ -88,7 +88,7 @@ describe('one-time recovery of legacy Graph name schema failures (#113)', () => 
 
   it('does not reset a recovered job again after it exhausts the ordinary bounded retry cycle', async () => {
     const { options, advance } = await legacyFixture();
-    const failingOptions = { ...options, graphProjector: async () => { throw new Error(signature); } };
+    const failingOptions = { ...options, graphEnabled: true, graphProjector: async () => { throw new Error(signature); } };
     const writer = await StrataGate.openWithStorage(failingOptions);
     const affected = writer.listGraphProjectionJobs().find(({ sourceEventIds }) => sourceEventIds[0] === 'evt_affected')!;
     for (let count = 0; count < 12; count += 1) { await writer.resumePendingWork(); advance(); }

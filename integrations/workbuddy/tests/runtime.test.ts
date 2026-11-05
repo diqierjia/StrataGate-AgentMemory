@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config.js'
 import { WorkBuddyRuntime } from '../src/runtime.js'
+import { StrataGate } from '@diqier/stratagate'
 
 const temporaryDirectories: string[] = []
 const servers: Server[] = []
@@ -158,6 +159,8 @@ describe('WorkBuddyRuntime', () => {
             }],
           }
           previousTargetMessageId = payload.target.messages[0].id
+        } else if (system.startsWith('You review two StrataGate memories')) {
+          result = { action:'KEEP_LEFT',confidence:.99,reason:'Same deployment decision',mergedTitle:'Deployment target selected',mergedSummary:'The deployment target is Singapore.' }
         } else {
           result = {
             reason: 'Project state updated from the deployment decision.',
@@ -201,6 +204,8 @@ describe('WorkBuddyRuntime', () => {
     })
     const elements = await memory.searchElements('Singapore', 'session-1')
     expect(elements.results[0]).toMatchObject({ kind: 'element', content: 'Singapore' })
+    const stored=await StrataGate.open({database:memory.config.database,namespace:memory.config.namespace})
+    try{expect(stored.listEvents().filter(card=>card.status==='active')).toHaveLength(1);expect(stored.listEvents().find(card=>card.status==='active')!.sourceMessageIds).toHaveLength(2)}finally{await stored.close()}
   })
 
   it('uses WorkBuddy lite by default without an external API key', async () => {
@@ -226,6 +231,8 @@ if (system.startsWith('You compress')) {
       temporal: { eventType: 'decision' }, scope: 'project', criticality: 'routine'
     }]
   }
+} else if (system.startsWith('You review two StrataGate memories')) {
+  result = {action:'KEEP_LEFT',confidence:.99,reason:'Same deployment decision',mergedTitle:'Deployment target selected',mergedSummary:'Singapore selected.'}
 } else {
   result = {
     reason: 'project state',
@@ -253,5 +260,7 @@ process.stdout.write(JSON.stringify({ structured_output: result }))
       model: { provider: 'workbuddy', model: 'lite' },
       counts: { blocks: 2, events: 2, elements: 1 },
     })
+    const stored=await StrataGate.open({database:memory.config.database,namespace:memory.config.namespace})
+    try{expect(stored.listEvents().filter(card=>card.status==='active')).toHaveLength(1);expect(stored.listEvents().find(card=>card.status==='active')!.sourceMessageIds).toHaveLength(2)}finally{await stored.close()}
   })
 })

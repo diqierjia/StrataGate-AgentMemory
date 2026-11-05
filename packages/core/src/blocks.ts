@@ -1,8 +1,45 @@
-import type { BlockLevel, RawMessage, ToolTrace } from './types.js';
+import type { BlockLevel, MemoryBlock, RawMessage, ToolTrace } from './types.js';
 
 export const DEFAULT_BLOCK_TURN_SIZE = 12;
 export const BLOCK_MAX_LEVEL = 5;
 export const BLOCK_DECAY_LAMBDA = 0.3;
+
+export interface BlockPosition {
+  blockPosition: number;
+  latestBlockPosition: number;
+}
+
+/** Sealed order is independent of derivation status and isolated per thread. */
+export function buildBlockTimeline(
+  blocks: readonly Pick<MemoryBlock, 'id' | 'threadId' | 'sequence'>[],
+): Map<string, BlockPosition> {
+  const threads = new Map<string | undefined, typeof blocks[number][]>();
+  for (const block of blocks) {
+    const thread = threads.get(block.threadId) ?? [];
+    thread.push(block);
+    threads.set(block.threadId, thread);
+  }
+  const positions = new Map<string, BlockPosition>();
+  for (const thread of threads.values()) {
+    thread.sort((a, b) => a.sequence - b.sequence);
+    thread.forEach((block, index) => positions.set(block.id, {
+      blockPosition: index + 1,
+      latestBlockPosition: thread.length,
+    }));
+  }
+  return positions;
+}
+
+export function getBlockDecayView(
+  block: Pick<MemoryBlock, 'pointerAnchorLevel' | 'pointerAnchorBlockPosition'>,
+  position: BlockPosition,
+  lambda = BLOCK_DECAY_LAMBDA,
+): { age: number; level: BlockLevel } {
+  return {
+    age: Math.max(0, position.latestBlockPosition - position.blockPosition),
+    level: getDecayedBlockLevel(block.pointerAnchorLevel, block.pointerAnchorBlockPosition, position.latestBlockPosition, lambda),
+  };
+}
 
 const FILLER_ONLY = new Set([
   'ok', 'okay', 'got it', 'thanks', 'thank you', 'yes', 'correct', 'sure',
@@ -70,7 +107,12 @@ export function blockLevelLabel(level: BlockLevel): string {
   ][level] ?? 'unknown';
 }
 
-function roleLabel(role: RawMessage['role']): string {
+function roleLabel(message: RawMessage, raw = false): string {
+  const { role } = message;
+  // Older synthetic provenance stored agent-authored facts with role=user.
+  // Label their origin when rendering, keeping the stored source intact.
+  if (role === 'user' && message.threadId?.startsWith('agent-memory:')) return 'Recorded';
+  if (raw) return role;
   if (role === 'user') return 'User';
   if (role === 'assistant') return 'Assistant';
   if (role === 'tool') return 'Tool';
@@ -169,12 +211,14 @@ function compactDerivationText(value: string, maxChars: number, label: string): 
 export function buildMemoryDerivationMessages(messages: readonly RawMessage[]): RawMessage[] {
   return messages.map((message) => ({
     ...message,
-    content: message.role === 'tool'
+    content: (message.role === 'tool' ? dailyToolJson(message.content) : undefined) ?? (message.role === 'tool'
       ? compactDerivationText(message.content, DERIVATION_TOOL_MESSAGE_MAX_CHARS, 'tool message content')
-      : message.content,
+      : message.content),
     ...(message.toolCalls
       ? {
           toolCalls: message.toolCalls.map((trace) => {
+            const daily = dailyToolSummary(trace);
+            if (daily) return { name: trace.name, result: daily };
             const argumentsValue = trace.arguments === undefined
               ? undefined
               : compactDerivationValue(
@@ -195,12 +239,35 @@ export function buildMemoryDerivationMessages(messages: readonly RawMessage[]): 
   }));
 }
 
+function dailyToolSummary(trace: ToolTrace): string | undefined {
+  if (trace.name !== 'memory_daily_write' && trace.name !== 'memory_daily_read') return undefined;
+  let result = trace.result;
+  if (typeof result === 'string') { try { result = JSON.parse(result); } catch { result = {}; } }
+  const saved = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  const args = trace.arguments ?? {};
+  const oneLine = (value: unknown) => String(value ?? '').replace(/[\r\n]+/g, ' ');
+  return trace.name === 'memory_daily_write'
+    ? `更新了 ${oneLine(saved.date ?? args.date ?? '今天')} 日记：《${oneLine(args.title)}》`
+    : `读取了每日笔记（${oneLine(args.date ?? args.query ?? '最近日期')}）`;
+}
+
+function dailyToolJson(text: string): string | undefined {
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    return dailyToolSummary({ name: String(value.name ?? value.tool ?? ''), arguments: (value.arguments ?? value.parameters) as Record<string, unknown>, result: value.result });
+  } catch { return undefined; }
+}
+
 function summarizeToolTrace(trace: ToolTrace): string {
+  const daily = dailyToolSummary(trace);
+  if (daily) return daily;
   const summary = resultSummary(trace.result);
   return `Tool call: ${trace.name}${summary ? ` (${summary})` : ''}`;
 }
 
 function summarizeToolJson(value: string): string | null {
+  const daily = dailyToolJson(value);
+  if (daily) return daily;
   const trimmed = value.trim().replace(/^```(?:json)?\s*/iu, '').replace(/\s*```$/u, '');
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
@@ -282,7 +349,7 @@ export function formatReadableTranscript(messages: readonly RawMessage[]): strin
     .flatMap((message) => {
       const text = message.content.trim();
       const inline = message.role === 'tool' ? summarizeToolJson(text) ?? text : text;
-      const lines = inline ? [`${roleLabel(message.role)}: ${inline}`] : [];
+      const lines = inline ? [`${roleLabel(message)}: ${inline}`] : [];
       lines.push(...(message.toolCalls ?? []).map(summarizeToolTrace));
       return lines;
     })
@@ -296,7 +363,7 @@ function renderRawToolTrace(trace: ToolTrace): string {
 export function formatRawTranscript(messages: readonly RawMessage[]): string {
   return messages
     .flatMap((message) => [
-      `${message.role}: ${message.content}`,
+      `${roleLabel(message, true)}: ${message.content}`,
       ...(message.toolCalls ?? []).map(renderRawToolTrace),
     ])
     .join('\n\n');
@@ -338,7 +405,7 @@ export function condenseTranscript(messages: readonly RawMessage[]): string {
         }
         return REPEATED_PASTE_MARKER;
       });
-      return rendered.length > 0 ? [`${roleLabel(message.role)}: ${rendered.join('\n\n')}`] : [];
+      return rendered.length > 0 ? [`${roleLabel(message)}: ${rendered.join('\n\n')}`] : [];
     })
     .join('\n\n');
 }
@@ -361,7 +428,10 @@ export function deterministicBlockLayers(messages: readonly RawMessage[]): Pick<
 > {
   const l5Rendered = formatRawTranscript(messages);
   const readable = formatReadableTranscript(messages);
-  const l4Readable = estimateTokens(readable) <= estimateTokens(l5Rendered) ? readable : l5Rendered;
+  // Daily traces must never fall back to raw bodies, even for tiny calls where
+  // the explanatory summary is longer than the original JSON.
+  const hasDailyTrace = messages.some(message => message.toolCalls?.some(trace => dailyToolSummary(trace) !== undefined) || (message.role === 'tool' && dailyToolJson(message.content) !== undefined));
+  const l4Readable = hasDailyTrace || estimateTokens(readable) <= estimateTokens(l5Rendered) ? readable : l5Rendered;
   const condensed = condenseTranscript(messages);
   const l3Condensed = estimateTokens(condensed) <= estimateTokens(l4Readable) ? condensed : l4Readable;
   return {

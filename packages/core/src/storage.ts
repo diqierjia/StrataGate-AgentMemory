@@ -3,9 +3,10 @@ import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventT
 import type { ElementCard, EventCard, ExternalMemoryImportJob, GraphEdge, GraphNode, MemoryBlock, RawMessage } from './types.js';
 import type { MemoryTopicState } from './topics.js';
 
-export const STRATAGATE_STORAGE_SCHEMA_VERSION = 12;
+export const STRATAGATE_STORAGE_SCHEMA_VERSION = 14;
 export const KNOWLEDGE_GRAPH_PROJECTOR_VERSION = 1;
 export const DERIVATION_MAX_ATTEMPTS = 3;
+export const DERIVATION_LEASE_MS = 5 * 60_000;
 
 /**
  * Thread-id prefixes of synthetic provenance blocks whose turns are not real
@@ -27,6 +28,7 @@ export interface ExtractionJob {
   lastError: string | null;
   nextRetryAt: string | null;
   updatedAt: string;
+  leaseUntil?: string | null;
 }
 
 export type BlockSummaryJobStatus = 'pending' | 'running' | 'succeeded' | 'failed';
@@ -38,9 +40,10 @@ export interface BlockSummaryJob {
   lastError: string | null;
   nextRetryAt: string | null;
   updatedAt: string;
+  leaseUntil?: string | null;
 }
 
-export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance';
+export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance' | 'dreamingStep' | 'eventDuplicateDecider';
 
 export interface SuccessfulModelResponse {
   id: string;
@@ -81,6 +84,38 @@ export interface GraphProjectionJob {
   nameProvenanceRecoveryVersion?: 1;
   createdAt: string;
   updatedAt: string;
+  leaseUntil?: string | null;
+  /** Epoch captured at claim time; used to reject late model results. */
+  claimEpoch?: number;
+  /** Unique lease/attempt fence; prevents a late result from an earlier claim
+   * of the same job id from completing a later retry in the same epoch. */
+  claimToken?: string;
+  /** Epoch in which this job was created while Graph processing was enabled.
+   * Missing means a legacy job that must be explicitly approved before reuse. */
+  createdEpoch?: number;
+}
+
+/** Shared by scheduling and claiming: current incremental work or explicitly
+ * approved history, always restricted to exposable Event sources. */
+export function graphProjectionSourceIds(job: GraphProjectionJob, events: ReadonlyMap<string, EventCard>,
+  epoch: number, approved: ReadonlySet<string>): string[] {
+  return job.sourceEventIds.filter((id) => {
+    const event = events.get(id);
+    return (event?.status === 'active' || event?.status === 'superseded')
+      && (job.createdEpoch === epoch || approved.has(id));
+  });
+}
+
+/** The one-time legacy recovery rule shared by writer-open and its derived index. */
+export function graphProjectionNeedsRecovery(job: GraphProjectionJob, events: readonly EventCard[]): boolean {
+  const signature = /^StrataGate model did not produce a valid stratagate_project_knowledge_graph call after 2 attempts: StrataGate stratagate_project_knowledge_graph arguments were invalid: "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string(?:; "nodes\[\d+\]\.metadataProvenance\.name\[\d+\]" must be a string)*$/;
+  return job.projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION
+    && job.nameProvenanceRecoveryVersion === undefined && job.status === 'failed'
+    && !(job.attempts < DERIVATION_MAX_ATTEMPTS && job.nextRetryAt !== null)
+    && signature.test((job.lastError ?? '').split('\n')[0]!.trim())
+    && job.sourceEventIds.length > 0
+    && job.sourceEventIds.every((id) => events.some((event) => event.id === id
+      && (event.status === 'active' || event.status === 'superseded')));
 }
 
 export interface UsageReceipt {
@@ -124,6 +159,11 @@ export interface StrataGateSnapshot {
   currentTurn: number;
   blockTurnSize: number;
   blockDecayLambda: number;
+  /** Durable per-namespace Graph policy. Absent in pre-toggle snapshots. */
+  graphEnabled?: boolean;
+  graphEpoch?: number;
+  /** Finite SDK approval, persisted across reopen; host policies can override it. */
+  graphBackfillEventIds?: string[];
   openTail: RawMessage[];
   blocks: MemoryBlock[];
   summaryJobs: BlockSummaryJob[];
@@ -148,21 +188,80 @@ export interface LoadedStrataGateState {
   revision: number;
 }
 
+/** Read projection, deliberately not a persistable/exportable snapshot. */
+export type AdminReadModel = Omit<StrataGateSnapshot, 'schemaVersion'> & { storedSchemaVersion?: number };
+export interface AdminBlockPage {
+  model: AdminReadModel;
+  revision: number;
+  threadId: string | null;
+  blockIds: string[];
+  total: number;
+}
+export interface AdminReadEntry { namespace: string; revision: number; snapshot: AdminReadModel }
+
 export interface RawMessageIndexDelta {
   upsert: Array<Pick<RawMessage, 'id' | 'content'>>;
   deleteIds: string[];
 }
 
+export interface DerivationLeaseGuard {
+  kind: 'summary' | 'extraction' | 'graph' | 'topic';
+  id: string;
+  attempts: number;
+  leaseUntil: string | null;
+}
+
+/** Host-owned durable policy. Epoch changes revoke in-flight Graph writes. */
+export interface GraphRuntimePolicy {
+  enabled: boolean;
+  paused: boolean;
+  epoch: number;
+  /** A finite, explicitly approved historical set; absent means no historical backfill. */
+  backfillEventIds?: readonly string[];
+}
+
+export interface LoadedDerivationLeases {
+  revision: number;
+  jobs: Array<DerivationLeaseGuard & { updatedAt: string }>;
+}
+
+/** Small business transactions; prepared values are published in memory only after COMMIT. */
+export type RecordMutation =
+  | { kind: 'append'; messages: RawMessage[]; receipt?: IngestionReceipt; updatedAt: string }
+  | { kind: 'block-pointers'; blocks: Array<Pick<MemoryBlock, 'id'> & Partial<Pick<MemoryBlock,
+      'surfaceCurrentLevel' | 'pointerCurrentLevel' | 'pointerAnchorLevel' | 'pointerAnchorBlockPosition' | 'lastLiftedAt' | 'lastLiftedBy'>>>; updatedAt: string }
+  | { kind: 'pin-event'; id: string; agent: boolean; pinned: boolean; updatedAt: string }
+  | { kind: 'memory-use'; eventIds: string[]; agentEventIds: string[]; elementIds: string[];
+      receipt?: UsageReceipt; updatedAt: string };
+export interface RecordMutationResult { revision: number; changed: boolean }
+
 export interface StorageAdapter {
   /** Read-only adapters never initialize or recover writer-owned state. */
   readonly readonly?: boolean;
   load(namespace: string): Promise<LoadedStrataGateState | null>;
+  /** Read running claim metadata at one durable revision, without memory history. */
+  loadDerivationLeases?(namespace: string): Promise<LoadedDerivationLeases | null>;
   save(
     namespace: string,
     snapshot: StrataGateSnapshot,
     expectedRevision: number,
     rawMessageIndexDelta?: RawMessageIndexDelta,
+    /** The pre-mutation claims fence transitions against concurrent heartbeats. */
+    leaseGuards?: readonly DerivationLeaseGuard[],
+    graphEpoch?: number,
   ): Promise<number>;
+  /** Optional Unit of Work: persist changed records, retaining the full-save contract for adapters. */
+  saveChanges?(
+    namespace: string, before: StrataGateSnapshot, snapshot: StrataGateSnapshot,
+    expectedRevision: number, rawMessageIndexDelta?: RawMessageIndexDelta,
+    leaseGuards?: readonly DerivationLeaseGuard[], graphEpoch?: number,
+  ): Promise<number>;
+  commitRecords?(namespace: string, expectedRevision: number, mutation: RecordMutation): Promise<RecordMutationResult>;
+  /** Renew only the still-owned running attempt, without loading memory history. */
+  renewDerivationLease?(
+    namespace: string, kind: 'summary' | 'extraction' | 'graph' | 'topic', id: string,
+    attempts: number, claimedAt: string, now: number,
+  ): Promise<string | null>;
   /**
    * Return a bounded set of raw-message ids for lexical candidate recall.
    * Implementations may return null when an index is unavailable; callers
@@ -383,7 +482,7 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
       schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION,
       agentEvents: [],
     };
-  } else if (schemaVersion === 11) {
+  } else if (schemaVersion === 12 || schemaVersion === 13) {
     snapshot = { ...structuredClone(value as StrataGateSnapshot), schemaVersion: STRATAGATE_STORAGE_SCHEMA_VERSION };
   } else if (schemaVersion === STRATAGATE_STORAGE_SCHEMA_VERSION) {
     snapshot = structuredClone(value) as StrataGateSnapshot;
@@ -398,6 +497,12 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
   }
   if (!Number.isFinite(snapshot.blockDecayLambda) || snapshot.blockDecayLambda < 0) {
     throw new TypeError('Invalid StrataGate snapshot: blockDecayLambda must be a non-negative finite number');
+  }
+  snapshot.graphEnabled = snapshot.graphEnabled === true;
+  snapshot.graphEpoch = Number.isSafeInteger(snapshot.graphEpoch) && snapshot.graphEpoch! >= 0 ? snapshot.graphEpoch! : 0;
+  if (snapshot.graphBackfillEventIds === undefined) snapshot.graphBackfillEventIds = [];
+  if (!Array.isArray(snapshot.graphBackfillEventIds) || !snapshot.graphBackfillEventIds.every(id => typeof id === 'string')) {
+    throw new TypeError('Invalid StrataGate snapshot: graphBackfillEventIds must be a string array');
   }
   if (!Array.isArray(snapshot.externalMemoryImportJobs)) snapshot.externalMemoryImportJobs = [];
   for (const key of ['openTail', 'blocks', 'summaryJobs', 'events', 'agentEvents', 'graphNodes', 'graphEdges', 'graphProjectionJobs', 'elements', 'extractionJobs', 'elementProjectionJobs', 'usageReceipts', 'ingestionReceipts', 'externalMemoryImportJobs'] as const) {
@@ -442,12 +547,35 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
     if (!Number.isSafeInteger(block.pointerAnchorBlockPosition) || block.pointerAnchorBlockPosition < 1) {
       throw new TypeError('Invalid StrataGate snapshot: pointerAnchorBlockPosition must be a positive integer');
     }
+    if (block.surfaceCurrentLevel === undefined) block.surfaceCurrentLevel = block.pointerCurrentLevel;
+    if (!Number.isSafeInteger(block.surfaceCurrentLevel) || block.surfaceCurrentLevel < 0 || block.surfaceCurrentLevel > 5) {
+      throw new TypeError('Invalid StrataGate snapshot: surfaceCurrentLevel must be a Block level');
+    }
     if (block.lastLiftedBy !== null && block.lastLiftedBy !== 'user' && block.lastLiftedBy !== 'agent') {
       throw new TypeError('Invalid StrataGate snapshot: lastLiftedBy must be user, agent, or null');
     }
   }
   if (snapshot.successfulModelResponses.length > 5) {
     snapshot.successfulModelResponses = snapshot.successfulModelResponses.slice(-5);
+  }
+  if (schemaVersion !== STRATAGATE_STORAGE_SCHEMA_VERSION) {
+    // Legacy ready anchors used a ready-only clock. Preserve its elapsed age
+    // at cutover instead of guessing which pending blocks existed at anchoring.
+    // Pending anchors already use sealed positions and must not be shifted.
+    const pendingCounts = new Map<string | undefined, number>();
+    for (const block of snapshot.blocks) {
+      if (block.processingStatus === 'pending') {
+        pendingCounts.set(block.threadId, (pendingCounts.get(block.threadId) ?? 0) + 1);
+      }
+    }
+    for (const block of snapshot.blocks) {
+      if (block.processingStatus === 'ready') {
+        block.pointerAnchorBlockPosition += pendingCounts.get(block.threadId) ?? 0;
+        if (!Number.isSafeInteger(block.pointerAnchorBlockPosition)) {
+          throw new TypeError('Invalid StrataGate snapshot: migrated Block anchor exceeds safe integer range');
+        }
+      }
+    }
   }
   return snapshot;
 }

@@ -12,6 +12,26 @@ import {
 } from '../src/index.js';
 
 describe('progressive conversation blocks', () => {
+  it('labels legacy agent provenance as Recorded without modifying raw messages or user quotations', () => {
+    const messages: RawMessage[] = [
+      { id: 'agent-source', role: 'user', content: 'User: quoted text stays intact.', createdAt: '2026-01-01T00:00:00Z', threadId: 'agent-memory:blk-old' },
+      { id: 'real-user', role: 'user', content: 'Real user message.', createdAt: '2026-01-01T00:00:01Z', threadId: 'ordinary-thread' },
+      { id: 'unthreaded', role: 'user', content: 'Legacy user message.', createdAt: '2026-01-01T00:00:02Z' },
+    ];
+    const before = structuredClone(messages);
+    const layers = deterministicBlockLayers(messages);
+    for (const text of [layers.l3Condensed, layers.l4Readable, formatRawTranscript(layers.l5Raw)]) {
+      expect(text).toContain('Recorded: User: quoted text stays intact.');
+      expect(text).not.toContain('User: User: quoted text');
+      expect(text).toMatch(/(?:User|user): Real user message\./u);
+      expect(text).toMatch(/(?:User|user): Legacy user message\./u);
+    }
+    expect(messages).toEqual(before);
+    expect(layers.l5Raw).toEqual(before);
+    expect(estimateTokens(layers.l3Condensed)).toBeLessThanOrEqual(estimateTokens(layers.l4Readable));
+    expect(estimateTokens(layers.l4Readable)).toBeLessThanOrEqual(estimateTokens(formatRawTranscript(layers.l5Raw)));
+  });
+
   it('keeps raw messages while removing only bounded redundancy from L3', () => {
     const paste = 'This is a deliberately long pasted paragraph that must remain available in the raw evidence layer even when its second identical occurrence is condensed from the smaller context layer.';
     const messages: RawMessage[] = [

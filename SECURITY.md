@@ -6,7 +6,7 @@ StrataGate is currently pre-1.0. Security fixes are applied to the latest releas
 
 ## Reporting a vulnerability
 
-Please use GitHub private vulnerability reporting for this repository. Do not open a public issue containing credentials, private conversations, raw provider traces, or an exploit that exposes stored memory.
+Do not open a public issue containing credentials, private conversations, raw provider traces, or an exploit that exposes stored memory. GitHub private vulnerability reporting is temporarily unavailable. Until it is restored, contact the maintainer directly at **jiahongcheng61@gmail.com** with a concise report. Do not attach production databases, raw memory transcripts, credentials, or tokens.
 
 Include the affected version or commit, a minimal reproduction, expected impact, and any suggested mitigation.
 

@@ -1,6 +1,7 @@
 export * from './blocks.js';
 export * from './graph.js';
 export * from './events.js';
+export * from './event-duplicates.js';
 export * from './external-memory.js';
 export * from './retrieval.js';
 export * from './search.js';
@@ -11,6 +12,7 @@ export * from './types.js';
 export * from './weights.js';
 export * from './time.js';
 export * from './topics.js';
+export * from './dreaming.js';
 export * from './topic-diagnostics.js';
 
 export * from './topic-overview-repair.js';

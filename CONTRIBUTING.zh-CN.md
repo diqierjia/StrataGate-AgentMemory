@@ -6,7 +6,7 @@
 
 ## 开始之前
 
-- 创建新 Issue 前，请先搜索[已有 Issue](https://github.com/diqierjia/StrataGate-AgentMemory/issues)。
+- 创建新 Issue 前，请先搜索[已有 Issue](https://gitee.com/diqier4123/StrataGate-AgentMemory/issues)。
 - 报告问题时，请注明相关集成、Node.js 版本、复现步骤、预期行为和实际行为。
 - 如果准备实现较大的功能或调整架构，请先创建 Issue 讨论方案和范围，再开始开发。
 - 不要在 Issue、测试、fixture 或 Pull Request 中提交私人对话、凭据、API Key 或其他敏感信息。安全问题请按照 [`SECURITY.md`](SECURITY.md) 报告。
@@ -29,15 +29,15 @@
 
 ## 开发环境
 
-StrataGate 是 npm workspace monorepo。请使用 Node.js `22.19.0` 或更新的 22.x 版本，也可以使用 Node.js 24 及以上版本；CI 会同时使用 Node.js 22 和 24 测试。
+StrataGate 是 npm workspace monorepo。请使用 Node.js `22.19.0` 或更新的 22.x 版本，也可以使用 Node.js 24 及以上版本。运行以下本地检查；2026-11-05 账号恢复后，重新要求完成 GitHub CI。
 
 ```bash
-git clone https://github.com/diqierjia/StrataGate-AgentMemory.git
+git clone https://gitee.com/diqier4123/StrataGate-AgentMemory.git
 cd StrataGate-AgentMemory
 npm ci
 ```
 
-运行与 CI 一致的主要检查：
+运行以下主要本地检查：
 
 ```bash
 npm run check

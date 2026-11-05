@@ -44,7 +44,10 @@ export interface MemoryBlock extends Omit<BlockLayers, 'l0Title' | 'l0Tags' | 'l
   shouldExtract?: boolean;
   processingStatus: BlockProcessingStatus;
   pointerCurrentLevel: BlockLevel;
+  /** The layer actually present in the host's injected checkpoint surface. */
+  surfaceCurrentLevel?: BlockLevel;
   pointerAnchorLevel: BlockLevel;
+  /** Per-thread sealed-block position (including pending); schema 14 onward. */
   pointerAnchorBlockPosition: number;
   lastLiftedAt: string | null;
   lastLiftedBy: BlockLiftSource | null;
@@ -127,6 +130,8 @@ export interface EventCardInput {
 
 export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> {
   id: string;
+  /** Archived source cards contributing facts/provenance to this consolidated card. */
+  mergedFromEventIds?: string[];
   /** Conversation turn where this Event entered its long-term-memory lifecycle. */
   formedTurn?: number;
   tags: string[];
@@ -252,6 +257,7 @@ export type ExternalMemoryImportJobStatus =
   | 'awaiting_confirmation'
   | 'ready'
   | 'failed'
+  | 'abandoned'
   | 'committed'
   | 'undone';
 
@@ -529,7 +535,11 @@ export interface GraphProjectionResult {
 }
 
 export interface GraphProjectionContext {
+  /** Recheck before each provider request, including format retries. Never serialize. */
+  assertActive?: () => void;
   jobId: string;
+  /** Unique token for this lease/attempt. Never persist or expose to prompts. */
+  claimToken?: string;
   projectorVersion: number;
   events: EventCard[];
   existingNodes: GraphNode[];
@@ -554,6 +564,15 @@ export interface SearchOptions {
    * the conversation-derived pool (1 = equal footing, 0 = never surfaced).
    */
   agentMemoryWeight?: number;
+  /**
+   * Event IDs in descending semantic-similarity order, computed by the host
+   * layer from stored embeddings. Core never embeds text or makes network
+   * calls; it only fuses this as one additional ranking lane. Omitted or
+   * empty means pure lexical retrieval, which is the default behavior.
+   */
+  vectorRanking?: string[];
+  /** Relative weight of the vector lane when it fuses with the lexical lanes. */
+  vectorWeight?: number;
   /** Disable retrieval bookkeeping for read-only previews. */
   trackRetrieval?: boolean;
 }
@@ -618,6 +637,9 @@ export interface RawSearchHit {
 }
 
 export interface RawSearchOptions {
+  /** Read-only restricted retrieval, applied before ranking. */
+  messageIds?: readonly string[];
+  offset?: number;
   /** Limit raw-message candidates to one conversation thread. */
   threadId?: string;
   /** Preserve the legacy session behavior that includes namespace-level messages. */

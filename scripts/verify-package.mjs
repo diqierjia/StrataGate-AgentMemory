@@ -54,7 +54,10 @@ try {
   ]
   for (const path of required) assert(files.has(path), `Packed artifact is missing ${path}`)
   for (const path of files) {
-    assert(!/^(src|tests|scripts|benchmarks)\//.test(path), `Development file leaked into package: ${path}`)
+    // The README links to this published benchmark report, explicitly listed
+    // in package.json. Other benchmark and development files remain forbidden.
+    const publishedReport = path === 'benchmarks/locomo-conv26-r8-final.json'
+    assert(publishedReport || !/^(src|tests|scripts|benchmarks)\//.test(path), `Development file leaked into package: ${path}`)
     assert(!/\.(?:db|sqlite3?|pem|key)$/i.test(path), `Sensitive/runtime file leaked into package: ${path}`)
   }
 

@@ -4,6 +4,12 @@ import type { Session } from '@deepseek-ai/dsh-session'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { StrataGateRuntime } from './runtime.js'
 import type {} from '@deepseek-ai/dsh-tools'
+import { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
+
+// Email draft preparation is independent of archived GitHub navigation.
+export { AGENT_FEEDBACK_ENABLED } from './feedback-policy.js'
+
+const SEARCH_RESULT_GUIDANCE = ' Read retrievalStatus and retrievalHint: scope_empty applies only to this search scope; no_match means this query found no match; unknown means scope availability could not be determined. An empty result never proves a memory was never recorded. 不得把空结果表述成“没有这条记忆”或“你没说过”。检索异常按工具错误处理，不是正常空结果。状态提示不是事实证据，不得采用或强化。'
 
 const jsonOutput = {
   schema: { type: 'json' as const },
@@ -46,25 +52,41 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
     },
   }))
 
-  ctx.tools.register(defineTool({
+  if (AGENT_FEEDBACK_ENABLED) ctx.tools.register(defineTool({
     name: 'feedback_prepare',
-    description: 'This tool is provided by the StrataGate plugin. Create or revise a local StrataGate feedback draft when the user directly requests it, or after a proactive suggestion permitted by the StrataGate feedback policy and the user explicitly agrees. A direct user request is already authorization. Use only facts known from the current conversation; leave unknown fields empty and never invent versions, logs, Block counts, or diagnostics. Never submit anything to GitHub. After success, briefly say the draft is local and not submitted, then render feedbackUrl as a Markdown link labeled "打开反馈草稿". Then ask exactly once: "要不要顺便让我尝试修复这个问题，并提交一个 PR？" If the user does not respond or declines, do not ask again. Do not use a popup or other additional UI. Do not print draft fields or an Issue-content table, and do not direct the user through Settings manually.',
+    description: 'This tool is provided by the StrataGate plugin. 整理 StrataGate 插件的故障、使用疑问和改进建议，生成本地邮件反馈草稿并自动附带运行摘要。用户直接要求可调用；主动建议须先获同意。依据当前会话事实填写，未知留空，去除凭据。省略字段保留原值，空字符串或空数组清空；新问题传 new_draft=true。成功后说明草稿在本地、邮件尚未发送，并将 feedbackUrl 显示为“打开反馈草稿”链接，供用户检查后手动发邮件。',
     parameters: {
-      title: { type: 'string' },
-      description: { type: 'string' },
-      reproduction: { type: 'array', items: { type: 'string' } },
-      expected: { type: 'string' },
-      actual: { type: 'string' },
-      error_context: { type: 'string' },
+      new_draft: { type: 'boolean', description: '新问题为 true；修改已有草稿时省略。' },
+      title: { type: 'string', description: '简短问题标题。' },
+      description: { type: 'string', description: '已知问题、建议或疑问。' },
+      reproduction: { type: 'array', items: { type: 'string' }, description: '实际发生过的复现步骤。' },
+      expected: { type: 'string', description: '已知预期结果。' },
+      actual: { type: 'string', description: '实际观察到的结果。' },
+      error_context: { type: 'string', description: '当前会话的相关错误；本地诊断由程序自动补充。' },
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.prepareFeedback(sessionOf(exec), {
+      ...(args.new_draft !== undefined ? { newDraft: args.new_draft } : {}),
       ...(args.title !== undefined ? { title: args.title } : {}),
       ...(args.description !== undefined ? { description: args.description } : {}),
       ...(args.reproduction !== undefined ? { reproduction: args.reproduction } : {}),
       ...(args.expected !== undefined ? { expected: args.expected } : {}),
       ...(args.actual !== undefined ? { actual: args.actual } : {}),
       ...(args.error_context !== undefined ? { errorContext: args.error_context } : {}),
+    }) as never,
+  }))
+
+  if (AGENT_FEEDBACK_ENABLED) ctx.tools.register(defineTool({
+    name: 'stratagate_diagnostics',
+    description: 'This tool is provided by the StrataGate plugin. 只读查询 StrataGate 插件当前记忆空间的运行诊断：近期失败、任务状态、耗时、Token 用量与采集覆盖度。默认给摘要；用返回的诊断 id 读取脱敏错误详情，offset 分页。用于排查或回应用户疑问；反馈草稿会自动附带摘要。',
+    parameters: {
+      id: { type: 'string', description: '摘要中返回的诊断 ID；提供时读取该条详情。' },
+      offset: { type: 'integer', description: '使用返回的 nextOffset 继续读取近期异常。' },
+    },
+    output: jsonOutput,
+    execute: async (args, exec) => runtime.diagnosticReport(runtime.namespaceFor(sessionOf(exec)), {
+      ...(args.id !== undefined ? { id: args.id, details: true } : {}),
+      ...(args.offset !== undefined ? { offset: args.offset } : {}),
     }) as never,
   }))
 
@@ -91,7 +113,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_search_events',
-    description: 'This tool is provided by the StrataGate plugin. Search durable Event memories for past facts, decisions, plans, changes, preferences, outcomes, and timing. Use a focused query with the most distinctive known names, entities, versions, tools, decisions, or outcomes. Results are compact candidates; rankScore reflects retrieval order only, not confidence or factual accuracy. Expand a relevant Event when its compact fields are not enough to verify the needed detail. Optionally pass topic_id to search within a navigated topic; query may be empty to browse its events, offset continues pagination, and temporalIntent first/latest controls chronology.',
+    description: 'This tool is provided by the StrataGate plugin. Search durable Event memories for past facts, decisions, plans, changes, preferences, outcomes, and timing. Use a focused query with the most distinctive known names, entities, versions, tools, decisions, or outcomes. Results are compact candidates; rankScore reflects retrieval order only, not confidence or factual accuracy. Expand a relevant Event when its compact fields are not enough to verify the needed detail. Optionally pass topic_id to search within a navigated topic; query may be empty to browse its events, offset continues pagination, and temporalIntent first/latest controls chronology.' + SEARCH_RESULT_GUIDANCE,
     parameters: {
       query: { type: 'string', required: true, description: 'A focused query for the target historical memory. Prefer explicit names, entities, versions, tools, decisions, or outcomes over vague references. May be empty when browsing a supplied topic_id.' },
       topic_id: { type: 'string', description: '目录中的主题 ID；限定真实来源事件，空 query 可浏览。' },
@@ -112,45 +134,47 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
     }) as never,
   }))
 
-  ctx.tools.register(defineTool({
+  const graphDefinitions = [defineTool({
     name: 'memory_search_graph',
-    description: 'This tool is provided by the StrataGate plugin. Search the Event-backed Knowledge Graph for current state and query-relevant history. Results explicitly label current, historical, or both; historical matches never imply current truth, disputed records remain marked, and Event evidence is bounded to the match. Endpoint names and aliases can match relations, while relation text alone is ranking context. rankScore is ranking-only, never confidence or factual accuracy.',
+    description: 'This tool is provided by the StrataGate plugin. Search the Event-backed Knowledge Graph for current state and query-relevant history. Results explicitly label current, historical, or both; historical matches never imply current truth, disputed records remain marked, and Event evidence is bounded to the match. Endpoint names and aliases can match relations, while relation text alone is ranking context. rankScore is ranking-only, never confidence or factual accuracy.' + SEARCH_RESULT_GUIDANCE,
     parameters: {
       query: { type: 'string', required: true },
       limit: { type: 'integer', description: 'Maximum results, 1-20.' },
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.searchGraph(sessionOf(exec), args.query, args.limit ?? 8) as never,
-  }))
-
-  ctx.tools.register(defineTool({
+  }), defineTool({
     name: 'memory_expand_graph_node',
     description: 'This tool is provided by the StrataGate plugin. Expand one Knowledge Graph node through the same Event-authoritative view as search: dynamic current state, marked disputed records, retrievable history, and bounded supporting Event evidence. Forgotten or archived Event provenance is never exposed.',
     parameters: { id: { type: 'string', required: true } },
     output: jsonOutput,
     execute: async (args, exec) => runtime.expandGraphNode(sessionOf(exec), args.id) as never,
-  }))
-
-  ctx.tools.register(defineTool({
-    name: 'memory_search_elements',
-    description: 'This tool is provided by the StrataGate plugin. Deprecated compatibility search for legacy Element-card data. Returns compact fact hits; rankScore is BM25/RRF ordering only, never confidence or factual accuracy. Prefer memory_search_graph.',
+  }), defineTool({
+    name: 'memory_expand_element',
+    description: 'This tool is provided by the StrataGate plugin. Expand an Element card, optionally as it was at an ISO date. The result is a new evidence batch and must be assessed.',
     parameters: {
-      query: { type: 'string', required: true },
-      limit: { type: 'integer' },
-      name: { type: 'string' },
-      elementType: { type: 'string', enum: ['person', 'project', 'organization', 'tool', 'place'] as const },
+      id: { type: 'string', required: true },
+      at: { type: 'string' },
     },
     output: jsonOutput,
-    execute: async (args, exec) => runtime.searchElements(sessionOf(exec), args.query, {
-      ...(args.limit !== undefined ? { limit: args.limit } : {}),
-      ...(args.name ? { name: args.name } : {}),
-      ...(args.elementType ? { type: args.elementType } : {}),
-    }) as never,
-  }))
+    execute: async (args, exec) => runtime.expandElement(sessionOf(exec), args.id, args.at) as never,
+  })]
+  let graphDisposers: Array<() => void> = []
+  let syncAssessmentTool = () => {}
+  const syncGraphTools = () => {
+    if (runtime.graphEnabled === false) {
+      for (const dispose of graphDisposers) dispose?.()
+      graphDisposers = []
+    } else if (!graphDisposers.length) graphDisposers = graphDefinitions.map(definition => ctx.tools.register(definition))
+    syncAssessmentTool()
+  }
+  syncGraphTools()
+  runtime.onGraphAvailabilityChanged?.(syncGraphTools)
+  ctx.on?.('system-prompt/assemble', async (_assembly, _context, next) => { syncGraphTools(); return next() })
 
   ctx.tools.register(defineTool({
     name: 'memory_search_raw',
-    description: 'This tool is provided by the StrataGate plugin. Search archived messages when summarized memories are insufficient. Returns compact raw hits (message id, blockId, excerpt, role, and time); use memory_expand_block with blockId for complete source details. By default searches the whole current namespace; use scope=session for the active thread. Returns evidence refs and batchId for assessment.',
+    description: 'This tool is provided by the StrataGate plugin. Search archived messages when summarized memories are insufficient. Returns compact raw hits (message id, blockId, excerpt, role, and time); use memory_expand_block with blockId for complete source details. By default searches the whole current namespace; use scope=session for the active thread. Returns evidence refs and batchId for assessment.' + SEARCH_RESULT_GUIDANCE,
     parameters: {
       query: { type: 'string', required: true },
       limit: { type: 'integer' },
@@ -162,17 +186,19 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_get_blocks',
-    description: 'This tool is provided by the StrataGate plugin. List decayed conversation-block summaries and their current detail levels. Defaults to the active session only; use scope=namespace to inspect every thread in the current namespace. The response always reports scope, namespace, threadId, counts, and a machine-readable emptyReason when no blocks match.',
+    description: 'This tool is provided by the StrataGate plugin. Browse a paginated block directory containing id, title, turnRange, the layer actually injected into the model, and targetLevel when the decay target differs. Use memory_expand_block for source content. Defaults to blocks with the active threadId only; use scope=namespace to browse every thread and legacy unthreaded blocks in the current namespace. Reports counts, offset, limit, nextOffset, and emptyReason; use nextOffset to continue.',
     parameters: {
       scope: { type: 'string', enum: ['session', 'namespace'] as const, description: 'Query range. Defaults to session to preserve existing isolation behavior.' },
+      offset: { type: 'integer', description: '从第几项开始，使用返回的 nextOffset 继续。' },
+      limit: { type: 'integer', description: '每页 1-20 项，默认 12 项。' },
     },
     output: jsonOutput,
-    execute: async (args, exec) => runtime.blocks(sessionOf(exec), args.scope) as never,
+    execute: async (args, exec) => runtime.blocks(sessionOf(exec), args.scope, args) as never,
   }))
 
   ctx.tools.register(defineTool({
     name: 'memory_expand_block',
-    description: 'This tool is provided by the StrataGate plugin. Expand one memory block to a more detailed layer. The result is a new evidence batch and must be assessed.',
+    description: 'This tool is provided by the StrataGate plugin. Expand one historical conversation Block to a more detailed layer. Use it when a Block checkpoint lacks the detail needed for the current task; pass the Block id shown in the checkpoint or returned by memory_get_blocks. The result is a new evidence batch and must be assessed.',
     parameters: {
       id: { type: 'string', required: true },
       target: { oneOf: [{ type: 'string' }, { type: 'integer' }] },
@@ -191,51 +217,91 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
     execute: async (args, exec) => runtime.expandEvent(sessionOf(exec), args.id) as never,
   }))
 
-  ctx.tools.register(defineTool({
-    name: 'memory_expand_element',
-    description: 'This tool is provided by the StrataGate plugin. Expand an Element card, optionally as it was at an ISO date. The result is a new evidence batch and must be assessed.',
-    parameters: {
-      id: { type: 'string', required: true },
-      at: { type: 'string' },
-    },
-    output: jsonOutput,
-    execute: async (args, exec) => runtime.expandElement(sessionOf(exec), args.id, args.at) as never,
-  }))
-
-  ctx.tools.register(defineTool({
-    name: 'memory_assess',
-    description: 'This tool is provided by the StrataGate plugin. Apply StrataGate Evidence Gate to a retrieval batch BEFORE the final user answer. Assess evidence, close all batches with memory_record_use, then output the user answer. Pass batch_id from the retrieval result; omitting it remains compatible with sequential flows and selects the latest batch. The response reports every input ref that was not adopted and why.',
-    parameters: {
-      batch_id: { type: 'string', description: 'The batchId returned by the retrieval to assess. Omit only in a strictly sequential flow.' },
-      verdict: { type: 'string', enum: ['sufficient', 'partial', 'wrong'] as const, required: true },
-      evidence_refs: { type: 'array', items: { type: 'string' }, required: true },
-      fit: { type: 'string', required: true },
-      missing: { type: 'string', required: true },
-      next_strategy: {
-        type: 'string',
-        enum: ['answer', 'search_events', 'expand_event', 'search_graph', 'expand_graph_node', 'search_elements', 'expand_element', 'search_raw_memory', 'expand_block'] as const,
-        required: true,
+  let assessmentDisposer: (() => void) | undefined
+  let assessmentGraphEnabled: boolean | undefined
+  syncAssessmentTool = () => {
+    const enabled = runtime.graphEnabled !== false
+    if (assessmentGraphEnabled === enabled) return
+    assessmentDisposer?.()
+    assessmentDisposer = ctx.tools.register(defineTool({
+      name: 'memory_assess',
+      description: 'This tool is provided by the StrataGate plugin. Apply StrataGate Evidence Gate to a retrieval batch BEFORE the final user answer. Assess evidence, close all batches with memory_record_use, then output the user answer. Pass batch_id from the retrieval result; omitting it remains compatible with sequential flows and selects the latest batch. The response reports every input ref that was not adopted and why.',
+      parameters: {
+        batch_id: { type: 'string', description: 'The batchId returned by the retrieval to assess. Omit only in a strictly sequential flow.' },
+        verdict: { type: 'string', enum: ['sufficient', 'partial', 'wrong'] as const, required: true },
+        evidence_refs: { oneOf: [{ type: 'array', items: { type: 'string' } }, { type: 'null' }], required: true,
+          description: 'Evidence refs adopted from this batch. Use [] when none are adopted; null is also accepted as [].' },
+        fit: { type: 'string', required: true },
+        missing: { type: 'string', required: true },
+        next_strategy: {
+          type: 'string',
+          enum: enabled
+            ? ['answer', 'search_events', 'expand_event', 'search_graph', 'expand_graph_node', 'expand_element', 'search_raw_memory', 'expand_block'] as const
+            : ['answer', 'search_events', 'expand_event', 'search_raw_memory', 'expand_block'] as const,
+          required: true,
+        },
       },
-    },
-    output: jsonOutput,
-    execute: async (args, exec) => runtime.assess(sessionOf(exec), args, args.batch_id) as never,
-  }))
+      output: jsonOutput,
+      execute: async (args, exec) => runtime.assess(sessionOf(exec), { ...args, evidence_refs: args.evidence_refs ?? [] }, args.batch_id) as never,
+    }))
+    assessmentGraphEnabled = enabled
+  }
+  syncAssessmentTool()
 
   ctx.tools.register(defineTool({
     name: 'memory_record_use',
     description: 'This tool is provided by the StrataGate plugin. Close one StrataGate retrieval batch BEFORE outputting the final user answer. Complete memory_assess / memory_record_use as pre-answer evidence processing for ALL batches, then generate the final user answer. Pass its batch_id and exactly the evidenceRefs from that batch actually adopted for the answer, or [] when none are used. Non-empty refs require that batch\'s sufficient assessment. Never write the answer first and record usage afterwards. Do not turn this tool\'s internal receipt or batch status into a user-facing answer. The host renders successful selections as answer-tail citations, so do not write a manual citation list. Omitting batch_id selects the latest batch for sequential compatibility.',
     parameters: {
       batch_id: { type: 'string', description: 'The batchId to close. Omit only in a strictly sequential flow.' },
-      evidence_refs: { type: 'array', items: { type: 'string' }, required: true },
+      evidence_refs: { oneOf: [{ type: 'array', items: { type: 'string' } }, { type: 'null' }], required: true,
+        description: 'Evidence refs actually used in the answer. Use [] when none are used; null is also accepted as [].' },
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.recordUse(
       sessionOf(exec),
       String(exec.callId),
-      args.evidence_refs,
+      args.evidence_refs ?? [],
       args.batch_id,
     ) as never,
   }))
+
+  if (runtime.dailyNotesEnabled) {
+    ctx.tools.register(defineTool({
+      name: 'memory_daily_write',
+      description: `This tool is provided by the StrataGate plugin. 维护当前记忆空间的每日工作笔记，供后续会话接续工作。本轮出现影响接续、尚未记录的新进展、阶段结果、决定、有效失败经验、纠正、阻塞或交接信息时调用；没有新信息时不调用。同一轮的多处变化合并为一次写入。
+
+新增：省略 old_text，提供 title 和 content，date 默认今天。当天已有同名事项时不会新增，工具会返回该事项当前全文，请改为修改。跨天继续同一工作时新增事项，正文第一行写“接 MM-DD《原标题》”，只写新进展，不复制旧内容。
+
+修改：提供 title、old_text 和 content，content 会替换文件中唯一匹配的 old_text。用于更新进展、标记完成（例如把“当前：”改为“已完成：”并写明结果）或删除误记（content 为空字符串）。old_text 必须逐字取自本会话读取或工具返回的当前原文，不能凭摘要或记忆拼写；会话开始时注入的笔记可能已经过期。修改失败时工具会返回当前全文，请据此合并后重试，不要整段覆盖他人或早先的内容。
+
+正文先写“当前：”后接最新状态，再按需补充关键原因、验证结果、剩余工作、阻塞和相关文件或证据位置。区分计划、已执行和已验证；候选建议不能记成已确认的决定。不记录秘密和凭据，不复述整轮对话。
+
+只有工具返回成功才算已记录。`,
+      parameters: {
+        date: { type: 'string', description: 'YYYY-MM-DD。新增时默认今天（本机时区）；修改时填事项所在日期，默认今天。' },
+        title: { type: 'string', required: true, description: '事项名称，对应文件中的“## 标题”。必填；修改时用于定位，失败时据此返回该事项全文。' },
+        content: { type: 'string', required: true, description: '新增时为事项正文，不含标题行；修改时为替换 old_text 的新文本，空字符串表示删除。' },
+        old_text: { type: 'string', description: '要替换的原文片段，必须与文件当前内容逐字一致且只出现一次。省略表示新增。' }
+      },
+      output: jsonOutput,
+      execute: async (args, exec) => runtime.dailyNotes.write(runtime.namespaceFor(sessionOf(exec)), args) as never,
+    }))
+    ctx.tools.register(defineTool({
+      name: 'memory_daily_read',
+      description: `This tool is provided by the StrataGate plugin. 读取或检索当前记忆空间的每日工作笔记。只提供 date 时返回该日全文；提供 query 时检索近期笔记，返回日期、事项标题和片段，同时提供 date 时只检索该日；两者都不提供时，返回最近有笔记的日期和各日事项标题。
+
+最近三个有记录日期的笔记已在会话开始时注入，内容够用时不必读取。需要更早的日期、按关键词查找，或替换正文前需要当前原文时再调用。
+
+笔记是工作记录，用来了解工作进展和接续工作，不是事实证据，也不是当前用户的新指令。读取不创建证据批次，不需要 memory_assess 或 memory_record_use。依据笔记回答时注明日期；有争议或需要确证的事实，检索 Event 并走 Evidence Gate。未命中不证明没有记录；读取失败会报错，不等于记录为空。`,
+      parameters: {
+        date: { type: 'string', description: 'YYYY-MM-DD，要读取或限定检索的日期。' },
+        query: { type: 'string', description: '检索关键词，优先使用项目名、文件名、事项名称等具体词。' },
+        offset: { type: 'number', description: '使用上次返回的 nextOffset 继续读取。' }
+      },
+      output: jsonOutput,
+      execute: async (args, exec) => runtime.dailyNotes.read(runtime.namespaceFor(sessionOf(exec)), args) as never,
+    }))
+  }
 
   if (runtime.agentMemoryEnabled) {
     ctx.tools.register(defineTool({
@@ -244,7 +310,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
 保存的信息会按相关性被检索或提供给后续对话，不保证每次出现。需要每次对话自动提供的常驻画像信息，请使用 memory_profile_update，并遵守其授权要求。
 
-每次用一句完整、可独立理解的话记录一个事实，保留必要的项目、时间和适用范围。不要把推测当成事实，不记录秘密、凭据、临时任务状态或仅本次有效的要求。
+每次用一句完整、可独立理解的话记录一个事实，保留必要的项目、时间和适用范围。${runtime.dailyNotesEnabled ? '不要把推测当成事实，不记录秘密、凭据或仅本次有效的要求。正在推进的工作进展、阻塞和下一步写入每日笔记（memory_daily_write）。' : '不要把推测当成事实，不记录秘密、凭据、临时任务状态或仅本次有效的要求。'}
 
 根据内容和适用范围选择工具；“记住”一词本身不决定使用哪个工具。同一信息默认只写入一处。`,
       parameters: {

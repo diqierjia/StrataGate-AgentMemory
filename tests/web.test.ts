@@ -1,14 +1,22 @@
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { vi } from 'vitest'
+import { resolveConfig } from '../src/config.js'
+import { selectDailyInjectionDates } from '../src/daily-notes.js'
+import type { DshModelBridge } from '../src/llm.js'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { StrataGateSnapshot } from '@diqier/stratagate'
-import type { StrataGateRuntime } from '../src/runtime.js'
+import { StrataGate } from '@diqier/stratagate'
+import { StrataGateRuntime } from '../src/runtime.js'
 import { handleAdminRequest, type WebResponse } from '../src/web.js'
 
 const fullFailure = 'StrataGate model response was not valid JSON\nRaw response (full):\n' + 'x'.repeat(600)
 
 const snapshot: StrataGateSnapshot = {
-  schemaVersion: 12,
+  schemaVersion: 14,
   currentTurn: 8,
   blockTurnSize: 4,
   blockDecayLambda: 0.3,
@@ -171,6 +179,219 @@ async function request(url: string, method = 'GET', targetRuntime = runtime, bod
 }
 
 describe('StrataGate admin routes', () => {
+  it('serves the configured memory model catalog through a read-only endpoint', async () => {
+    const catalog = { selection: { mode: 'auto' }, providers: [{ id: 'cheap', name: 'Cheap' }], models: [{ id: 'fast', name: 'Fast' }] }
+    const adminMemoryModelCatalog = vi.fn(async () => catalog)
+    const target = { adminMemoryModelCatalog } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/models?provider=cheap', 'GET', target)
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual(catalog)
+    expect(adminMemoryModelCatalog).toHaveBeenCalledWith('cheap')
+    expect((await request('/api/stratagate/models', 'GET', target)).body).toEqual(catalog)
+    expect(adminMemoryModelCatalog).toHaveBeenLastCalledWith(undefined)
+    expect((await request('/api/stratagate/models?key=secret', 'GET', target)).status).toBe(400)
+    expect((await request('/api/stratagate/models', 'POST', target)).status).toBe(405)
+    expect(adminMemoryModelCatalog).toHaveBeenCalledTimes(2)
+  })
+  it('uses sealed coordinates for 75 blocks with 10 pending and agrees with core through recovery and expansion', async () => {
+    const failures = new Set([1, 6, 13, 22, 31, 40, 49, 58, 67, 75].map(String))
+    const memory = StrataGate.inMemory({ blockTurnSize: 1, summarizer: async (messages) => {
+      if (failures.has(messages[0]!.content)) throw new Error('synthetic pending')
+      return { l0Title: messages[0]!.content, l0Tags: [], l1Summary: 'summary', l2Keypoints: [], shouldExtract: false }
+    } })
+    try {
+      for (let index = 1; index <= 75; index++) await memory.appendTurn({ user: String(index), assistant: 'saved', threadId: 'a' })
+      await memory.appendTurn({ user: 'other thread', assistant: 'saved', threadId: 'b' })
+      const target = { ...runtime, adminSnapshot: async () => memory.exportSnapshot() } as unknown as StrataGateRuntime
+      const route = '/api/stratagate/memories?namespace=test&kind=blocks&threadId=a&limit=100'
+      const verify = async () => {
+        const result = await request(route, 'GET', target)
+        expect(result.status).toBe(200)
+        expect(result.body.items).toHaveLength(75)
+        expect(result.body.items.filter((block: any) => block.distanceFromLatest === 0)).toHaveLength(1)
+        const core = new Map(memory.getBlockContext('a').map((block) => [block.id, block]))
+        for (const block of result.body.items) {
+          expect(block.distanceFromLatest).toBe(75 - block.blockIndex)
+          if (block.processingStatus === 'ready') {
+            expect(block.targetLevel).toBe(core.get(block.id)!.level)
+            expect(block.distanceFromLatest).toBe(core.get(block.id)!.age)
+          }
+        }
+        return result.body.items
+      }
+      const before = await verify()
+      const paged = await request(`${route}&offset=64`, 'GET', target)
+      expect(paged.body.items.map((block: any) => block.distanceFromLatest)).toEqual([10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
+      const id = memory.listBlocks()[1]!.id
+      await memory.expandBlock(id, 3, 'user')
+      expect((await verify()).find((block: any) => block.id === id).targetLevel).toBe(3)
+      failures.clear()
+      for (const block of memory.listBlocks().filter((block) => block.processingStatus === 'pending').reverse()) await memory.retryBlockSummary(block.id)
+      const after = await verify()
+      for (const block of before.filter((block: any) => block.processingStatus === 'ready' && block.id !== id)) {
+        expect(after.find((item: any) => item.id === block.id).targetLevel).toBe(block.targetLevel)
+      }
+      expect(after.find((block: any) => block.id === id).targetLevel).toBe(3)
+    } finally { await memory.close() }
+  })
+
+  it('keeps failed optional directory metadata unknown without breaking other overview state', async () => {
+    let reads = 0
+    const state = { ...snapshot, get memoryTopicState() {
+      if (++reads > 1) throw new Error('controlled directory metadata failure')
+      return snapshot.memoryTopicState
+    } }
+    const target = { ...runtime, adminSnapshot: async () => state } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/overview', 'GET', target)
+    expect(result.status).toBe(200)
+    expect(result.body.namespaces[0]).toMatchObject({ topicDirectoryRevision: null, topicDirectoryReadError: true, blocks: 1 })
+  })
+
+  it.each([false, true])('keeps retry state and extraction coverage truthful (terminal=%s) without mutating jobs', async (terminal) => {
+    const state = structuredClone(snapshot)
+    state.summaryJobs = [{ blockId: 'blk_1', status: 'failed', attempts: terminal ? 3 : 1,
+      lastError: 'isolated injected failure', nextRetryAt: terminal ? null : '2026-10-22T00:00:00Z', updatedAt: '2026-10-21T00:00:00Z' }]
+    state.extractionJobs = [{ ...state.summaryJobs[0]!, status: 'failed' }]
+    state.blocks[0]!.processingStatus = 'pending'
+    const before = JSON.stringify(state)
+    const namespace = 'isolated:retry-state'
+    const target = { adminNamespaces: async () => [namespace], adminSnapshot: async (key: string) => key === namespace ? state : null,
+      adminSnapshotEntries: async () => [{ namespace, revision: 1, snapshot: state }], adminWorkspaceName: () => 'Isolated' } as unknown as StrataGateRuntime
+    const dashboard = await request('/api/stratagate/dashboard?namespace=' + namespace, 'GET', target)
+    const row = dashboard.body.overview.namespaces[0]
+    expect(row.failedJobDetails.find((job: any) => job.kind === 'block-summary').blockDetails[0].rawAvailable).toBe(true)
+    expect(row.longTermExtractionGap).toBe(terminal)
+    expect(row.taskStatus.blockSummary).toMatchObject({ terminalFailed: terminal ? 1 : 0, retryable: terminal ? 0 : 1 })
+    const block = dashboard.body.data.blocks[0]
+    expect(block.summaryJob.state).toBe(terminal ? 'terminal-failed' : 'retryable')
+    expect(block.status).toBe(terminal ? 'failed' : 'processing')
+    expect(block.rawAvailable).toBe(true)
+    expect(dashboard.body.data.events).toHaveLength(snapshot.events.length)
+    const source = await request('/api/stratagate/sources?namespace=' + namespace + '&blockId=blk_1', 'GET', target)
+    expect(source.body.messages[0].id).toBe('msg_1')
+    expect(source.body.messages[0].content).not.toContain('super-secret-value')
+    await request('/api/stratagate/overview', 'GET', target)
+    expect(JSON.stringify(state)).toBe(before)
+    // Recovered work and removed source data change only their matching notice.
+    state.blocks[0]!.l5Raw = []
+    if (terminal) {
+      const noRaw = await request('/api/stratagate/dashboard?namespace=' + namespace, 'GET', target)
+      expect(noRaw.body.data.blocks[0].rawAvailable).toBe(false)
+      expect(noRaw.body.overview.namespaces[0].failedJobDetails.find((job: any) => job.kind === 'block-summary').blockDetails[0].rawAvailable).toBe(false)
+      expect(noRaw.body.data.blocks[0].summaryJob.state).toBe('terminal-failed')
+    }
+    state.extractionJobs[0]!.status = 'succeeded'
+    state.summaryJobs[0]!.status = 'succeeded'
+    const restored = await request('/api/stratagate/dashboard?namespace=' + namespace, 'GET', target)
+    expect(restored.body.overview.namespaces[0].longTermExtractionGap).toBe(false)
+  })
+
+  it('does not infer extraction gaps from orphan jobs or another workspace, and propagates read failures', async () => {
+    const orphan = await request('/api/stratagate/overview')
+    expect(orphan.body.namespaces[0].longTermExtractionGap).toBe(false)
+    const unavailable = { adminNamespaces: async () => ['isolated'], adminSnapshot: async () => { throw new Error('isolated database read unavailable') } } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/overview', 'GET', unavailable)
+    expect(result.status).toBe(500)
+    expect(result.body.error).toContain('isolated database read unavailable')
+    expect(result.body.namespaces).toBeUndefined()
+  })
+
+  it.each(['running', 'failed'] as const)('counts Agent Events in current graph progress (%s)', async (status) => {
+    const agentEvents = ['agent-1', 'agent-2'].map((id) => ({ ...snapshot.events[0]!, id }))
+    const graphSnapshot = {
+      ...snapshot, events: [], agentEvents, graphNodes: [], summaryJobs: [], extractionJobs: [],
+      graphProjectionJobs: [
+        { ...snapshot.graphProjectionJobs[0]!, sourceEventIds: ['agent-1'] },
+        { ...snapshot.graphProjectionJobs[0]!, id: 'agent-job-2', sourceEventIds: ['agent-2'], status, attempts: 3, nextRetryAt: null },
+      ],
+    }
+    const agentRuntime = {
+      adminNamespaces: async () => ['dsh:project:agent'], adminSnapshot: async () => graphSnapshot,
+      adminWorkspaceName: () => 'Agent only', adminAgentMemoryRetrievalWeight: () => 0,
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/overview', 'GET', agentRuntime)
+    const graph = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Aagent&kind=graph', 'GET', agentRuntime)
+    const expected = { projected: 1, total: 2, state: status === 'running' ? 'processing' : 'failed', complete: false }
+    expect(result.body.namespaces[0].graphMigration).toMatchObject(expected)
+    expect(graph.body.migration).toEqual(result.body.namespaces[0].graphMigration)
+  })
+
+  it.each((['forgotten', 'archived'] as const).flatMap(status => (['failed', 'running', 'pending'] as const).map(jobStatus => ({ status, jobStatus }))))('excludes retained $jobStatus jobs whose ordinary and Agent sources are all $status', async ({ status, jobStatus }) => {
+    const historicalSnapshot = {
+      ...snapshot, events: [{ ...snapshot.events[0]!, status }],
+      agentEvents: [{ ...snapshot.events[0]!, id: 'agent-history', status }],
+      summaryJobs: [], extractionJobs: [],
+      graphProjectionJobs: [{ ...snapshot.graphProjectionJobs[0]!, sourceEventIds: ['evt_1', 'agent-history'],
+        status: jobStatus, attempts: jobStatus === 'failed' ? 3 : 1, lastError: 'old failure', nextRetryAt: null }],
+    }
+    const historyRuntime = { adminNamespaces: async () => ['dsh:project:history'], adminSnapshot: async () => historicalSnapshot,
+      adminWorkspaceName: () => 'History', adminSnapshotEntries: async () => [{ namespace: 'dsh:project:history', revision: 1, snapshot: historicalSnapshot }],
+    } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/dashboard', 'GET', historyRuntime)
+    expect(result.status).toBe(200)
+    expect(result.body.processing).toBe(false)
+    const row = result.body.overview.namespaces[0]
+    expect(row).toMatchObject({ failedJobs: 0, processingJobs: 0, failedJobDetails: [], processingJobDetails: [],
+      taskStatus: { graphProjection: { terminalFailed: 0 } }, graphMigration: { total: 0, projected: 0, failed: 0, complete: true, state: 'complete' } })
+    expect(result.body.data.graph.migration).toEqual(row.graphMigration)
+    expect(historicalSnapshot.graphProjectionJobs[0]!.status).toBe(jobStatus)
+  })
+
+  it('hides a real retained terminal failure after forgetEvent and shows it again after restoreEvent without mutating the job', async () => {
+    let now = new Date('2026-10-13T00:00:00.000Z')
+    const memory = StrataGate.inMemory({ blockTurnSize: 1, now: () => now,
+      summarizer: async () => ({ l0Title: 'fixture', l0Tags: [], l1Summary: 'fixture', l2Keypoints: [], shouldExtract: false }),
+      graphEnabled: true, graphProjector: async () => ({ reason: 'unused', nodes: [], edges: [] }),
+    })
+    try {
+      await memory.appendTurn({ user: 'Synthetic graph source', assistant: 'saved' })
+      const block = memory.listBlocks()[0]!
+      const event = await memory.addEvent({ title: 'Synthetic event', summary: 'fixture', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] })
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const claim = await memory.claimNextGraphProjection()
+        expect(claim).not.toBeNull()
+        await memory.failGraphProjection(claim!.jobId, new Error('Synthetic permanent failure'))
+        now = new Date(now.getTime() + 60_000)
+      }
+      const retainedJob = structuredClone(memory.listGraphProjectionJobs()[0]!)
+      expect(retainedJob).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null })
+      const liveRuntime = { adminNamespaces: async () => ['dsh:project:real-forget'], adminSnapshot: async () => memory.exportSnapshot(), adminWorkspaceName: () => 'Fixture' } as unknown as StrataGateRuntime
+      const active = await request('/api/stratagate/overview', 'GET', liveRuntime)
+      expect(active.body.namespaces[0]).toMatchObject({ failedJobs: 1, graphMigration: { failed: 1, state: 'failed' } })
+      await memory.forgetEvent(event.id)
+      const frozenBeforeRead = memory.exportSnapshot()
+      const forgotten = await request('/api/stratagate/overview', 'GET', liveRuntime)
+      const graph = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Areal-forget&kind=graph', 'GET', liveRuntime)
+      expect(forgotten.body.namespaces[0]).toMatchObject({ failedJobs: 0, failedJobDetails: [], graphMigration: { failed: 0, total: 0, complete: true } })
+      expect(graph.body.migration).toEqual(forgotten.body.namespaces[0].graphMigration)
+      expect(memory.exportSnapshot()).toEqual(frozenBeforeRead)
+      await memory.restoreEvent(event.id)
+      const restored = await request('/api/stratagate/overview', 'GET', liveRuntime)
+      expect(restored.body.namespaces[0]).toMatchObject({ failedJobs: 1, graphMigration: { total: 1, failed: 1, state: 'failed' } })
+      expect(memory.listGraphProjectionJobs()[0]).toEqual(retainedJob)
+    } finally { await memory.close() }
+  })
+
+  it('intersects projected IDs with live sources and keeps mixed-source failures current', async () => {
+    const mixedSnapshot = {
+      ...snapshot, events: [{ ...snapshot.events[0]!, id: 'old', status: 'forgotten' as const }, { ...snapshot.events[0]!, id: 'live' }],
+      summaryJobs: [], extractionJobs: [],
+      graphProjectionJobs: [{ ...snapshot.graphProjectionJobs[0]!, sourceEventIds: ['old', 'missing'] },
+        { ...snapshot.graphProjectionJobs[0]!, id: 'mixed', sourceEventIds: ['old', 'live'], status: 'failed' as const, attempts: 3, nextRetryAt: null }],
+    }
+    const mixedRuntime = { adminNamespaces: async () => ['dsh:project:mixed'], adminSnapshot: async () => mixedSnapshot, adminWorkspaceName: () => 'Mixed' } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/overview', 'GET', mixedRuntime)
+    expect(result.body.namespaces[0]).toMatchObject({ failedJobs: 1, graphMigration: { projected: 0, total: 1, failed: 1, state: 'failed' } })
+    const graph = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Amixed&kind=graph', 'GET', mixedRuntime)
+    expect(graph.body.migration).toEqual(result.body.namespaces[0].graphMigration)
+  })
+
+  it('returns an empty Dashboard before any workspace memory exists', async () => {
+    const emptyRuntime = { adminSnapshotEntries: async () => [], adminDataDirectory: () => 'fixture', adminWorkspaceName: () => '' } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/dashboard', 'GET', emptyRuntime)
+    expect(result).toMatchObject({ status: 200, body: { namespace: null, overview: { namespaces: [] }, data: null, processing: false } })
+  })
+
   it('exposes optional Event metadata while keeping legacy API cards unchanged', async () => {
     const copy = structuredClone(snapshot);
     copy.events[0]!.catalogHints = ['工作方式', '包管理'];
@@ -262,6 +483,9 @@ describe('StrataGate admin routes', () => {
       adminRetryExternalMemory: async (namespace: string, jobId: string) => {
         received.push({ operation: 'retry', namespace, jobId }); return { jobId, status: 'processing' }
       },
+      adminAbandonExternalMemory: async (namespace: string, jobId: string) => {
+        received.push({ operation: 'abandon', namespace, jobId }); return { jobId, status: 'abandoned' }
+      },
       adminCommitExternalMemory: async (namespace: string, jobId: string, choices: Array<{ index: number; action: string }>) => {
         received.push({ operation: 'commit', namespace, jobId, choices }); return { importedCount: 2, sourceBlockId: 'blk_import' }
       },
@@ -283,12 +507,16 @@ describe('StrataGate admin routes', () => {
     const undo = await request('/api/stratagate/import', 'POST', importRuntime, {
       operation: 'undo', namespace: 'dsh:project:test', sourceBlockId: 'blk_import',
     })
+    const abandon = await request('/api/stratagate/import', 'POST', importRuntime, {
+      operation: 'abandon', namespace: 'dsh:project:test', jobId: 'job-1',
+    })
     expect(preview).toMatchObject({ status: 200, body: { jobId: 'job-1', status: 'processing' } })
     expect(status).toMatchObject({ status: 200, body: { jobId: 'job-1', status: 'processing' } })
     expect(getStatus).toMatchObject({ status: 200, body: { jobId: 'job-1', status: 'processing' } })
     expect(commit).toMatchObject({ status: 200, body: { importedCount: 2 } })
     expect(undo).toMatchObject({ status: 200, body: { removedEventIds: ['evt_1'] } })
-    expect(received).toHaveLength(5)
+    expect(abandon).toMatchObject({ status: 200, body: { status: 'abandoned' } })
+    expect(received).toHaveLength(6)
   })
 
   it('serves the complete external memory export prompt', async () => {
@@ -945,6 +1173,22 @@ describe('StrataGate admin routes', () => {
     expect(second.headers.ETag).not.toBe(oldEtag)
   })
 
+  it('refreshes duplicate repair progress even when no Event revision changed', async () => {
+    let completed = false
+    const repairRuntime = { ...runtime, adminDuplicateRepairStatus: () => ({ version: 1,
+      status: completed ? 'completed' : 'pending', scannedAt: '2026-10-18T00:00:00Z', scannedEvents: 2,
+      candidates: 1, processed: completed ? 1 : 0, merged: 0, retained: completed ? 1 : 0, failed: 0,
+    }) } as unknown as StrataGateRuntime
+    const first = await request('/api/stratagate/dashboard?namespace=dsh%3Aproject%3Atest', 'GET', repairRuntime)
+    expect(first.body.processing).toBe(true)
+    completed = true
+    const second = await request('/api/stratagate/dashboard?namespace=dsh%3Aproject%3Atest', 'GET', repairRuntime, undefined, { 'if-none-match': first.headers.ETag! })
+    expect(second.status).toBe(200)
+    expect(second.headers.ETag).not.toBe(first.headers.ETag)
+    expect(second.body.processing).toBe(false)
+    expect(second.body.overview.namespaces[0].duplicateRepair).toMatchObject({ status: 'completed', retained: 1 })
+  })
+
   it('filters short-term Blocks and the open tail by the selected conversation', async () => {
     const first = {
       ...snapshot.blocks[0]!,
@@ -1084,13 +1328,14 @@ describe('StrataGate admin routes', () => {
     }])
   })
 
-  it('reports the actual decayed layer and its size relative to L5', async () => {
+  it('reports the injected surface layer separately from the decay target', async () => {
     const layerRuntime = {
       adminSnapshot: async () => ({
         ...snapshot,
         blocks: [{
           ...snapshot.blocks[0]!,
           threadId: 'thread-layer',
+          surfaceCurrentLevel: 5 as const,
           pointerAnchorLevel: 4 as const,
           l5Raw: snapshot.blocks[0]!.l5Raw.map((message) => ({ ...message, threadId: 'thread-layer' })),
         }],
@@ -1098,8 +1343,8 @@ describe('StrataGate admin routes', () => {
     } as unknown as StrataGateRuntime
     const result = await request('/api/stratagate/memories?namespace=layers&kind=blocks&threadId=thread-layer', 'GET', layerRuntime)
     const block = result.body.items[0]
-    const l4 = block.layerTokens.find(({ level }: { level: number }) => level === 4)
-    expect(block).toMatchObject({ currentLevel: 4, currentTokens: l4.tokens, compressionPercent: l4.percentOfL5 })
+    expect(block).toMatchObject({ currentLevel: 5, targetLevel: 4 })
+    expect(block.currentTokens).toBe(block.layerTokens.find(({ level }: { level: number }) => level === 5).tokens)
     expect(block.compressionPercent).toBe(Math.round(block.currentTokens / block.l5Tokens * 100))
   })
 
@@ -1239,6 +1484,35 @@ describe('StrataGate admin routes', () => {
     expect(invalid).toMatchObject({ status: 400, body: { error: expect.stringContaining('L0 through L5') } })
   })
 
+  it('distinguishes a preflight rejection from an ambiguous save failure', async () => {
+    const url = '/api/stratagate/blocks/expand?namespace=test&blockId=blk_1&level=L4'
+    const rejected = { ...runtime, adminExpandBlock: async () => { throw Object.assign(new Error('当前模型预计放不下'), { code: 'BLOCK_SELECTION_REJECTED' }) } } as unknown as StrataGateRuntime
+    expect(await request(url, 'PATCH', rejected)).toMatchObject({ status: 409, body: { code: 'BLOCK_SELECTION_REJECTED', error: '当前模型预计放不下' } })
+    const ambiguous = { ...runtime, adminExpandBlock: async () => { throw new Error('native save failed') } } as unknown as StrataGateRuntime
+    expect(await request(url, 'PATCH', ambiguous)).toMatchObject({ status: 500, body: { error: 'native save failed' } })
+  })
+
+  it.each(['pending', 'blocked'] as const)('reports a %s selection separately from the actual injected level', async (status) => {
+    const state = structuredClone(snapshot)
+    Object.assign(state.blocks[0]!, { threadId: 's1', pointerCurrentLevel: 4, pointerAnchorLevel: 4,
+      surfaceCurrentLevel: 0, lastLiftedBy: 'user', lastLiftedAt: '2026-10-27T12:00:00Z' })
+    state.blocks[0]!.l5Raw[0]!.threadId = 's1'
+    const target = { ...runtime, adminSnapshot: async () => state,
+      adminBlockSurfaceSync: () => ({ status, message: '当前模型上下文尚未更新' }) } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Atest&kind=blocks&threadId=s1', 'GET', target)
+    expect(result.body.items[0]).toMatchObject({ currentLevel: 0, targetLevel: 4, surfaceSync: { status, message: '当前模型上下文尚未更新' } })
+  })
+
+  it('keeps an unknown surface level pending after restart instead of claiming the selection is applied', async () => {
+    const state = structuredClone(snapshot)
+    Object.assign(state.blocks[0]!, { threadId: 's1', pointerAnchorLevel: 4,
+      lastLiftedBy: 'user', lastLiftedAt: '2026-10-27T12:00:00Z' })
+    state.blocks[0]!.l5Raw[0]!.threadId = 's1'
+    const target = { ...runtime, adminSnapshot: async () => state } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/memories?namespace=dsh%3Aproject%3Atest&kind=blocks&threadId=s1', 'GET', target)
+    expect(result.body.items[0]).toMatchObject({ surfaceLevelKnown: false, surfaceSync: { status: 'pending' } })
+  })
+
   it('links answer audit records to events and original messages', async () => {
     const result = await request('/api/stratagate/audit?namespace=dsh%3Aproject%3Atest')
     expect(result.body.items[0]).toMatchObject({
@@ -1307,5 +1581,73 @@ describe('StrataGate admin routes', () => {
       .toMatchObject({ status: 409, body: { error: '该项刚刚在其他位置更新' } })
     expect(profile.preferredLanguage).toBe(`${literal} More.`)
     expect((await request('/api/stratagate/profile', 'PATCH', profileRuntime, { field: 'preferredLanguage', value: '中文', other: true })).status).toBe(400)
+  })
+})
+
+
+describe('read-only daily-note admin routes', () => {
+  async function fixture(run: (runtime: StrataGateRuntime, opened: ReturnType<typeof vi.fn>) => Promise<void>, enabled = true, dailyNotesInjectionDays = 3) {
+    const root = await mkdtemp(join(tmpdir(), 'stratagate-daily-api-'))
+    const opened = vi.fn(async () => {})
+    const runtime = new StrataGateRuntime(resolveConfig({ database: join(root, 'memory.db'), dailyNotesEnabled: enabled, dailyNotesInjectionDays, dailyNotesTimeZone: 'Asia/Shanghai' }),
+      { isReady: () => false, onAdaptersUpdated: () => () => {} } as unknown as DshModelBridge,
+      () => {}, async () => {}, () => undefined, opened)
+    try { await run(runtime, opened) } finally { await runtime.close(); await rm(root, { recursive: true, force: true }) }
+  }
+  it.each([1, 7, 30])('reports the configured %s days using the same selection as injection', async days => {
+    await fixture(async runtime => {
+      for (let d = 1; d <= 10; d++) await runtime.dailyNotes.write('n', { date: `2026-10-${String(d).padStart(2, '0')}`, title: 'A', content: 'progress' })
+      const result = await request('/api/stratagate/daily?namespace=n', 'GET', runtime)
+      expect(result.body.injectionDays).toBe(days)
+      expect(result.body.injectedDates).toEqual(selectDailyInjectionDates(result.body.dates, days))
+      const snapshot = await runtime.dailyNotes.snapshot('n')
+      expect((snapshot.match(/^# 2026-/gm) || []).length).toBe(Math.min(days, 10))
+    }, true, days)
+  })
+  it.each([true, false])('lists all dates, shares injection selection and reads existing files when enabled=%s', async enabled => {
+    await fixture(async runtime => {
+      for (const date of ['2020-01-01', '2020-02-01', '2026-10-27', '2026-10-28']) await runtime.dailyNotes.write('n', { date, title: 'A', content: '当前：验证 `src/client.js`' })
+      const result = await request('/api/stratagate/daily?namespace=n', 'GET', runtime)
+      expect(result.status).toBe(200)
+      expect(result.body).toMatchObject({ enabled, timeZone: 'Asia/Shanghai', dates: ['2026-10-28', '2026-10-27', '2020-02-01', '2020-01-01'] })
+      expect(result.body.today).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(result.body.injectedDates).toEqual(selectDailyInjectionDates(result.body.dates))
+      const snapshot = await runtime.dailyNotes.snapshot('n')
+      for (const date of result.body.injectedDates) expect(snapshot).toContain('# ' + date)
+      expect(snapshot).not.toContain('2020-01-01')
+      expect(await request('/api/stratagate/daily/note?namespace=n&date=2026-10-28', 'GET', runtime)).toMatchObject({ status: 200, body: { date: '2026-10-28', markdown: '# 2026-10-28\n\n## A\n当前：验证 `src/client.js`\n' } })
+      expect((await request('/api/stratagate/daily?namespace=other', 'GET', runtime)).body.dates).toEqual([])
+    }, enabled)
+  })
+  it('distinguishes invalid date, missing file and failed reads; rejects writes and missing namespace', async () => {
+    await fixture(async runtime => {
+      for (const date of ['', '2026-02-30', '../secret', '2026-1-1']) expect((await request('/api/stratagate/daily/note?namespace=n&date=' + encodeURIComponent(date), 'GET', runtime)).status).toBe(400)
+      expect((await request('/api/stratagate/daily/note?namespace=n&date=2026-10-28', 'GET', runtime)).status).toBe(404)
+      expect((await request('/api/stratagate/daily', 'GET', runtime)).status).toBe(400)
+      for (const path of ['daily', 'daily/note?date=2026-10-28']) expect((await request('/api/stratagate/' + path + (path.includes('?') ? '&' : '?') + 'namespace=n', 'POST', runtime)).status).toBe(405)
+      await mkdir(join(runtime.dailyNotes.directory('n'), '2026-10-28.md'), { recursive: true })
+      const failed = await request('/api/stratagate/daily/note?namespace=n&date=2026-10-28', 'GET', runtime)
+      expect(failed.status).toBe(500); expect(failed.body.error).toBeTruthy(); expect(failed.body).not.toHaveProperty('markdown')
+      await rm(runtime.dailyNotes.directory('n'), { recursive: true }); await writeFile(runtime.dailyNotes.directory('n'), 'not a directory')
+      expect((await request('/api/stratagate/daily?namespace=n', 'GET', runtime)).status).toBe(500)
+    })
+  })
+  it('creates and opens only the namespace daily directory, even when disabled', async () => {
+    await fixture(async (runtime, opened) => {
+      expect((await request('/api/stratagate/daily/open-directory?namespace=n', 'GET', runtime)).status).toBe(405)
+      expect((await request('/api/stratagate/daily/open-directory?namespace=n', 'POST', runtime)).status).toBe(200)
+      expect(opened).toHaveBeenCalledWith(runtime.dailyNotes.directory('n'), expect.any(AbortSignal))
+      opened.mockRejectedValueOnce(new Error('directory access denied'))
+      expect(await request('/api/stratagate/daily/open-directory?namespace=n', 'POST', runtime)).toMatchObject({ status: 500, body: { error: 'directory access denied' } })
+    }, false)
+  })
+  it('returns explicit errors for in-memory daily storage', async () => {
+    const runtime = new StrataGateRuntime(resolveConfig({ database: ':memory:' }), { isReady: () => false, onAdaptersUpdated: () => () => {} } as unknown as DshModelBridge)
+    try {
+      for (const [path, method] of [['daily', 'GET'], ['daily/note?date=2026-10-28', 'GET'], ['daily/open-directory', 'POST']]) {
+        const result = await request('/api/stratagate/' + path + (path!.includes('?') ? '&' : '?') + 'namespace=n', method, runtime)
+        expect(result.status).toBe(500); expect(result.body.error).toContain(':memory:')
+      }
+    } finally { await runtime.close() }
   })
 })

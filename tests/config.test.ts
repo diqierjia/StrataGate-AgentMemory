@@ -9,9 +9,19 @@ describe('DeepSeek Harness plugin config', () => {
     expect(volatileIfSupported(current)).toEqual({ meta: { volatile: true } })
   })
 
+  it.each([0, -1, 31, 1.5, NaN, Infinity])('rejects invalid injection days %s', dailyNotesInjectionDays => {
+    expect(() => resolveConfig({ database: 'db', dailyNotesInjectionDays })).toThrow('dailyNotesInjectionDays')
+  })
+  it.each([1, 7, 30])('accepts injection days %s', dailyNotesInjectionDays => {
+    expect(resolveConfig({ database: 'db', dailyNotesInjectionDays }).dailyNotesInjectionDays).toBe(dailyNotesInjectionDays)
+  })
+
   it('resolves safe defaults', () => {
     expect(resolveConfig({ database: ' ./memory.db ' })).toEqual({
       database: './memory.db',
+      dailyNotesEnabled: true,
+      dailyNotesInjectionDays: 3,
+      dailyNotesContextMaxChars: 12_000,
       namespaceMode: 'project',
       namespacePrefix: 'dsh',
       globalNamespace: 'global',
@@ -26,12 +36,23 @@ describe('DeepSeek Harness plugin config', () => {
       showStrataGateStatus: true,
       showShortTermStatus: true,
       showRetrievalStatus: true,
+      showSidebarEntry: false,
     })
   })
 
   it('requires an explicit model pair', () => {
     expect(() => resolveConfig({ database: 'memory.db', provider: 'deepseek' }))
       .toThrow('provider and model must be configured together')
+  })
+
+  it('accepts atomic model selections and rejects incomplete custom routes', () => {
+    expect(resolveConfig({ database: 'memory.db', memoryModel: { mode: 'auto' } }).memoryModel).toEqual({ mode: 'auto' })
+    expect(resolveConfig({ database: 'memory.db', memoryModel: { mode: 'custom', provider: ' cheap ', model: ' fast ' } }).memoryModel)
+      .toEqual({ mode: 'custom', provider: 'cheap', model: 'fast' })
+    for (const memoryModel of [{ mode: 'custom' as const }, { mode: 'custom' as const, provider: 'p', model: ' ' }]) {
+      expect(() => resolveConfig({ database: 'memory.db', memoryModel })).toThrow('同时选择')
+    }
+    expect(Config.dict?.memoryModel?.meta.volatile).toBe(true)
   })
 
   it('exposes the Block decay coefficient and guidance in the plugin form', () => {
@@ -76,21 +97,25 @@ describe('DeepSeek Harness plugin config', () => {
     expect(Config.dict?.showStrataGateStatus?.meta).toMatchObject({ default: true, volatile: true })
     expect(Config.dict?.showShortTermStatus?.meta).toMatchObject({ default: true, volatile: true })
     expect(Config.dict?.showRetrievalStatus?.meta).toMatchObject({ default: true, volatile: true })
+    expect(Config.dict?.showSidebarEntry?.meta).toMatchObject({ default: false, volatile: true })
     expect(Config.dict?.structuredReasoningEffort?.meta).toMatchObject({ volatile: true })
     expect(resolveConfig({ database: 'memory.db' })).toMatchObject({
       showStrataGateStatus: true,
       showShortTermStatus: true,
       showRetrievalStatus: true,
+      showSidebarEntry: false,
     })
     expect(resolveConfig({
       database: 'memory.db',
       showStrataGateStatus: false,
       showShortTermStatus: false,
       showRetrievalStatus: false,
+      showSidebarEntry: false,
     })).toMatchObject({
       showStrataGateStatus: false,
       showShortTermStatus: false,
       showRetrievalStatus: false,
+      showSidebarEntry: false,
     })
   })
 
@@ -98,5 +123,10 @@ describe('DeepSeek Harness plugin config', () => {
     const live = { get: () => false }
     expect(resolveConfig({ database: 'memory.db', showStrataGateStatus: live as unknown as boolean }).showStrataGateStatus).toBe(false)
     expect(resolveConfig({ database: 'memory.db', showStrataGateStatus: true }).showStrataGateStatus).toBe(true)
+  })
+
+  it.each([true, false])('preserves a saved sidebar preference %s after changing the install default', (choice) => {
+    expect(resolveConfig({ database: 'memory.db', showSidebarEntry: choice }).showSidebarEntry).toBe(choice)
+    expect(resolveConfig({ database: 'memory.db', showSidebarEntry: { get: () => choice } as unknown as boolean }).showSidebarEntry).toBe(choice)
   })
 })

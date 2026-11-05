@@ -1,0 +1,6 @@
+# Keep validation notes, but exclude generated runtime state from npm packs.
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.log
+**/node_modules/**

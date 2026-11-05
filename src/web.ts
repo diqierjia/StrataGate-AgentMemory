@@ -1,14 +1,17 @@
+import { validDate } from './daily-notes.js'
 import { createHash } from 'node:crypto'
+import { dreamingStatus } from './dreaming.js'
 import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   DERIVATION_MAX_ATTEMPTS,
   deterministicBlockLayers,
+  buildBlockTimeline,
   effectiveGraphNodeView,
   estimateTokens,
   EXTERNAL_MEMORY_EXPORT_PROMPT_ZH_CN,
   formatRawTranscript,
-  getDecayedBlockLevel,
+  getBlockDecayView,
   KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
   MEMORY_TOPIC_PROJECTOR_VERSION,
   MemoryTopicDirectory,
@@ -22,10 +25,11 @@ import {
   type ExternalMemoryAction,
   type MemoryBlock,
   type RawMessage,
-  type StrataGateSnapshot,
+  type AdminReadModel,
+  type AdminReadEntry,
   type UsageReceipt,
 } from '@diqier/stratagate'
-import type { AdminSnapshotEntry, FeedbackDraftInput, StrataGateRuntime } from './runtime.js'
+import type { FeedbackDraftInput, StrataGateRuntime } from './runtime.js'
 import { clusterKnowledgeGraph } from './graph-clustering.js'
 import { memoryTopicSections, memoryTopicSectionNavigation, renderMemoryDirectory, sortMemoryTopics } from './topics.js'
 
@@ -184,7 +188,7 @@ function redactedMessage(message: RawMessage, blockId: string | null): RawMessag
     : common
 }
 
-function sourceMessages(snapshot: StrataGateSnapshot, ids?: ReadonlySet<string>): Array<RawMessage & { blockId: string | null }> {
+function sourceMessages(snapshot: AdminReadModel, ids?: ReadonlySet<string>): Array<RawMessage & { blockId: string | null }> {
   const output: Array<RawMessage & { blockId: string | null }> = []
   for (const block of snapshot.blocks) {
     for (const message of block.l5Raw) {
@@ -282,7 +286,7 @@ function appendWeightSegment(
   points.push({ turn: toTurn, weight: sampledEventWeight(event, toTurn, fromTurn, mentionCount), kind: 'sample' })
 }
 
-function eventWeightTrajectory(snapshot: StrataGateSnapshot, event: EventCard): unknown {
+function eventWeightTrajectory(snapshot: AdminReadModel, event: EventCard): unknown {
   const currentTurn = snapshot.currentTurn
   const formedTurn = Number.isSafeInteger(event.formedTurn) && event.formedTurn! >= 0
     ? event.formedTurn!
@@ -432,12 +436,14 @@ function eventWeightTrajectory(snapshot: StrataGateSnapshot, event: EventCard): 
   }
 }
 
-function eventSummary(event: EventCard, snapshot?: StrataGateSnapshot): unknown {
+function eventSummary(event: EventCard, snapshot?: AdminReadModel): unknown {
   return {
     id: event.id,
     formedTurn: event.formedTurn,
     title: event.title,
     summary: event.summary,
+    quotes: event.quotes,
+    ...(event.mergedFromEventIds?.length ? { mergedFromEventIds: event.mergedFromEventIds } : {}),
     tags: event.tags,
     sourceBlockId: event.sourceBlockId,
     sourceMessageIds: event.sourceMessageIds,
@@ -476,7 +482,23 @@ function matchesQuery(value: unknown, query: string): boolean {
   return JSON.stringify(value).toLocaleLowerCase().includes(query.toLocaleLowerCase())
 }
 
-async function requiredSnapshot(runtime: StrataGateRuntime, namespace: string): Promise<StrataGateSnapshot> {
+function associationIndex<T>(values: readonly T[], keys: (value: T) => readonly string[]): Map<string, T[]> {
+  const index = new Map<string, T[]>()
+  for (const value of values) for (const key of new Set(keys(value))) {
+    const group = index.get(key) ?? []
+    group.push(value)
+    index.set(key, group)
+  }
+  return index
+}
+
+function indexedAssociations<T>(index: ReadonlyMap<string, readonly T[]>, keys: Iterable<string>, order: ReadonlyMap<T, number>): T[] {
+  const values = new Set<T>()
+  for (const key of keys) for (const value of index.get(key) ?? []) values.add(value)
+  return [...values].sort((left, right) => order.get(left)! - order.get(right)!)
+}
+
+async function requiredSnapshot(runtime: StrataGateRuntime, namespace: string): Promise<AdminReadModel> {
   const snapshot = await runtime.adminSnapshot(namespace)
   if (!snapshot) throw new AdminHttpError(404, `Unknown StrataGate namespace: ${namespace}`)
   return snapshot
@@ -489,7 +511,7 @@ class AdminHttpError extends Error {
 }
 
 /** Rebuild the display on a clone, without opening a writer or claiming work. */
-function topicDirectoryProjection(snapshot: StrataGateSnapshot, agentMemoryWeight: number) {
+function topicDirectoryProjection(snapshot: AdminReadModel, agentMemoryWeight: number) {
   const visibleEvents = [...snapshot.events, ...(agentMemoryWeight > 0 ? snapshot.agentEvents : [])]
     .filter((event) => event.status === 'active' || event.status === 'superseded')
   const directory = new MemoryTopicDirectory()
@@ -576,6 +598,7 @@ function topicDirectoryProjection(snapshot: StrataGateSnapshot, agentMemoryWeigh
     failures,
     data: {
       navigationOnly: true as const,
+      dreaming: dreamingStatus(snapshot.memoryTopicState?.dreaming),
       revision,
       context: renderMemoryDirectory(topics, visibleEvents),
       topics: chapters.map((topic) => ({
@@ -669,7 +692,8 @@ async function topicEvents(runtime: StrataGateRuntime, url: URL): Promise<unknow
       const covered = new Set(memoryTopicSections(topic).flatMap((section) => section.sourceEventIds))
       ids = topic.sourceEventIds.filter((id) => !covered.has(id))
     } else {
-      const section = memoryTopicSections(topic).find((candidate) => candidate.key === sectionKey)
+      const resolvedKey = topic.sectionAliases?.[sectionKey] ?? sectionKey
+      const section = memoryTopicSections(topic).find((candidate) => candidate.key === resolvedKey)
       if (!section) throw new AdminHttpError(404, 'Unknown or unavailable memory topic section')
       ids = section.sourceEventIds
     }
@@ -684,7 +708,32 @@ async function topicEvents(runtime: StrataGateRuntime, url: URL): Promise<unknow
   }
 }
 
-async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly AdminSnapshotEntry[]): Promise<unknown> {
+/** Read-only graph work view. Retained jobs without a live source are history. */
+function liveGraphProjection(snapshot: AdminReadModel, processing = true) {
+  const eventIds = new Set([...snapshot.events, ...snapshot.agentEvents]
+    .filter(({ status }) => status !== 'forgotten' && status !== 'archived')
+    .map(({ id }) => id))
+  const jobs = snapshot.graphProjectionJobs.filter(job => job.lastError !== 'Graph claim revoked'
+    && (processing || job.status === 'completed') && job.sourceEventIds.some((id) => eventIds.has(id)))
+  const status = summarizeDerivationJobs(jobs, (job) => job.status === 'completed')
+  const projected = new Set(jobs
+    .filter(({ status, projectorVersion }) => status === 'completed' && projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
+    .flatMap(({ sourceEventIds }) => sourceEventIds.filter((id) => eventIds.has(id)))).size
+  const total = eventIds.size
+  const complete = projected === total && status.processing === 0 && status.terminalFailed === 0 && status.blocked === 0
+  const state = status.processing > 0 ? 'processing' : status.terminalFailed > 0 ? 'failed' : complete ? 'complete' : 'incomplete'
+  return {
+    jobs, status,
+    migration: {
+      projected, total,
+      pending: jobs.filter(({ status }) => status === 'pending').length,
+      running: jobs.filter(({ status }) => status === 'running').length,
+      failed: status.terminalFailed, retryable: status.retryable, processing: status.processing, state, complete,
+    },
+  }
+}
+
+async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly AdminReadEntry[]): Promise<unknown> {
   const entries = cachedEntries ?? await Promise.all((await runtime.adminNamespaces()).map(async (namespace) => ({
     namespace,
     revision: 0,
@@ -705,6 +754,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
           threadId: block.threadId,
           turnRange: block.turnRange,
           shouldExtract: block.source.shouldExtract ?? null,
+          rawAvailable: block.messages.some(({ content }) => Boolean(content.trim())),
         }))
       }
       const block = snapshot.blocks.find(({ id }) => id === blockId)
@@ -716,6 +766,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         threadId: block.threadId ?? null,
         turnRange: [block.startTurn, block.endTurn] as [number, number],
         shouldExtract: block.shouldExtract ?? null,
+        rawAvailable: block.l5Raw.some(({ content }) => Boolean(content.trim())),
       }] : []
     })
     const describeBlockJob = (kind: 'block-summary' | 'event-extraction', job: {
@@ -791,7 +842,9 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
     const topicStatus = summarizeDerivationJobs(topicJobs, (job) => job.status === 'completed')
     const summaryStatus = summarizeDerivationJobs(snapshot.summaryJobs, (job) => job.status === 'succeeded')
     const extractionStatus = summarizeDerivationJobs(snapshot.extractionJobs, (job) => job.status === 'succeeded' || job.status === 'skipped')
-    const graphStatus = summarizeDerivationJobs(snapshot.graphProjectionJobs, (job) => job.status === 'completed')
+    const policy = runtime.adminGraphSettings?.()
+    const graphWork = liveGraphProjection(snapshot, policy ? policy.enabled && !policy.paused : true)
+    const graphStatus = graphWork.status
     const failedJobs = summaryStatus.terminalFailed + extractionStatus.terminalFailed + graphStatus.terminalFailed + topicStatus.terminalFailed
     const processingJobs = summaryStatus.processing + extractionStatus.processing + graphStatus.processing + topicStatus.processing
     const failedJobDetails = [
@@ -802,7 +855,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       ...snapshot.extractionJobs
         .filter(({ status }) => status === 'failed')
         .map((job) => describeBlockJob('event-extraction', job)),
-      ...snapshot.graphProjectionJobs
+      ...graphWork.jobs
         .filter(({ status }) => status === 'failed')
         .map(describeGraphJob),
     ]
@@ -816,7 +869,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         .filter((job) => derivationJobState(job, job.status === 'succeeded' || job.status === 'skipped') === 'processing'
           || derivationJobState(job, job.status === 'succeeded' || job.status === 'skipped') === 'retryable')
         .map((job) => describeBlockJob('event-extraction', job)),
-      ...snapshot.graphProjectionJobs
+      ...graphWork.jobs
         .filter(graphProjectionIsProcessing)
         .map(describeGraphJob),
     ]
@@ -827,10 +880,21 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       ...snapshot.graphNodes.map(({ updatedAt }) => updatedAt),
       ...snapshot.usageReceipts.map(({ createdAt }) => createdAt),
     ].sort()
+    // Optional directory metadata must not turn a region read failure into a
+    // failure of the complete overview. The directory reader reports its own
+    // failure; diagnostics must keep recovery disabled until a revision exists.
+    let topicDirectoryRevision: string | null = null
+    let topicDirectoryReadError = false
+    try {
+      topicDirectoryRevision = topicDirectoryProjection(snapshot, runtime.adminAgentMemoryRetrievalWeight?.() ?? 1).data.revision
+    } catch {
+      topicDirectoryReadError = true
+    }
     rows.push({
       namespace,
+      duplicateRepair: runtime.adminDuplicateRepairStatus?.(namespace) ?? null,
       workspaceName: runtime.adminWorkspaceName(namespace) ?? '当前工作区',
-      schemaVersion: snapshot.schemaVersion,
+      schemaVersion: 'schemaVersion' in snapshot ? snapshot.schemaVersion : snapshot.storedSchemaVersion,
       currentTurn: snapshot.currentTurn,
       blockTurnSize: snapshot.blockTurnSize,
       blockDecayLambda: snapshot.blockDecayLambda,
@@ -848,31 +912,13 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
         graphProjection: graphStatus,
         topicProjection: topicStatus,
       },
-      graphMigration: (() => {
-        const projected = new Set(snapshot.graphProjectionJobs
-          .filter(({ status, projectorVersion }) => status === 'completed' && projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
-          .flatMap(({ sourceEventIds }) => sourceEventIds)).size
-        const total = snapshot.events.filter(({ status }) => status !== 'forgotten' && status !== 'archived').length
-        const complete = projected >= total
-        const state = complete
-          ? 'complete'
-          : graphStatus.processing > 0
-            ? 'processing'
-            : graphStatus.terminalFailed > 0
-              ? 'failed'
-              : 'incomplete'
-        return {
-          projected,
-          total,
-          pending: snapshot.graphProjectionJobs.filter(({ status }) => status === 'pending').length,
-          running: snapshot.graphProjectionJobs.filter(({ status }) => status === 'running').length,
-          failed: graphStatus.terminalFailed,
-          retryable: graphStatus.retryable,
-          processing: graphStatus.processing,
-          state,
-          complete,
-        }
-      })(),
+      topicDirectoryRevision,
+      topicDirectoryReadError,
+      graphMigration: graphWork.migration,
+      // Only a live source Block in this namespace establishes a retrieval gap.
+      longTermExtractionGap: snapshot.extractionJobs.some((job) =>
+        derivationJobState(job, job.status === 'succeeded' || job.status === 'skipped') === 'terminal-failed'
+        && snapshot.blocks.some((block) => block.id === job.blockId && block.shouldExtract === true)),
       usageReceipts: snapshot.usageReceipts.length,
       memoryUseCount: snapshot.usageReceipts.filter((receipt) =>
         receipt.eventIds.length > 0 || receipt.elementIds.length > 0).length,
@@ -887,6 +933,10 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
   return {
     readonly: true,
     settingsWritable: true,
+    graphSettings: runtime.adminGraphSettings?.() ?? { enabled: false, paused: false, legacy: false, noticeSeen: true, everEnabled: false },
+    // Semantic-recall settings are read back through the same PATCH endpoint
+    // that writes them, so the panel never has to guess the effective values.
+    vectorSettings: runtime.adminVectorSettings?.() ?? { embeddingUrl: '', embeddingKey: '', embeddingKeyConfigured: false, embeddingModel: '', vectorWeight: 1, embeddingMinScore: 0.3, embeddingReady: false, rerankUrl: '', rerankKey: '', rerankKeyConfigured: false, rerankModel: '', rerankReady: false },
     dataDirectory: runtime.adminDataDirectory?.() ?? null,
     pluginVersion: STRATAGATE_DSH_VERSION,
     harnessVersion: installedPackageVersion(['@deepseek-ai/dsh', '@deepseek-ai/dsh-session']),
@@ -894,12 +944,45 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
   }
 }
 
-async function updateSettings(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
+async function jsonBody(req: WebRequest, label: string, limit = 16 * 1024): Promise<Record<string, unknown>> {
+  let suppliedBody = req.body
+  if (suppliedBody === undefined && typeof req[Symbol.asyncIterator] === 'function') {
+    const chunks: Buffer[] = []
+    let size = 0
+    for await (const chunk of req as AsyncIterable<Uint8Array | string>) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += value.length
+      if (size > limit) throw new AdminHttpError(413, `${label} exceeds ${limit} bytes`)
+      chunks.push(value)
+    }
+    suppliedBody = Buffer.concat(chunks).toString('utf8')
+  }
+  let body: unknown = suppliedBody
+  if (typeof body === 'string') {
+    if (!body.trim()) return {}
+    try { body = JSON.parse(body) } catch { throw new AdminHttpError(400, `${label} must be valid JSON`) }
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new AdminHttpError(400, `${label} must be a JSON object`)
+  }
+  return body as Record<string, unknown>
+}
+
+async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequest): Promise<unknown> {
   const rawTurnSize = url.searchParams.get('blockTurnSize')?.trim()
   const rawLambda = url.searchParams.get('blockDecayLambda')?.trim()
   const rawAgentWeight = url.searchParams.get('agentMemoryRetrievalWeight')?.trim()
-  if (rawTurnSize === undefined && rawLambda === undefined && rawAgentWeight === undefined) {
-    throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, or agentMemoryRetrievalWeight is required')
+  const vectorParams = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore',
+    'rerankUrl', 'rerankKey', 'rerankModel'] as const
+  const queryVectorParams = vectorParams.filter((name) => url.searchParams.has(name))
+  if (queryVectorParams.length > 0) {
+    throw new AdminHttpError(400, 'Embedding settings must be sent in a JSON body; credentials in the URL are not accepted')
+  }
+  const hasBody = req.body !== undefined || typeof req[Symbol.asyncIterator] === 'function'
+  const body = hasBody ? await jsonBody(req, 'Embedding settings') : {}
+  const suppliedVectorParams = vectorParams.filter((name) => Object.hasOwn(body, name))
+  if (rawTurnSize === undefined && rawLambda === undefined && rawAgentWeight === undefined && suppliedVectorParams.length === 0) {
+    throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, agentMemoryRetrievalWeight, or an embedding setting is required')
   }
   let turnSize: number | undefined
   let lambda: number | undefined
@@ -925,10 +1008,39 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL): Promise<unk
     }
     agentWeight = value
   }
-  const result: { blockTurnSize?: number; blockDecayLambda?: number; agentMemoryRetrievalWeight?: number } = {}
+  const result: { blockTurnSize?: number; blockDecayLambda?: number; agentMemoryRetrievalWeight?: number; vectorSettings?: Record<string, unknown> } = {}
   if (turnSize !== undefined) result.blockTurnSize = await runtime.adminSetBlockTurnSize(turnSize)
   if (lambda !== undefined) result.blockDecayLambda = await runtime.adminSetBlockDecayLambda(lambda)
   if (agentWeight !== undefined) result.agentMemoryRetrievalWeight = runtime.adminSetAgentMemoryRetrievalWeight(agentWeight)
+  if (suppliedVectorParams.length > 0) {
+    const paramText = (name: string): string => {
+      const value = body[name]
+      if (typeof value !== 'string') throw new AdminHttpError(400, `${name} must be a string`)
+      return value.trim()
+    }
+    const paramNumber = (name: string): number => {
+      const value = body[name]
+      if (typeof value !== 'number' && typeof value !== 'string') throw new AdminHttpError(400, `${name} must be a number`)
+      const parsed = Number(value)
+      if (!Number.isFinite(parsed)) throw new AdminHttpError(400, `${name} must be a finite number`)
+      return parsed
+    }
+    try {
+      result.vectorSettings = runtime.adminSetVectorSettings({
+        ...(suppliedVectorParams.includes('embeddingUrl') ? { embeddingUrl: paramText('embeddingUrl') } : {}),
+        ...(suppliedVectorParams.includes('embeddingKey') ? { embeddingKey: paramText('embeddingKey') } : {}),
+        ...(suppliedVectorParams.includes('embeddingModel') ? { embeddingModel: paramText('embeddingModel') } : {}),
+        ...(suppliedVectorParams.includes('vectorWeight') ? { vectorWeight: paramNumber('vectorWeight') } : {}),
+        ...(suppliedVectorParams.includes('embeddingMinScore') ? { embeddingMinScore: paramNumber('embeddingMinScore') } : {}),
+        ...(suppliedVectorParams.includes('rerankUrl') ? { rerankUrl: paramText('rerankUrl') } : {}),
+        ...(suppliedVectorParams.includes('rerankKey') ? { rerankKey: paramText('rerankKey') } : {}),
+        ...(suppliedVectorParams.includes('rerankModel') ? { rerankModel: paramText('rerankModel') } : {}),
+      })
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) throw new AdminHttpError(400, error.message)
+      throw error
+    }
+  }
   return result
 }
 
@@ -976,7 +1088,8 @@ async function feedback(runtime: StrataGateRuntime, req: WebRequest, url: URL): 
   if (req.method === 'GET') {
     const namespace = url.searchParams.get('namespace')?.trim() ?? ''
     if (!namespace) throw new AdminHttpError(400, 'namespace is required')
-    return runtime.adminFeedbackDraft(namespace)
+    const result = runtime.adminFeedbackDraft(namespace)
+    return { ...result, diagnostics: result.draft?.diagnostics ?? await runtime.diagnosticReport?.(namespace) }
   }
   if (req.method !== 'PUT') throw new AdminHttpError(405, 'StrataGate feedback requires GET or PUT')
   let suppliedBody = req.body
@@ -1050,6 +1163,11 @@ async function importExternalMemory(runtime: StrataGateRuntime, req: WebRequest)
     if (!jobId) throw new AdminHttpError(400, 'jobId is required')
     return runtime.adminRetryExternalMemory(namespace, jobId)
   }
+  if (operation === 'abandon') {
+    const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
+    if (!jobId) throw new AdminHttpError(400, 'jobId is required')
+    return runtime.adminAbandonExternalMemory(namespace, jobId)
+  }
   if (operation === 'commit') {
     const jobId = typeof body.jobId === 'string' ? body.jobId.trim() : ''
     if (!jobId) throw new AdminHttpError(400, 'jobId is required')
@@ -1068,7 +1186,7 @@ async function importExternalMemory(runtime: StrataGateRuntime, req: WebRequest)
     if (!sourceBlockId) throw new AdminHttpError(400, 'sourceBlockId is required')
     return runtime.adminUndoExternalMemory(namespace, sourceBlockId)
   }
-  throw new AdminHttpError(400, 'operation must be preview, status, retry, commit, or undo')
+  throw new AdminHttpError(400, 'operation must be preview, status, retry, abandon, commit, or undo')
 }
 
 function externalMemoryPrompt(): unknown {
@@ -1096,7 +1214,8 @@ function timestampKey(value: string): string {
   return Number.isFinite(parsed) ? String(parsed) : value
 }
 
-function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotView {
+function recoverSnapshotView(snapshot: AdminReadModel): RecoveredSnapshotView {
+  const failedSummaries = new Set(snapshot.summaryJobs.filter(job => derivationJobState(job, job.status === 'succeeded') === 'terminal-failed').map(job => job.blockId))
   const receiptThreads = new Map<string, string>()
   const receiptActivity = new Map<string, string>()
   const receiptTurns = new Map<string, number>()
@@ -1138,6 +1257,11 @@ function recoverSnapshotView(snapshot: StrataGateSnapshot): RecoveredSnapshotVie
       const messages = groups.get(item.threadId) ?? []
       messages.push(item.message)
       groups.set(item.threadId, messages)
+    }
+    // A terminal summary still needs its own Block notice when no raw source
+    // can be read. Use only the recorded thread, or the existing legacy scope.
+    if (groups.size === 0 && failedSummaries.has(source.id)) {
+      groups.set(source.threadId?.trim() || LEGACY_THREAD_ID, [])
     }
     const entries = [...groups]
     for (const [threadId, messages] of entries) {
@@ -1198,17 +1322,19 @@ function virtualBlockLayers(block: DisplayBlock): DisplayLayer[] {
   ])
 }
 
-function conversationRows(snapshot: StrataGateSnapshot, view = recoverSnapshotView(snapshot)): Array<{ id: string; label: string; blocks: number; lastActivityAt: string | null }> {
+function conversationRows(snapshot: AdminReadModel, view = recoverSnapshotView(snapshot)): Array<{ id: string; label: string; blocks: number; lastActivityAt: string | null }> {
+  const blocksByThread = associationIndex(view.blocks, block => [block.threadId])
+  const openByThread = associationIndex(view.openMessages, message => [message.threadId])
   const ids = new Set([
     ...view.blocks.map((block) => block.threadId),
     ...view.openMessages.map(({ threadId }) => threadId),
     ...view.receiptThreads.values(),
   ])
   return [...ids].map((id) => {
-    const blocks = view.blocks.filter((block) => block.threadId === id)
+    const blocks = blocksByThread.get(id) ?? []
     const messages = [
       ...blocks.flatMap((block) => block.messages),
-      ...view.openMessages.filter((message) => message.threadId === id).map(({ message }) => message),
+      ...(openByThread.get(id) ?? []).map(({ message }) => message),
     ]
     const firstUser = messages.find(({ role, content }) => role === 'user' && content.trim())
     const title = firstUser?.content.replace(/\s+/g, ' ').trim().slice(0, 28)
@@ -1229,11 +1355,16 @@ function conversationRows(snapshot: StrataGateSnapshot, view = recoverSnapshotVi
 async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
   const namespace = url.searchParams.get('namespace')?.trim() ?? ''
   if (!namespace) throw new AdminHttpError(400, 'namespace is required')
-  const snapshot = await requiredSnapshot(runtime, namespace)
   const kind = url.searchParams.get('kind') ?? 'events'
   const query = url.searchParams.get('q')?.trim() ?? ''
   const offset = numeric(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER)
   const limit = numeric(url.searchParams.get('limit'), 100, 1, 200)
+  const blockPage = kind === 'blocks' && !query && runtime.adminReadBlockPage
+    ? await runtime.adminReadBlockPage(namespace, { threadId: url.searchParams.get('threadId')?.trim() ?? '', offset, limit },
+      model => conversationRows(model)[0]?.id ?? null)
+    : null
+  const eventModel = kind === 'events' && runtime.adminReadEventModel ? await runtime.adminReadEventModel(namespace) : null
+  const snapshot = blockPage?.model ?? eventModel ?? await requiredSnapshot(runtime, namespace)
   let values: unknown[]
   if (kind === 'events') {
     const timeline = url.searchParams.get('timeline') === 'true'
@@ -1247,7 +1378,10 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       const happened = event.temporal.happenedStart ?? event.temporal.happenedEnd
       return { value: happened ?? event.temporal.mentionedAt ?? event.createdAt, known: Boolean(happened) }
     }
-    values = [...snapshot.events]
+    const nodesById = new Map(snapshot.graphNodes.map(node => [node.id, node]))
+    const nodeOrder = new Map(snapshot.graphNodes.map((node, index) => [node, index]))
+    const elementsByEvent = associationIndex(snapshot.elements, element => element.sourceEventIds)
+    const candidates = [...snapshot.events]
       .sort((left, right) => occurrence(right).value.localeCompare(occurrence(left).value))
       .filter((event) => !timeline || (event.status !== 'forgotten' && event.status !== 'archived'))
       .filter((event) => !eventType || event.temporal.eventType === eventType)
@@ -1262,15 +1396,15 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         if (timeFilter === 'week') return Number.isFinite(time) && time >= weekAgo
         return true
       })
-      .map((event) => ({
+    values = (query ? candidates : candidates.slice(offset, offset + limit)).map((event) => ({
         ...(eventSummary(event, snapshot) as object),
-        relatedNodes: snapshot.graphNodes
-          .filter(({ id }) => (event.temporal.participantNodeIds ?? []).includes(id))
+        relatedNodes: [...new Set(event.temporal.participantNodeIds ?? [])]
+          .flatMap(id => nodesById.get(id) ?? []).sort((left, right) => nodeOrder.get(left)! - nodeOrder.get(right)!)
           .map(({ id, name, type, aliases }) => ({ id, name, type, aliases })),
-        relatedElements: snapshot.elements
-          .filter(({ sourceEventIds }) => sourceEventIds.includes(event.id))
+        relatedElements: (elementsByEvent.get(event.id) ?? [])
           .map(({ id, name }) => ({ id, name })),
       }))
+    if (!query) return { namespace, kind, total: candidates.length, offset, limit, items: values }
   }
   else if (kind === 'graph') {
     const eventMap = new Map(snapshot.events.map((event) => [event.id, event]))
@@ -1284,31 +1418,7 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
       })),
       edges: snapshot.graphEdges,
       clusters: clusterKnowledgeGraph(snapshot.graphNodes, snapshot.graphEdges),
-      migration: (() => {
-        const projected = new Set(snapshot.graphProjectionJobs
-          .filter(({ status, projectorVersion }) => status === 'completed' && projectorVersion === KNOWLEDGE_GRAPH_PROJECTOR_VERSION)
-          .flatMap(({ sourceEventIds }) => sourceEventIds)).size
-        const graphStatus = summarizeDerivationJobs(snapshot.graphProjectionJobs, (job) => job.status === 'completed')
-        const total = snapshot.events.filter(({ status }) => status !== 'forgotten' && status !== 'archived').length
-        const complete = projected >= total
-        return {
-          projected,
-          total,
-          pending: snapshot.graphProjectionJobs.filter(({ status }) => status === 'pending').length,
-          running: snapshot.graphProjectionJobs.filter(({ status }) => status === 'running').length,
-          failed: graphStatus.terminalFailed,
-          retryable: graphStatus.retryable,
-          processing: graphStatus.processing,
-          state: complete
-            ? 'complete'
-            : graphStatus.processing > 0
-              ? 'processing'
-              : graphStatus.terminalFailed > 0
-                ? 'failed'
-                : 'incomplete',
-          complete,
-        }
-      })(),
+      migration: liveGraphProjection(snapshot).migration,
     }
   }
   else if (kind === 'elements') values = snapshot.elements.map(elementSummary)
@@ -1316,45 +1426,62 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
     const recovered = recoverSnapshotView(snapshot)
     const conversations = conversationRows(snapshot, recovered)
     const requestedThreadId = url.searchParams.get('threadId')?.trim() ?? ''
-    const activeThreadId = requestedThreadId || conversations[0]?.id || null
+    const activeThreadId = blockPage?.threadId ?? (requestedThreadId || conversations[0]?.id || null)
     const scopedBlocks = activeThreadId
       ? recovered.blocks.filter((block) => block.threadId === activeThreadId)
       : []
-    values = scopedBlocks.map((block) => {
+    const timeline = buildBlockTimeline(scopedBlocks.map((block) => ({
+      id: block.id, threadId: block.threadId, sequence: block.source.sequence,
+    })))
+    const sourceTimeline = buildBlockTimeline(snapshot.blocks)
+    const summaries = new Map(snapshot.summaryJobs.map(job => [job.blockId, job]))
+    const extractions = new Map(snapshot.extractionJobs.map(job => [job.blockId, job]))
+    const eventsByBlock = associationIndex(snapshot.events, event => event.sourceBlockId ? [event.sourceBlockId] : [])
+    const projectionsByEvent = associationIndex(snapshot.graphProjectionJobs, job => job.sourceEventIds)
+    const nodesByEvent = associationIndex(snapshot.graphNodes, node => node.sourceEventIds)
+    const projectionOrder = new Map(snapshot.graphProjectionJobs.map((job, index) => [job, index]))
+    const nodeOrder = new Map(snapshot.graphNodes.map((node, index) => [node, index]))
+    const pageIds = blockPage ? new Set(blockPage.blockIds) : null
+    const pageBlocks = query ? scopedBlocks : pageIds
+      ? scopedBlocks.filter(block => pageIds.has(block.id)) : scopedBlocks.slice(offset, offset + limit)
+    values = pageBlocks.map((block) => {
       const source = block.source
       const layers = virtualBlockLayers(block)
       const layerTokens = layers.map(({ level, tokens, percentOfL5 }) => ({ level, tokens, percentOfL5 }))
-      const extraction = snapshot.extractionJobs.find(({ blockId }) => blockId === source.id)
-      const summary = snapshot.summaryJobs.find(({ blockId }) => blockId === source.id)
+      const extraction = extractions.get(source.id)
+      const summary = summaries.get(source.id)
       const blockMessageIds = new Set(block.messages.map(({ id }) => id))
-      const relatedEvents = snapshot.events.filter((event) => event.sourceBlockId === source.id
-        && (!block.virtual || event.sourceMessageIds.some((id) => blockMessageIds.has(id))))
+      const relatedEvents = (eventsByBlock.get(source.id) ?? []).filter(event => !block.virtual || event.sourceMessageIds.some(id => blockMessageIds.has(id)))
       const eventIds = new Set(relatedEvents.map(({ id }) => id))
-      const projections = snapshot.graphProjectionJobs
-        .filter(({ sourceEventIds }) => sourceEventIds.some((id) => eventIds.has(id)))
-      const relatedNodes = snapshot.graphNodes
-        .filter(({ sourceEventIds }) => sourceEventIds.some((id) => eventIds.has(id)))
+      const projections = indexedAssociations(projectionsByEvent, eventIds, projectionOrder)
+      const relatedNodes = indexedAssociations(nodesByEvent, eventIds, nodeOrder)
         .map(({ id, name, type }) => ({ id, name, type }))
-      const failedProjection = projections.find(({ status }) => status === 'failed')
-      const pendingProjection = projections.some(({ status }) => status === 'pending' || status === 'running')
+      const failedProjection = projections.find((job) => derivationJobState(job, job.status === 'completed') === 'terminal-failed')
+      const pendingProjection = projections.some(graphProjectionIsProcessing)
       const needsExtraction = source.shouldExtract === true
-      const status = summary?.status === 'failed'
+      const summaryState = summary ? derivationJobState(summary, summary.status === 'succeeded') : null
+      const extractionState = extraction ? derivationJobState(extraction, extraction.status === 'succeeded' || extraction.status === 'skipped') : null
+      const status = summaryState === 'terminal-failed'
         ? 'failed'
-        : summary?.status === 'pending' || summary?.status === 'running' || (!summary && source.processingStatus === 'pending')
+        : summaryState === 'processing' || summaryState === 'retryable' || (!summary && source.processingStatus === 'pending')
           ? 'processing'
-          : extraction?.status === 'failed' || failedProjection
+          : extractionState === 'terminal-failed' || failedProjection
             ? 'failed'
+            : extractionState === 'processing' || extractionState === 'retryable' ? 'processing'
             : extraction?.status === 'succeeded' || extraction?.status === 'skipped'
               ? pendingProjection ? 'processing' : 'organized'
               : needsExtraction ? 'waiting' : 'organized'
-      const blockPosition = scopedBlocks.findIndex(({ id }) => id === block.id) + 1
-      const latestBlockPosition = scopedBlocks.length
-      const currentLevel = getDecayedBlockLevel(
-        source.pointerAnchorLevel,
-        source.threadId ? source.pointerAnchorBlockPosition : Math.min(source.pointerAnchorBlockPosition, blockPosition),
-        latestBlockPosition,
-        snapshot.blockDecayLambda,
-      )
+      const position = (block.virtual ? timeline.get(block.id) : sourceTimeline.get(source.id))!
+      const { blockPosition } = position
+      // Legacy mixed-thread sources can be split into virtual display blocks.
+      // Keep their display-only anchor bounded to that recovered conversation.
+      const { age, level: targetLevel } = getBlockDecayView({
+        pointerAnchorLevel: source.pointerAnchorLevel,
+        pointerAnchorBlockPosition: block.virtual
+          ? Math.min(source.pointerAnchorBlockPosition, blockPosition)
+          : source.pointerAnchorBlockPosition,
+      }, position, snapshot.blockDecayLambda)
+      const currentLevel = source.surfaceCurrentLevel ?? targetLevel
       const currentMetrics = layerTokens.find(({ level }) => level === currentLevel)
       const l5Tokens = layerTokens.find(({ level }) => level === 5)?.tokens ?? 0
       return {
@@ -1371,18 +1498,27 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         summary: source.l1Summary,
         keypoints: source.l2Keypoints,
         currentLevel,
+        surfaceLevelKnown: source.surfaceCurrentLevel !== undefined,
+        targetLevel,
         currentTokens: currentMetrics?.tokens ?? 0,
         l5Tokens,
         compressionPercent: currentMetrics?.percentOfL5 ?? (currentLevel === 5 ? 100 : 0),
         layerTokens,
-        distanceFromLatest: Math.max(0, latestBlockPosition - blockPosition),
+        distanceFromLatest: age,
         expansionSource: source.lastLiftedAt ? source.lastLiftedBy ?? 'legacy' : null,
+        surfaceSync: source.lastLiftedBy === 'user'
+          ? runtime.adminBlockSurfaceSync?.(namespace, source.id) ?? (source.surfaceCurrentLevel === undefined || currentLevel !== targetLevel && targetLevel === source.pointerAnchorLevel
+            ? { status: 'pending', reason: 'session-unloaded', message: '已保存选择，打开这段对话后生效。' }
+            : { status: 'applied', message: '已应用，供助手后续回复参考。' })
+          : null,
         lastLiftedAt: source.lastLiftedAt,
         sourceMessages: block.messages.length,
         createdAt: source.createdAt,
         virtual: block.virtual,
+        rawAvailable: block.messages.some(({ content }) => Boolean(content.trim())),
         processingStatus: source.processingStatus,
         summaryJob: summary ? {
+          state: derivationJobState(summary, summary.status === 'succeeded'),
           status: summary.status,
           attempts: summary.attempts,
           nextRetryAt: summary.nextRetryAt,
@@ -1417,10 +1553,10 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
     return {
       namespace,
       kind,
-      total: filtered.length,
+      total: query ? filtered.length : blockPage?.total ?? scopedBlocks.length,
       offset,
       limit,
-      items: filtered.slice(offset, offset + limit),
+      items: query ? filtered.slice(offset, offset + limit) : filtered,
       openBlock: {
         turnRange: openTurns > 0
           ? openDshTurns.length > 0 && openDshTurns.every((turn): turn is number => turn !== undefined)
@@ -1457,7 +1593,7 @@ async function sources(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
     const event = snapshot.events.find(({ id }) => id === eventId)
       ?? ((runtime.adminAgentMemoryRetrievalWeight?.() ?? 1) > 0
         ? snapshot.agentEvents.find(({ id, status }) => id === eventId
-          && (status === 'active' || status === 'superseded')) : undefined)
+          && (status === 'active' || status === 'superseded' || status === 'archived')) : undefined)
     if (!event) throw new AdminHttpError(404, `Unknown event: ${eventId}`)
     events = [event]
     ids = new Set(event.sourceMessageIds)
@@ -1534,8 +1670,8 @@ async function sources(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
         .map(({ id, name, type, aliases }) => ({ id, name, type, aliases })),
     } : {}),
     elements: elements.map(elementSummary),
-    blocks: events.map((event) => snapshot.blocks.find(({ id }) => id === event.sourceBlockId))
-      .filter((block): block is MemoryBlock => Boolean(block))
+    blocks: snapshot.blocks.filter(block => events.some(event => event.sourceBlockId === block.id)
+      || block.l5Raw.some(message => ids.has(message.id)))
       .map((block) => ({ id: block.id, title: block.l0Title, createdAt: block.createdAt })),
     messages: sourceMessages(snapshot, ids),
   }
@@ -1549,7 +1685,14 @@ async function expandBlock(runtime: StrataGateRuntime, url: URL): Promise<unknow
   if (!blockId) throw new AdminHttpError(400, 'blockId is required')
   if (blockId.startsWith('virtual:')) throw new AdminHttpError(409, 'Recovered legacy fragments are read-only display data')
   if (!/^L?[0-5]$/i.test(target)) throw new AdminHttpError(400, 'level must be L0 through L5')
-  return runtime.adminExpandBlock(namespace, blockId, target)
+  try {
+    return await runtime.adminExpandBlock(namespace, blockId, target)
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'BLOCK_SELECTION_REJECTED') {
+      throw new AdminHttpError(409, error.message, { code: 'BLOCK_SELECTION_REJECTED' })
+    }
+    throw error
+  }
 }
 
 async function retryBlockSummary(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
@@ -1616,7 +1759,7 @@ async function retryTopicProjection(runtime: StrataGateRuntime, url: URL): Promi
   }
 }
 
-function receiptSources(snapshot: StrataGateSnapshot, receipt: UsageReceipt): unknown {
+function receiptSources(snapshot: AdminReadModel, receipt: UsageReceipt): unknown {
   const events = snapshot.events.filter(({ id }) => receipt.eventIds.includes(id))
   const elements = snapshot.elements.filter(({ id }) => receipt.elementIds.includes(id))
   const eventIds = new Set([...receipt.eventIds, ...elements.flatMap(({ sourceEventIds }) => sourceEventIds)])
@@ -1660,15 +1803,27 @@ function requestHeader(req: WebRequest, name: string): string {
 }
 
 async function dashboard(runtime: StrataGateRuntime, url: URL, ifNoneMatch: string): Promise<DashboardResult> {
-  const entries = await runtime.adminSnapshotEntries()
   const requestedNamespace = url.searchParams.get('namespace')?.trim() ?? ''
-  const selected = entries.find(({ namespace }) => namespace === requestedNamespace) ?? entries[0]
   const threadId = url.searchParams.get('threadId')?.trim() ?? ''
-  const revisionKey = entries.map(({ namespace, revision }) => `${namespace}:${revision}`).join('|')
+  const queryKey = JSON.stringify(['offset', 'q', 'time', 'eventType', 'eventStatus', 'participant', 'timeline'].map(key => url.searchParams.get(key) ?? ''))
   const agentMemoryWeight = runtime.adminAgentMemoryRetrievalWeight?.() ?? 1
+  const etagFor = (entries: readonly { namespace: string; revision: number }[]): string => {
+    const selectedNamespace = entries.find(entry => entry.namespace === requestedNamespace)?.namespace ?? entries[0]?.namespace ?? ''
+    const revisionKey = entries.map(({ namespace, revision }) => `${namespace}:${revision}`).join('|')
+    const duplicateKey = JSON.stringify([entries.map(({ namespace }) => runtime.adminDuplicateRepairStatus?.(namespace) ?? null), runtime.adminGraphSettings?.()])
+    return `"${createHash('sha256').update(`${STRATAGATE_DSH_VERSION}\0${TOPIC_DIRECTORY_VIEW_VERSION}\0${revisionKey}\0${selectedNamespace}\0${threadId}\0${agentMemoryWeight}\0${duplicateKey}\0${queryKey}`).digest('base64url').slice(0, 24)}"`
+  }
+  if (ifNoneMatch && typeof runtime.adminReadNamespaceRevisions === 'function') {
+    const etag = etagFor(await runtime.adminReadNamespaceRevisions())
+    if (ifNoneMatch.split(',').map(value => value.trim()).includes(etag)) return { etag, notModified: true }
+  }
+  const entries = typeof runtime.adminReadDashboardEntries === 'function' && !url.searchParams.get('q')?.trim()
+    ? await runtime.adminReadDashboardEntries({ namespace: requestedNamespace, threadId, offset: numeric(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER), limit: 40 }, model => conversationRows(model)[0]?.id ?? null)
+    : await runtime.adminSnapshotEntries()
+  const selected = entries.find(({ namespace }) => namespace === requestedNamespace) ?? entries[0]
   // Include the plugin version so an upgraded server cannot validate an ETag
   // generated by the previous UI/server pair when the memory revision is unchanged.
-  const etag = `"${createHash('sha256').update(`${STRATAGATE_DSH_VERSION}\0${TOPIC_DIRECTORY_VIEW_VERSION}\0${revisionKey}\0${selected?.namespace ?? ''}\0${threadId}\0${agentMemoryWeight}`).digest('base64url').slice(0, 24)}"`
+  const etag = etagFor(entries)
   if (ifNoneMatch.split(',').map((value) => value.trim()).includes(etag)) return { etag, notModified: true }
 
   const overviewValue = await overview(runtime, entries)
@@ -1692,7 +1847,7 @@ async function dashboard(runtime: StrataGateRuntime, url: URL, ifNoneMatch: stri
     memories(snapshotRuntime, memoryUrl('blocks', '40')),
     audit(snapshotRuntime, memoryUrl('audit', '100')),
   ]) as [any, any, any, any]
-  const selectedOverview = (overviewValue as { namespaces?: Array<{ namespace: string; processingJobs?: number }> })
+  const selectedOverview = (overviewValue as { namespaces?: Array<{ namespace: string; processingJobs?: number; duplicateRepair?: { status: string } | null }> })
     .namespaces?.find(({ namespace }) => namespace === selected.namespace)
   const topicDirectoryData = topicDirectoryProjection(selected.snapshot, agentMemoryWeight).data
   return {
@@ -1703,6 +1858,7 @@ async function dashboard(runtime: StrataGateRuntime, url: URL, ifNoneMatch: stri
       revision: selected.revision,
       overview: overviewValue,
       processing: Number(selectedOverview?.processingJobs ?? 0) > 0
+        || selectedOverview?.duplicateRepair?.status === 'pending'
         || (topicDirectoryData.bootstrap !== null && topicDirectoryData.bootstrap.total > 0
           && (topicDirectoryData.bootstrap.status === 'pending' || topicDirectoryData.bootstrap.status === 'running')),
       data: {
@@ -1741,15 +1897,122 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
   try {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const path = url.pathname.replace(/\/$/, '')
-    if (path === '/api/stratagate/feedback') {
+    if (path === '/api/stratagate/duplicates') {
+      const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      await requiredSnapshot(runtime, namespace)
+      if (req.method === 'GET') {
+        if (!['all', 'review', 'ai', 'history'].includes(url.searchParams.get('queue') ?? 'all')) throw new AdminHttpError(400, 'Invalid duplicate queue')
+        sendJson(res, 200, await runtime.adminDuplicateRepairPairs(namespace,
+          numeric(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER), numeric(url.searchParams.get('limit'), 20, 1, 50), url.searchParams.get('queue') ?? 'all',
+          url.searchParams.has('focusLeft') && url.searchParams.has('focusRight') ? { leftId: url.searchParams.get('focusLeft')!, rightId: url.searchParams.get('focusRight')! } : undefined))
+      } else if (req.method === 'POST') {
+        let body = req.body
+        if (body === undefined && typeof req[Symbol.asyncIterator] === 'function') {
+          const chunks: Buffer[] = []; let size = 0
+          for await (const chunk of req as AsyncIterable<Uint8Array | string>) {
+            const value = Buffer.from(chunk); size += value.length
+            if (size > 65536) throw new AdminHttpError(413, 'Duplicate control exceeds 64 KB')
+            chunks.push(value)
+          }
+          body = Buffer.concat(chunks).toString('utf8')
+        }
+        if (typeof body === 'string') { try { body = JSON.parse(body) } catch { throw new AdminHttpError(400, 'Invalid JSON') } }
+        if (!body || typeof body !== 'object') throw new AdminHttpError(400, 'Invalid duplicate control')
+        const input = body as Record<string, unknown>
+        if (!['rescan', 'merge', 'select', 'keep', 'undo', 'draft', 'takeover'].includes(String(input.action))) throw new AdminHttpError(400, 'Invalid duplicate action')
+        const pair = input.pair as { leftId: string; rightId: string; leftFingerprint: string; rightFingerprint: string; exact: boolean; similarity: number } | undefined
+        if (input.action !== 'rescan' && (!pair || ![pair.leftId, pair.rightId].every(id => typeof id === 'string' && id.length > 0 && id.length <= 200)
+          || ![pair.leftFingerprint, pair.rightFingerprint].every(hash => typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash)))) throw new AdminHttpError(400, 'Invalid duplicate pair')
+        if ((input.action === 'merge' || input.action === 'select') && (!pair || input.keepId !== pair.leftId && input.keepId !== pair.rightId)) throw new AdminHttpError(400, 'Invalid keeper')
+        if (input.action === 'undo' && (typeof input.undoId !== 'string' || !/^[a-f0-9-]{36}$/.test(input.undoId))) throw new AdminHttpError(400, 'Invalid undo record')
+        const draft = input.draft as { title?: unknown; summary?: unknown } | undefined
+        if (input.action === 'merge' && (!draft || typeof draft.title !== 'string' || !draft.title.trim() || draft.title.length > 200
+          || typeof draft.summary !== 'string' || !draft.summary.trim() || draft.summary.length > 12000)) throw new AdminHttpError(400, '请提供完整的合并标题和正文')
+        try {
+          if (input.regenerate !== undefined && typeof input.regenerate !== 'boolean') throw new AdminHttpError(400, 'Invalid regeneration option')
+          const result = await runtime.adminDuplicateRepairControl(namespace, input.action as 'rescan' | 'merge' | 'select' | 'keep' | 'undo' | 'draft' | 'takeover', pair, input.keepId as string | undefined, input.undoId as string | undefined, draft as { title: string; summary: string } | undefined, input.regenerate === true)
+          if (!result.ok) throw new AdminHttpError(409, '卡片已变化、置顶或存在时间/冲突关系，未执行合并；请刷新查看')
+          sendJson(res, 200, result)
+        } catch (error) {
+          if (error instanceof AdminHttpError) throw error
+          throw new AdminHttpError(409, error instanceof Error ? error.message : String(error))
+        }
+      } else throw new AdminHttpError(405, 'Duplicate review requires GET or POST')
+    } else if (path === '/api/stratagate/feedback') {
       sendJson(res, 200, await feedback(runtime, req, url))
+    } else if (path === '/api/stratagate/diagnostics') {
+      const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      if (req.method === 'POST') {
+        const category = url.searchParams.get('category') ?? ''
+        if (!['timeout', 'network', 'request-failed'].includes(category)) throw new AdminHttpError(400, 'Unknown frontend diagnostic category')
+        runtime.diagnostics.record({ namespace, stage: 'frontend' }, { errors: 1 }, { error: category })
+        sendJson(res, 200, { recorded: true })
+        return
+      }
+      if (req.method !== 'GET') throw new AdminHttpError(405, 'StrataGate diagnostics require GET or POST')
+      const id = url.searchParams.get('id') ?? undefined
+      sendJson(res, 200, await runtime.diagnosticReport(namespace, { ...(id ? { id, details: true } : {}), offset: numeric(url.searchParams.get('offset'), 0, 0, 2000) }))
     } else if (path === '/api/stratagate/profile') {
       // This is the authenticated Settings editor. Redacting its editable values
       // would replace user data with placeholders on the next save.
       sendJson(res, 200, await persistentProfile(runtime, req), true)
+    } else if (path === '/api/stratagate/graph/control') {
+      if (req.method !== 'POST') throw new AdminHttpError(405, 'Graph control requires POST')
+      sendJson(res, 200, await runtime.adminGraphControl(url.searchParams.get('action') ?? '', url.searchParams.get('token') ?? undefined))
     } else if (path === '/api/stratagate/settings') {
       if (req.method !== 'PATCH') throw new AdminHttpError(405, 'StrataGate settings require PATCH')
-      sendJson(res, 200, await updateSettings(runtime, url))
+      sendJson(res, 200, await updateSettings(runtime, url, req))
+    } else if (path === '/api/stratagate/models') {
+      // Keep the existing memory-processing model picker separate from the
+      // endpoint-based embedding/rerank model lists.
+      if (req.method === 'GET' && !url.searchParams.has('kind')) {
+        if (url.searchParams.has('url') || url.searchParams.has('key')) {
+          throw new AdminHttpError(400, 'Model credentials must be sent in a JSON body; credentials in the URL are not accepted')
+        }
+        sendJson(res, 200, await runtime.adminMemoryModelCatalog(url.searchParams.get('provider') || undefined))
+        return
+      }
+      if (req.method === 'POST' && req.body === undefined && typeof req[Symbol.asyncIterator] !== 'function') {
+        throw new AdminHttpError(405, 'Memory models require GET; embedding/rerank listing requires a JSON body')
+      }
+      if (req.method !== 'GET' && req.method !== 'POST') throw new AdminHttpError(405, 'StrataGate model listing requires GET or POST')
+      if (req.method === 'GET' && (url.searchParams.has('url') || url.searchParams.has('key'))) {
+        throw new AdminHttpError(400, 'Model credentials must be sent in a JSON body; credentials in the URL are not accepted')
+      }
+      const body = req.method === 'POST' ? await jsonBody(req, 'Model listing') : {}
+      const kindValue = req.method === 'POST' ? body.kind : url.searchParams.get('kind')
+      const kind = typeof kindValue === 'string' && kindValue ? kindValue : 'embedding'
+      if (kind !== 'embedding' && kind !== 'rerank') throw new AdminHttpError(400, 'Unsupported model list kind')
+      if (req.method === 'POST' && (body.url !== undefined && typeof body.url !== 'string'
+        || body.key !== undefined && typeof body.key !== 'string')) {
+        throw new AdminHttpError(400, 'Model url and key must be strings')
+      }
+      // Optional body overrides let the settings form test credentials before saving.
+      const override = {
+        ...(typeof body.url === 'string' ? { url: body.url } : {}),
+        ...(typeof body.key === 'string' ? { key: body.key } : {}),
+      }
+      const models = kind === 'rerank'
+        ? await runtime.adminListRerankModels(override)
+        : await runtime.adminListEmbeddingModels(override)
+      sendJson(res, 200, { kind, models })
+    } else if (['/api/stratagate/daily', '/api/stratagate/daily/note', '/api/stratagate/daily/open-directory'].includes(path)) {
+      const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      if (path.endsWith('/open-directory')) {
+        if (req.method !== 'POST') throw new AdminHttpError(405, 'Daily directory open requires POST')
+        sendJson(res, 200, await runtime.adminOpenDailyDirectory(namespace, AbortSignal.timeout(15_000)))
+      } else {
+        if (req.method !== 'GET') throw new AdminHttpError(405, 'Daily notes are read-only and require GET')
+        if (path.endsWith('/note')) {
+          const date = url.searchParams.get('date') ?? ''
+          try { validDate(date) } catch { throw new AdminHttpError(400, 'date 必须是有效的 YYYY-MM-DD') }
+          try { sendJson(res, 200, await runtime.adminDailyNote(namespace, date), true) }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new AdminHttpError(404, '该日期的笔记文件不存在'); throw error }
+        } else sendJson(res, 200, await runtime.adminDailyNotes(namespace))
+      }
     } else if (path === '/api/stratagate/storage/open-directory') {
       if (req.method !== 'POST') throw new AdminHttpError(405, 'StrataGate data directory open requires POST')
       sendJson(res, 200, await runtime.adminOpenDataDirectory(AbortSignal.timeout(15_000)))
@@ -1765,6 +2028,21 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
     } else if (path === '/api/stratagate/topics/retry') {
       if (req.method !== 'POST') throw new AdminHttpError(405, 'Topic retry requires POST')
       sendJson(res, 200, await retryTopicProjection(runtime, url))
+    } else if (path === '/api/stratagate/dreaming') {
+      const namespace = url.searchParams.get('namespace')?.trim() ?? ''
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      if (req.method === 'GET') sendJson(res, 200, await runtime.adminDreamingStatus(namespace))
+      else if (req.method === 'POST') {
+        const action = url.searchParams.get('action') ?? ''
+        const id = url.searchParams.get('id') || undefined
+        if (action === 'open-session') {
+          if (!id) throw new AdminHttpError(400, 'id is required')
+          sendJson(res, 200, await runtime.adminDreamingSession(namespace, id))
+          return
+        }
+        if (!['start', 'pause', 'resume', 'terminate'].includes(action) || (action !== 'start' && !id)) throw new AdminHttpError(400, 'Invalid Dreaming control')
+        sendJson(res, 200, await runtime.adminDreamingControl(namespace, action, id))
+      } else throw new AdminHttpError(405, 'Dreaming requires GET or POST')
     } else if (path === '/api/stratagate/import') {
       if (req.method === 'GET') {
         const operation = url.searchParams.get('operation')
