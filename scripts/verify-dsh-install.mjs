@@ -12,9 +12,13 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
 const expectedPluginVersion = process.env.EXPECTED_PLUGIN_VERSION ?? manifest.version
 const tarball = process.argv[2] ? resolve(packageRoot, process.argv[2]) : join(packageRoot, `${manifest.name}-${manifest.version}.tgz`)
+const historicalVersions = manifest.dshWorkshop.compatibility.dshVersions
+const currentVersion = manifest.dshWorkshop.compatibility.currentVersion
 const versions = process.env.DSH_VERSION
   ? [process.env.DSH_VERSION]
-  : manifest.dshWorkshop.compatibility.dshVersions
+  : process.env.DSH_MATRIX === 'representative'
+    ? [currentVersion]
+    : [...new Set([...historicalVersions, currentVersion])]
 const fixtureRoot = join(packageRoot, 'tests', 'fixtures')
 
 function run(command, args, cwd, env = {}) {

@@ -56,6 +56,17 @@ npm run check:workbuddy
 npm run test:workbuddy
 ```
 
+DSH compatibility checks are tiered. Pull requests run the oldest supported
+boundary (`0.1.2-rc.1`), the last 0.1 host (`0.1.7-rc.2`), and the current
+host (`0.2.1-rc.5`) on Ubuntu and Windows. The 0.2 migration boundary
+(`0.2.0-rc.2`) stays in the historical matrix because its Windows tests are
+timing/lock sensitive. The complete historical matrix runs nightly from
+`.github/workflows/dsh-compatibility-full.yml`; release verification can opt
+into it with the `full_dsh_matrix` input when a change affects host interfaces,
+migrations, storage, installation, or package structure. A new DSH patch
+version replaces the current-host slot instead of being added permanently to
+the matrix.
+
 ## Making a change
 
 1. Create a branch from the latest `main`.
