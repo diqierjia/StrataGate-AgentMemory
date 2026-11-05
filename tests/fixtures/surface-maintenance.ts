@@ -26,7 +26,7 @@ export interface SurfaceInternals {
   knownSessions: Map<string, WeakRef<Session>>
   drainTails: Map<string, Promise<void>>
   pendingSurfaceSync: Map<string, { namespace: string; blockId: string; reason?: 'user-expansion' }>
-  surfaceMaintenance: Map<string, { dirty: boolean; busy: boolean; timer?: ReturnType<typeof setTimeout>; run?: Promise<void>; blockedAt?: string }>
+  surfaceMaintenance: Map<string, { dirty: boolean; busy: boolean; timer?: ReturnType<typeof setTimeout>; run?: Promise<void>; blockedAt?: string; capacityKey?: string }>
   markSurfaceDirty(session: Session, memory: StrataGate): void
   runSurfaceMaintenance(session: Session): Promise<void>
   syncDecayedBlockSurface(session: Session, memory: StrataGate, contexts: readonly BlockContextEntry[]): Promise<boolean>

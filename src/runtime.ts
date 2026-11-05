@@ -347,6 +347,7 @@ interface SurfaceMaintenance {
   run?: Promise<void> | undefined
   failures: number
   checkpointLimit: number
+  capacityKey?: string
   blockedAt?: string
 }
 
@@ -949,8 +950,21 @@ export class StrataGateRuntime {
         this.scheduleSurfaceMaintenance(surface)
       } else if (event.type === 'request/context') {
         const limit = surfaceCheckpointLimit(session)
-        if (surface.checkpointLimit !== limit) {
-          surface.checkpointLimit = limit
+        const capacityKey = surfaceCapacityKey(session)
+        const limitChanged = surface.checkpointLimit !== limit
+        const capacityChanged = surface.capacityKey !== undefined && surface.capacityKey !== capacityKey
+        surface.checkpointLimit = limit
+        surface.capacityKey = capacityKey
+        if (limitChanged || capacityChanged
+          || surface.blockedAt !== undefined && surface.blockedAt !== surfaceMaintenanceInput(surface)) {
+          this.markSurfaceDirty(session, surface.memory)
+        }
+      } else if (event.type === 'request/header') {
+        const capacityKey = surfaceCapacityKey(session)
+        const capacityChanged = surface.capacityKey !== undefined && surface.capacityKey !== capacityKey
+        surface.capacityKey = capacityKey
+        if (capacityChanged
+          || surface.blockedAt !== undefined && surface.blockedAt !== surfaceMaintenanceInput(surface)) {
           this.markSurfaceDirty(session, surface.memory)
         }
       } else if (String(event.type).startsWith('compaction/') || event.type === 'session/end-seed'
@@ -2113,7 +2127,10 @@ export class StrataGateRuntime {
     if (!state || state.session !== session || state.memory !== memory) {
       if (state?.timer) clearTimeout(state.timer)
       if (state) state.generation += 1
-      state = { session, memory, dirty: true, generation: 0, busy: hostTurnActive(session), failures: 0, checkpointLimit: surfaceCheckpointLimit(session) }
+      state = {
+        session, memory, dirty: true, generation: 0, busy: hostTurnActive(session), failures: 0,
+        checkpointLimit: surfaceCheckpointLimit(session),
+      }
       this.surfaceMaintenance.set(key, state)
     }
     return state
@@ -4114,7 +4131,7 @@ function appendBlockSurface(session: Session, blockId: string, text: string, seq
 }
 
 function surfaceMaintenanceInput(state: SurfaceMaintenance): string {
-  return `${state.memory.storageRevision}:${surfaceCheckpointLimit(state.session)}:${state.session.surface?.nodes.join(',') ?? ''}`
+  return `${state.memory.storageRevision}:${surfaceCapacityKey(state.session)}:${state.session.surface?.nodes.join(',') ?? ''}`
 }
 
 function surfaceFailureIsPermanent(error: unknown): boolean {

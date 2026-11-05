@@ -177,6 +177,52 @@ describe('safe native context replacement', () => {
     } finally { await f.dispose() }
   })
 
+  it('wakes a blocked surface when the full context capacity changes', async () => {
+    const f = await rawFixture({ leading: 'system' })
+    try {
+      const initial = f.session.append('request/context', { provider: 'test', model: 'small', contextWindow: 128_000 })
+      f.plugin.acceptEvent(f.session, initial)
+      f.flush.mockRejectedValueOnce(Object.assign(new Error('Call deadline exceeded'), { retryable: false }))
+      f.mark(); await f.run()
+      expect(f.flush).toHaveBeenCalledTimes(1)
+      expect(f.internals.surfaceMaintenance.get(String(f.session.id))?.blockedAt).toBeDefined()
+
+      // 128K and 200K both cap the checkpoint limit at 4096, so the raw
+      // context window must be part of the retry fingerprint.
+      const changed = f.session.append('request/context', { provider: 'test', model: 'large', contextWindow: 200_000 })
+      f.plugin.acceptEvent(f.session, changed)
+      f.flush.mockResolvedValue(undefined)
+      await f.run()
+      expect(f.flush).toHaveBeenCalledTimes(2)
+      expect(f.internals.surfaceMaintenance.get(String(f.session.id))?.blockedAt).toBeUndefined()
+    } finally { await f.dispose() }
+  })
+
+  it('wakes a blocked surface when header output or tool capacity changes', async () => {
+    const f = await rawFixture({ leading: 'system' })
+    try {
+      const initial = f.session.append('request/header', {
+        reason: 'initial', header: { config: { provider: 'test', model: 'test', maxTokens: 100 } },
+      })
+      f.plugin.acceptEvent(f.session, initial)
+      f.flush.mockRejectedValueOnce(Object.assign(new Error('Call deadline exceeded'), { retryable: false }))
+      f.mark(); await f.run()
+      expect(f.flush).toHaveBeenCalledTimes(1)
+      expect(f.internals.surfaceMaintenance.get(String(f.session.id))?.blockedAt).toBeDefined()
+
+      const changed = f.session.append('request/header', {
+        reason: 'change', header: { config: { provider: 'test', model: 'test', maxTokens: 200 }, tools: [{
+          name: 'inspect', description: 'Inspect context', parameters: { type: 'object', properties: {} },
+        }] },
+      })
+      f.plugin.acceptEvent(f.session, changed)
+      f.flush.mockResolvedValue(undefined)
+      await f.run()
+      expect(f.flush).toHaveBeenCalledTimes(2)
+      expect(f.internals.surfaceMaintenance.get(String(f.session.id))?.blockedAt).toBeUndefined()
+    } finally { await f.dispose() }
+  })
+
   it('does not suspend newer work when an older in-flight save fails', async () => {
     const f = await rawFixture({ leading: 'system' })
     let started!: () => void
