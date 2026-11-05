@@ -17,10 +17,15 @@ async function rawFixture(options: { leading?: 'system' | 'developer'; middle?: 
   const session = Session.create('surface-safety' as never)
   const protectedSeqs: SessionSeq[] = []
   function protect(kind: 'system' | 'developer' | 'foreign') {
+    const header = kind === 'developer' ? session.append('request/header', {
+      reason: 'initial', header: { config: { provider: 'test', model: 'test' }, tools: [{
+        name: 'inspect', description: 'Keep this live tool definition', parameters: { type: 'object', properties: {} },
+      }] },
+    }) : undefined
     const event = kind === 'system'
       ? session.append('system/message', { turn: 1, step: 1, message: createSystemMessage('Keep system instructions') }, { surfaceOp: 'append' })
       : kind === 'developer'
-        ? session.append('developer/message', { turn: 1, step: 1, message: createDeveloperMessage({ source: { kind: 'tool-registry' }, content: [{ type: 'text', text: 'Keep developer instructions' }] }) }, { surfaceOp: 'append' })
+        ? session.append('developer/message', { turn: 1, step: 1, headerSeq: header!.seq, message: createDeveloperMessage({ source: { kind: 'tool-registry' }, content: [{ type: 'tool-addition', toolName: 'inspect' }] }) }, { surfaceOp: 'append' })
         : session.append('user/message', createUserMessage({ content: [{ type: 'text', text: 'Keep another plugin context' }], source: { kind: 'plugin:other' } as never }), { surfaceOp: 'append' })
     protectedSeqs.push(event.seq)
   }
@@ -58,6 +63,20 @@ async function rawFixture(options: { leading?: 'system' | 'developer'; middle?: 
 }
 
 describe('safe native context replacement', () => {
+  it.each(['system', 'developer'] as const)('applies a manual selection to raw first-turn history without replacing its %s message', async leading => {
+    const f = await rawFixture({ leading })
+    try {
+      const original = structuredClone(f.session.deriveMessages()[0])
+      expect(await f.plugin.adminExpandBlock(f.namespace, f.block.id, 0)).toMatchObject({ surfaceSync: { status: 'applied' } })
+      expect(f.session.deriveMessages()).toHaveLength(2)
+      expect(f.session.deriveMessages()[0]).toEqual(original)
+      expect(f.session.surface.nodes[0]).toBe(f.protectedSeqs[0])
+      expect(f.memory.listBlocks()[0]!.l5Raw).toEqual(f.raw)
+      const restored = Session.create(f.session.id, f.session.snapshotEvents(), f.session.header)
+      expect(restored.deriveMessages()).toEqual(f.session.deriveMessages())
+    } finally { await f.dispose() }
+  })
+
   it.each(['system', 'developer'] as const)('seals and expands the first turn while preserving its leading %s instructions', async leading => {
     const f = await rawFixture({ leading })
     try {
@@ -195,5 +214,20 @@ describe('safe native context replacement', () => {
       expect(f.memory.listBlocks()[0]!.l5Raw).toEqual(f.raw)
       save.mockRestore()
     } finally { await f.dispose() }
+  })
+
+  it('bounds the actual timer-driven retry loop after repeated host save failures', async () => {
+    vi.useFakeTimers()
+    const f = await rawFixture({ leading: 'system' })
+    try {
+      f.flush.mockRejectedValue(new Error('temporary host save failure'))
+      f.mark()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(f.flush).toHaveBeenCalledTimes(3)
+      expect(f.errors).toHaveLength(3)
+      expect(f.internals.surfaceMaintenance.get(String(f.session.id))!.timer).toBeUndefined()
+      expect(f.session.deriveMessages()).toHaveLength(2)
+      expect(f.memory.listBlocks()[0]!.l5Raw).toEqual(f.raw)
+    } finally { await f.dispose(); vi.useRealTimers() }
   })
 })
