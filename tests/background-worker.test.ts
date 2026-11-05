@@ -176,8 +176,24 @@ describe('Issue #128 indexed background discovery', () => {
     const database = await databasePath()
     const storage = new SqliteStorage({ filename: database })
     const snapshot = StrataGate.inMemory({ blockTurnSize: 1 }).exportSnapshot()
-    try { for (let index = 0; index < 1000; index++) await storage.save(`idle:${index}`, snapshot, 0) }
+    try { await storage.save('idle:0', snapshot, 0) }
     finally { await storage.close() }
+    // Empty namespaces need only the persisted space header. Clone the real
+    // saved header in one transaction instead of timing 1000 durable commits.
+    const db = new DatabaseSync(database)
+    try {
+      const columns = (db.prepare("PRAGMA table_info('memory_spaces')").all() as Array<{ name: string }>)
+        .map(row => row.name).filter(name => name !== 'namespace')
+      const names = columns.map(name => `"${name}"`).join(', ')
+      const insert = db.prepare(`INSERT INTO memory_spaces (namespace, ${names}) SELECT ?, ${names} FROM memory_spaces WHERE namespace = 'idle:0'`)
+      db.exec('BEGIN IMMEDIATE')
+      for (let index = 1; index < 1000; index++) insert.run(`idle:${index}`)
+      // Each clone has the seed's empty job/event state, so its prepared
+      // derived index is empty too. Index rebuilding has separate regressions.
+      db.exec("DELETE FROM background_work_dirty WHERE namespace LIKE 'idle:%'")
+      db.exec('COMMIT')
+      expect(db.prepare('SELECT COUNT(*) AS count FROM memory_spaces').get()).toEqual({ count: 1000 })
+    } finally { db.close() }
     const loads = vi.spyOn(SqliteStorage.prototype, 'load')
     const namespaces = vi.spyOn(SqliteStorage.prototype, 'listNamespaces')
     const runtime = runtimeFor(database)

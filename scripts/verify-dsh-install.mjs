@@ -236,6 +236,9 @@ try {
     const modernHost = satisfies(version, '>=0.1.7-rc.1', { includePrerelease: true })
     overrides['@deepseek-ai/cordis'] = modernHost ? hostManifest.dependencies['@deepseek-ai/cordis'] : '4.0.2'
     overrides['@deepseek-ai/schemastery'] = modernHost ? hostManifest.dependencies['@deepseek-ai/schemastery'] : '3.18.2'
+    // Loader 1.0.4+ uses newer Cordis internals. A caret install otherwise
+    // mixes it with the intentionally pinned 4.0.2 legacy host above.
+    if (!modernHost) overrides['@deepseek-ai/cordis-plugin-loader'] = '1.0.3'
     const freshManifestPath = join(root, 'package.json')
     const freshManifest = JSON.parse(readFileSync(freshManifestPath, 'utf8'))
     freshManifest.overrides = overrides
