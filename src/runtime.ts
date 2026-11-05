@@ -1979,13 +1979,19 @@ export class StrataGateRuntime {
   }
 
   /** Finish deferred sealing or user expansion only after the target surface is applied. */
-  private async syncPendingRetrySurface(session: Session, memory: StrataGate, userOnly = false): Promise<void> {
+  private async syncPendingRetrySurface(session: Session, memory: StrataGate, userOnly = false, force = false): Promise<void> {
+    if (!force && this.surfaceRetryBlocked(session, memory)) return
     const levels = new Map<string, BlockLevel>()
-    const completed = this.applyPendingRetrySurface(session, memory, levels, userOnly)
-    if (completed.length === 0) return
-    await this.commitSurfaceLevels(memory, levels)
-    await this.flushSurface(session)
-    this.completeSurfaceRequests(completed)
+    try {
+      const completed = this.applyPendingRetrySurface(session, memory, levels, userOnly)
+      if (completed.length === 0) return
+      await this.commitSurfaceLevels(memory, levels)
+      await this.flushSurface(session)
+      this.completeSurfaceRequests(completed)
+    } catch (error) {
+      this.recordSurfaceFailure(session, memory, error)
+      throw error
+    }
   }
 
   private applyPendingRetrySurface(
@@ -2061,6 +2067,7 @@ export class StrataGateRuntime {
   /** Read-only in the common case; render only explicit lifts or oversized checkpoints. */
   private async syncRequestSurface(session: Session, memory: StrataGate): Promise<void> {
     if (hostCompactionActive(session)) return
+    if (this.surfaceRetryBlocked(session, memory)) return
     const current = currentBlockSurfaceMessages(session)
     const limit = surfaceCheckpointLimit(session)
     const repair = new Set<string>()
@@ -2090,6 +2097,17 @@ export class StrataGateRuntime {
 
   private markSurfaceDirty(session: Session, memory: StrataGate): void {
     if (this.closed) return
+    const state = this.ensureSurfaceMaintenanceState(session, memory)
+    state.dirty = true
+    state.generation += 1
+    if (state.blockedAt !== undefined && state.blockedAt !== surfaceMaintenanceInput(state)) {
+      delete state.blockedAt
+      state.failures = 0
+    }
+    this.scheduleSurfaceMaintenance(state)
+  }
+
+  private ensureSurfaceMaintenanceState(session: Session, memory: StrataGate): SurfaceMaintenance {
     const key = String(session.id)
     let state = this.surfaceMaintenance.get(key)
     if (!state || state.session !== session || state.memory !== memory) {
@@ -2098,13 +2116,35 @@ export class StrataGateRuntime {
       state = { session, memory, dirty: true, generation: 0, busy: hostTurnActive(session), failures: 0, checkpointLimit: surfaceCheckpointLimit(session) }
       this.surfaceMaintenance.set(key, state)
     }
-    state.dirty = true
-    state.generation += 1
-    if (state.blockedAt !== undefined && state.blockedAt !== surfaceMaintenanceInput(state)) {
-      delete state.blockedAt
-      state.failures = 0
+    return state
+  }
+
+  private clearSurfaceFailure(session: Session, memory: StrataGate): void {
+    const state = this.surfaceMaintenance.get(String(session.id))
+    if (state?.session !== session || state.memory !== memory) return
+    delete state.blockedAt
+    state.failures = 0
+  }
+
+  private surfaceRetryBlocked(session: Session, memory: StrataGate): boolean {
+    const state = this.surfaceMaintenance.get(String(session.id))
+    if (state?.session !== session || state.memory !== memory || state.blockedAt === undefined) return false
+    if (state.blockedAt !== surfaceMaintenanceInput(state)) {
+      this.clearSurfaceFailure(session, memory)
+      return false
     }
-    this.scheduleSurfaceMaintenance(state)
+    return true
+  }
+
+  private recordSurfaceFailure(session: Session, memory: StrataGate, error: unknown): void {
+    const state = this.ensureSurfaceMaintenanceState(session, memory)
+    state.dirty = true
+    state.failures += 1
+    if (surfaceFailureIsPermanent(error) || state.failures >= SURFACE_MAINTENANCE_MAX_ATTEMPTS) {
+      state.blockedAt = surfaceMaintenanceInput(state)
+      if (state.timer) clearTimeout(state.timer)
+      state.timer = undefined
+    }
   }
 
   private scheduleSurfaceMaintenance(state: SurfaceMaintenance, delay = 25): void {
@@ -3338,10 +3378,11 @@ export class StrataGateRuntime {
           if (plan.status === 'blocked') throw Object.assign(new Error(plan.message), { code: 'BLOCK_SELECTION_REJECTED' })
         }
         const result = await memory.expandBlock(id, target, 'user')
+        if (session && this.namespaceFor(session) === key) this.clearSurfaceFailure(session, memory)
         this.pendingSurfaceSync.delete(`${key}\u0000${id}`)
         this.queueSurfaceSync(key, id, 'user-expansion')
         if (session && this.namespaceFor(session) === key) {
-          await this.syncPendingRetrySurface(session, memory)
+          await this.syncPendingRetrySurface(session, memory, false, true)
         }
         return {
           ...result, surfaceLevel: memory.listBlocks().find(({ id: blockId }) => blockId === id)?.surfaceCurrentLevel,
@@ -4073,7 +4114,7 @@ function appendBlockSurface(session: Session, blockId: string, text: string, seq
 }
 
 function surfaceMaintenanceInput(state: SurfaceMaintenance): string {
-  return `${state.memory.storageRevision}:${surfaceCheckpointLimit(state.session)}:${state.session.surface.nodes.join(',')}`
+  return `${state.memory.storageRevision}:${surfaceCheckpointLimit(state.session)}:${state.session.surface?.nodes.join(',') ?? ''}`
 }
 
 function surfaceFailureIsPermanent(error: unknown): boolean {

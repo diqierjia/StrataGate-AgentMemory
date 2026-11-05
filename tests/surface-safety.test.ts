@@ -154,6 +154,29 @@ describe('safe native context replacement', () => {
     } finally { await f.dispose() }
   })
 
+  it('blocks request-path retries after an explicit save failure until reselection', async () => {
+    const f = await rawFixture({ leading: 'system' })
+    try {
+      const deadline = Object.assign(new Error('Call deadline exceeded'), { retryable: false })
+      f.flush.mockRejectedValueOnce(deadline)
+      await expect(f.plugin.adminExpandBlock(f.namespace, f.block.id, 5)).rejects.toThrow('Call deadline exceeded')
+      expect(f.flush).toHaveBeenCalledTimes(1)
+      expect(f.internals.pendingSurfaceSync.has(`${f.namespace}\u0000${f.block.id}`)).toBe(true)
+
+      // A normal prompt must not replay the permanently failed native save.
+      await f.plugin.buildAutoContext(f.session)
+      expect(f.flush).toHaveBeenCalledTimes(1)
+      expect(f.internals.surfaceMaintenance.get(String(f.session.id))?.blockedAt).toBeDefined()
+
+      // An explicit reselection clears the stop condition and retries the save.
+      f.flush.mockResolvedValue(undefined)
+      await f.plugin.adminExpandBlock(f.namespace, f.block.id, 5)
+      expect(f.flush).toHaveBeenCalledTimes(2)
+      expect(f.internals.pendingSurfaceSync.has(`${f.namespace}\u0000${f.block.id}`)).toBe(false)
+      expect(f.internals.surfaceMaintenance.get(String(f.session.id))?.blockedAt).toBeUndefined()
+    } finally { await f.dispose() }
+  })
+
   it('does not suspend newer work when an older in-flight save fails', async () => {
     const f = await rawFixture({ leading: 'system' })
     let started!: () => void
