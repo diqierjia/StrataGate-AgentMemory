@@ -11,10 +11,10 @@
 StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细节，较早对话逐渐简化，需要时可以找回原文；重要信息整理为长期事件，知识图谱表达当前状态，主题目录帮助 Agent 了解记过哪些内容，并按需查找来源。
 
 <p align="center">
+  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml"><img src="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/v/stratagate-dsh.svg" alt="npm version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-08-16%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD&amp;color=blue" alt="npm 累计下载量（截至 2026-10-26）" /></a>
-  <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2F2026-09-27%3A2026-10-26%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 2026-09-27 至 2026-10-26 下载量" /></a>
+  <a href="https://github.com/diqierjia/StrataGate-AgentMemory/stargazers"><img src="https://img.shields.io/github/stars/diqierjia/StrataGate-AgentMemory?style=social&amp;label=Stars" alt="GitHub stars" /></a>
 </p>
 
 [English](README.md) · [DeepSeek Harness 插件说明](docs/DSH.zh-CN.md) · [架构说明](docs/ARCHITECTURE.md) · [完整评测](docs/EVALUATION.md)
@@ -25,12 +25,31 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。近期对话保留细
 
 ---
 
-## 社区
+<div align="center">
 
-可在 [dshfind](https://dshfind.com) 浏览本插件及其他 DeepSeek Harness 插件。
+<h3 align="center">社区与下载</h3>
 
-[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
-[![欢迎贡献](https://img.shields.io/badge/%E6%AC%A2%E8%BF%8E%E8%B4%A1%E7%8C%AE-brightgreen.svg)](CONTRIBUTING.zh-CN.md)
+<table align="center">
+  <tr>
+    <td align="center">
+      <a href="https://dshfind.com/zh/plugins/diqierjia/StrataGate-AgentMemory?ref=badge">
+        <img src="https://dshfind.com/api/card/diqierjia/StrataGate-AgentMemory?lang=zh" alt="StrataGate 的 dshfind 收录、评分与累计下载" width="350" />
+      </a>
+    </td>
+    <td align="center">
+      <strong>npm 下载统计</strong><br /><br />
+      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/npm/dt/stratagate-dsh.svg?label=%E7%B4%AF%E8%AE%A1%E4%B8%8B%E8%BD%BD" alt="npm 累计下载量" /></a><br />
+      <a href="https://www.npmjs.com/package/stratagate-dsh"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.npmjs.org%2Fdownloads%2Fpoint%2Flast-month%2Fstratagate-dsh&amp;query=%24.downloads&amp;label=%E8%BF%91%2030%20%E5%A4%A9&amp;color=brightgreen" alt="npm 近 30 天下载量" /></a>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome DSH Plugin" /></a>
+  <a href="CONTRIBUTING.zh-CN.md"><img src="https://img.shields.io/badge/%E6%AC%A2%E8%BF%8E%E8%B4%A1%E7%8C%AE-brightgreen.svg" alt="欢迎贡献" /></a>
+</p>
+
+</div>
 
 ---
 
@@ -482,11 +501,13 @@ npm run build
 
 欢迎各种形式的贡献：修复问题、完善文档、增加集成，或探索更好的记忆与检索方案都可以。
 
-请先阅读 [`CONTRIBUTING.zh-CN.md`](CONTRIBUTING.zh-CN.md)，其中包含 monorepo 开发环境、检查与测试命令、适合参与的方向，以及提交 Pull Request 的建议。如果还不确定一个想法是否适合项目，建议先[创建 Issue](https://gitee.com/diqier4123/StrataGate-AgentMemory/issues)，再投入较大的改动。
+请先阅读 [`CONTRIBUTING.zh-CN.md`](CONTRIBUTING.zh-CN.md)，其中包含 monorepo 开发环境、检查与测试命令、适合参与的方向，以及提交 Pull Request 的建议。如果还不确定一个想法是否适合项目，建议先[创建 Issue](https://github.com/diqierjia/StrataGate-AgentMemory/issues)，再投入较大的改动。
 
 ## 贡献者
 
-[在 Gitee 查看贡献者](https://gitee.com/diqier4123/StrataGate-AgentMemory/contributors?ref=main)。
+<a href="https://github.com/diqierjia/StrataGate-AgentMemory/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=diqierjia/StrataGate-AgentMemory" alt="StrataGate 贡献者" />
+</a>
 
 ## 许可证
 
