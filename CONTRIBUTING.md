@@ -29,7 +29,7 @@ Small, focused changes are welcome. A pull request does not need to introduce a 
 
 ## Development setup
 
-StrataGate is an npm workspace monorepo. Use Node.js `22.19.0` or a newer 22.x release, or Node.js 24 and above. The project runs the local checks below while GitHub CI remains unavailable.
+StrataGate is an npm workspace monorepo. Use Node.js `22.19.0` or a newer 22.x release, or Node.js 24 and above. Run the local checks below; GitHub CI is required again following account recovery on 2026-11-05.
 
 ```bash
 git clone https://gitee.com/diqier4123/StrataGate-AgentMemory.git

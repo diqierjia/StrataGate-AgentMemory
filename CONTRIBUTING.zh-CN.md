@@ -29,7 +29,7 @@
 
 ## 开发环境
 
-StrataGate 是 npm workspace monorepo。请使用 Node.js `22.19.0` 或更新的 22.x 版本，也可以使用 Node.js 24 及以上版本。GitHub CI 暂停期间，以本地检查、测试和构建结果为准。
+StrataGate 是 npm workspace monorepo。请使用 Node.js `22.19.0` 或更新的 22.x 版本，也可以使用 Node.js 24 及以上版本。运行以下本地检查；2026-11-05 账号恢复后，重新要求完成 GitHub CI。
 
 ```bash
 git clone https://gitee.com/diqier4123/StrataGate-AgentMemory.git

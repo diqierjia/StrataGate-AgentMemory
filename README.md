@@ -4,7 +4,7 @@
 
 # StrataGate
 
-Project documentation and issue reports are available on [Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory); the package's GitHub repository field is retained for tool compatibility.
+Project source, releases, and issues are available on [GitHub](https://github.com/diqierjia/StrataGate-AgentMemory). [Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory) remains a synchronized repository.
 
 ### Recent conversations stay detailed. Older memories grow more concise.
 

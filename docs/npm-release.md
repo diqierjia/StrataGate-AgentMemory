@@ -1,6 +1,8 @@
 # npm 暂存发布
 
-目标是把大包上传、网络重试放在用户认证之前。当前仅走 npm；GitHub 恢复前不执行 PR、CI、Tag、Release、trusted publishing 或 Roadmap 同步。
+GitHub 账号已于 2026-11-05 恢复。正式发布默认恢复 `.github/workflows/release-dsh.yml` 的 GitHub Actions trusted-publishing 路径：发布源码进入 `origin/main`，通过相关 CI，再由同一提交生成 npm 包、Tag / Release、版本包、固定名称包和源码归档，核验后更新 Roadmap #93，并同步 Gitee。发包仍须已有发布授权和候选验收；仓库同步不等于发布授权。
+
+本页记录需要明确采用的本地 npm 暂存备用路径，目标是把大包上传、网络重试放在用户认证之前。采用备用路径仍须同步 GitHub 源码、CI、Tag / Release 资产与 Roadmap；npm 已公开时只补齐 GitHub，不重新发布或重新构建来替换已验收包。GitHub 包资产应复用经下载核验的公开 npm 包，两个包资产字节一致；源码归档对应已核实的发布提交。历史版本缺乏提交或包哈希证据时标注缺口，不补造 provenance。不要对已公开版本直接触发会再次执行 npm publish 的旧发布工作流。
 
 ## 前置条件
 

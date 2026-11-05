@@ -1,0 +1,94 @@
+{
+  "verification": "deterministic mocked streams, not live model generation",
+  "base": "e954eaf2f2cbbef4bb6226a2ebb35191424868c2",
+  "rows": [
+    {
+      "initialCharacters": 656,
+      "retryOverview": "same",
+      "success": false,
+      "calls": 2,
+      "diagnostics": {
+        "category": "validation-failed",
+        "reason": "overview.text exceeds the character limit",
+        "eventCount": 1,
+        "candidateTopicCount": 1,
+        "estimatedInputTokens": 3769,
+        "requestedOutputTokens": 32768,
+        "maxOutputTokens": 32768,
+        "modelCalls": 2,
+        "actualCharacters": 656,
+        "minCharacters": 1,
+        "maxCharacters": 600,
+        "fieldPath": "topics[0].overview[1].text",
+        "finishReason": "tool-calls",
+        "reasoningOff": "unavailable",
+        "reasoningObserved": false
+      }
+    },
+    {
+      "initialCharacters": 778,
+      "retryOverview": "same",
+      "success": false,
+      "calls": 2,
+      "diagnostics": {
+        "category": "validation-failed",
+        "reason": "overview.text exceeds the character limit",
+        "eventCount": 1,
+        "candidateTopicCount": 1,
+        "estimatedInputTokens": 3769,
+        "requestedOutputTokens": 32768,
+        "maxOutputTokens": 32768,
+        "modelCalls": 2,
+        "actualCharacters": 778,
+        "minCharacters": 1,
+        "maxCharacters": 600,
+        "fieldPath": "topics[0].overview[1].text",
+        "finishReason": "tool-calls",
+        "reasoningOff": "unavailable",
+        "reasoningObserved": false
+      }
+    },
+    {
+      "initialCharacters": 1000,
+      "retryOverview": "same",
+      "success": false,
+      "calls": 2,
+      "diagnostics": {
+        "category": "validation-failed",
+        "reason": "overview.text exceeds the character limit",
+        "eventCount": 1,
+        "candidateTopicCount": 1,
+        "estimatedInputTokens": 3769,
+        "requestedOutputTokens": 32768,
+        "maxOutputTokens": 32768,
+        "modelCalls": 2,
+        "actualCharacters": 1000,
+        "minCharacters": 1,
+        "maxCharacters": 600,
+        "fieldPath": "topics[0].overview[1].text",
+        "finishReason": "tool-calls",
+        "reasoningOff": "unavailable",
+        "reasoningObserved": false
+      }
+    },
+    {
+      "initialCharacters": 1001,
+      "retryOverview": "empty",
+      "success": false,
+      "calls": 2,
+      "diagnostics": {
+        "category": "validation-failed",
+        "reason": "Topic retry must replace invalid overview without removing entries.",
+        "eventCount": 1,
+        "candidateTopicCount": 1,
+        "estimatedInputTokens": 3769,
+        "requestedOutputTokens": 32768,
+        "maxOutputTokens": 32768,
+        "modelCalls": 2,
+        "finishReason": "tool-calls",
+        "reasoningOff": "unavailable",
+        "reasoningObserved": false
+      }
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 
 # StrataGate
 
-项目文档和问题反馈请前往 [Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory)；包信息中的 GitHub 仓库字段暂时保留，用于兼容工具识别。
+项目源码、版本发布和问题反馈请前往 [GitHub](https://github.com/diqierjia/StrataGate-AgentMemory)；[Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory) 保留为同步仓库。
 
 ### 近期对话保留细节，远期记忆逐渐简化。
 
