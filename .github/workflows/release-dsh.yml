@@ -19,6 +19,11 @@ on:
         required: false
         default: false
         type: boolean
+      full_dsh_matrix:
+        description: Run every recorded historical DSH host plus the current host during release verification
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -92,12 +97,19 @@ jobs:
       - name: Pack release assets from the checked-out source
         shell: bash
         env:
-          DSH_VERSION: ${{ inputs.allow_unavailable_dsh_0_1_5 && '0.1.2-rc.1' || '' }}
+          DSH_MATRIX: ${{ inputs.full_dsh_matrix && 'full' || 'representative' }}
           SKIP_DSH_SMOKE: ${{ inputs.skip_dsh_smoke && 'true' || 'false' }}
         run: |
-          if [ -n "$DSH_VERSION" ]; then
+          if [ "${{ inputs.allow_unavailable_dsh_0_1_5 }}" = 'true' ]; then
+            DSH_VERSION='0.1.2-rc.1'
             echo "::warning::DSH 0.1.5 smoke was explicitly waived; verifying $DSH_VERSION only"
+          elif [ "$DSH_MATRIX" = 'representative' ]; then
+            DSH_VERSION="$(node -p 'require("./package.json").dshWorkshop.compatibility.currentVersion')"
+            echo "Verifying the current DSH host only; use full_dsh_matrix for the historical matrix"
+          else
+            unset DSH_VERSION
           fi
+          export DSH_VERSION
           versioned="stratagate-dsh-${VERSION}.tgz"
           source_asset="stratagate-dsh-${VERSION}-source.tar.gz"
           npm pack --silent

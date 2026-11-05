@@ -120,6 +120,7 @@
       "dispose": "supported"
     },
     "compatibility": {
+      "currentVersion": "0.2.1-rc.5",
       "dshVersions": [
         "0.1.2-rc.1",
         "0.1.5-rc.1",

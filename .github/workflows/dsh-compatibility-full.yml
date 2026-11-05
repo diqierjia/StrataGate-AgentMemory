@@ -1,0 +1,33 @@
+name: DSH historical compatibility
+
+on:
+  schedule:
+    # 02:30 Asia/Shanghai; keep the complete legacy matrix out of every PR.
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dsh-compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        dsh: [0.1.2-rc.1, 0.1.5-rc.1, 0.1.6-alpha.1, 0.1.7-rc.1, 0.1.7-rc.2, 0.2.0-rc.1, 0.2.0-rc.2, 0.2.1-rc.5]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: npm ci
+      - name: Run full DSH compatibility suite in isolated CLI root
+        run: node scripts/run-dsh-compatibility.mjs
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}

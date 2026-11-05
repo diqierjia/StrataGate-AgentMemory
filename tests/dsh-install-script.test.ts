@@ -9,6 +9,12 @@ const failureCheck = source.match(/if \([^\r\n]+\) \{\s*await verifyPluginFailur
 if (!hostDeclaration || !failureCheck) throw new Error('DSH install verification host declaration or failure check is missing')
 
 describe('DSH install verification failure probe', () => {
+  it('supports representative and full matrix selection', () => {
+    expect(source).toContain('manifest.dshWorkshop.compatibility.currentVersion')
+    expect(source).toContain("process.env.DSH_MATRIX === 'representative'")
+    expect(source).toContain('[...new Set([...historicalVersions, currentVersion])]')
+  })
+
   it.each(['0.1.2-rc.1', '0.1.5-rc.1', '0.1.6-alpha.1', '0.1.7-rc.1', '0.2.0-rc.2'])(
     'keeps the loader compatible with the Cordis core for %s', version => {
       const setup = source.match(/overrides\['@deepseek-ai\/cordis'\][\s\S]*?(?=    const freshManifestPath)/)?.[0]
@@ -36,6 +42,7 @@ describe('DSH install verification failure probe', () => {
     ['0.2.0-rc.2', true],
     ['0.2.0', true],
     ['0.2.1-rc.1', true],
+    ['0.2.1-rc.5', true],
     ['0.3.0', true],
   ])('executes the actual script branch for %s without an unbound host flag', async (version, expected) => {
     const calls: unknown[][] = []

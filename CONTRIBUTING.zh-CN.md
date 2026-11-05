@@ -56,6 +56,8 @@ npm run check:workbuddy
 npm run test:workbuddy
 ```
 
+DSH 兼容检查按风险分层。Pull Request 在 Ubuntu 和 Windows 上检查最老支持边界（`0.1.2-rc.1`）、最后一个 0.1 宿主（`0.1.7-rc.2`）、0.2 迁移边界（`0.2.0-rc.2`）和当前宿主（`0.2.1-rc.5`）。完整历史矩阵由 `.github/workflows/dsh-compatibility-full.yml` 每天运行；涉及宿主接口、迁移、存储、安装或包结构的高风险发布，可在发布流程中选择 `full_dsh_matrix`。新的 DSH 补丁版本替换当前宿主位置，不永久追加到矩阵。
+
 ## 修改代码
 
 1. 从最新的 `main` 创建分支。
