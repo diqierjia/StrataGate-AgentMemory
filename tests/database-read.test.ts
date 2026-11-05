@@ -19,7 +19,9 @@ async function request(runtime: StrataGateRuntime, url: string) {
 async function fixture(legacy = false, count = 12) {
   const root = await mkdtemp(join(tmpdir(), 'stratagate-read-')); roots.push(root)
   const storage = new SqliteStorage({ filename: join(root, 'memory.db') })
-  const memory = await StrataGate.openWithStorage({ storage, namespace: 'test', blockTurnSize: 1, disableElementProjection: true,
+  // This suite checks persisted read projections, not per-turn write costs.
+  // Build the same history in memory and persist it once before querying SQLite.
+  const memory = StrataGate.inMemory({ blockTurnSize: 1, disableElementProjection: true,
     summarizer: async messages => ({ l0Title: messages[0]!.content.slice(0, 32), l0Tags: [], l1Summary: 'Summary', l2Keypoints: [], shouldExtract: false }) })
   for (let index = 0; index < count; index++) {
     await memory.appendTurn({ user: `message ${index}`, assistant: `answer ${index}`, ...(legacy ? {} : { threadId: index < 9 ? 'a' : 'b' }),
@@ -30,9 +32,10 @@ async function fixture(legacy = false, count = 12) {
   const event = await memory.addEvent({ title: 'associated result', summary: 'match beyond first page', sourceBlockId: block.id,
     sourceMessageIds: [block.l5Raw[0]!.id], tags: [], quotes: [], temporal: {}, criticality: 'routine' })
   await memory.recordMemoryUse({ eventIds: [event.id] }, { receiptId: 'receipt' })
+  const revision = await storage.save('test', memory.exportSnapshot(), 0)
   const snapshot = (await storage.load('test'))!.snapshot
   const base = { adminSnapshot: async () => snapshot, adminNamespaces: async () => ['test'],
-    adminSnapshotEntries: async () => [{ namespace: 'test', revision: memory.storageRevision, snapshot }],
+    adminSnapshotEntries: async () => [{ namespace: 'test', revision, snapshot }],
     adminAgentMemoryRetrievalWeight: () => 1, adminWorkspaceName: () => 'Test' }
   const full = base as unknown as StrataGateRuntime
   const projected = { ...base,
