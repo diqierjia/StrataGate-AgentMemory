@@ -38,6 +38,7 @@ export const STRATAGATE_MESSAGE_SOURCE_KIND = 'plugin:stratagate-memory' as cons
 const DSH_RUNTIME_RANGE = '0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0'
 const MODERN_API_RANGE = '>=0.1.7-rc.1'
 const SESSION_FORMAT_RUNTIME_RANGE = '>=0.2.0-0'
+const DSH_022_VENDOR_RUNTIME_RANGE = '>=0.2.2-0 <0.3.0-0'
 const SEMVER_OPTIONS = { includePrerelease: true }
 
 /** Check readable method shapes without invoking host APIs or changing data. */
@@ -122,9 +123,13 @@ export function classifyDshRuntime(packageVersions: DshRuntimePackageVersions): 
   const sameSessionFormatFamily = !satisfies(dshVersion, SESSION_FORMAT_RUNTIME_RANGE, SEMVER_OPTIONS)
     || SESSION_FORMAT_PACKAGES.every((name) => packageVersions[name] === dshVersion)
   const modernApi = satisfies(dshVersion, MODERN_API_RANGE, SEMVER_OPTIONS)
+  const dsh022VendorFamily = satisfies(dshVersion, DSH_022_VENDOR_RUNTIME_RANGE, SEMVER_OPTIONS)
   const compatibleVendors = modernApi
-    ? isCompatiblePatch(packageVersions['@deepseek-ai/cordis'], 4, 0, 4)
-      && isCompatiblePatch(packageVersions['@deepseek-ai/schemastery'], 3, 18, 4)
+    ? dsh022VendorFamily
+      ? isCompatiblePatch(packageVersions['@deepseek-ai/cordis'], 4, 1, 0)
+        && isCompatiblePatch(packageVersions['@deepseek-ai/schemastery'], 3, 19, 0)
+      : isCompatiblePatch(packageVersions['@deepseek-ai/cordis'], 4, 0, 4)
+        && isCompatiblePatch(packageVersions['@deepseek-ai/schemastery'], 3, 18, 4)
     : packageVersions['@deepseek-ai/cordis'] === '4.0.2'
       && packageVersions['@deepseek-ai/schemastery'] === '3.18.2'
   if (satisfies(dshVersion, DSH_RUNTIME_RANGE, SEMVER_OPTIONS)
@@ -139,7 +144,7 @@ export function classifyDshRuntime(packageVersions: DshRuntimePackageVersions): 
     'StrataGate cannot start because this DSH profile resolves an unsupported or mixed core runtime. '
     + `Resolved: ${found}. Supported DSH versions: ${DSH_RUNTIME_RANGE} (including prereleases). `
     + 'Core DSH packages must share one version; DSH 0.2.0 and later also require matching Session Format packages. '
-    + 'Modern hosts require Cordis 4.0.x from 4.0.4 and Schemastery 3.18.x from 3.18.4; older hosts use 4.0.2 and 3.18.2. '
+    + 'DSH 0.2.2 and later require Cordis 4.1.x from 4.1.0 and Schemastery 3.19.x from 3.19.0; earlier modern hosts require Cordis 4.0.x from 4.0.4 and Schemastery 3.18.x from 3.18.4, while older hosts use 4.0.2 and 3.18.2. '
     + 'Reinstall or update stratagate-dsh through `dsh plugin --profile <name> add <package>` so the host supplies its peers.',
   )
 }

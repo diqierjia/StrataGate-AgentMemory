@@ -12,7 +12,7 @@ export function findReusableRun(runs, sha) {
 export function hasRequiredJobs(jobs) {
   const names = ['core (22.19.0)', 'core (24.x)']
   for (const os of ['ubuntu-latest', 'windows-latest']) {
-    for (const host of ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.1-rc.5']) {
+    for (const host of ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.2-rc.1']) {
       names.push(`dsh-compatibility (${os}, ${host})`)
     }
   }

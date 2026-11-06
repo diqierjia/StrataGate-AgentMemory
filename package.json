@@ -1,6 +1,6 @@
 {
   "name": "stratagate-dsh",
-  "version": "0.3.41",
+  "version": "0.3.42-candidate.1",
   "description": "Recent conversations stay vivid. Older ones fade into summaries, not oblivion. StrataGate gives DeepSeek Harness six-layer, time-decaying memory, while lasting events and relationships settle into a knowledge graph. Bring your memories from other AIs with you—no need to start over.",
   "type": "module",
   "main": "./dist/index.js",
@@ -120,7 +120,7 @@
       "dispose": "supported"
     },
     "compatibility": {
-      "currentVersion": "0.2.1-rc.5",
+      "currentVersion": "0.2.2-rc.1",
       "dshVersions": [
         "0.1.2-rc.1",
         "0.1.5-rc.1",
@@ -162,7 +162,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.2 || ~4.0.4",
+    "@deepseek-ai/cordis": "4.0.2 || ~4.0.4 || ~4.1.0",
     "@deepseek-ai/dsh-agent-default-model": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-client-ui-conversation": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-llm": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
@@ -174,7 +174,7 @@
     "@deepseek-ai/dsh-settings": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1 || >=0.1.5-rc.2 <0.3.0-0",
-    "@deepseek-ai/schemastery": "3.18.2 || ~3.18.4"
+    "@deepseek-ai/schemastery": "3.18.2 || ~3.18.4 || ~3.19.0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {

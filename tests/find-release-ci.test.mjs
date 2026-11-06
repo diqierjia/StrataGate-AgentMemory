@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { findReusableRun, hasRequiredJobs, main } from '../scripts/find-release-ci.mjs'
 
 const good = { id: 1, run_attempt: 2, head_sha: 'abc', head_branch: 'main', event: 'push', status: 'completed', conclusion: 'success', path: '.github/workflows/ci.yml', html_url: 'https://example.test/run' }
-const jobs = ['core (22.19.0)', 'core (24.x)', ...['ubuntu-latest', 'windows-latest'].flatMap(os => ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.1-rc.5'].map(host => `dsh-compatibility (${os}, ${host})`))].map(name => ({ name, status: 'completed', conclusion: 'success' }))
+const jobs = ['core (22.19.0)', 'core (24.x)', ...['ubuntu-latest', 'windows-latest'].flatMap(os => ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.2-rc.1'].map(host => `dsh-compatibility (${os}, ${host})`))].map(name => ({ name, status: 'completed', conclusion: 'success' }))
 const env = { GITHUB_SHA: 'abc', GITHUB_REPOSITORY: 'owner/repo', GH_TOKEN: 'token' }
 
 test('requires the exact successful main push and every required matrix job', () => {

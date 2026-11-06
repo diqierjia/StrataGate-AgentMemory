@@ -15,7 +15,7 @@ describe('DSH install verification failure probe', () => {
     expect(source).toContain('[...new Set([...historicalVersions, currentVersion])]')
   })
 
-  it.each(['0.1.2-rc.1', '0.1.5-rc.1', '0.1.6-alpha.1', '0.1.7-rc.1', '0.2.0-rc.2'])(
+  it.each(['0.1.2-rc.1', '0.1.5-rc.1', '0.1.6-alpha.1', '0.1.7-rc.1', '0.2.0-rc.2', '0.2.2-rc.1'])(
     'keeps the loader compatible with the Cordis core for %s', version => {
       const setup = source.match(/overrides\['@deepseek-ai\/cordis'\][\s\S]*?(?=    const freshManifestPath)/)?.[0]
       if (!setup) throw new Error('Host dependency overrides missing')
@@ -43,6 +43,7 @@ describe('DSH install verification failure probe', () => {
     ['0.2.0', true],
     ['0.2.1-rc.1', true],
     ['0.2.1-rc.5', true],
+    ['0.2.2-rc.1', true],
     ['0.3.0', true],
   ])('executes the actual script branch for %s without an unbound host flag', async (version, expected) => {
     const calls: unknown[][] = []

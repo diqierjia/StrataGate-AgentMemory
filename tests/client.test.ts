@@ -411,7 +411,7 @@ describe('StrataGate Web client contract', () => {
   it('declares the supported DSH Conversation package and service contracts', () => {
     const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     expect(manifest.dsh.client.inject).toEqual(['@deepseek-ai/dsh-client-ui-conversation'])
-    expect(manifest.dshWorkshop.compatibility.currentVersion).toBe('0.2.1-rc.5')
+    expect(manifest.dshWorkshop.compatibility.currentVersion).toBe('0.2.2-rc.1')
     expect(manifest.dshWorkshop.compatibility.dshVersions).toEqual(['0.1.2-rc.1', '0.1.5-rc.1', '0.1.6-alpha.1', '0.1.7-rc.1', '0.1.7-rc.2', '0.2.0-rc.1', '0.2.0-rc.2'])
   })
 
