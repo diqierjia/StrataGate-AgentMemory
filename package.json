@@ -68,7 +68,8 @@
     "verify:dsh": "npm run build:dsh && node scripts/verify-package.mjs && npm pack --ignore-scripts --pack-destination . && node scripts/verify-dsh-install.mjs",
     "verify:workbuddy": "npm run verify:package --workspace stratagate-workbuddy",
     "test:watch": "vitest --config vitest.config.ts",
-    "prepare": "npm run build:dsh"
+    "prepare": "npm run build:dsh",
+    "pack:candidate": "node scripts/stage-candidate.mjs"
   },
   "keywords": [
     "memory",

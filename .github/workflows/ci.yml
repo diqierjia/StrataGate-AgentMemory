@@ -67,7 +67,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs tests/classify-ci-risk.test.mjs
+      - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs tests/classify-ci-risk.test.mjs tests/stage-candidate.test.mjs
       - run: npm run check
       - run: npm test
       - run: npm run build

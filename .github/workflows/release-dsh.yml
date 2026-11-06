@@ -61,6 +61,10 @@ jobs:
 
           version="$(node -p 'require("./package.json").version')"
           tag="stratagate-dsh-v${version}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release source must use a formal three-part version; candidate versions belong only in staging copies: $version"
+            exit 1
+          fi
 
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             test "$GITHUB_REF_NAME" = "$tag" || {
