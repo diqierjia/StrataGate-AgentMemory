@@ -25,3 +25,16 @@ test('checks the matching run attempt and fails closed on unavailable evidence',
   await assert.rejects(main(env, async url => url.includes('/attempts/') ? { ok: true, json: async () => ({ jobs: jobs.slice(1) }) } : { ok: true, json: async () => ({ workflow_runs: [good] }) }), /Required CI jobs/)
   await assert.rejects(main({}, request), /missing GitHub context/)
 })
+
+test('manual releases use main CI directly without querying PR evidence', async () => {
+  const calls = []
+  const manual = { ...env, GITHUB_EVENT_NAME: 'workflow_dispatch' }
+  const request = async url => {
+    calls.push(url)
+    if (url.includes('/attempts/2/jobs?')) return { ok: true, json: async () => ({ jobs }) }
+    if (url.includes('/actions/workflows/')) return { ok: true, json: async () => ({ workflow_runs: [good] }) }
+    throw new Error(`unexpected URL ${url}`)
+  }
+  assert.equal(await main(manual, request), true)
+  assert.equal(calls.some(url => url.includes('/pulls?')), false)
+})

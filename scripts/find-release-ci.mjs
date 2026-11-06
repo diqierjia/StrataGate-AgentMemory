@@ -23,15 +23,17 @@ export async function main(env = process.env, request = fetch) {
   let run
   {
     if (!env.GITHUB_SHA || !env.GITHUB_REPOSITORY || !env.GH_TOKEN) throw new Error('missing GitHub context')
-    const { findPrCi } = await import('./find-pr-ci.mjs')
-    try {
-      const prRun = await findPrCi(env, request)
-      if (prRun) {
-        if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, 'reuse=true\n')
-        console.log(`Reusing same-tree PR CI ${prRun.html_url}`)
-        return true
-      }
-    } catch (error) { console.log(`Cannot reuse PR CI: ${error.message}`) }
+    if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch') {
+      const { findPrCi } = await import('./find-pr-ci.mjs')
+      try {
+        const prRun = await findPrCi(env, request)
+        if (prRun) {
+          if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, 'reuse=true\n')
+          console.log(`Reusing same-tree PR CI ${prRun.html_url}`)
+          return true
+        }
+      } catch (error) { console.log(`Cannot reuse PR CI: ${error.message}`) }
+    }
     const url = `${env.GITHUB_API_URL || 'https://api.github.com'}/repos/${env.GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&branch=main&head_sha=${encodeURIComponent(env.GITHUB_SHA)}&per_page=100`
     const response = await request(url, { headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } })
     if (!response.ok) throw new Error(`GitHub API HTTP ${response.status}`)
