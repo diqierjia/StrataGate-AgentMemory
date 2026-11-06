@@ -4,7 +4,7 @@ import { findPrCi, main } from '../scripts/find-pr-ci.mjs'
 import { main as findReleaseCi } from '../scripts/find-release-ci.mjs'
 
 const env = { GITHUB_SHA: 'merge', GITHUB_REPOSITORY: 'owner/repo', GH_TOKEN: 'token' }
-const jobs = ['reuse-pr-ci', 'core (22.19.0)', 'core (24.x)', ...['ubuntu-latest', 'windows-latest'].flatMap(os => ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.1-rc.5'].map(host => `dsh-compatibility (${os}, ${host})`))].map(name => ({ name, status: 'completed', conclusion: 'success' }))
+const jobs = ['reuse-pr-ci', 'core (22.19.0)', 'core (24.x)', ...['ubuntu-latest', 'windows-latest'].flatMap(os => ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.2-rc.1'].map(host => `dsh-compatibility (${os}, ${host})`))].map(name => ({ name, status: 'completed', conclusion: 'success' }))
 const pr = { merged_at: 'now', merge_commit_sha: 'merge', base: { ref: 'main' }, head: { sha: 'head', repo: { full_name: 'owner/repo' } } }
 const run = { id: 1, run_attempt: 1, event: 'pull_request', head_sha: 'head', head_repository: { full_name: 'owner/repo' }, path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success', html_url: 'test' }
 function api({ mergeTree = 'tree', headTree = 'tree', pull = pr, ci = run, ciJobs = jobs } = {}) {
