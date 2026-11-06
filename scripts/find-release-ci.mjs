@@ -19,6 +19,10 @@ export function hasRequiredJobs(jobs) {
   return names.every(name => jobs.some(job => job.name === name && job.status === 'completed' && job.conclusion === 'success'))
 }
 
+export function hasReusablePrCiJob(jobs) {
+  return jobs.some(job => job.name === 'reuse-pr-ci' && job.status === 'completed' && job.conclusion === 'success')
+}
+
 export async function main(env = process.env, request = fetch) {
   let run
   {
@@ -44,7 +48,7 @@ export async function main(env = process.env, request = fetch) {
     const jobsResponse = await request(`${env.GITHUB_API_URL || 'https://api.github.com'}/repos/${env.GITHUB_REPOSITORY}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`, { headers: { Authorization: `Bearer ${env.GH_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } })
     if (!jobsResponse.ok) throw new Error(`GitHub jobs API HTTP ${jobsResponse.status}`)
     const jobsData = await jobsResponse.json()
-    if (!Array.isArray(jobsData.jobs) || !hasRequiredJobs(jobsData.jobs)) throw new Error('Required CI jobs missing or unsuccessful')
+    if (!Array.isArray(jobsData.jobs) || (!hasRequiredJobs(jobsData.jobs) && !hasReusablePrCiJob(jobsData.jobs))) throw new Error('Required CI jobs missing or unsuccessful')
   }
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `reuse=${Boolean(run)}\n`)
   console.log(`Reusing successful main CI ${run.html_url}`)
