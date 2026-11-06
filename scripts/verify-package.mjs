@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
@@ -27,13 +27,25 @@ function assert(condition, message) {
 
 let tarball
 let installRoot
+let ownsTarball = false
 try {
   installRoot = mkdtempSync(join(tmpdir(), 'stratagate-dsh-pack-'))
-  const packOutput = run(['pack', '--json', '--ignore-scripts', '--pack-destination', installRoot], packageRoot)
-  const jsonStart = Math.max(packOutput.lastIndexOf('\n['), packOutput.startsWith('[') ? 0 : -1)
-  assert(jsonStart >= 0, `npm pack did not return JSON:\n${packOutput}`)
-  const packed = JSON.parse(packOutput.slice(jsonStart).trim())[0]
-  tarball = join(installRoot, packed.filename)
+  let packed
+  if (process.argv[2]) {
+    tarball = resolve(process.argv[2])
+    const listing = spawnSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
+    assert(listing.status === 0, `Cannot list supplied tarball: ${listing.stderr}`)
+    const paths = listing.stdout.split(/\r?\n/).filter(Boolean)
+    assert(paths.every(path => path.startsWith('package/') && !path.split('/').includes('..')), 'Unexpected tarball path')
+    packed = { filename: basename(tarball), entryCount: paths.length, files: paths.map(path => ({ path: path.slice('package/'.length) })) }
+  } else {
+    const packOutput = run(['pack', '--json', '--ignore-scripts', '--pack-destination', installRoot], packageRoot)
+    const jsonStart = Math.max(packOutput.lastIndexOf('\n['), packOutput.startsWith('[') ? 0 : -1)
+    assert(jsonStart >= 0, `npm pack did not return JSON:\n${packOutput}`)
+    packed = JSON.parse(packOutput.slice(jsonStart).trim())[0]
+    tarball = join(installRoot, packed.filename)
+    ownsTarball = true
+  }
   const files = new Set(packed.files.map(({ path }) => path.replaceAll('\\', '/')))
   const required = [
     'package.json',
@@ -93,6 +105,8 @@ try {
   }
   run(['install', tarball, '--ignore-scripts', '--package-lock=false', '--legacy-peer-deps'], installRoot)
   const installed = join(installRoot, 'node_modules', 'stratagate-dsh')
+  const installedManifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'))
+  assert(installedManifest.name === manifest.name && installedManifest.version === manifest.version, 'Installed package name/version does not match source')
   for (const path of required) assert(existsSync(join(installed, path)), `Clean install is missing ${path}`)
   // DSH core packages are optional peers and intentionally absent from this
   // bare npm project. Runtime import is covered by verify-dsh-install.mjs,
@@ -100,5 +114,5 @@ try {
   console.log(`Verified ${packed.filename}: ${packed.entryCount} files and clean tarball install passed.`)
 } finally {
   if (installRoot) rmSync(installRoot, { recursive: true, force: true })
-  if (tarball) rmSync(tarball, { force: true })
+  if (tarball && ownsTarball) rmSync(tarball, { force: true })
 }
