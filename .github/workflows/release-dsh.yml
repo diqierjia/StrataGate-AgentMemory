@@ -28,6 +28,8 @@ on:
 permissions:
   contents: write
   id-token: write
+  actions: read
+  pull-requests: read
 
 jobs:
   publish:
@@ -88,12 +90,14 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - name: Find successful CI for release commit
+        id: prior_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/find-release-ci.mjs
       - name: Build and verify package contents
         run: |
           npm run build:dsh
-          node scripts/verify-package.mjs
       - name: Pack release assets from the checked-out source
         shell: bash
         env:
@@ -112,8 +116,9 @@ jobs:
           export DSH_VERSION
           versioned="stratagate-dsh-${VERSION}.tgz"
           source_asset="stratagate-dsh-${VERSION}-source.tar.gz"
-          npm pack --silent
+          npm pack --silent --ignore-scripts
           test -f "$versioned"
+          node scripts/verify-package.mjs "$versioned"
           if [ "$SKIP_DSH_SMOKE" = 'true' ]; then
             echo "::warning::DSH runtime smoke was explicitly waived after manual acceptance"
           else

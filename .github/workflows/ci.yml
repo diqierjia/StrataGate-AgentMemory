@@ -7,9 +7,34 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
+
+# A newer commit supersedes an earlier run for the same PR. Keep main runs
+# independent so a PR update cannot cancel validation of the release branch.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  reuse-pr-ci:
+    runs-on: ubuntu-latest
+    outputs:
+      reuse: ${{ steps.match.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Check whether merged source already passed PR CI
+        id: match
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/find-pr-ci.mjs
+
   core:
+    needs: reuse-pr-ci
+    if: needs.reuse-pr-ci.outputs.reuse != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -17,16 +42,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs
       - run: npm run check
       - run: npm test
       - run: npm run build
 
   dsh-compatibility:
+    needs: reuse-pr-ci
+    if: needs.reuse-pr-ci.outputs.reuse != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +69,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24.x
