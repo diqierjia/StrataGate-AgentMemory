@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        dsh: [0.1.2-rc.1, 0.1.5-rc.1, 0.1.6-alpha.1, 0.1.7-rc.1, 0.1.7-rc.2, 0.2.0-rc.1, 0.2.0-rc.2, 0.2.1-rc.5]
+        dsh: [0.1.2-rc.1, 0.1.5-rc.1, 0.1.6-alpha.1, 0.1.7-rc.1, 0.1.7-rc.2, 0.2.0-rc.1, 0.2.0-rc.2, 0.2.1-rc.5, 0.2.2-rc.1]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

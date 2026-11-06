@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { evaluatePluginCompatibility } from '@deepseek-ai/dsh-app-boot'
+import { satisfies } from 'semver'
 import {
   buildDshReplaceSurfaceOp,
   buildDshMessageSource,
@@ -16,10 +17,20 @@ const common = {
 } as const
 
 function versions(version: string): DshRuntimePackageVersions {
+  const dsh022VendorFamily = (() => {
+    try {
+      return satisfies(version, '>=0.2.2-0 <0.3.0-0', { includePrerelease: true })
+    } catch {
+      return false
+    }
+  })()
   return {
     ...common,
     ...(!['0.1.2-rc.1', '0.1.5-rc.2', '0.1.6-alpha.1'].includes(version)
-      ? { '@deepseek-ai/cordis': '4.0.4', '@deepseek-ai/schemastery': '3.18.4' } : {}),
+      ? dsh022VendorFamily
+        ? { '@deepseek-ai/cordis': '4.1.0', '@deepseek-ai/schemastery': '3.19.0' }
+        : { '@deepseek-ai/cordis': '4.0.4', '@deepseek-ai/schemastery': '3.18.4' }
+      : {}),
     '@deepseek-ai/dsh-agent-default-model': version,
     '@deepseek-ai/dsh-client-ui-conversation': version,
     '@deepseek-ai/dsh-llm': version,
@@ -37,7 +48,7 @@ function versions(version: string): DshRuntimePackageVersions {
 describe('DSH runtime compatibility', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
-  it.each(['0.2.0-alpha.1', '0.2.0-alpha.99', '0.2.0-beta.3', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.0-rc.99', '0.2.0', '0.2.0+build.1', '0.2.1-rc.1', '0.2.1', '0.2.2-beta.1', '0.2.99', '0.2.99+build.1'])('passes the real host installation check for DSH %s', (version) => {
+  it.each(['0.2.0-alpha.1', '0.2.0-alpha.99', '0.2.0-beta.3', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.0-rc.99', '0.2.0', '0.2.0+build.1', '0.2.1-rc.1', '0.2.1', '0.2.2-beta.1', '0.2.2-rc.1', '0.2.99', '0.2.99+build.1'])('passes the real host installation check for DSH %s', (version) => {
     expect(evaluatePluginCompatibility(manifest, {}, version)).toBeUndefined()
   })
 
@@ -59,6 +70,8 @@ describe('DSH runtime compatibility', () => {
     expect(lock.packages[''].peerDependencies).toEqual(manifest.peerDependencies)
     expect(lock.packages[''].engines).toEqual(manifest.engines)
     expect(manifest.engines.dsh).toBe('0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0')
+    expect(manifest.peerDependencies['@deepseek-ai/cordis']).toBe('4.0.2 || ~4.0.4 || ~4.1.0')
+    expect(manifest.peerDependencies['@deepseek-ai/schemastery']).toBe('3.18.2 || ~3.18.4 || ~3.19.0')
     for (const [name, range] of Object.entries(manifest.peerDependencies)) {
       if (!name.startsWith('@deepseek-ai/dsh-')) continue
       expect(range).toBe(name.startsWith('@deepseek-ai/dsh-session-format')
@@ -108,7 +121,7 @@ describe('DSH runtime compatibility', () => {
     expect(() => classifyDshRuntime(mixed)).toThrow(/unsupported or mixed core runtime/)
   })
 
-  it.each(['0.2.0-0', '0.2.0-alpha.1', '0.2.0-alpha.99', '0.2.0-beta.3', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.0-rc.99', '0.2.0', '0.2.0+build.1', '0.2.0-alpha.1+build.2', '0.2.1-alpha.1', '0.2.1-rc.1', '0.2.1', '0.2.2-beta.1', '0.2.99', '0.2.99+build.1'])('accepts the complete coherent DSH %s family', (version) => {
+  it.each(['0.2.0-0', '0.2.0-alpha.1', '0.2.0-alpha.99', '0.2.0-beta.3', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.0-rc.99', '0.2.0', '0.2.0+build.1', '0.2.0-alpha.1+build.2', '0.2.1-alpha.1', '0.2.1-rc.1', '0.2.1', '0.2.2-beta.1', '0.2.2-rc.1', '0.2.99', '0.2.99+build.1'])('accepts the complete coherent DSH %s family', (version) => {
     expect(classifyDshRuntime(versions(version)).cliVersion).toBe(version)
   })
 
@@ -129,6 +142,15 @@ describe('DSH runtime compatibility', () => {
     ]) {
       expect(() => classifyDshRuntime({ ...versions('0.2.0-rc.2'), ...change })).toThrow(/unsupported or mixed core runtime/)
     }
+  })
+
+  it('accepts the DSH 0.2.2 vendor family and rejects the previous family', () => {
+    expect(classifyDshRuntime(versions('0.2.2-rc.1')).cliVersion).toBe('0.2.2-rc.1')
+    expect(() => classifyDshRuntime({
+      ...versions('0.2.2-rc.1'),
+      '@deepseek-ai/cordis': '4.0.4',
+      '@deepseek-ai/schemastery': '3.18.4',
+    })).toThrow(/unsupported or mixed core runtime/)
   })
 
   const sessionFormatPackages = [

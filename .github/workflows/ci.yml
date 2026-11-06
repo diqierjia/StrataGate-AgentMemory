@@ -35,7 +35,7 @@ jobs:
         # 0.1 host, and the current host. The 0.2 migration boundary remains
         # in the historical matrix because its Windows tests are timing/lock
         # sensitive and should not block every PR.
-        dsh: [0.1.2-rc.1, 0.1.7-rc.2, 0.2.1-rc.5]
+        dsh: [0.1.2-rc.1, 0.1.7-rc.2, 0.2.2-rc.1]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
