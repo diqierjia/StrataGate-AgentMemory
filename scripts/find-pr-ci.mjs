@@ -1,8 +1,9 @@
 import { appendFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { hasRequiredJobs } from './find-release-ci.mjs'
+import { requiresWindows } from './classify-ci-risk.mjs'
 
-export async function findPrCi(env = process.env, request = fetch) {
+export async function findPrCi(env = process.env, request = fetch, { requireWindows: requiredWindowsOverride } = {}) {
   const { GITHUB_SHA: sha, GITHUB_REPOSITORY: repo, GH_TOKEN: token } = env
   if (!sha || !repo || !token) throw new Error('missing GitHub context')
   const base = `${env.GITHUB_API_URL || 'https://api.github.com'}/repos/${repo}`
@@ -21,12 +22,13 @@ export async function findPrCi(env = process.env, request = fetch) {
     if (!pr.merged_at || pr.merge_commit_sha !== sha || pr.base?.ref !== 'main' || pr.head?.repo?.full_name !== repo || !pr.head?.sha) continue
     const head = await get(`/commits/${pr.head.sha}`)
     if (head?.commit?.tree?.sha !== tree) continue
+    const requireWindows = requiredWindowsOverride ?? requiresWindows((await get(`/pulls/${pr.number}/files?per_page=100`)).map(file => file.filename))
     const data = await get(`/actions/workflows/ci.yml/runs?event=pull_request&head_sha=${encodeURIComponent(pr.head.sha)}&per_page=100`)
     if (!Array.isArray(data.workflow_runs)) throw new Error('invalid workflow runs response')
     for (const run of data.workflow_runs) {
       if (run.event !== 'pull_request' || run.head_sha !== pr.head.sha || run.head_repository?.full_name !== repo || run.path !== '.github/workflows/ci.yml' || run.status !== 'completed' || run.conclusion !== 'success') continue
       const result = await get(`/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`)
-      if (Array.isArray(result.jobs) && hasRequiredJobs(result.jobs) && result.jobs.some(job => job.name === 'reuse-pr-ci' && job.status === 'completed' && job.conclusion === 'success')) return run
+      if (Array.isArray(result.jobs) && hasRequiredJobs(result.jobs, { requireWindows }) && result.jobs.some(job => job.name === 'reuse-pr-ci' && job.status === 'completed' && job.conclusion === 'success') && result.jobs.some(job => job.name === 'classify' && job.status === 'completed' && job.conclusion === 'success')) return run
     }
   }
   return undefined
