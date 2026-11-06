@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findReusableRun, hasRequiredJobs, main } from '../scripts/find-release-ci.mjs'
+import { findReusableRun, hasRequiredJobs, hasReusablePrCiJob, main } from '../scripts/find-release-ci.mjs'
 
 const good = { id: 1, run_attempt: 2, head_sha: 'abc', head_branch: 'main', event: 'push', status: 'completed', conclusion: 'success', path: '.github/workflows/ci.yml', html_url: 'https://example.test/run' }
 const jobs = ['core (22.19.0)', 'core (24.x)', ...['ubuntu-latest', 'windows-latest'].flatMap(os => ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.2-rc.1'].map(host => `dsh-compatibility (${os}, ${host})`))].map(name => ({ name, status: 'completed', conclusion: 'success' }))
@@ -12,6 +12,8 @@ test('requires the exact successful main push and every required matrix job', ()
   assert.equal(hasRequiredJobs(jobs), true)
   assert.equal(hasRequiredJobs(jobs.slice(1)), false)
   assert.equal(hasRequiredJobs(jobs.map((j, i) => i ? j : { ...j, conclusion: 'skipped' })), false)
+  assert.equal(hasReusablePrCiJob([{ name: 'reuse-pr-ci', status: 'completed', conclusion: 'success' }]), true)
+  assert.equal(hasReusablePrCiJob([{ name: 'reuse-pr-ci', status: 'completed', conclusion: 'skipped' }]), false)
 })
 
 test('checks the matching run attempt and fails closed on unavailable evidence', async () => {
@@ -37,4 +39,12 @@ test('manual releases use main CI directly without querying PR evidence', async 
   }
   assert.equal(await main(manual, request), true)
   assert.equal(calls.some(url => url.includes('/pulls?')), false)
+})
+
+test('accepts a main CI run that reused a complete PR CI', async () => {
+  const manual = { ...env, GITHUB_EVENT_NAME: 'workflow_dispatch' }
+  const request = async url => url.includes('/attempts/2/jobs?')
+    ? { ok: true, json: async () => ({ jobs: [{ name: 'reuse-pr-ci', status: 'completed', conclusion: 'success' }] }) }
+    : { ok: true, json: async () => ({ workflow_runs: [good] }) }
+  assert.equal(await main(manual, request), true)
 })
