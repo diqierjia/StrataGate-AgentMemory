@@ -466,6 +466,7 @@ window.__ModuleLoader__.load({
         --sg-water:light-dark(#3f6d9c,#6f97c0);
         --sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC",serif;
         --sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+        container-type:inline-size;container-name:sg-memory;
         background:var(--sg-page);font-family:var(--sg-body,"Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif)
       }
       .sg-memory :is(h1,h2,h3,.sg-detail-title,.sg-entry-title,.sg-block-name,.sg-topic-chapter-title,.sg-brand-name,.sg-decay-title,.sg-event-clock b){font-family:var(--sg-serif);letter-spacing:0}
@@ -572,15 +573,23 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-daily-stepper button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-text)}
       .sg-memory .sg-daily-stepper button:disabled{opacity:.35;cursor:default}
       .sg-memory .sg-daily-stepper span{min-width:54px;padding:6px 8px;border-inline:1px solid var(--sg-border);text-align:center}
-      .sg-memory .sg-daily-strip{grid-template-columns:1fr;gap:0;margin:4px 0 18px;border-top:1px solid var(--sg-border)}
-      .sg-memory .sg-daily-day{grid-template-columns:72px 6px minmax(0,1fr);gap:16px;padding:12px 0;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;background:transparent}
-      .sg-memory .sg-daily-day:before{left:88px;top:12px;bottom:12px;width:6px;border-radius:3px;background:var(--sg-sand)}
-      .sg-memory .sg-daily-day.selected{border-color:var(--sg-hair);background:transparent}
-      .sg-memory .sg-daily-day.selected:before{background:var(--sg-sand)}
-      .sg-memory .sg-daily-num{grid-row:auto;font:400 26px/1 var(--sg-serif);text-align:right}
-      .sg-memory .sg-daily-week{grid-column:1;grid-row:2;text-align:right;color:var(--sg-muted);font-weight:400}
-      .sg-memory .sg-daily-rel{grid-column:3;grid-row:1 / span 2;align-self:center;text-align:left}
-      .sg-memory .sg-daily-note{max-width:none;margin-left:94px;padding-top:12px;border-top:0}
+      .sg-memory .sg-days{display:grid}
+      .sg-memory .sg-day-row{display:grid;grid-template-columns:72px 6px minmax(0,1fr);column-gap:16px;padding:12px 0;border-top:1px solid var(--sg-hair);align-items:start}
+      .sg-memory .sg-day-hit{display:grid;grid-template-columns:72px 6px;grid-column:1 / 3;grid-row:1;gap:16px;padding:0;border:0;background:transparent;text-align:right;cursor:pointer}
+      .sg-memory .sg-day-body{grid-column:3;grid-row:1;min-width:0}
+      .sg-memory .sg-day-date b{display:block;font:400 26px/1 var(--sg-serif)}
+      .sg-memory .sg-day-date span,.sg-memory .sg-daily-rel{color:var(--sg-muted);font-size:11px}
+      .sg-memory .sg-day-rail{display:block;width:6px;min-height:36px;border-radius:3px;background:var(--sg-sand)}
+      .sg-memory .sg-day-row.out .sg-day-rail,.sg-memory .sg-day-row.paused .sg-day-rail{background:transparent;box-shadow:inset 0 0 0 1.2px var(--sg-border)}
+      .sg-memory .sg-day-row.out{color:var(--sg-muted)}
+      .sg-memory .sg-day-points{margin:6px 0 0;padding:0;list-style:none}
+      .sg-memory .sg-day-points li{display:flex;gap:10px;align-items:baseline;padding:3px 0;font-size:13px}
+      .sg-memory .sg-day-time{flex:0 0 auto;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-day-cut{display:grid;grid-template-columns:72px minmax(0,1fr);column-gap:16px;align-items:center;margin:2px 0;color:var(--sg-muted);font-size:11px}
+      .sg-memory .sg-day-cut span{grid-column:2;display:flex;align-items:center;gap:8px}
+      .sg-memory .sg-day-cut span:before,.sg-memory .sg-day-cut span:after{content:"";flex:1;border-top:1px dashed var(--sg-border)}
+      .sg-memory .sg-day-cut span:before{flex:0 0 8px}
+      .sg-memory .sg-daily-note{max-width:none;margin:8px 0 0;padding-top:0;border-top:0}
       .sg-memory .sg-daily-note-date h3{font:400 20px/1.3 var(--sg-serif)}
       .sg-memory .sg-daily-pill{border-radius:4px;background:color-mix(in srgb,var(--sg-sand) 18%,transparent);color:var(--sg-sand)}
       .sg-memory .sg-daily-pill.muted{background:transparent;color:var(--sg-muted);border:1px solid var(--sg-border)}
@@ -595,10 +604,40 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-topic-directory-intro .sg-context-trigger{margin-left:auto}
       .sg-memory .sg-topic-directory>div[hidden]+*{display:block}
       .sg-memory .sg-topic-directory:before{content:"目录一直带着  →  需要时翻到具体事件";display:block;margin:0 0 12px;color:var(--sg-muted);font-size:12px}
-      .sg-memory .sg-topic-directory>div:not([hidden]){display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid var(--sg-border);border-radius:4px;background:var(--sg-sheet);box-shadow:0 1px 0 var(--sg-border),0 3px 0 -1px var(--sg-sheet),0 3px 0 0 var(--sg-border);overflow:hidden}
-      @media(max-width:680px){.sg-memory .sg-topic-directory>div:not([hidden]){grid-template-columns:1fr}}
-      .sg-memory .sg-topic-directory>div:not([hidden])>.sg-topic-chapter{grid-column:1;padding:22px 28px 20px;border:0}
-      .sg-memory .sg-topic-directory>div:not([hidden])>.sg-topic-chapter+.sg-topic-chapter{border-top:1px solid var(--sg-hair)}
+      .sg-memory .sg-topic-directory>div:not([hidden]){display:block;border:0;background:transparent;box-shadow:none}
+      .sg-memory .sg-book{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);background:var(--sg-sheet);border:1px solid var(--sg-border);border-radius:4px;box-shadow:0 1px 0 var(--sg-border),0 3px 0 -1px var(--sg-sheet),0 3px 0 0 var(--sg-border)}
+      .sg-memory .sg-book-toc,.sg-memory .sg-book-page{min-width:0;padding:26px 26px 20px}
+      .sg-memory .sg-book-toc{grid-column:1}
+      .sg-memory .sg-book-page{grid-column:2;grid-row:1;border-left:1px solid var(--sg-border);box-shadow:inset 1px 0 0 var(--sg-page)}
+      .sg-memory .sg-book .sg-directory-fold.open,.sg-memory .sg-book .sg-directory-fold.open>.sg-directory-fold-inner{overflow:visible;display:block}
+      .sg-memory .sg-book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:absolute;z-index:1;top:0;left:50%;width:50%;max-height:100%;overflow:auto;box-sizing:border-box;padding:26px 26px 20px;background:var(--sg-sheet)}
+      .sg-memory .sg-book:has(.sg-topic-section.cur){min-height:520px}
+      .sg-memory .sg-toc-title{margin:0 0 18px;padding-left:.6em;text-align:center;font:400 15px var(--sg-serif);letter-spacing:.6em}
+      .sg-memory .sg-book .sg-topic-chapter{padding:0 0 14px;border:0}
+      .sg-memory .sg-book .sg-topic-chapter-header{display:block}
+      .sg-memory .sg-book .sg-topic-chapter-toggle{display:flex;align-items:baseline;gap:8px;width:100%;font:700 14.5px var(--sg-serif)}
+      .sg-memory .sg-book .sg-topic-chapter-label{min-width:3.2em;font:400 12px var(--sg-serif);color:var(--sg-muted)}
+      .sg-memory .sg-book .sg-toc-lead{flex:1;min-width:16px;border-bottom:1.5px dotted color-mix(in srgb,var(--sg-muted) 55%,transparent);transform:translateY(-4px)}
+      .sg-memory .sg-book .sg-toc-count{min-width:1.6em;font:12px var(--sg-mono);color:var(--sg-muted);text-align:right}
+      .sg-memory .sg-book .sg-topic-sections{padding:4px 0 0}
+      .sg-memory .sg-book .sg-topic-section-heading{display:flex;align-items:baseline;gap:8px;margin:0}
+      .sg-memory .sg-book .sg-topic-section-toggle{position:relative;flex:1;margin-left:3.2em;color:var(--sg-muted);font-size:13px;font-weight:400}
+      .sg-memory .sg-book .sg-topic-section.cur>.sg-topic-section-heading .sg-topic-section-toggle{color:var(--sg-text);font-weight:600}
+      .sg-memory .sg-book .sg-topic-section.cur>.sg-topic-section-heading .sg-topic-section-toggle:before{content:"";position:absolute;left:-12px;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--sg-text)}
+      .sg-memory .sg-book .sg-topic-section-heading .sg-directory-chevron{display:none}
+      .sg-memory .sg-book .sg-topic-chapter-number,.sg-memory .sg-book .sg-topic-description{display:none}
+      .sg-memory .sg-book-k{margin:0;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-book-section-title{margin:2px 0 8px;font:700 19px var(--sg-serif)}
+      .sg-memory .sg-book .sg-topic-section-body .sg-topic-overview-toggle{display:none}
+      .sg-memory .sg-book .sg-topic-section-body .sg-directory-number{display:block;margin-bottom:4px;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-book .sg-topic-section-body .sg-topic-overview-text{display:block;margin:0 0 12px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+      .sg-memory .sg-book .sg-topic-section-body{margin:0;padding:0;border:0}
+      .sg-memory .sg-book .sg-topic-section-body .sg-topic-section-toggle{display:none}
+      .sg-memory .sg-folio{margin:16px 0 0;text-align:center;font:11px var(--sg-serif);color:var(--sg-muted)}
+      .sg-memory .sg-book-back{display:none;margin:0 0 12px;padding:0;border:0;background:transparent;color:var(--sg-muted);cursor:pointer}
+      .sg-memory .sg-toc-foot{display:flex;align-items:center;gap:8px;margin-top:18px;padding-top:10px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11.5px}
+      .sg-memory .sg-toc-foot .sg-context-trigger{margin-left:auto}
+      .sg-memory .sg-topic-event.fade{color:var(--sg-muted)}
       .sg-memory .sg-topic-chapter-number{font:400 24px/1 var(--sg-serif);color:var(--sg-muted)}
       .sg-memory .sg-topic-chapter-copy h2{font:400 17px/1.35 var(--sg-serif)}
       .sg-memory .sg-topic-chapter-toggle{display:flex;align-items:baseline}
@@ -615,20 +654,59 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-topic-event-arrow{opacity:1}
       .sg-memory .sg-topic-event:last-child{border-bottom:0}
       .sg-memory .sg-topic-pending{grid-column:1;padding:12px 28px}
-      .sg-memory .sg-topic-directory>div:not([hidden])>.sg-topic-chapter:has(.sg-topic-section-body.open){grid-column:1 / -1}
+      .sg-memory .sg-session-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,280px);gap:28px;align-items:start}
+      .sg-memory .sg-session-side{border-top:1px solid var(--sg-text);padding-top:12px}
+      .sg-memory .sg-session-side h4{margin:0 0 2px;font:700 16px var(--sg-serif)}
+      .sg-memory .sg-side-k{display:block;margin-bottom:10px;color:var(--sg-muted);font:11.5px var(--sg-mono)}
+      .sg-memory .sg-lvl{display:flex;gap:3px;margin:4px 0}
+      .sg-memory .sg-lvl i{flex:1;height:6px;border-radius:2px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+      .sg-memory .sg-lvl i.on{background:var(--sg-water);box-shadow:none}
+      .sg-memory .sg-lvl-l{display:flex;justify-content:space-between;margin-bottom:12px;color:var(--sg-muted);font-size:10.5px}
+      .sg-memory .sg-session-side p{margin:0 0 12px;color:var(--sg-muted);font-size:12.5px;line-height:1.7}
+      .sg-memory .sg-steps{display:flex;gap:4px;margin:4px 0 8px}
+      .sg-memory .sg-steps i{flex:1;height:8px;border-radius:2px;background:var(--sg-sand)}
+      .sg-memory .sg-steps i.todo{background:transparent;box-shadow:inset 0 0 0 1.2px var(--sg-border)}
+      .sg-memory .sg-steps-l{display:flex;justify-content:space-between;gap:8px;color:var(--sg-muted);font-size:11.5px}
+      .sg-memory .sg-steps-l b{color:var(--sg-text);font-weight:600}
+      @container sg-memory (max-width:680px){
+        .sg-memory .sg-book{grid-template-columns:1fr;min-height:0}
+        .sg-memory .sg-book-page{display:none}
+        .sg-memory .sg-book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:static;left:auto;width:auto;max-height:none;padding:8px 0 0}
+        .sg-memory .sg-book:not(.show-leaf) .sg-topic-section.cur>.sg-directory-fold{display:none}
+        .sg-memory .sg-book.show-leaf .sg-toc-title,.sg-memory .sg-book.show-leaf .sg-topic-chapter-header,.sg-memory .sg-book.show-leaf .sg-topic-section:not(.cur),.sg-memory .sg-book.show-leaf .sg-topic-section.cur>.sg-topic-section-heading,.sg-memory .sg-book.show-leaf .sg-toc-foot{display:none}
+        .sg-memory .sg-book.show-leaf .sg-book-back{display:inline-flex}
+        .sg-memory .sg-book-toc{padding:20px 16px}
+        .sg-memory .sg-session-layout{grid-template-columns:1fr}
+        .sg-memory .sg-session-side{display:none}
+        .sg-memory .sg-day-row,.sg-memory .sg-day-hit,.sg-memory .sg-day-cut{grid-template-columns:44px 5px minmax(0,1fr);column-gap:12px}
+        .sg-memory .sg-day-hit{grid-template-columns:44px 5px}
+        .sg-memory .sg-day-cut{grid-template-columns:44px minmax(0,1fr)}
+        .sg-memory .sg-day-date b,.sg-memory .sg-tl-date b{font-size:18px}
+        .sg-memory .sg-tl-day{grid-template-columns:40px 18px minmax(0,1fr);column-gap:8px}
+        .sg-memory .sg-tl:before{left:57px}
+        .sg-memory .sg-timeline-dot{left:-23px}
+      }
 
       /* Timeline: an editorial date rail with neutral graph accents. */
-      .sg-memory .sg-timeline{padding:16px 24px 22px;background:transparent}
-      .sg-memory .sg-time-group>h3{margin:5px 0 8px;padding-left:0;font:400 21px/1.1 var(--sg-serif)}
-      .sg-memory .sg-time-group:before{left:84px;top:35px;background:var(--sg-border)}
-      .sg-memory .sg-timeline-card{grid-template-columns:68px minmax(0,1fr) auto;column-gap:32px;row-gap:0;margin:0;padding:10px 0 11px;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;background:transparent}
+      .sg-memory .sg-timeline{position:relative;padding:8px 0 22px;background:transparent}
+      .sg-memory .sg-tl:before{content:"";position:absolute;left:95px;top:6px;bottom:18px;border-left:1.5px solid var(--sg-border)}
+      .sg-memory .sg-tl-day{display:grid;grid-template-columns:84px 22px minmax(0,1fr);column-gap:10px}
+      .sg-memory .sg-tl-date{padding-top:2px;text-align:right}
+      .sg-memory .sg-tl-date b{display:block;font:400 22px/1.1 var(--sg-serif)}
+      .sg-memory .sg-tl-date span{color:var(--sg-muted);font-size:11px;white-space:nowrap}
+      .sg-memory .sg-tl-axis{position:relative}
+      .sg-memory .sg-timeline-dot{left:-26px}
+      .sg-memory .sg-tl-items{min-width:0;padding-bottom:18px}
+      .sg-memory .sg-timeline-card{position:relative;display:flex;align-items:baseline;gap:10px;grid-template-columns:none;margin:0;padding:6px 0 7px;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;background:transparent}
       .sg-memory .sg-timeline-card:hover,.sg-memory .sg-timeline-card.selected{border-color:var(--sg-hair);background:transparent}
       .sg-memory .sg-month-rail{display:none}
       .sg-memory .sg-event-clock,.sg-memory .sg-event-main{min-width:0}
       .sg-memory .sg-event-clock b{display:block;font:400 22px/1.1 var(--sg-serif);color:var(--sg-text)}
       .sg-memory .sg-event-clock>span{display:block;font-size:11px;color:var(--sg-muted)}
-      .sg-memory .sg-timeline-dot{left:80px;top:18px;width:8px;height:8px;border:0;background:var(--sg-moss);box-shadow:0 0 0 2px var(--sg-page)}
-      .sg-memory .sg-timeline-dot.fade{background:var(--sg-page);box-shadow:0 0 0 2px var(--sg-page),inset 0 0 0 1.5px var(--sg-muted)}
+      .sg-memory .sg-timeline-dot{left:-26px;top:11px;width:11px;height:11px;border:0;background:var(--sg-moss);box-shadow:0 0 0 3px var(--sg-page)}
+      @container sg-memory (max-width:680px){.sg-memory .sg-timeline-dot{left:-23px}.sg-memory .sg-tl:before{left:57px}}
+      .sg-memory .sg-timeline-dot.fade{background:var(--sg-page);box-shadow:0 0 0 3px var(--sg-page),inset 0 0 0 1.5px var(--sg-muted)}
+      .sg-memory .sg-timeline-card.fade{color:var(--sg-muted)}
       .sg-memory .sg-event-main p,.sg-memory .sg-timeline .sg-tags{display:none}
       .sg-memory .sg-type-badge{border:0;background:transparent;color:var(--sg-muted);padding:0;font-size:12px}
       .sg-memory .sg-event-clock{font:11px var(--sg-mono);color:var(--sg-muted)}
@@ -2606,9 +2684,18 @@ window.__ModuleLoader__.load({
       React.useEffect(() => () => cancelHide(), [])
       const now = new Date(); const weekAgo = now.getTime() - 7 * 86400000
       const groups = { '今天': [], '本周': [], '更早': [] }
-      events.slice()
-        .sort((a, b) => String(eventOccurrence(b).value).localeCompare(String(eventOccurrence(a).value)))
-        .forEach((event) => { const info = eventOccurrence(event); const time = Date.parse(info.value); const sameDay = Number.isFinite(time) && new Date(time).toDateString() === now.toDateString(); groups[sameDay ? '今天' : time >= weekAgo ? '本周' : '更早'].push(event) })
+      const sortedEvents = events.slice().sort((a, b) => String(eventOccurrence(b).value).localeCompare(String(eventOccurrence(a).value)))
+      sortedEvents.forEach((event) => { const info = eventOccurrence(event); const time = Date.parse(info.value); const sameDay = Number.isFinite(time) && new Date(time).toDateString() === now.toDateString(); groups[sameDay ? '今天' : time >= weekAgo ? '本周' : '更早'].push(event) })
+      const days = []
+      for (const event of sortedEvents) {
+        const info = eventOccurrence(event)
+        const time = Date.parse(info.value || '')
+        const key = Number.isFinite(time) ? new Date(time).toDateString() : 'unknown'
+        const existing = days.find((day) => day.key === key)
+        if (existing) existing.events.push(event)
+        else days.push({ key, time, events: [event] })
+      }
+      void groups
       const nodeMap = new Map(nodes.map((node) => [node.id, node]))
       const monthMarks = []
       const seenMonths = new Set()
@@ -2623,15 +2710,19 @@ window.__ModuleLoader__.load({
       }
       monthMarks.sort((left, right) => left.key.localeCompare(right.key))
       const rail = monthMarks.slice(-8)
-      return h('div', { className: 'sg-timeline' },
+      return h('div', { className: 'sg-timeline sg-tl' },
         rail.length > 1 ? h('div', { className: 'sg-month-rail', 'aria-hidden': 'true' }, rail.map((mark) => h('span', { key: mark.key }, h('i'), mark.label))) : null,
-        Object.entries(groups).map(([label, items]) => items.length ? h('section', { key: label, className: 'sg-time-group' }, h('h3', null, label), items.map((event) => {
-        const info = eventOccurrence(event); const temporal = event.temporal || {}
-        return h('button', { key: event.id, className: 'sg-timeline-card ' + (event.id === selectedId ? 'selected' : ''), onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
-          h('span', { className: 'sg-timeline-dot' + (temporal.status === 'cancelled' ? ' fade' : '') }), h('div', { className: 'sg-event-clock' }, (() => { const time = Date.parse(info.value || ''); if (!Number.isFinite(time)) return h('span', null, '时间未知'); const date = new Date(time); const same = date.toDateString() === new Date().toDateString(); return h(React.Fragment, null, h('b', null, String(date.getDate())), h('span', null, same ? '今天' : ['周日','周一','周二','周三','周四','周五','周六'][date.getDay()])) })()),
-          h('div', { className: 'sg-event-main' }, h('div', { className: 'sg-event-title-row' }, h('strong', null, event.title), h('span', { className: 'sg-type-badge' }, EVENT_TYPE_TEXT[temporal.eventType] || temporal.eventType || '其他')), h('p', null, event.summary || '暂无摘要'), h('div', { className: 'sg-tags' }, (temporal.participantNodeIds || []).flatMap((id) => nodeMap.get(id) || []).map((node) => h('span', { key: node.id, className: 'sg-tag' }, node.name)), !(temporal.participantNodeIds || []).length ? (temporal.participants || []).map((name) => h('span', { key: name, className: 'sg-tag' }, name)) : null)),
-          h('span', { className: 'sg-event-status ' + (temporal.status || 'unknown') }, EVENT_STATUS_TEXT[temporal.status] || '未知'))
-      })) : null), floating && preview ? h('div', { className: 'sg-event-popover', style: { left: preview.left + 'px', top: preview.top + 'px' }, onMouseEnter: cancelHide, onMouseLeave: scheduleHide },
+        days.map((day) => h('div', { key: day.key, className: 'sg-tl-day' },
+          h('div', { className: 'sg-tl-date' }, Number.isFinite(day.time) ? h(React.Fragment, null, h('b', null, String(new Date(day.time).getDate())), h('span', null, new Date(day.time).toDateString() === now.toDateString() ? '今天' : ['周日','周一','周二','周三','周四','周五','周六'][new Date(day.time).getDay()])) : h('span', null, '时间未知')),
+          h('div', { className: 'sg-tl-axis', 'aria-hidden': 'true' }),
+          h('div', { className: 'sg-tl-items' }, day.events.map((event) => {
+            const temporal = event.temporal || {}
+            const faded = temporal.status === 'cancelled'
+            return h('button', { key: event.id, className: 'sg-timeline-card' + (event.id === selectedId ? ' selected' : '') + (faded ? ' fade' : ''), onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
+              h('span', { className: 'sg-timeline-dot' + (faded ? ' fade' : '') }),
+              h('div', { className: 'sg-event-main' }, h('div', { className: 'sg-event-title-row' }, h('strong', null, event.title), h('span', { className: 'sg-type-badge' }, EVENT_TYPE_TEXT[temporal.eventType] || temporal.eventType || '其他')), h('p', null, event.summary || '暂无摘要'), h('div', { className: 'sg-tags' }, (temporal.participantNodeIds || []).flatMap((id) => nodeMap.get(id) || []).map((node) => h('span', { key: node.id, className: 'sg-tag' }, node.name)), !(temporal.participantNodeIds || []).length ? (temporal.participants || []).map((name) => h('span', { key: name, className: 'sg-tag' }, name)) : null)),
+              h('span', { className: 'sg-event-status ' + (temporal.status || 'unknown') }, EVENT_STATUS_TEXT[temporal.status] || '未知'))
+          })))), floating && preview ? h('div', { className: 'sg-event-popover', style: { left: preview.left + 'px', top: preview.top + 'px' }, onMouseEnter: cancelHide, onMouseLeave: scheduleHide },
         h('button', { type: 'button', className: 'sg-popover-close', 'aria-label': '关闭事件详情', onClick: hidePreview }, '×'),
         h(EventDetailPanel, { event: preview.event, nodes, events, onNode, openSource })) : null)
     }
@@ -2667,7 +2758,7 @@ window.__ModuleLoader__.load({
     function TopicEventRow({ event, number, openEvent }) {
       const used = Boolean(event?.weight?.lastRetrievedAt) || Number(event?.weight?.lastAdoptedTurn) >= 0 || (Array.isArray(event?.weightTrajectory?.adoptionHistory) && event.weightTrajectory.adoptionHistory.length > 0)
       return h('button', {
-        type: 'button', className: 'sg-topic-event', 'data-topic-event-id': event.id,
+        type: 'button', className: 'sg-topic-event' + ((event?.temporal?.status === 'cancelled' || event?.status === 'cancelled') ? ' fade' : ''), 'data-topic-event-id': event.id,
         onClick: (click) => openEvent(event, click.currentTarget), title: event.title || event.summary || undefined,
       }, number ? h('span', { className: 'sg-directory-number' }, number) : h('span', { className: 'sg-topic-pending-mark', 'aria-hidden': 'true' }, '·'),
       h('span', { className: 'sg-topic-event-title' }, event.title || event.summary || '记忆事件'), used ? h('span', { className: 'sg-used-bubble', title: '曾被用于回答', 'aria-label': '曾被用于回答' }, '▰') : null, h('span', { className: 'sg-topic-event-arrow', 'aria-hidden': 'true' }, '↗'))
@@ -2743,33 +2834,54 @@ window.__ModuleLoader__.load({
         page.total > 9 ? h('button', { type: 'button', className: 'sg-topic-show-all', disabled: !showAll && (page.loading || Boolean(page.error)), 'aria-expanded': showAll, onClick: () => setShowAll((value) => !value) }, showAll ? collapseLabel : '还有 ' + (page.total - 9) + ' 条事件 · ' + (expandLabel || '展开全部')) : null)
     }
 
-    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged }) {
+    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged, leaf = false, onPick = null, current = false }) {
       const [open, setOpen] = React.useState(false)
       const [overviewOpen, setOverviewOpen] = React.useState(true)
       const sectionNumber = chapter + '.' + index
       const regionId = 'sg-topic-' + encodeURIComponent(topicId) + '-' + encodeURIComponent(part.uiKey)
       const sourceCount = Number(part.sourceEventCount || 0)
-      return h('section', { className: 'sg-topic-section', 'data-section-index': String(index) },
-        h('h3', { className: 'sg-topic-section-heading' }, h('button', { type: 'button', className: 'sg-topic-section-toggle', title: part.uiTitle, 'aria-expanded': open, 'aria-controls': regionId, onClick: () => setOpen((current) => !current) },
-          h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', null, part.uiTitle), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
-        h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-section-body' },
-          (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((current) => !current) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
+      const shown = leaf || open
+      return h('section', { className: 'sg-topic-section' + (shown ? ' cur' : '') + (leaf ? ' leaf' : ''), 'data-section-index': String(index) },
+        h('h3', { className: 'sg-topic-section-heading' },
+          h('button', { type: 'button', className: 'sg-topic-section-toggle', title: part.uiTitle, 'aria-expanded': shown, 'aria-controls': regionId, 'aria-current': current || shown ? 'true' : undefined, onClick: () => { onPick?.(); if (!leaf) setOpen((value) => !value) } },
+            h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', null, part.uiTitle), leaf ? null : h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')),
+          h('span', { className: 'sg-toc-count' }, String(sourceCount))),
+        h(DirectoryFold, { open: shown, id: regionId }, h('div', { className: 'sg-topic-section-body' },
+          h('p', { className: 'sg-book-k' }, sectionNumber),
+          h('h3', { className: 'sg-book-section-title' }, part.uiTitle),
+          (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((value) => !value) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: overviewOpen, id: regionId + '-overview' }, (part.paragraphs || []).map((paragraph, paragraphIndex) => h('p', { key: paragraphIndex, className: 'sg-topic-overview-text', 'data-overview-paragraph-index': String(paragraphIndex) }, paragraph.text || '暂无总览')))) : null,
-          h(TopicEventList, { namespace, revision, topicId, sectionKey: part.uiKey, total: sourceCount, active: active && open, openEvent, numberPrefix: sectionNumber, onDirectoryChanged }))))
+          h(TopicEventList, { namespace, revision, topicId, sectionKey: part.uiKey, total: sourceCount, active: active && shown, openEvent, numberPrefix: sectionNumber, onDirectoryChanged }),
+          h('p', { className: 'sg-folio' }, '— 第' + chapterOrdinal(chapter) + '章 · ' + sectionNumber + ' —'))))
     }
 
-    function TopicChapter({ topic, number, namespace, revision, active, openEvent, onDirectoryChanged, expandRequest = 0 }) {
+    function TopicChapter({ topic, number, namespace, revision, active, openEvent, onDirectoryChanged, expandRequest = 0, variant = 'full', leafSectionKey = '', onPickSection = null }) {
       const [open, setOpen] = React.useState(true)
       const [otherOpen, setOtherOpen] = React.useState(false)
       React.useEffect(() => { if (expandRequest > 0) setOpen(true) }, [expandRequest])
       const regionId = 'sg-topic-chapter-' + encodeURIComponent(topic.id)
       const chapterLabel = '第' + chapterOrdinal(number) + '章'
+      const sections = topicSections(topic)
+      if (variant === 'leaf') {
+        const index = sections.findIndex((part) => part.uiKey === leafSectionKey)
+        const part = index >= 0 ? sections[index] : null
+        return part ? h('article', { className: 'sg-topic-chapter sg-book-leaf', 'data-topic-id': topic.id },
+          h(TopicSection, { part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active, openEvent, onDirectoryChanged, leaf: true })) : null
+      }
+      if (variant === 'toc') {
+        const count = sections.reduce((sum, part) => sum + Number(part.sourceEventCount || 0), 0)
+        return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
+          h('header', { className: 'sg-topic-chapter-header' },
+            h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-count' }, String(count)))))),
+          h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
+            sections.map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: false, openEvent, onDirectoryChanged, current: leafSectionKey === part.uiKey, onPick: () => onPickSection?.(topic.id, part.uiKey) })))))
+      }
       return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
         h('header', { className: 'sg-topic-chapter-header' },
           h('span', { className: 'sg-topic-chapter-number', 'aria-hidden': 'true' }, String(number).padStart(2, '0')),
           h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
-          topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: active && open, openEvent, onDirectoryChanged })),
+          topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: active && open, openEvent, onDirectoryChanged, onPick: () => onPickSection?.(topic.id, part.uiKey) })),
           !(topic.sections || []).length ? h('p', { className: 'sg-topic-no-overview' }, '这个主题尚未建立小节，可查看待归类事件。') : null,
           (() => {
             const remaining = Number(topic.coverage?.unassignedEvents ?? topic.coverage?.omittedEvents ?? 0)
@@ -2874,6 +2986,14 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('')
       const [collapsed, setCollapsed] = React.useState(!initialRun)
       const [confirmTerminate, setConfirmTerminate] = React.useState(false)
+      const terminateCancelRef = React.useRef(null)
+      React.useEffect(() => {
+        if (!confirmTerminate) return undefined
+        terminateCancelRef.current?.focus?.()
+        const onKeyDown = (event) => { if (event.key === 'Escape') setConfirmTerminate(false) }
+        document.addEventListener('keydown', onKeyDown)
+        return () => document.removeEventListener('keydown', onKeyDown)
+      }, [confirmTerminate])
       const request = React.useRef(null)
       const previousStatus = React.useRef(initialRun?.status)
       React.useEffect(() => {
@@ -2948,9 +3068,10 @@ window.__ModuleLoader__.load({
          confirmTerminate ? h('div', { className: 'sg-import-overlay', onClick: () => setConfirmTerminate(false) },
            h('section', { className: 'sg-import-dialog sg-r6-danger-dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': '终止整理确认', onClick: event => event.stopPropagation() },
              h('h3', { className: 'sg-import-dialog-title' }, '终止这次整理？'),
-             h('p', { className: 'sg-setting-note' }, '已完成的章节会保留，尚未完成的章节保持原样。'),
+             Number(run?.total) > 0 && Number(run.total) <= 24 ? h('div', { className: 'sg-steps', 'aria-hidden': 'true' }, Array.from({ length: Number(run.total) }, (_, index) => h('i', { key: index, className: index < Number(run.completed || 0) ? 'done' : 'todo' }))) : null,
+             Number(run?.total) > 0 ? h('div', { className: 'sg-steps-l' }, h('span', null, h('b', null, String(Math.min(Number(run.completed || 0), Number(run.total))) + ' 批'), '已整理的会保留'), h('span', null, Math.max(0, Number(run.total) - Number(run.completed || 0)) + ' 批保持原样')) : h('p', { className: 'sg-setting-note' }, '已完成的章节会保留，尚未完成的章节保持原样。'),
              h('div', { className: 'sg-r6-dialog-actions' },
-               h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setConfirmTerminate(false) }, '继续整理'),
+               h('button', { type: 'button', className: 'sg-quiet-button', ref: terminateCancelRef, onClick: () => setConfirmTerminate(false) }, '继续整理'),
                h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: () => { setConfirmTerminate(false); void control('terminate') } }, '终止')))) : null)
     }
 
@@ -2968,14 +3089,29 @@ window.__ModuleLoader__.load({
       const invalidate = React.useCallback(() => { setInvalidatedRevision(revision); return onDirectoryChanged?.() }, [revision, onDirectoryChanged])
       const topics = directory?.topics || []
       const pendingTotal = Number(directory?.pending?.total || 0)
+      const [picked, setPicked] = React.useState(null)
+      const [showLeaf, setShowLeaf] = React.useState(false)
+      React.useEffect(() => {
+        if (!picked) return
+        const stillThere = topics.some((topic) => topic.id === picked.topicId && topicSections(topic).some((part) => part.uiKey === picked.sectionKey))
+        if (!stillThere) { setPicked(null); setShowLeaf(false) }
+      }, [revision, topics, picked])
+      const pickSection = (topicId, sectionKey) => { setPicked({ topicId, sectionKey }); setShowLeaf(true) }
+      const organizedAt = directory?.dreaming?.updatedAt && ['completed', 'terminated'].includes(directory.dreaming.status) ? formatTime(directory.dreaming.updatedAt) : ''
       return h('section', { className: 'sg-topic-directory', 'data-testid': 'stratagate-topic-directory', 'aria-label': '主题目录' },
         h('header', { className: 'sg-topic-directory-intro' },
-          h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }),
+          topics.length ? null : h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }),
           h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: topics.length > 0 && !blocked, onDirectoryChanged, onOpenDreamingSession })),
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
-          h('div', { ref: chaptersRef }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest }))),
+          topics.length ? h('div', { className: 'sg-book' + (showLeaf ? ' show-leaf' : ''), ref: chaptersRef },
+            h('button', { type: 'button', className: 'sg-book-back', onClick: () => setShowLeaf(false) }, '目录'),
+            h('div', { className: 'sg-book-toc' },
+              h('h3', { className: 'sg-toc-title' }, '目录'),
+              topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, onPickSection: pickSection })),
+              h('div', { className: 'sg-toc-foot' }, organizedAt ? h('span', null, organizedAt) : null, h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))),
+            h('div', { className: 'sg-book-page', 'aria-hidden': 'true' })) : null,
           pendingTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' }, h('h2', { className: 'sg-topic-pending-heading' }, h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', null, '待整理'), h('span', null, pendingTotal + ' 条事件'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null))
     }
@@ -3267,6 +3403,21 @@ window.__ModuleLoader__.load({
     function dailyInline(text) {
       return String(text).split(/(`[^`\n]+`)/g).map((part, key) =>  /^`[^`\n]+`$/.test(part) ? h('code', { key }, part.slice(1, -1)) : part)
     }
+    function dailyPoints(markdown) {
+      const points = []
+      for (const raw of String(markdown || '').split(/\r?\n/)) {
+        const line = raw.trim()
+        if (!line || /^# \d{4}-\d{2}-\d{2}$/.test(line)) continue
+        const status = line.match(/^(当前|已完成)：\s*(.*)$/)
+        const bullet = line.match(/^[-*] |^## /)
+        if (!status && !bullet) continue
+        const text = (status ? status[2] : line.replace(/^[-*] |^## /, '')).trim()
+        if (!text) continue
+        const timed = text.match(/^(\d{1,2}:\d{2})\s+(.+)$/)
+        points.push(timed ? { time: timed[1], text: timed[2] } : { time: '', text })
+      }
+      return points
+    }
     function renderDailyMarkdown(markdown) {
       const output = []; let children = []; let title = null; let list = []
       const flushList = () => { if (list.length) { children.push(h('ul', { key: 'list-' + children.length }, list)); list = [] } }
@@ -3289,6 +3440,7 @@ window.__ModuleLoader__.load({
       const [indexError, setIndexError] = React.useState('')
       const [selected, setSelected] = React.useState('')
       const [note, setNote] = React.useState({ loading: false, date: '', markdown: '', error: '' })
+      const [notes, setNotes] = React.useState({})
       const [revision, setRevision] = React.useState(0)
       const [noteRevision, setNoteRevision] = React.useState(0)
       const [calendarOpen, setCalendarOpen] = React.useState(false)
@@ -3314,6 +3466,16 @@ window.__ModuleLoader__.load({
         }).catch(error => { if (!abort.signal.aborted) setNote({ loading: false, date: selected, markdown: '', error: String(error.message || error) }) })
         return () => abort.abort()
       }, [namespace, selected, noteRevision])
+      React.useEffect(() => {
+        const abort = new AbortController()
+        for (const date of index?.dates || []) {
+          if (!date || date === selected) continue
+          void api('daily/note', { namespace, date }, { signal: abort.signal }).then((data) => {
+            if (!abort.signal.aborted) setNotes((current) => ({ ...current, [date]: String(data?.markdown || '') }))
+          }).catch(() => {})
+        }
+        return () => abort.abort()
+      }, [namespace, index, selected, noteRevision])
       React.useEffect(() => {
         if (!calendarOpen) return
         const outside = event => { if (!calendarButton.current?.contains(event.target) && !calendarPopup.current?.contains(event.target)) setCalendarOpen(false) }
@@ -3373,18 +3535,25 @@ window.__ModuleLoader__.load({
         directoryFeedback ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, directoryFeedback) : null,
         indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
           !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
-          dates.length ? h(React.Fragment, null,
-            h('div', { className: 'sg-daily-strip', role: 'tablist', 'aria-label': '带入新会话的笔记' }, injected.map((date, i) => {
+          dates.length ? h('div', { className: 'sg-days', role: 'list', 'aria-label': '带入新会话的笔记' }, [...dates].sort((left, right) => right.localeCompare(left)).flatMap((date, position, ordered) => {
               const parts = dailyParts(date)
-              return h('button', { key: date, type: 'button', role: 'tab', 'aria-selected': selected === date, tabIndex: selected === date || (!injected.includes(selected) && i === 0) ? 0 : -1, className: 'sg-daily-day' + (selected === date ? ' selected' : ''), onClick: () => choose(date), onKeyDown: event => {
-                const next = event.key === 'ArrowRight' ? (i + 1) % injected.length : event.key === 'ArrowLeft' ? (i + injected.length - 1) % injected.length : event.key === 'Home' ? 0 : event.key === 'End' ? injected.length - 1 : -1
-                if (next >= 0) { event.preventDefault(); choose(injected[next]); event.currentTarget.parentElement.children[next]?.focus() }
-              } }, h('span', { className: 'sg-daily-num' }, parts.day), h('span', { className: 'sg-daily-week' }, parts.month + '月 · ' + parts.week), h('span', { className: 'sg-daily-rel' }, dailyRelative(date, index.today)))
-            })),
-            note.loading || note.date !== selected ? h(Loading) : note.error ? failure(note.error) : date ? h('article', { key: selected, className: 'sg-daily-note' },
-              h('div', { className: 'sg-daily-note-date' }, h('h3', null, date.month + ' 月 ' + date.day + ' 日'), h('span', null, date.week + ' · ' + dailyRelative(selected, index.today))),
-              h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在带入范围内'), !injected.includes(selected) ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null), renderDailyMarkdown(note.markdown)) : null)
-            : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
+              const inRange = enabled && injected.includes(date)
+              const previousInRange = position > 0 && enabled && injected.includes(ordered[position - 1])
+              const cut = enabled && previousInRange && !inRange ? h('div', { key: 'cut', className: 'sg-day-cut' }, h('span', null, '以下不带入')) : null
+              const active = selected === date
+              const markdown = active && note.date === date ? note.markdown : (notes[date] || '')
+              const points = dailyPoints(markdown)
+              return [cut, h('article', { key: date, className: 'sg-day-row' + (inRange || !enabled ? '' : ' out') + (active ? ' selected' : '') + (!enabled ? ' paused' : '') },
+                h('button', { type: 'button', className: 'sg-day-hit', 'aria-pressed': active, onClick: () => choose(date) },
+                  h('span', { className: 'sg-day-date' }, h('b', null, String(parts.day)), h('span', null, parts.week)),
+                  h('i', { className: 'sg-day-rail', 'aria-hidden': 'true' })),
+                h('div', { className: 'sg-day-body' },
+                  h('span', { className: 'sg-daily-rel' }, dailyRelative(date, index.today)),
+                  points.length ? h('ul', { className: 'sg-day-points' }, points.map((point, pointIndex) => h('li', { key: pointIndex }, point.time ? h('span', { className: 'sg-day-time' }, point.time) : null, h('span', null, point.text)))) : null,
+                  active ? (note.loading || note.date !== date ? h(Loading) : note.error ? failure(note.error) : h('div', { className: 'sg-daily-note' },
+                    h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(date) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(date) ? '会带入新会话' : '不在带入范围内'), !injected.includes(date) && injected[0] ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null),
+                    points.length ? null : renderDailyMarkdown(note.markdown))) : null))]
+            })) : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
     }
 
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh }) {
@@ -3403,6 +3572,18 @@ window.__ModuleLoader__.load({
       activeScope.current = scope
       const selectionRequest = React.useRef(null)
       const currentOpen = openBlock || { turnRange: null, messages: 0, status: 'open' }
+      const sessionRef = React.useRef(null)
+      const [sessionNarrow, setSessionNarrow] = React.useState(false)
+      React.useEffect(() => {
+        const node = sessionRef.current
+        if (!node || typeof ResizeObserver !== 'function') return undefined
+        const observer = new ResizeObserver((entries) => {
+          const width = entries[0]?.contentRect?.width || 0
+          setSessionNarrow(width > 0 && width <= 680)
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+      }, [])
 
       React.useEffect(() => {
         setExpandedId(''); setDetails({}); setLoadingId(''); setPreviewError(null); setSelectionFeedback({})
@@ -3495,6 +3676,7 @@ window.__ModuleLoader__.load({
           h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: String(Math.max(1, rail.max)), step: '1', value: String(Math.min(rail.value, Math.max(1, rail.max))), disabled: rail.max <= 0, onChange: (event) => { const value = Number(event.target.value); if (distributionRef.current) distributionRef.current.scrollLeft = value; setRail((current) => ({ ...current, value })) }, 'aria-label': 'Block 分布滑轨' }),
           h('div', { className: 'sg-time-direction', 'aria-hidden': 'true' }, h('span', null, '更旧'), h('span', { className: 'sg-time-line' }), h('span', null, '更新 →')),
           h('div', { className: 'sg-overview-meta' }, h('span', null, '已封存块：本页 ' + visible.length + ' / 共 ' + pagedBlocks.page.total), h('span', null, '开放块：' + turnRangeText(currentOpen.turnRange) + '（未封存）'))),
+        h('div', { className: 'sg-session-layout', ref: sessionRef },
         h('section', { className: 'sg-block-list', 'aria-label': 'Block 列表' },
           h('div', { className: 'sg-block-header', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
           visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
@@ -3514,13 +3696,25 @@ window.__ModuleLoader__.load({
             } }),
             previewError?.scope === scope && previewError.blockId === block.id ? h('div', { role: 'alert', className: 'sg-selection-feedback error' }, previewError.message) : null,
             summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
-            expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
+            expandedId === block.id && sessionNarrow ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
           h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-block-toggle sg-open-row', 'data-depth': '5' },
             h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-open-badge' }, '未封存')),
             h('span', { className: 'sg-block-name' }, '开放块'),
             h('span', { className: 'sg-block-turn' }, turnRangeText(currentOpen.turnRange), h('span', { className: 'sg-open-dots', 'aria-hidden': 'true' }, Array.from({ length: openCapacity }, (_, index) => h('i', { key: index, className: index < Math.min(openTurns, openCapacity) ? '' : 'o' })))),
             h('span', { className: 'sg-block-distance' }, '—'),
             h('span', { className: 'sg-row-chevron', 'aria-hidden': 'true' })))),
+        !sessionNarrow && expandedId ? h('aside', { className: 'sg-session-side', 'aria-label': '会话记忆详情' }, visible.filter((block) => block.id === expandedId).map((block) => {
+          const level = visibleBlockLevel(block)
+          const layers = Array.isArray(details[block.id]?.layers) ? details[block.id].layers : []
+          const summary = layers.find((layer) => Number(layer.level) === level)?.content || layers.slice().sort((a, b) => Number(b.level) - Number(a.level))[0]?.content || ''
+          return h(React.Fragment, { key: block.id },
+            h('h4', null, (block.virtual ? '旧块 ' : '块 ') + block.sequence),
+            h('span', { className: 'sg-side-k' }, '记忆块 ' + block.sequence + (block.turnRange ? ' · ' + turnRangeText(block.turnRange) : '')),
+            level === null ? null : h('div', { className: 'sg-lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((step) => h('i', { key: step, className: step <= level ? 'on' : '' }))),
+            level === null ? null : h('div', { className: 'sg-lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
+            summary ? h('p', null, summary) : null,
+            h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (levelChoice) => expandTo(block, levelChoice) }))
+        })) : null),
         h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }))
     }
 
