@@ -1040,6 +1040,22 @@ export class StrataGateRuntime {
         if (result.sealedBlock) this.scheduleBlockDerivation(session, memory)
       }
     } catch (error) {
+      if (error instanceof StorageConflictError && memory) {
+        // Another DSH instance may have committed this namespace while the
+        // detached writer still held an older snapshot. Refresh before the
+        // queued turns are retried; replaying the stale revision only repeats
+        // the same conflict and blocks all later memory writes.
+        try {
+          await memory.reloadFromStorage()
+          const remaining = turns.slice(completed)
+          if (remaining.length > 0) {
+            this.pendingTurns.set(key, [...remaining, ...(this.pendingTurns.get(key) ?? [])])
+          }
+          return
+        } catch (reloadError) {
+          error = reloadError
+        }
+      }
       const remaining = turns.slice(completed)
       if (remaining.length > 0) {
         this.pendingTurns.set(key, [...remaining, ...(this.pendingTurns.get(key) ?? [])])
@@ -1734,18 +1750,9 @@ export class StrataGateRuntime {
     if (endTurn === null || hostCompactionActive(session)) return false
     const sourceEventSeqs = sources ?? sealedSurfaceSeqs(session, endTurn, block)
     if (!sourceEventSeqs) return false
-    const start = sourceEventSeqs[0]
-    const end = sourceEventSeqs.at(-1)
-    if (start === undefined || end === undefined) return false
     const selected = selectCompressedBlockSurface(session, sourceEventSeqs, block, context)
     if (!selected) return false
-    session.append('user/message', createUserMessage({
-      content: [{ type: 'text', text: selected }],
-      source: dshMessageSource(),
-    }), {
-      surfaceOp: dshReplaceSurfaceOp(start, end),
-      sourceEventSeqs,
-    })
+    appendBlockSurface(session, block, selected, sourceEventSeqs)
     this.surfaceFlushPending.add(session)
     levels.set(block.id, checkpointLevel(selected) ?? context.level)
     return true
@@ -1811,13 +1818,7 @@ export class StrataGateRuntime {
       )
       if (!text) continue
       if (node.text !== text) {
-        session.append('user/message', createUserMessage({
-          content: [{ type: 'text', text }],
-          source: dshMessageSource(),
-        }), {
-          surfaceOp: dshReplaceSurfaceOp(node.seq, node.seq),
-          sourceEventSeqs: [node.seq],
-        })
+        appendBlockSurface(session, block, text, [node.seq])
         this.surfaceFlushPending.add(session)
         changed = true
       }
@@ -1842,12 +1843,14 @@ export class StrataGateRuntime {
     const node = current.get(block.id)
     const endTurn = node ? null : dshTurnAtBlockEnd(session, block)
     const seqs = node ? [node.seq] : endTurn === null ? null : sealedSurfaceSeqs(session, endTurn, block)
-    if (!seqs?.length) return { status: 'blocked', reason: 'source-unavailable', message: '这段历史已被整理，无法在这里切换层级。可以让助手查找这段历史。' }
+    if (!seqs?.length || !safeBlockSurfaceRange(session, block, seqs)) return {
+      status: 'blocked', reason: 'source-unavailable',
+      message: '这段历史已被整理，或夹有需要保留的系统、工具或插件内容，无法在这里切换层级。可以让助手查找这段历史。',
+    }
     const relief: SurfaceRelief[] = []
     const window = session.requestContext?.()?.contextWindow
     if (node?.text !== text && typeof window === 'number' && Number.isInteger(window) && window > 0) {
-      const start = seqs[0]!
-      const end = seqs.at(-1)!
+      const replaced = new Set(seqs)
       let before = 0
       let removed = 0
       for (const seq of session.surface.nodes) {
@@ -1855,7 +1858,7 @@ export class StrataGateRuntime {
         const message = event && session.deriveEventMessage(event)
         const tokens = message ? estimateTokens(JSON.stringify(message)) : 0
         before += tokens
-        if (seq >= start && seq <= end) removed += tokens
+        if (replaced.has(seq)) removed += tokens
       }
       const header = session.requestHeader?.()
       const reserved = (header?.config.maxTokens ?? 0) + (header?.tools?.length ? estimateTokens(JSON.stringify(header.tools)) : 0)
@@ -1871,7 +1874,7 @@ export class StrataGateRuntime {
           && candidate.lastLiftedBy !== 'user').sort((a, b) => a.sequence - b.sequence)
         for (const candidate of candidates) {
           const checkpoint = current.get(candidate.id)
-          if (!checkpoint || checkpoint.seq >= start && checkpoint.seq <= end) continue
+          if (!checkpoint || replaced.has(checkpoint.seq)) continue
           const level = checkpointLevel(checkpoint.text)
           if (level === undefined || level === 0) continue
           const original = this.cachedCheckpointTokens(session, checkpoint)
@@ -1920,20 +1923,15 @@ export class StrataGateRuntime {
     }
     const { text, seqs, relief } = plan
     for (const replacement of relief) {
-      session.append('user/message', createUserMessage({
-        content: [{ type: 'text', text: replacement.text }], source: dshMessageSource(),
-      }), { surfaceOp: dshReplaceSurfaceOp(replacement.seq, replacement.seq), sourceEventSeqs: [replacement.seq] })
+      const replacementBlock = memory.listBlocks().find(candidate => candidate.id === replacement.id)
+      if (!replacementBlock) continue
+      appendBlockSurface(session, replacementBlock, replacement.text, [replacement.seq])
       levels.set(replacement.id, replacement.level)
       this.surfaceFlushPending.add(session)
     }
     const node = currentBlockSurfaceMessages(session).get(block.id)
     if (node?.text !== text) {
-      const start = seqs[0]
-      const end = seqs.at(-1)
-      if (start === undefined || end === undefined) return false
-      session.append('user/message', createUserMessage({
-        content: [{ type: 'text', text }], source: dshMessageSource(),
-      }), { surfaceOp: dshReplaceSurfaceOp(start, end), sourceEventSeqs: seqs })
+      appendBlockSurface(session, block, text, seqs)
       this.surfaceFlushPending.add(session)
     }
     levels.set(block.id, context.level)
@@ -4009,9 +4007,15 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
         start: open.start,
         end: event.seq,
         nodes: currentSurface.filter((seq) => {
-          if (seq > open!.start && seq < event.seq) return true
           const current = session.eventAt(seq)
-          return current?.type === 'tool/result'
+          // System/developer messages are live instructions, never raw
+          // conversation owned by a memory Block.
+          if (!replaceableBlockEvent(current, block.id)) return false
+          if ((current?.type === 'assistant/message' || current?.type === 'tool/result')
+            && !surfaceEventBelongsToTurn(session, current, open!.turn)) return false
+          if (seq > open!.start && seq < event.seq) return true
+          return (current?.type === 'tool/result' || current?.type === 'assistant/message')
+            && surfaceEventBelongsToTurn(session, current, open!.turn)
             && current.surfaceOp !== 'append'
             && current.sourceEventSeqs?.some((source) => source > open!.start && source < event.seq)
         }),
@@ -4044,7 +4048,92 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
   const startIndex = currentSurface.indexOf(start)
   const endIndex = currentSurface.indexOf(end)
   if (startIndex < 0 || endIndex < startIndex) return null
-  return currentSurface.slice(startIndex, endIndex + 1)
+  const range = currentSurface.slice(startIndex, endIndex + 1)
+  // A native replacement shadows the whole contiguous range between its ends.
+  // Reject the operation when that range contains another turn's content.
+  return safeBlockSurfaceRange(session, block, range) ? range : null
+}
+
+function replaceableBlockEvent(event: SessionEvent | undefined, blockId: string): boolean {
+  if (event?.type === 'assistant/message' || event?.type === 'tool/result') return true
+  return event?.type === 'user/message'
+    && (event.data.source.kind === 'user' || blockSurfaceMessage(event)?.id === blockId)
+}
+
+function turnAtSurfaceSeq(session: Session, seq: SessionSeq): number | undefined {
+  let turn: number | undefined
+  for (const event of session.snapshotEvents()) {
+    if (event.seq >= seq) break
+    if (event.type === 'turn/start') turn = event.data.turn
+    else if (event.type === 'turn/end') turn = undefined
+  }
+  return turn
+}
+
+function sourceTurnsForBlock(session: Session, block: MemoryBlock): Set<number> {
+  const sourceTimes = new Set(block.l5Raw.filter((message) => message.role === 'user')
+    .map((message) => Date.parse(message.createdAt)))
+  return new Set(session.snapshotEvents()
+    .filter((event): event is Extract<SessionEvent, { type: 'turn/end' }> => event.type === 'turn/end'
+      && sourceTimes.has(event.time))
+    .map((event) => event.data.turn))
+}
+
+function surfaceEventTurns(
+  session: Session,
+  event: Extract<SessionEvent, { type: 'assistant/message' | 'tool/result' }>,
+): Set<number> {
+  if (event.surfaceOp !== 'append' && event.sourceEventSeqs?.length) {
+    const sourceTurns = event.sourceEventSeqs.flatMap((source) => {
+      const original = session.eventAt(source)
+      return original?.type === 'assistant/message' || original?.type === 'tool/result'
+        ? [original.data.turn] : []
+    })
+    if (sourceTurns.length > 0) return new Set(sourceTurns)
+  }
+  return new Set([event.data.turn])
+}
+
+function surfaceEventBelongsToTurn(
+  session: Session,
+  event: Extract<SessionEvent, { type: 'assistant/message' | 'tool/result' }>,
+  turn: number,
+): boolean {
+  const turns = surfaceEventTurns(session, event)
+  return turns.size === 1 && turns.has(turn)
+}
+
+function safeBlockSurfaceRange(session: Session, block: MemoryBlock, seqs: readonly SessionSeq[]): boolean {
+  if (seqs.length === 0) return false
+  const start = session.surface.nodes.indexOf(seqs[0]!)
+  if (start < 0) return false
+  const sourceTurns = sourceTurnsForBlock(session, block)
+  return seqs.every((seq, index) => {
+    if (session.surface.nodes[start + index] !== seq) return false
+    const event = session.eventAt(seq)
+    if (!replaceableBlockEvent(event, block.id)) return false
+    const checkpoint = blockSurfaceMessage(event)
+    if (checkpoint) return checkpoint.id === block.id
+    if (event?.type === 'assistant/message' || event?.type === 'tool/result') {
+      const eventTurns = surfaceEventTurns(session, event)
+      return eventTurns.size > 0 && [...eventTurns].every(turn => sourceTurns.has(turn))
+    }
+    if (event?.type === 'user/message' && event.data.source.kind === 'user') {
+      return sourceTurns.has(turnAtSurfaceSeq(session, seq) ?? -1)
+    }
+    return false
+  })
+}
+
+function appendBlockSurface(session: Session, block: MemoryBlock, text: string, seqs: SessionSeq[]): void {
+  if (!safeBlockSurfaceRange(session, block, seqs)) {
+    throw Object.assign(new Error('StrataGate surface replacement no longer owns its complete source range'), { retryable: false })
+  }
+  session.append('user/message', createUserMessage({
+    content: [{ type: 'text', text }], source: dshMessageSource(),
+  }), {
+    surfaceOp: dshReplaceSurfaceOp(seqs[0]!, seqs.at(-1)!), sourceEventSeqs: seqs,
+  })
 }
 
 function checkpointLevel(text: string): BlockLevel | undefined {

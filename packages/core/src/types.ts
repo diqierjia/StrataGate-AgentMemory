@@ -521,6 +521,8 @@ export interface GraphEdgeProjection {
   fromRef: string;
   toRef: string;
   relation: string;
+  /** Existing edge ids that this projection explicitly replaces. */
+  supersedesEdgeIds?: string[];
   status?: GraphRecordStatus;
   validFrom?: string;
   validTo?: string;
