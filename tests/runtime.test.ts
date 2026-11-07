@@ -1502,6 +1502,98 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
+  it('reloads a shared namespace after a concurrent writer conflict before retrying ingestion', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-shared-writer-'))
+    const database = join(directory, 'memory.db')
+    const config: ResolvedConfig = {
+      database, namespaceMode: 'project', namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 4, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
+    }
+    const runtimeA = new StrataGateRuntime(config, fakeModels)
+    const runtimeB = new StrataGateRuntime(config, fakeModels)
+    const sessionA = Session.create('shared-writer-a' as never)
+    const sessionB = Session.create('shared-writer-b' as never)
+    const accessA = runtimeA as unknown as { space(active: Session): Promise<StrataGate> }
+    const accessB = runtimeB as unknown as { space(active: Session): Promise<StrataGate> }
+    try {
+      const memoryB = await accessB.space(sessionB)
+      const memoryA = await accessA.space(sessionA)
+      for (const event of turnEvents(1)) runtimeA.acceptEvent(sessionA, event)
+      await runtimeA.flush()
+      expect(memoryA.turn).toBe(1)
+
+      for (const event of turnEvents(2)) runtimeB.acceptEvent(sessionB, event)
+      await runtimeB.flush()
+      await vi.waitFor(() => expect(memoryB.turn).toBe(2), { timeout: 5_000, interval: 100 })
+
+      const reopened = await StrataGate.open({ database, namespace: runtimeB.namespaceFor(sessionB), blockTurnSize: 4 })
+      try { expect(reopened.turn).toBe(2) } finally { await reopened.close() }
+    } finally {
+      await runtimeA.close().catch(() => {})
+      await runtimeB.close().catch(() => {})
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not assign a late old-turn tool replacement to the next Block', async () => {
+    const memory = StrataGate.inMemory({ blockTurnSize: 1,
+      summarizer: async () => ({ l0Title: 'Saved work', l0Tags: [], l1Summary: 'Saved summary', l2Keypoints: [], shouldExtract: false }),
+    })
+    const activeSession = Session.create('surface-cross-block' as never)
+    const append = activeSession.append.bind(activeSession) as (...args: unknown[]) => SessionEvent
+    const runtime = new StrataGateRuntime({
+      database: ':memory:', namespaceMode: 'session', namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 1, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      append('turn/start', { turn: 1 })
+      append('step/start', { turn: 1, step: 1 })
+      const oldUser = append('user/message', createUserMessage({ content: [{ type: 'text', text: 'old turn' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
+      const callId = 'old-call' as never
+      const oldCall = append('assistant/message', { turn: 1, step: 1, message: createAssistantMessage({
+        content: [{ type: 'tool-call', id: callId, name: 'inspect', arguments: '{}' }], source: { provider: 'test', model: 'test' },
+      }), stream: [] }, { surfaceOp: 'append' })
+      append('tool/call', { turn: 1, step: 1, callId, name: 'inspect', arguments: '{}' })
+      append('step/end', { turn: 1, step: 1 })
+      const oldEnd = append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      await memory.appendTurn({ user: 'old turn', assistant: 'old tool output', threadId: String(activeSession.id), createdAt: new Date(oldEnd.time).toISOString(), assistantToolCalls: [{ name: 'inspect', arguments: {}, result: 'old tool output' }] })
+
+      await new Promise(resolve => setTimeout(resolve, 2))
+      append('turn/start', { turn: 2 })
+      append('step/start', { turn: 2, step: 1 })
+      const newUser = append('user/message', createUserMessage({ content: [{ type: 'text', text: 'new turn' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
+      // The old turn's tool result lands after the next user message, then its
+      // content is replaced in place. The session fold keeps that replacement
+      // between the new turn's own surface nodes.
+      const oldResult = append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
+        callId, content: [{ type: 'text', text: 'old tool output' }], isError: false,
+      }) }, { surfaceOp: 'append' })
+      const oldResultData = oldResult.data as Extract<SessionEvent, { type: 'tool/result' }>['data']
+      const replacement = append('tool/result', { ...oldResultData, message: { ...oldResultData.message, content: [{ type: 'text', text: 'short old output' }] } }, {
+        surfaceOp: { op: 'replace', startSeq: oldResult.seq, endSeq: oldResult.seq }, sourceEventSeqs: [oldResult.seq],
+      })
+      const newAnswer = append('assistant/message', { turn: 2, step: 1, message: createAssistantMessage({
+        content: [{ type: 'text', text: 'new answer' }], source: { provider: 'test', model: 'test' },
+      }), stream: [] }, { surfaceOp: 'append' })
+      append('step/end', { turn: 2, step: 1 })
+      const newEnd = append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+      await memory.appendTurn({ user: 'new turn', assistant: 'new answer', threadId: String(activeSession.id), createdAt: new Date(newEnd.time).toISOString() })
+
+      const block = memory.listBlocks()[1]!
+      const context = memory.getBlockContext(String(activeSession.id), new Set([block.id]))[0]!
+      const surface = [...activeSession.surface.nodes]
+      expect(surface).toEqual([oldUser.seq, oldCall.seq, newUser.seq, replacement.seq, newAnswer.seq])
+      const changed = (runtime as unknown as { applySealedSurface: (...args: unknown[]) => boolean })
+        .applySealedSurface(activeSession, block, context, 2, new Map())
+      expect(changed).toBe(false)
+      expect([...activeSession.surface.nodes]).toEqual(surface)
+      expect(newAnswer.seq).toBeGreaterThan(oldResult.seq)
+    } finally {
+      await runtime.close()
+      await memory.close()
+    }
+  })
+
   it('uses native surface replacement for sealed turns and preserves the open-tail tool chain', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-native-compaction-'))
     const database = join(directory, 'memory.db')

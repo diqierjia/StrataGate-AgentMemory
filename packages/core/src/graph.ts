@@ -435,8 +435,9 @@ export function applyGraphProjection(options: ApplyGraphProjectionOptions): { no
       warnings.push(`Dropped current edge "${relation}" because it has no active Event provenance.`);
       continue;
     }
-    for (const old of options.edges.filter((edge) => edge.status === 'active'
-      && edge.fromNodeId === from.id && edge.relation === relation && edge.toNodeId !== to.id)) {
+    const supersededIds = new Set(strings(proposal.supersedesEdgeIds, 64));
+    for (const old of options.edges.filter((edge) => supersededIds.has(edge.id)
+      && edge.status === 'active' && edge.fromNodeId === from.id && edge.relation === relation && edge.toNodeId !== to.id)) {
       old.status = 'superseded';
       if (!old.validTo) old.validTo = validFrom;
       old.updatedAt = options.now;

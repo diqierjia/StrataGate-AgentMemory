@@ -1084,13 +1084,57 @@ describe('DeepSeek Harness model JSON retries', () => {
     expect(payload.existingNodes[0]).not.toHaveProperty('confidence')
     expect(payload.existingNodes[0]).not.toHaveProperty('createdAt')
     expect(payload.existingNodes[0].facts[0]).not.toHaveProperty('id')
-    expect(payload.existingEdges[0]).not.toHaveProperty('id')
+    expect(payload.existingEdges.map((edge: { id: string }) => edge.id)).toEqual(existingEdges.slice(-60).map(({ id }) => id))
+    expect(payload.existingEdges[0]).not.toHaveProperty('confidence')
+    expect(payload.existingEdges[0]).not.toHaveProperty('createdAt')
+    expect(payload.existingEdges[0]).not.toHaveProperty('updatedAt')
     expect(JSON.stringify(payload).length).toBeLessThan(JSON.stringify(context).length * 0.35)
     expect(request.system).toContain('never echo unchanged historical graph records')
+    expect(request.system).toContain('supersedesEdgeIds copied from existingEdges.id')
     expect(result.nodes).toHaveLength(24)
     expect(result.edges).toHaveLength(32)
     expect(result.nodes[0]?.name).toBe('Proposal 0')
     expect(result.edges[0]?.relation).toBe('related')
+  })
+
+  it('keeps explicit supersedesEdgeIds only when both endpoints are declared', async () => {
+    const event = {
+      id: 'evt_replace', title: 'Storage change', summary: 'Atlas now uses Redis instead of PostgreSQL.',
+      tags: [], quotes: [], sourceMessageIds: ['msg_replace'], sourceBlockId: 'blk_replace',
+      temporal: {}, scope: 'project' as const, criticality: 'routine' as const,
+      status: 'active' as const, supersededBy: null,
+      weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
+      createdAt: '2026-09-20T00:00:00.000Z', updatedAt: '2026-09-20T00:00:00.000Z',
+    }
+    const node = (ref: string, name: string, type: string) => ({
+      ref, name, type, tags: ['service'],
+      metadataProvenance: {
+        name: [event.id],
+        tags: [{ value: 'service', sourceEventIds: [event.id] }],
+      },
+      sourceEventIds: [event.id],
+    })
+    const listed = Array.from({ length: 33 }, (_, index) => `edge_${index}`)
+    const { bridge, session } = modelBridge([{
+      tool: {
+        reason: 'explicit replacement',
+        nodes: [node('atlas', 'Atlas', 'project'), node('redis', 'Redis', 'tool')],
+        edges: [
+          { fromRef: 'atlas', toRef: 'redis', relation: 'uses', supersedesEdgeIds: listed, sourceEventIds: [event.id] },
+          { fromRef: 'atlas', toRef: 'missing', relation: 'uses', supersedesEdgeIds: ['edge_hidden'], sourceEventIds: [event.id] },
+          { fromRef: 'atlas', toRef: 'redis', relation: 'mentions', sourceEventIds: [event.id] },
+        ],
+      },
+    }])
+    const result = await bridge.run(session, () => bridge.graphProjector({
+      jobId: 'gproj_supersede', projectorVersion: 1, events: [event], existingNodes: [], existingEdges: [],
+    }))
+    expect(result.edges).toHaveLength(2)
+    expect(result.edges[0]).toMatchObject({
+      fromRef: 'atlas', toRef: 'redis', relation: 'uses', supersedesEdgeIds: listed.slice(0, 32),
+    })
+    expect(result.edges[1]).toEqual({ fromRef: 'atlas', toRef: 'redis', relation: 'mentions', sourceEventIds: [event.id] })
+    expect(JSON.stringify(result.edges[1])).not.toContain('supersedesEdgeIds')
   })
 
   it('does not pay for an identical second Graph call after max-token truncation', async () => {
