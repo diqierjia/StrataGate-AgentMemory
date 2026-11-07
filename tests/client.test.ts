@@ -1381,7 +1381,7 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'/' + run.total + ' 批次'")
     expect(source).toContain('Dreaming 整理进度（批次）')
     expect(source).toContain("const [section, setSection] = React.useState('overview')")
-    expect(source).toContain("[['overview', '总览'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['profile', '常驻画像'], ['more', '更多']]")
+    expect(source).toContain("[['overview', '总览'], ['short', '会话'], ['daily', '短期'], ['long', '长期'], ['profile', '画像'], ['more', '更多']]")
     expect(source).toContain('块衰减总览')
     expect(source).toContain('开放块 · 未封存')
     expect(source).toContain('距最新封存块')
@@ -2490,7 +2490,7 @@ describe('daily notes client', () => {
   it('keeps the overview default and six untruncated navigation labels', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain("React.useState('overview')")
-    expect(source).toContain("[['overview', '总览'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['profile', '常驻画像'], ['more', '更多']]")
+    expect(source).toContain("[['overview', '总览'], ['short', '会话'], ['daily', '短期'], ['long', '长期'], ['profile', '画像'], ['more', '更多']]")
     expect(source).toContain('grid-template-columns:repeat(6,minmax(0,1fr))')
     expect(source).toContain('会话记忆详情')
     expect(source).toContain('会话记忆状态')
