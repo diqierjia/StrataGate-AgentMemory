@@ -483,7 +483,7 @@ window.__ModuleLoader__.load({
         --sg-fast:140ms;
         --sg-medium:220ms;
         container:sg-memory / inline-size;position:relative;isolation:isolate;box-sizing:border-box;width:100%;max-width:1200px;min-width:0;margin:0 auto;padding:18px 20px 36px;
-        background:radial-gradient(circle at 8% -8%,color-mix(in srgb,var(--sg-accent) 5%,transparent),transparent 32%),var(--sg-page);color:var(--sg-text);font:14px/1.55 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+        background:var(--sg-page);color:var(--sg-text);font:14px/1.55 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;
         letter-spacing:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;
       }
       .sg-memory *{box-sizing:border-box;letter-spacing:0}.sg-memory button,.sg-memory input,.sg-memory select{font:inherit;color:inherit}.sg-memory button,.sg-memory a,.sg-memory input,.sg-memory select,.sg-memory summary{transition:color var(--sg-fast) var(--sg-ease),background-color var(--sg-fast) var(--sg-ease),border-color var(--sg-fast) var(--sg-ease),box-shadow var(--sg-fast) var(--sg-ease),opacity var(--sg-fast) var(--sg-ease),transform var(--sg-fast) var(--sg-ease)}.sg-memory button:active,.sg-memory a:active{transform:scale(.985)}.sg-memory :is(button,a,input,select,summary,[tabindex]):focus-visible{outline:2px solid var(--sg-accent);outline-offset:2px;box-shadow:0 0 0 4px var(--sg-focus)}
@@ -508,19 +508,19 @@ window.__ModuleLoader__.load({
       .sg-process-notice{padding:12px 13px;margin:0 0 14px;border:1px solid color-mix(in srgb,var(--sg-warn) 30%,var(--sg-border));border-radius:8px;background:var(--sg-warn-soft)}.sg-process-notice strong{display:block;color:var(--sg-text);font-size:13px}.sg-process-notice span{display:block;margin-top:3px;color:var(--sg-muted);font-size:12px}.sg-process-unavailable{padding:24px 14px;text-align:center;color:var(--sg-muted)}.sg-process-unavailable strong{display:block;color:var(--sg-text);font-size:14px}.sg-process-unavailable span{display:block;margin-top:5px;font-size:12px}
       .sg-menu{display:grid;gap:7px}.sg-menu-row{display:grid;grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:11px;width:100%;padding:12px;border:1px solid transparent;border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 48%,transparent);text-align:left;cursor:pointer}.sg-menu-row:hover{border-color:color-mix(in srgb,var(--sg-accent) 22%,var(--sg-border));background:color-mix(in srgb,var(--sg-accent) 6%,var(--sg-surface));transform:translateY(-1px);box-shadow:0 8px 20px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-menu-row:hover .sg-menu-title,.sg-menu-row:hover .sg-chevron{color:var(--sg-accent)}.sg-menu-icon{width:32px;height:32px;display:grid;place-items:center;border:1px solid color-mix(in srgb,var(--sg-accent) 14%,var(--sg-border));border-radius:8px;background:var(--sg-soft);color:var(--sg-muted);font-weight:700}.sg-menu-title{font-weight:700}.sg-menu-subtitle{color:var(--sg-muted);font-size:12px}.sg-counts{display:flex;gap:22px;padding:5px 0 18px;border-bottom:1px solid var(--sg-border)}.sg-count-value{font-size:22px;font-weight:760;letter-spacing:-.03em}.sg-count-label{color:var(--sg-muted);font-size:12px}.sg-structured-group{padding-top:17px}.sg-raw-group{padding:12px 0;border-bottom:1px solid var(--sg-border)}.sg-raw-group summary{cursor:pointer;font-weight:680}.sg-raw-json{max-height:360px;padding:11px;margin:10px 0 0;overflow:auto;border-radius:7px;background:var(--sg-soft)}
       .sg-import-card{padding:15px;border:1px solid color-mix(in srgb,var(--sg-accent) 22%,var(--sg-border));border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 72%,transparent);box-shadow:0 8px 24px color-mix(in srgb,var(--sg-text) 5%,transparent)}.sg-import-card textarea{width:100%;min-height:270px;padding:11px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page);resize:vertical;outline:0;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.sg-import-card textarea:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-import-actions{display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap}.sg-import-button{padding:8px 13px;border:1px solid var(--sg-accent);border-radius:7px;background:var(--sg-accent);color:#fff;cursor:pointer;font-weight:680}.sg-import-button:disabled{cursor:wait;opacity:.6}.sg-import-hint{margin:8px 0 0;color:var(--sg-muted);font-size:12px}.sg-import-result{margin-top:12px;padding:10px 11px;border-radius:7px;background:var(--sg-good-soft);color:var(--sg-good);font-size:12px}.sg-import-error{margin-top:12px;padding:10px 11px;border-radius:7px;background:var(--sg-danger-soft);color:var(--sg-danger);font-size:12px}
-      .sg-import-overlay{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.52);backdrop-filter:blur(2px);animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-import-dialog{width:min(720px,calc(100vw - 28px));max-height:calc(100vh - 36px);overflow:auto;padding:14px;border:1px solid color-mix(in srgb,var(--sg-border) 90%,#fff 10%);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.42)}.sg-import-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}.sg-import-dialog-title{margin:0;font-size:18px;font-weight:760}.sg-import-step{padding:12px;margin-top:10px;border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 78%,transparent)}.sg-import-step-head{display:flex;align-items:center;gap:9px;margin-bottom:9px}.sg-import-step-num{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--sg-text);color:var(--sg-page);font-weight:760}.sg-import-step-title{font-weight:720}.sg-import-prompt{max-height:185px;padding:10px;overflow:auto;border-radius:7px;background:var(--sg-page);color:var(--sg-muted);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.sg-import-dialog .sg-import-card{padding:0;border:0;box-shadow:none;background:transparent}.sg-import-dialog .sg-import-card textarea{min-height:165px;background:var(--sg-page)}.sg-import-dialog-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}.sg-import-cancel{padding:8px 18px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;cursor:pointer}.sg-import-dialog .sg-import-button{padding:8px 18px}.sg-import-copy{margin-left:auto;padding:6px 11px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);cursor:pointer;font-size:12px}.sg-import-copy:hover{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-import-loading{color:var(--sg-muted);font-size:12px}.sg-import-preview{display:grid;gap:8px;margin-top:10px}.sg-import-preview-item{padding:10px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page)}.sg-import-preview-content{margin-top:7px;padding:8px;border-radius:6px;background:var(--sg-surface);font-size:12px;line-height:1.55}.sg-import-preview-content strong{display:block;margin-bottom:3px}.sg-import-preview-title{font-weight:700}.sg-import-preview-meta{display:flex;gap:8px;margin-top:5px;color:var(--sg-muted);font-size:12px}.sg-import-preview-reason{margin-top:5px;font-size:12px}.sg-import-review{display:flex;gap:7px;align-items:flex-start;margin-top:8px;color:var(--sg-warn);font-size:12px}
+      .sg-import-overlay{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(0,0,0,.52);animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-import-dialog{width:min(720px,calc(100vw - 28px));max-height:calc(100vh - 36px);overflow:auto;padding:14px;border:1px solid color-mix(in srgb,var(--sg-border) 90%,#fff 10%);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.42)}.sg-import-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}.sg-import-dialog-title{margin:0;font-size:18px;font-weight:760}.sg-import-step{padding:12px;margin-top:10px;border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 78%,transparent)}.sg-import-step-head{display:flex;align-items:center;gap:9px;margin-bottom:9px}.sg-import-step-num{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--sg-text);color:var(--sg-page);font-weight:760}.sg-import-step-title{font-weight:720}.sg-import-prompt{max-height:185px;padding:10px;overflow:auto;border-radius:7px;background:var(--sg-page);color:var(--sg-muted);font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}.sg-import-dialog .sg-import-card{padding:0;border:0;box-shadow:none;background:transparent}.sg-import-dialog .sg-import-card textarea{min-height:165px;background:var(--sg-page)}.sg-import-dialog-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}.sg-import-cancel{padding:8px 18px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;cursor:pointer}.sg-import-dialog .sg-import-button{padding:8px 18px}.sg-import-copy{margin-left:auto;padding:6px 11px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);cursor:pointer;font-size:12px}.sg-import-copy:hover{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-import-loading{color:var(--sg-muted);font-size:12px}.sg-import-preview{display:grid;gap:8px;margin-top:10px}.sg-import-preview-item{padding:10px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-page)}.sg-import-preview-content{margin-top:7px;padding:8px;border-radius:6px;background:var(--sg-surface);font-size:12px;line-height:1.55}.sg-import-preview-content strong{display:block;margin-bottom:3px}.sg-import-preview-title{font-weight:700}.sg-import-preview-meta{display:flex;gap:8px;margin-top:5px;color:var(--sg-muted);font-size:12px}.sg-import-preview-reason{margin-top:5px;font-size:12px}.sg-import-review{display:flex;gap:7px;align-items:flex-start;margin-top:8px;color:var(--sg-warn);font-size:12px}
       .sg-audit{padding:14px 0;border-bottom:1px solid var(--sg-border)}.sg-audit summary{cursor:pointer}.sg-audit-body{margin-top:10px}.sg-audit-evidence{margin-top:9px}.sg-star{padding:14px 0;margin-top:14px;border-top:1px solid var(--sg-border)}.sg-star-actions{display:flex;gap:10px;align-items:center;margin-top:8px}.sg-link{color:var(--sg-accent);text-decoration:none}.sg-quiet-button{padding:5px 7px;border-radius:5px;color:var(--sg-muted);font-size:12px}.sg-pagination{display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 0;color:var(--sg-muted);font-size:12px}.sg-page-button{padding:6px 10px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);cursor:pointer}.sg-page-button:hover:not(:disabled){border-color:var(--sg-accent);color:var(--sg-accent)}.sg-page-button:disabled{cursor:not-allowed;opacity:.45}.sg-page-error{color:var(--sg-danger)}
-      .sg-decay-overview{padding:15px 16px 13px;margin-bottom:12px;border:1px solid color-mix(in srgb,var(--sg-accent) 20%,var(--sg-border));border-radius:12px;background:linear-gradient(145deg,color-mix(in srgb,var(--sg-surface) 88%,transparent),color-mix(in srgb,var(--sg-accent) 4%,var(--sg-surface)));box-shadow:0 8px 24px color-mix(in srgb,var(--sg-text) 5%,transparent)}.sg-decay-title{margin:0;font-size:14px;font-weight:740;letter-spacing:-.012em}.sg-decay-copy{margin:3px 0 12px;color:var(--sg-muted);font-size:12px}.sg-distribution{display:flex;align-items:stretch;gap:4px;min-width:0;overflow-x:auto;padding:2px 0 3px}.sg-level-chip{display:grid;place-items:center;min-width:39px;height:38px;padding:0 10px;border:1px solid color-mix(in srgb,var(--sg-accent) 36%,var(--sg-border));border-radius:7px;font-weight:740;white-space:nowrap;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--sg-surface) 55%,transparent)}.sg-level-chip:hover{transform:translateY(-2px)}.sg-level-chip[data-level="0"],.sg-level-badge[data-level="0"],.sg-layer-item.current[data-level="0"]{background:var(--sg-level-0)}.sg-level-chip[data-level="1"],.sg-level-badge[data-level="1"],.sg-layer-item.current[data-level="1"]{background:var(--sg-level-1)}.sg-level-chip[data-level="2"],.sg-level-badge[data-level="2"],.sg-layer-item.current[data-level="2"]{background:var(--sg-level-2)}.sg-level-chip[data-level="3"],.sg-level-badge[data-level="3"],.sg-layer-item.current[data-level="3"]{background:var(--sg-level-3)}.sg-level-chip[data-level="4"],.sg-level-badge[data-level="4"],.sg-layer-item.current[data-level="4"]{background:var(--sg-level-4)}.sg-level-chip[data-level="5"],.sg-level-badge[data-level="5"],.sg-layer-item.current[data-level="5"]{background:var(--sg-level-5)}.sg-open-chip{min-width:116px;border-style:dashed;background:transparent;color:var(--sg-text);font-weight:650;box-shadow:none}.sg-time-direction{display:flex;align-items:center;gap:9px;margin-top:9px;color:var(--sg-muted);font-size:11px}.sg-time-line{height:1px;flex:1;background:linear-gradient(90deg,var(--sg-border),var(--sg-accent))}.sg-overview-meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;color:var(--sg-muted);font-size:12px}
+      .sg-decay-overview{padding:15px 16px 13px;margin-bottom:12px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-surface)}.sg-decay-title{margin:0;font-size:14px;font-weight:740;letter-spacing:-.012em}.sg-decay-copy{margin:3px 0 12px;color:var(--sg-muted);font-size:12px}.sg-distribution{display:flex;align-items:stretch;gap:4px;min-width:0;overflow-x:auto;padding:2px 0 3px}.sg-level-chip{display:grid;place-items:center;min-width:39px;height:38px;padding:0 10px;border:1px solid color-mix(in srgb,var(--sg-accent) 36%,var(--sg-border));border-radius:7px;font-weight:740;white-space:nowrap;box-shadow:inset 0 1px 0 color-mix(in srgb,var(--sg-surface) 55%,transparent)}.sg-level-chip:hover{transform:translateY(-2px)}.sg-level-chip[data-level="0"],.sg-level-badge[data-level="0"],.sg-layer-item.current[data-level="0"]{background:var(--sg-level-0)}.sg-level-chip[data-level="1"],.sg-level-badge[data-level="1"],.sg-layer-item.current[data-level="1"]{background:var(--sg-level-1)}.sg-level-chip[data-level="2"],.sg-level-badge[data-level="2"],.sg-layer-item.current[data-level="2"]{background:var(--sg-level-2)}.sg-level-chip[data-level="3"],.sg-level-badge[data-level="3"],.sg-layer-item.current[data-level="3"]{background:var(--sg-level-3)}.sg-level-chip[data-level="4"],.sg-level-badge[data-level="4"],.sg-layer-item.current[data-level="4"]{background:var(--sg-level-4)}.sg-level-chip[data-level="5"],.sg-level-badge[data-level="5"],.sg-layer-item.current[data-level="5"]{background:var(--sg-level-5)}.sg-open-chip{min-width:116px;border-style:dashed;background:transparent;color:var(--sg-text);font-weight:650;box-shadow:none}.sg-time-direction{display:flex;align-items:center;gap:9px;margin-top:9px;color:var(--sg-muted);font-size:11px}.sg-time-line{height:1px;flex:1;background:var(--sg-border)}.sg-overview-meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;color:var(--sg-muted);font-size:12px}
       .sg-block-list{position:relative;border:1px solid var(--sg-border);border-radius:12px;background:color-mix(in srgb,var(--sg-surface) 56%,transparent);overflow:hidden}.sg-block-header,.sg-block-toggle{display:grid;grid-template-columns:88px 98px minmax(128px,1fr) 116px 24px;align-items:center;gap:8px;width:100%;min-width:0}.sg-block-header{padding:9px 12px;border-bottom:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-soft) 48%,transparent);color:var(--sg-muted);font-size:11px}.sg-block-unit+.sg-block-unit{border-top:1px solid var(--sg-border)}.sg-block-toggle{padding:11px 12px;border:0;background:transparent;text-align:left;cursor:pointer}.sg-block-toggle:hover,.sg-block-toggle[aria-expanded="true"]{background:color-mix(in srgb,var(--sg-accent) 6%,transparent)}.sg-block-toggle:hover .sg-row-chevron{color:var(--sg-accent);transform:translateX(2px)}.sg-block-toggle[aria-expanded="true"] .sg-row-chevron{color:var(--sg-accent);transform:rotate(180deg)}.sg-level-cell{display:flex;align-items:center;gap:6px;min-width:0}.sg-level-badge{display:inline-grid;place-items:center;min-width:38px;height:25px;padding:0 8px;border:1px solid color-mix(in srgb,var(--sg-accent) 42%,var(--sg-border));border-radius:6px;font-weight:740}.sg-lifted{padding:1px 5px;border:1px solid var(--sg-border);border-radius:5px;color:var(--sg-muted);font-size:10px;white-space:nowrap}.sg-block-name{font-weight:690}.sg-block-distance,.sg-block-turn{color:var(--sg-muted);font-size:12px}.sg-row-chevron{color:var(--sg-muted);font-size:17px;text-align:right;transition:color var(--sg-fast) var(--sg-ease),transform var(--sg-medium) var(--sg-ease)}.sg-open-row{cursor:default}.sg-open-row:hover{background:transparent}.sg-open-badge{display:inline-flex;align-items:center;height:25px;padding:0 8px;border:1px dashed var(--sg-muted);border-radius:6px;white-space:nowrap}.sg-block-expanded{padding:0 10px 11px;transform-origin:top;animation:sg-expand var(--sg-medium) var(--sg-ease) both}.sg-layer-panel{padding:11px;border:1px solid var(--sg-border);border-radius:9px;background:color-mix(in srgb,var(--sg-page) 82%,var(--sg-surface));box-shadow:inset 0 1px 0 color-mix(in srgb,var(--sg-surface) 70%,transparent)}.sg-layer-heading{display:flex;justify-content:space-between;gap:10px;margin-bottom:8px}.sg-layer-heading strong{font-size:13px}.sg-layer-heading span{color:var(--sg-muted);font-size:11px}.sg-layer-stack{display:flex;flex-direction:column;gap:5px}.sg-layer-hover{position:relative}.sg-layer-hover:has(.sg-layer-menu){z-index:15}.sg-layer-item:has(.sg-layer-menu){transform:none}.sg-layer-hover:after{content:"";position:absolute;left:100%;top:0;width:12px;height:100%}.sg-layer-item{position:relative;display:grid;grid-template-columns:39px minmax(0,1fr) 30px;align-items:stretch;min-height:39px;border:1px solid var(--sg-border);border-radius:7px;background:color-mix(in srgb,var(--sg-soft) 55%,transparent);color:var(--sg-muted)}.sg-layer-item:hover{border-color:color-mix(in srgb,var(--sg-accent) 34%,var(--sg-border));transform:translateX(2px)}.sg-layer-item.current{border-color:color-mix(in srgb,var(--sg-accent) 72%,var(--sg-border));color:var(--sg-text);box-shadow:inset 2px 0 0 var(--sg-accent)}.sg-layer-label{display:grid;place-items:center;border-right:1px solid var(--sg-border);font-weight:720;color:inherit}.sg-layer-preview{padding:8px 10px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px}.sg-layer-more{width:30px;border:0;border-left:1px solid transparent;border-radius:0 6px 6px 0;background:transparent;color:inherit;cursor:pointer;font-weight:800;letter-spacing:1px}.sg-layer-more:hover,.sg-layer-more[aria-expanded="true"]{background:color-mix(in srgb,var(--sg-accent) 14%,transparent)}.sg-layer-menu{position:absolute;right:3px;top:34px;z-index:14;min-width:132px;padding:4px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-surface);box-shadow:var(--sg-shadow);animation:sg-pop var(--sg-fast) var(--sg-ease) both}.sg-layer-menu button{width:100%;padding:7px 9px;border:0;border-radius:5px;background:transparent;text-align:left;cursor:pointer;white-space:nowrap}.sg-layer-menu button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-accent)}.sg-layer-menu button:disabled{cursor:not-allowed;opacity:.45}.sg-layer-popover{position:absolute;left:calc(100% + 11px);top:-7px;z-index:12;width:min(360px,46vw);max-height:340px;padding:12px;overflow:auto;border:1px solid color-mix(in srgb,var(--sg-accent) 32%,var(--sg-border));border-radius:10px;background:var(--sg-surface);box-shadow:var(--sg-shadow);visibility:hidden;opacity:0;transform:translateX(-4px);transition:opacity var(--sg-fast) var(--sg-ease),transform var(--sg-fast) var(--sg-ease),visibility var(--sg-fast)}.sg-layer-hover:hover .sg-layer-popover,.sg-layer-item:focus-visible + .sg-layer-popover{visibility:visible;opacity:1;transform:translateX(0)}.sg-layer-popover strong{display:block;margin-bottom:7px}.sg-layer-full{margin:0;white-space:pre-wrap;font:12px/1.55 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif}.sg-inline-error{padding:7px 9px;margin-bottom:7px;border-radius:6px;background:var(--sg-danger-soft);color:var(--sg-danger);font-size:12px}
-      .sg-loading{padding:32px 0}.sg-skeleton{position:relative;height:12px;margin:10px 0;overflow:hidden;border-radius:5px;background:var(--sg-soft)}.sg-skeleton:after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 15%,color-mix(in srgb,var(--sg-surface) 80%,transparent) 48%,transparent 82%);transform:translateX(-110%);animation:sg-shimmer 1.35s ease-in-out infinite}.sg-skeleton:nth-child(2){width:72%}.sg-empty{padding:40px 16px;text-align:center;color:var(--sg-muted)}.sg-empty strong{display:block;margin-bottom:5px;color:var(--sg-text);font-size:14px}.sg-error{padding:13px;margin-bottom:16px;border:1px solid color-mix(in srgb,var(--sg-danger) 28%,var(--sg-border));border-radius:9px;background:var(--sg-danger-soft);animation:sg-pop var(--sg-medium) var(--sg-ease) both}.sg-error-title{font-weight:700;color:var(--sg-danger)}.sg-error details{margin-top:7px;font-size:12px}
+      .sg-loading{padding:32px 0}.sg-skeleton{position:relative;height:12px;margin:10px 0;overflow:hidden;border-radius:5px;background:var(--sg-soft)}.sg-skeleton:after{content:"";position:absolute;inset:0;background:color-mix(in srgb,var(--sg-surface) 55%,transparent);transform:translateX(-110%);animation:sg-shimmer 1.35s ease-in-out infinite}.sg-skeleton:nth-child(2){width:72%}.sg-empty{padding:40px 16px;text-align:center;color:var(--sg-muted)}.sg-empty strong{display:block;margin-bottom:5px;color:var(--sg-text);font-size:14px}.sg-error{padding:13px;margin-bottom:16px;border:1px solid color-mix(in srgb,var(--sg-danger) 28%,var(--sg-border));border-radius:9px;background:var(--sg-danger-soft);animation:sg-pop var(--sg-medium) var(--sg-ease) both}.sg-error-title{font-weight:700;color:var(--sg-danger)}.sg-error details{margin-top:7px;font-size:12px}
       .sg-muted{color:var(--sg-muted);font-size:12px}
       .sg-long-tabs{position:relative;z-index:30;display:flex;gap:4px;width:max-content;margin:0 0 14px;padding:4px;border:1px solid var(--sg-border);border-radius:999px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-long-tabs>button{padding:7px 19px;border:0;border-radius:999px;background:transparent;color:var(--sg-muted);cursor:pointer}.sg-long-tabs>button.active{background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-menu{position:relative;z-index:31;display:inline-flex;align-items:center}.sg-long-tabs .sg-graph-menu-trigger{display:grid;place-items:center;align-self:center;flex:none;box-sizing:border-box;width:32px;height:32px;min-width:32px;min-height:32px;padding:0;border:0;border-radius:999px;background:transparent;color:var(--sg-muted);font-size:22px;line-height:1;cursor:pointer}.sg-graph-menu-trigger svg{display:block;width:16px;height:16px;flex:none}.sg-graph-menu-trigger:hover,.sg-graph-menu-trigger[aria-expanded=true]{background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-menu-popover{position:absolute;z-index:32;left:50%;right:auto;top:calc(100% + 8px);width:min(300px,calc(100vw - 32px));padding:10px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-page);box-shadow:var(--sg-shadow);text-align:left;transform:translateX(-50%)}
       .sg-migration{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px;margin:0 0 10px;padding:9px 12px;border:1px solid color-mix(in srgb,var(--sg-accent) 28%,var(--sg-border));border-radius:8px;background:color-mix(in srgb,var(--sg-accent) 7%,transparent);font-size:12px}.sg-migration small{color:var(--sg-muted)}
       .sg-long-explorer{position:relative}.sg-long-explorer.fullscreen{position:fixed;inset:12px;z-index:2147482000;display:flex;flex-direction:column;max-width:none;padding:18px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-page);box-shadow:0 24px 80px rgba(0,0,0,.48)}.sg-long-explorer.fullscreen .sg-long-layout{flex:1;height:auto;min-height:0}.sg-long-explorer.fullscreen .sg-long-tabs{flex:0 0 auto}.sg-long-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}.sg-long-toolbar .sg-search{flex:1 1 14rem;min-width:min(100%,14rem);margin:0}.sg-long-toolbar .sg-toolbar-button{flex-shrink:0}.sg-toolbar-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:39px;padding:0 13px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);cursor:pointer;white-space:nowrap}.sg-toolbar-button:hover,.sg-toolbar-button[aria-expanded="true"]{border-color:var(--sg-accent);color:var(--sg-accent)}.sg-toolbar-count{margin:0 0 8px;color:var(--sg-muted);font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.sg-long-layout{display:grid;grid-template-columns:minmax(0,1.72fr) minmax(280px,.9fr);height:min(680px,calc(100vh - 320px));min-height:480px;border:1px solid var(--sg-border);border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--sg-page) 74%,transparent)}.sg-summary-layout{grid-template-columns:minmax(0,1fr)}
       .sg-filterbar{display:flex;gap:7px;margin:0 0 8px;padding:8px;border:1px solid var(--sg-border);border-radius:7px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent);flex-wrap:wrap}.sg-filterbar select{min-width:112px;padding:6px 25px 6px 8px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-surface);color:var(--sg-text);font-size:11px}.sg-active-filter-count{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--sg-accent);color:white;font-size:10px}
-      .sg-graph-canvas{position:relative;min-width:0;overflow:hidden;background-image:radial-gradient(circle at center,color-mix(in srgb,var(--sg-accent) 6%,transparent),transparent 62%)}.sg-cytoscape{position:absolute;inset:0 0 38px;min-height:0}.sg-graph-zoom{position:absolute;z-index:7;top:12px;right:12px;display:grid;grid-template-columns:30px minmax(86px,124px) 30px;align-items:center;gap:5px;padding:5px;border:1px solid color-mix(in srgb,var(--sg-accent) 20%,var(--sg-border));border-radius:7px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 6px 18px color-mix(in srgb,var(--sg-text) 10%,transparent);backdrop-filter:blur(8px)}.sg-graph-zoom button{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--sg-text);font-size:20px;line-height:1;cursor:pointer}.sg-graph-zoom button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-zoom button:disabled{cursor:default;opacity:.35}.sg-graph-zoom input{width:100%;min-width:0;height:18px;margin:0;accent-color:var(--sg-accent);cursor:pointer}.sg-graph-legend{position:absolute;z-index:5;left:14px;bottom:10px;display:flex;gap:14px;flex-wrap:wrap;color:var(--sg-muted);font-size:11px}.sg-graph-legend span{display:flex;align-items:center;gap:5px}.sg-graph-legend i{width:9px;height:9px;border-radius:50%}.sg-node-bubble{position:absolute;z-index:8;width:min(310px,42%);padding:12px;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 14px 34px rgba(0,0,0,.3);transform:translate(35px,-50%)}.sg-node-bubble.flip{transform:translate(calc(-100% - 35px),-50%)}.sg-node-bubble h3{margin:0;font-size:14px}.sg-node-bubble-head,.sg-node-bubble-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}.sg-node-bubble-state{margin:7px 0;color:var(--sg-muted);font-size:11px}.sg-node-bubble ul{margin:7px 0;padding-left:17px;font-size:11px;line-height:1.55}.sg-node-bubble-foot{padding-top:8px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11px}.sg-node-bubble button{border:0;background:transparent;color:var(--sg-accent);cursor:pointer;font-weight:680}.sg-node-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.sg-node-tag{padding:2px 7px;border-radius:999px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:11px}.sg-graph-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+      .sg-graph-canvas{position:relative;min-width:0;overflow:hidden;background:var(--sg-page)}.sg-cytoscape{position:absolute;inset:0 0 38px;min-height:0}.sg-graph-zoom{position:absolute;z-index:7;top:12px;right:12px;display:grid;grid-template-columns:30px minmax(86px,124px) 30px;align-items:center;gap:5px;padding:5px;border:1px solid color-mix(in srgb,var(--sg-accent) 20%,var(--sg-border));border-radius:7px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 6px 18px color-mix(in srgb,var(--sg-text) 10%,transparent);}.sg-graph-zoom button{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--sg-text);font-size:20px;line-height:1;cursor:pointer}.sg-graph-zoom button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-accent)}.sg-graph-zoom button:disabled{cursor:default;opacity:.35}.sg-graph-zoom input{width:100%;min-width:0;height:18px;margin:0;accent-color:var(--sg-accent);cursor:pointer}.sg-graph-legend{position:absolute;z-index:5;left:14px;bottom:10px;display:flex;gap:14px;flex-wrap:wrap;color:var(--sg-muted);font-size:11px}.sg-graph-legend span{display:flex;align-items:center;gap:5px}.sg-graph-legend i{width:9px;height:9px;border-radius:50%}.sg-node-bubble{position:absolute;z-index:8;width:min(310px,42%);padding:12px;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));border-radius:9px;background:color-mix(in srgb,var(--sg-surface) 94%,transparent);box-shadow:0 14px 34px rgba(0,0,0,.3);transform:translate(35px,-50%)}.sg-node-bubble.flip{transform:translate(calc(-100% - 35px),-50%)}.sg-node-bubble h3{margin:0;font-size:14px}.sg-node-bubble-head,.sg-node-bubble-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}.sg-node-bubble-state{margin:7px 0;color:var(--sg-muted);font-size:11px}.sg-node-bubble ul{margin:7px 0;padding-left:17px;font-size:11px;line-height:1.55}.sg-node-bubble-foot{padding-top:8px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11px}.sg-node-bubble button{border:0;background:transparent;color:var(--sg-accent);cursor:pointer;font-weight:680}.sg-node-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.sg-node-tag{padding:2px 7px;border-radius:999px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:11px}.sg-graph-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
       .sg-long-detail{min-width:0;padding:16px;overflow:auto;border-left:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-surface) 70%,transparent)}.sg-placeholder-detail{display:grid;place-items:center;color:var(--sg-muted);text-align:center}.sg-long-detail h2{margin:0;font-size:17px}.sg-long-detail section{padding:13px 0;border-top:1px solid var(--sg-border)}.sg-long-detail section:first-of-type{margin-top:13px}.sg-long-detail h3{margin:0 0 8px;font-size:13px}.sg-long-detail ul{margin:0;padding-left:18px;font-size:12px;line-height:1.65}.sg-detail-copy{margin:0;color:var(--sg-muted);font-size:12px;line-height:1.65;white-space:pre-wrap}.sg-node-head{display:flex;align-items:center;gap:10px}.sg-node-avatar{display:grid;place-items:center;width:42px;height:42px;border-radius:50%;color:white;font-size:20px}.sg-status-dot{color:var(--sg-good);font-size:12px}.sg-relation-row{display:grid;grid-template-columns:68px 1fr auto;gap:7px;padding:7px 0;border-bottom:1px solid color-mix(in srgb,var(--sg-border) 65%,transparent);font-size:12px}.sg-relation-row span,.sg-relation-row small{color:var(--sg-muted)}.sg-support-event{display:flex;align-items:center;justify-content:space-between;width:100%;margin:5px 0;padding:9px;border:1px solid var(--sg-border);border-radius:7px;background:transparent;color:var(--sg-text);text-align:left;cursor:pointer}.sg-support-event:hover{border-color:var(--sg-accent)}
-      .sg-timeline-layout{grid-template-columns:minmax(420px,1.35fr) minmax(320px,.9fr)}.sg-timeline{position:relative;padding:10px 20px 18px;overflow:auto}.sg-time-group{position:relative}.sg-time-group>h3{margin:7px 0 8px;padding-left:17px;font-size:13px}.sg-time-group:before{content:"";position:absolute;left:5px;top:30px;bottom:-12px;width:1px;background:var(--sg-border)}.sg-timeline-card{position:relative;display:grid;grid-template-columns:112px minmax(0,1fr) auto;gap:12px;width:100%;margin:0 0 8px;padding:12px 14px;border:1px solid var(--sg-border);border-radius:8px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent);color:var(--sg-text);text-align:left;cursor:pointer}.sg-timeline-card:hover,.sg-timeline-card.selected{border-color:var(--sg-accent);background:color-mix(in srgb,var(--sg-accent) 7%,var(--sg-surface))}.sg-timeline-dot{position:absolute;left:-19px;top:17px;width:9px;height:9px;border:2px solid var(--sg-accent);border-radius:50%;background:var(--sg-page)}.sg-event-clock{font-size:11px;white-space:normal}.sg-event-clock small{display:block;margin-top:3px;color:var(--sg-muted);line-height:1.35}.sg-event-title-row{display:flex;align-items:center;gap:7px;min-width:0}.sg-event-title-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sg-event-main p{margin:5px 0 7px;color:var(--sg-muted);font-size:12px;line-height:1.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.sg-type-badge{display:inline-flex;align-items:center;width:max-content;padding:2px 7px;border:1px solid color-mix(in srgb,var(--sg-accent) 30%,var(--sg-border));border-radius:5px;background:color-mix(in srgb,var(--sg-accent) 10%,transparent);color:var(--sg-accent);font-size:10px}.sg-event-status{display:inline-flex;width:max-content;height:max-content;padding:3px 8px;border:1px solid var(--sg-border);border-radius:999px;color:var(--sg-muted);font-size:10px;white-space:nowrap}.sg-event-status.occurred{border-color:color-mix(in srgb,var(--sg-good) 40%,var(--sg-border));background:var(--sg-good-soft);color:var(--sg-good)}.sg-event-status.planned,.sg-event-status.ongoing{border-color:color-mix(in srgb,var(--sg-accent) 35%,var(--sg-border));color:var(--sg-accent)}.sg-event-status.cancelled{color:var(--sg-danger)}.sg-event-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:7px}.sg-event-popover{position:fixed;z-index:2147483000;width:min(380px,calc(100vw - 24px));max-height:min(72vh,620px);overflow:auto;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));border-radius:10px;background:var(--sg-page);box-shadow:0 18px 50px rgba(0,0,0,.38)}.sg-event-popover .sg-long-detail{border:0;background:transparent}.sg-popover-close{position:absolute;right:8px;top:8px;z-index:2;width:27px;height:27px;border:0;border-radius:6px;background:var(--sg-soft);cursor:pointer}.sg-time-grid{display:grid;grid-template-columns:92px 1fr;margin:0;border:1px solid var(--sg-border);border-radius:7px;overflow:hidden;font-size:11px}.sg-time-grid dt,.sg-time-grid dd{margin:0;padding:7px 8px;border-bottom:1px solid var(--sg-border)}.sg-time-grid dt{color:var(--sg-muted);background:var(--sg-soft)}.sg-time-grid dt:nth-last-of-type(1),.sg-time-grid dd:nth-last-of-type(1){border-bottom:0}.sg-entity-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--sg-border);border-radius:999px;background:transparent;color:var(--sg-text);font-size:11px;cursor:pointer}.sg-evidence-row{display:flex;justify-content:space-between;gap:8px;padding:6px 0;color:var(--sg-muted);font-size:11px}.sg-evidence-row code{max-width:180px;overflow:hidden;text-overflow:ellipsis}.sg-source-button{width:100%;padding:9px;border:1px solid color-mix(in srgb,var(--sg-accent) 42%,var(--sg-border));border-radius:7px;background:transparent;color:var(--sg-accent);cursor:pointer}
+      .sg-timeline-layout{grid-template-columns:minmax(420px,1.35fr) minmax(320px,.9fr)}.sg-timeline{position:relative;padding:10px 20px 18px;overflow:auto}.sg-time-group{position:relative}.sg-time-group>h3{margin:7px 0 8px;padding-left:17px;font-size:13px}.sg-time-group:before{content:"";position:absolute;left:5px;top:30px;bottom:-12px;width:1px;background:var(--sg-border)}.sg-timeline-card{position:relative;display:grid;grid-template-columns:112px minmax(0,1fr) auto;gap:12px;width:100%;margin:0 0 8px;padding:12px 14px;border:1px solid var(--sg-border);border-radius:8px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent);color:var(--sg-text);text-align:left;cursor:pointer}.sg-timeline-card:hover,.sg-timeline-card.selected{border-color:var(--sg-accent);background:color-mix(in srgb,var(--sg-accent) 7%,var(--sg-surface))}.sg-timeline-dot{position:absolute;left:-19px;top:17px;width:9px;height:9px;border:2px solid var(--sg-accent);border-radius:50%;background:var(--sg-page)}.sg-event-clock{font-size:11px;white-space:normal}.sg-event-clock small{display:block;margin-top:3px;color:var(--sg-muted);line-height:1.35}.sg-event-title-row{display:flex;align-items:center;gap:7px;min-width:0}.sg-event-title-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sg-event-main p{margin:5px 0 7px;color:var(--sg-muted);font-size:12px;line-height:1.4;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.sg-type-badge{display:inline-flex;align-items:center;width:max-content;padding:2px 7px;border:1px solid color-mix(in srgb,var(--sg-accent) 30%,var(--sg-border));border-radius:5px;background:color-mix(in srgb,var(--sg-accent) 10%,transparent);color:var(--sg-accent);font-size:10px}.sg-event-status{display:inline-flex;width:max-content;height:max-content;padding:3px 8px;border:1px solid var(--sg-border);border-radius:999px;color:var(--sg-muted);font-size:10px;white-space:nowrap}.sg-event-status.occurred{border-color:color-mix(in srgb,var(--sg-good) 40%,var(--sg-border));background:var(--sg-good-soft);color:var(--sg-good)}.sg-event-status.planned,.sg-event-status.ongoing{border-color:color-mix(in srgb,var(--sg-accent) 35%,var(--sg-border));color:var(--sg-accent)}.sg-event-status.cancelled{color:var(--sg-muted)}.sg-event-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:7px}.sg-event-popover{position:fixed;z-index:2147483000;width:min(380px,calc(100vw - 24px));max-height:min(72vh,620px);overflow:auto;border:1px solid color-mix(in srgb,var(--sg-accent) 38%,var(--sg-border));border-radius:10px;background:var(--sg-page);box-shadow:0 18px 50px rgba(0,0,0,.38)}.sg-event-popover .sg-long-detail{border:0;background:transparent}.sg-popover-close{position:absolute;right:8px;top:8px;z-index:2;width:27px;height:27px;border:0;border-radius:6px;background:var(--sg-soft);cursor:pointer}.sg-time-grid{display:grid;grid-template-columns:92px 1fr;margin:0;border:1px solid var(--sg-border);border-radius:7px;overflow:hidden;font-size:11px}.sg-time-grid dt,.sg-time-grid dd{margin:0;padding:7px 8px;border-bottom:1px solid var(--sg-border)}.sg-time-grid dt{color:var(--sg-muted);background:var(--sg-soft)}.sg-time-grid dt:nth-last-of-type(1),.sg-time-grid dd:nth-last-of-type(1){border-bottom:0}.sg-entity-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--sg-border);border-radius:999px;background:transparent;color:var(--sg-text);font-size:11px;cursor:pointer}.sg-evidence-row{display:flex;justify-content:space-between;gap:8px;padding:6px 0;color:var(--sg-muted);font-size:11px}.sg-evidence-row code{max-width:180px;overflow:hidden;text-overflow:ellipsis}.sg-source-button{width:100%;padding:9px;border:1px solid color-mix(in srgb,var(--sg-accent) 42%,var(--sg-border));border-radius:7px;background:transparent;color:var(--sg-accent);cursor:pointer}
       .sg-view{min-width:0;animation:sg-view-in var(--sg-medium) var(--sg-ease) both}.sg-long-tabs{border-radius:10px}.sg-long-tabs>button{border-radius:7px}.sg-long-tabs>button:hover{color:var(--sg-text)}.sg-long-tabs>button.active{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--sg-accent) 16%,var(--sg-border))}.sg-toolbar-button:hover,.sg-source-button:hover,.sg-primary-link:hover{transform:translateY(-1px);box-shadow:0 7px 18px color-mix(in srgb,var(--sg-accent) 14%,transparent)}.sg-long-layout{border-radius:12px;box-shadow:0 10px 28px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-long-explorer.fullscreen{animation:sg-fullscreen-in var(--sg-medium) var(--sg-ease) both}.sg-node-bubble{animation:sg-fade var(--sg-medium) var(--sg-ease) both;box-shadow:var(--sg-shadow)}.sg-event-popover{animation:sg-pop var(--sg-medium) var(--sg-ease) both;box-shadow:var(--sg-shadow)}.sg-long-detail{animation:sg-panel-in var(--sg-medium) var(--sg-ease) both}.sg-timeline-card:hover{transform:translateX(2px);box-shadow:0 7px 18px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-timeline-card.selected{box-shadow:inset 3px 0 0 var(--sg-accent)}.sg-support-event:hover,.sg-entity-pill:hover{transform:translateY(-1px);background:color-mix(in srgb,var(--sg-accent) 5%,transparent)}
       @keyframes sg-view-in{from{opacity:0}to{opacity:1}}
       @keyframes sg-expand{from{opacity:0;transform:translateY(-5px) scale(.992)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -594,7 +594,7 @@ window.__ModuleLoader__.load({
       .sg-retrieved-unavailable{padding:6px 8px;color:var(--dsw-alias-label-tertiary,#8a8f98)}
       .sg-retrieved-final{display:flex;justify-content:space-between;gap:12px;margin-top:6px;padding:8px;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.1));color:var(--dsw-alias-label-secondary,#61666b);font-weight:650}.sg-retrieved-final span:last-child{color:var(--dsw-alias-label-tertiary,#8a8f98);font-weight:500}
       @keyframes sg-retrieved-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
-      .sg-citation-overlay{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.46);backdrop-filter:blur(2px)}
+      .sg-citation-overlay{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;padding:18px;background:rgba(0,0,0,.46)}
       .sg-citation-dialog{--sg-page:var(--dsw-alias-bg-layer-2,#fff);--sg-surface:var(--dsw-specific-input-major,var(--sg-page));--sg-soft:var(--dsw-alias-interactive-bg-hover-solid,#f1f3f5);--sg-text:var(--dsw-alias-label-primary,#0f1115);--sg-muted:var(--dsw-alias-label-secondary,#61666b);--sg-border:var(--dsw-alias-border-l2,rgba(0,0,0,.1));--sg-accent:var(--dsw-alias-state-business-primary,#4176e6);width:min(760px,calc(100vw - 28px));max-height:calc(100vh - 36px);overflow:auto;border:1px solid var(--sg-border);border-radius:13px;background:var(--sg-page);color:var(--sg-text);box-shadow:0 24px 80px rgba(0,0,0,.34);font:13px/1.6 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif}
       .sg-citation-dialog *{box-sizing:border-box}
       .sg-citation-dialog-head{position:sticky;top:0;z-index:3;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 17px 13px;border-bottom:1px solid var(--sg-border);background:var(--sg-page)}
@@ -634,7 +634,7 @@ window.__ModuleLoader__.load({
       .sg-citation-layer-state{display:block;margin-top:2px;color:var(--sg-accent);font-size:11px;font-weight:700}
       .sg-citation-layer-state.retrieved{color:var(--sg-muted)}
       .sg-citation-graph{display:grid;gap:7px}
-      .sg-citation-graph-frame{position:relative;height:320px;overflow:hidden;border:1px solid var(--sg-border);border-radius:9px;background:radial-gradient(circle at center,color-mix(in srgb,var(--sg-accent) 7%,transparent),transparent 65%),var(--sg-page)}
+      .sg-citation-graph-frame{position:relative;height:320px;overflow:hidden;border:1px solid var(--sg-border);border-radius:9px;background:var(--sg-page)}
       .sg-citation-graph-canvas{position:absolute;inset:0}
       .sg-citation-graph-note{margin:0;color:var(--sg-muted);font-size:11px}
       .sg-citation-graph-fallback{display:grid;gap:6px;padding:12px}
@@ -645,6 +645,372 @@ window.__ModuleLoader__.load({
       .sg-citation-error{color:var(--dsw-alias-state-error-primary,#c42b1c)}
       @media(max-width:560px){.sg-answer-citations{grid-template-columns:1fr}.sg-answer-citations-list{display:grid}.sg-answer-citation{max-width:100%;width:100%}.sg-retrieved-memory{grid-template-columns:20px auto minmax(0,1fr)}.sg-retrieved-memory-state{grid-column:3}.sg-citation-overlay{padding:8px}.sg-citation-dialog{width:100%;max-height:calc(100vh - 16px)}.sg-citation-graph-frame{height:280px}}
       ${eventDetailCss}
+    `
+
+    // Round 6 visual layer. These rules load after the legacy sheet so they win
+    // without editing dozens of older declarations; behaviour stays untouched.
+    const R6_STYLES = `
+      .sg-memory{
+        --sg-sheet:color-mix(in srgb,var(--sg-text) 4%,var(--sg-page));
+        --sg-hair:color-mix(in srgb,var(--sg-border) 70%,transparent);
+        --sg-ink:var(--sg-text);
+        --sg-moss:color-mix(in srgb,var(--dsw-alias-state-success-primary,#5f7f4d) 62%,var(--sg-text));
+        --sg-sand:color-mix(in srgb,var(--dsw-alias-state-warn-label,#a9822f) 74%,var(--sg-text));
+        --sg-water:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3f6d9c) 68%,var(--sg-text));
+        --sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC",serif;
+        --sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+        background:var(--sg-page);
+      }
+      /* header + tabs */
+      .sg-memory .sg-header{padding:14px 0 0;margin-bottom:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+      .sg-memory .sg-header-row{padding:0 2px}
+      .sg-memory .sg-header-row-secondary{margin-top:6px}
+      .sg-memory .sg-logo{width:28px;height:28px;border-radius:8px;box-shadow:none}
+      .sg-memory .sg-brand-name{font-family:var(--sg-serif);font-size:18px;font-weight:400;letter-spacing:0}
+      .sg-memory .sg-brand-version{font-family:var(--sg-mono);font-size:11px}
+      .sg-memory .sg-usage-count{padding:0;background:none}
+      .sg-memory .sg-usage-number{font-family:var(--sg-serif);font-weight:400;font-size:16px}
+      .sg-memory .sg-tabs{display:flex;grid-template-columns:none;gap:2px;margin:12px 0 20px;padding:0;border:0;border-bottom:1px solid var(--sg-border);border-radius:0;background:transparent;overflow-x:auto;scrollbar-width:none}
+      .sg-memory .sg-tabs::-webkit-scrollbar{display:none}
+      .sg-memory .sg-tab{position:relative;display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:8px 10px 10px;border:0;border-radius:0;background:none;color:var(--sg-muted);font-size:13px;box-shadow:none;white-space:nowrap}
+      .sg-memory .sg-tab:hover{background:none;color:var(--sg-text)}
+      .sg-memory .sg-tab.active{color:var(--sg-text);background:none;font-weight:600;box-shadow:none}
+      .sg-memory .sg-tab.active:after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--sg-text)}
+      .sg-tab-swatch{width:10px;height:10px;flex:none;border-radius:2px;background:var(--sg-text)}
+      .sg-tab-swatch.water{background:var(--sg-water)}
+      .sg-tab-swatch.sand{background:var(--sg-sand)}
+      .sg-tab-swatch.ink{background:var(--sg-ink)}
+      .sg-tab-swatch.lib{background:color-mix(in srgb,var(--sg-moss) 16%,transparent);box-shadow:inset 0 0 0 1.2px var(--sg-moss)}
+      /* shared page furniture */
+      .sg-memory .sg-intro h2,.sg-memory .sg-detail-title,.sg-memory .sg-daily-head h2{font-family:var(--sg-serif);font-weight:700;letter-spacing:0;font-size:22px}
+      .sg-memory .sg-intro p,.sg-memory .sg-daily-head p{font-size:12.5px;max-width:60ch}
+      .sg-pg-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+      .sg-pg-head h2{margin:0;font:700 22px var(--sg-serif)}
+      .sg-pg-tag{display:inline-flex;align-items:center;gap:6px;color:var(--sg-muted);font-size:12px}
+      .sg-pg-end{margin-left:auto;display:flex;align-items:center;gap:8px}
+      .sg-sw{width:10px;height:10px;flex:none;border-radius:2px;background:var(--sg-text)}
+      .sg-sw.moss{background:var(--sg-moss)}.sg-sw.sand{background:var(--sg-sand)}.sg-sw.water{background:var(--sg-water)}.sg-sw.ink{background:var(--sg-ink)}
+      .sg-sw.lib{background:color-mix(in srgb,var(--sg-moss) 16%,transparent);box-shadow:inset 0 0 0 1.2px var(--sg-moss)}
+      .sg-mono{font-family:var(--sg-mono);font-variant-numeric:tabular-nums}
+      .sg-used{display:inline-flex;align-items:center;gap:3px;color:var(--sg-text);font:12px var(--sg-mono);white-space:nowrap}
+      .sg-used svg{width:13px;height:11px;flex:none}
+      .sg-memory .sg-save-button,.sg-memory .sg-primary-link,.sg-memory .sg-import-button{background:var(--sg-text);border-color:var(--sg-text);color:var(--sg-page);border-radius:6px}
+      .sg-memory .sg-save-button:hover:not(:disabled){background:color-mix(in srgb,var(--sg-text) 88%,var(--sg-page))}
+      .sg-memory .sg-block-toggle:hover,.sg-memory .sg-block-toggle[aria-expanded="true"],.sg-memory .sg-entry-button:hover{transform:none}
+      .sg-memory .sg-footer{display:flex;justify-content:space-between;gap:12px;text-align:left;border-top:1px solid var(--sg-hair);color:var(--sg-muted);padding-top:12px}
+      .sg-memory .sg-footer button{color:var(--sg-muted)}
+      .sg-memory .sg-toolbar-button:hover,.sg-memory .sg-source-button:hover,.sg-memory .sg-primary-link:hover{transform:none;box-shadow:none}
+      .sg-memory .sg-entity-pill:hover,.sg-memory .sg-support-event:hover,.sg-memory .sg-timeline-card:hover{transform:none}
+      .sg-memory .sg-import-overlay{background:color-mix(in srgb,#000 42%,transparent)}
+      .sg-memory .sg-import-dialog{border-radius:12px;box-shadow:0 18px 50px color-mix(in srgb,#000 24%,transparent)}
+      @keyframes sg-r6-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+      @keyframes sg-r6-grow{from{transform:scaleX(0)}to{transform:none}}
+      @keyframes sg-r6-pop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+      @media (prefers-reduced-motion:reduce){.sg-r6-anim,.sg-memory .sg-r6-anim *{animation:none!important}}
+      @media (max-width:680px){
+        .sg-memory .sg-header-row-primary{gap:8px}
+        .sg-memory .sg-usage-count span{display:none}
+        .sg-memory .sg-tab{padding:8px 8px 10px;font-size:12.5px}
+        .sg-pg-head h2{font-size:20px}
+      }
+
+      /* 常驻画像：分组列表，一行就是一项 */
+      .sg-memory .sg-pf .sg-profile-group,.sg-memory .sg-more .sg-profile-group{margin:0;padding:0;border:0;border-radius:0;background:none}
+      .sg-memory .sg-pf .sg-profile-row{border-bottom:0}
+      .sg-cap-row{display:flex;align-items:center;gap:12px;margin:0 0 20px}
+      .sg-cap-bar{flex:1;height:6px;border-radius:3px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair);overflow:hidden}
+      .sg-cap-bar i{display:block;height:100%;border-radius:3px;background:var(--sg-ink);transform-origin:left;animation:sg-r6-grow .6s both}
+      .sg-cap-num{color:var(--sg-muted);font-size:12px;white-space:nowrap}
+      .sg-cap-num b{font:400 17px var(--sg-serif);color:var(--sg-text);margin-right:3px}
+      .sg-pf{columns:2;column-gap:26px}
+      .sg-pf>.sg-profile-group{break-inside:avoid;margin-bottom:20px}
+      .sg-profile-group h4{margin:0 0 7px 2px;font-size:12px;font-weight:500;color:var(--sg-muted)}
+      .sg-profile-group ul{margin:0;padding:0;list-style:none;border:1px solid var(--sg-border);border-radius:10px;overflow:hidden;background:var(--sg-page)}
+      .sg-memory .sg-profile-group .sg-profile-row{display:block;border-top:1px solid var(--sg-hair);cursor:pointer}
+      .sg-memory .sg-profile-group .sg-profile-row:first-child{border-top:0}
+      .sg-memory .sg-profile-group .sg-profile-row:hover{background:var(--sg-sheet)}
+      .sg-memory .sg-profile-group .sg-profile-row:has(.sg-profile-content textarea),.sg-memory .sg-profile-group .sg-profile-row:has(.sg-profile-content input){background:var(--sg-sheet);cursor:default}
+      .sg-memory .sg-profile-group .sg-profile-summary{grid-template-columns:minmax(0,1fr) auto 14px;align-items:center;gap:10px;min-height:0;padding:10px 12px 10px 14px}
+      .sg-memory .sg-profile-group .sg-profile-summary.editing{grid-template-columns:minmax(0,1fr);padding:10px 12px 12px 14px;align-items:start}
+      .sg-memory .sg-profile-group .sg-profile-label{display:block;font-size:11.5px;font-weight:400;color:var(--sg-muted)}
+      .sg-memory .sg-profile-group .sg-profile-value{display:block;font-size:13.5px;color:var(--sg-text)}
+      .sg-memory .sg-profile-group .sg-profile-value.empty{opacity:1;color:var(--sg-accent)}
+      .sg-memory .sg-profile-group .sg-profile-content{display:block}
+      .sg-memory .sg-profile-group .sg-profile-action{display:none}
+      .sg-memory .sg-profile-group .sg-profile-chev{color:var(--sg-muted);font-size:16px;line-height:1}
+      .sg-memory .sg-profile-group .sg-profile-used{justify-self:end}
+      .sg-memory .sg-profile-group .sg-profile-editor{padding:6px 0 0}
+      .sg-memory .sg-profile-group .sg-profile-editor :is(input,textarea){border-color:var(--sg-accent);outline:3px solid color-mix(in srgb,var(--sg-accent) 16%,transparent);border-radius:7px;background:var(--sg-page);font-size:13px;padding:8px 10px}
+      .sg-memory .sg-profile-group .sg-profile-editor :is(input,textarea):focus{box-shadow:none}
+      .sg-memory .sg-profile-group .sg-profile-editor textarea{min-height:58px;resize:none;line-height:1.6}
+      .sg-memory .sg-profile-group .sg-profile-editor-foot{margin-top:8px;font-size:11.5px;color:var(--sg-muted)}
+      .sg-memory .sg-profile-group .sg-profile-actions .sg-save-button{background:var(--sg-text);color:var(--sg-page);border-radius:6px}
+      .sg-memory .sg-profile-group .sg-profile-actions .sg-quiet-button{color:var(--sg-muted)}
+      .sg-memory .sg-profile-group .sg-profile-conflict,.sg-memory .sg-profile-group .sg-profile-save-feedback{color:var(--sg-danger)}
+      .sg-profile-head .sg-intro{margin-bottom:0}
+      @media (max-width:680px){.sg-pf{columns:1}.sg-pf>.sg-profile-group{margin-bottom:16px}}
+
+      /* 长期记忆：目录做成一本摊开的书 */
+      .sg-how{display:flex;align-items:center;gap:8px;margin:-4px 0 14px;font-size:12px;color:var(--sg-muted);flex-wrap:wrap}
+      .sg-book{position:relative;border:1px solid var(--sg-border);border-radius:3px;background:var(--sg-sheet);box-shadow:0 1px 0 var(--sg-border),0 3px 0 -1px var(--sg-sheet),0 3px 0 0 var(--sg-border)}
+      .sg-book:before{content:"";position:absolute;top:0;bottom:0;left:34px;border-left:1px solid color-mix(in srgb,var(--sg-border) 55%,transparent);pointer-events:none}
+      .sg-leaf{position:relative;min-width:0;padding:26px 26px 20px 54px}
+      .sg-leaf-foot{margin-top:18px}
+      .sg-toc-title{margin:0 0 16px;padding-left:.6em;text-align:center;font:400 15px var(--sg-serif);letter-spacing:.6em}
+      .sg-toc-col{display:flex;justify-content:flex-end;margin-bottom:2px;color:var(--sg-muted);font-size:10.5px}
+      .sg-toc-ch{margin:0 0 12px}
+      .sg-toc-ch-head,.sg-toc-sec{display:flex;align-items:baseline;gap:8px;min-width:0}
+      .sg-memory .sg-toc-ch-head{gap:8px;font:700 14px var(--sg-serif)}
+      .sg-toc-ch-no{flex:0 0 auto;min-width:3.4em;font:400 12px var(--sg-serif);color:var(--sg-muted)}
+      .sg-toc-lead{flex:1;min-width:14px;border-bottom:1.5px dotted color-mix(in srgb,var(--sg-muted) 55%,transparent);transform:translateY(-4px)}
+      .sg-toc-cnt{flex:0 0 auto;min-width:1.6em;text-align:right;font:12px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-toc-sec{position:relative;margin-left:3.2em;padding:3px 6px 3px 0;border:0;border-radius:4px;background:none;font-size:13px;color:var(--sg-muted);text-align:left;cursor:pointer}
+      .sg-memory .sg-toc-sec:hover{background:color-mix(in srgb,var(--sg-text) 5%,transparent);color:var(--sg-text)}
+      .sg-toc-sec-no{flex:0 0 auto;min-width:2.4em;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-toc-sec-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sg-memory .sg-toc-sec.cur{color:var(--sg-text);font-weight:600}
+      .sg-toc-sec.cur:before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--sg-text)}
+      .sg-toc-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:10px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11.5px}
+      .sg-toc-foot .sg-context-trigger{margin-left:auto;color:var(--sg-muted);font-size:11.5px}
+      .sg-leaf-k{display:block;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-leaf h3{margin:2px 0 4px;font:700 19px var(--sg-serif)}
+      .sg-leaf-sum{margin:0 0 14px;color:var(--sg-muted);font-size:13px;line-height:1.75;white-space:pre-wrap}
+      .sg-leaf-events{margin:0;padding:0;list-style:none}
+      .sg-leaf-events li{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:baseline;gap:10px;padding:7px 0;border-top:1px solid var(--sg-border)}
+      .sg-memory .sg-leaf-events .sg-topic-event{display:contents;background:none}
+      .sg-leaf-events .sg-d{font:11.5px var(--sg-mono);color:var(--sg-muted);white-space:nowrap}
+      .sg-leaf-events .sg-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500;color:var(--sg-text)}
+      .sg-leaf-events .sg-topic-event:hover .sg-t{color:var(--sg-accent)}
+      .sg-leaf-events .sg-topic-event-arrow{display:none}
+      .sg-leaf-folio{margin-top:14px;text-align:center;font:11px var(--sg-serif);color:var(--sg-muted)}
+      .sg-leaf-empty{padding:24px 0;color:var(--sg-muted);font-size:12.5px}
+      .sg-topic-directory .sg-topic-sections{padding-left:0}
+      .sg-topic-directory .sg-topic-section-body{margin-left:0;padding-left:0;border-left:0}
+      .sg-topic-directory .sg-topic-overview-text{padding-left:0}
+      .sg-topic-directory .sg-topic-overview-toggle{display:none}
+      .sg-topic-directory .sg-topic-section-toggle .sg-toc-lead{display:block}
+      .sg-topic-directory .sg-topic-section-toggle .sg-toc-cnt:before{content:attr(data-count)}
+      .sg-topic-directory .sg-topic-section-toggle{padding:4px 6px 4px 0;margin-left:3.2em;font-size:13px;color:var(--sg-muted)}
+      .sg-topic-directory .sg-topic-section-toggle>.sg-directory-number{min-width:2.4em;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-topic-directory .sg-topic-section-toggle>.sg-toc-sec-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sg-topic-directory .sg-topic-section-toggle.cur{color:var(--sg-text);font-weight:600}
+      .sg-topic-directory .sg-topic-section-toggle.cur:before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--sg-text)}
+      .sg-topic-directory .sg-topic-chapter-toggle{position:relative;display:flex;align-items:baseline;gap:8px;width:100%;font:700 14.5px var(--sg-serif)}
+      .sg-topic-directory .sg-topic-chapter-toggle>.sg-topic-chapter-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sg-topic-directory .sg-topic-chapter-toggle>.sg-directory-chevron{margin-left:2px}
+      .sg-topic-directory .sg-topic-chapter-toggle:after{content:attr(data-count);margin-left:6px;font:12px var(--sg-mono);color:var(--sg-muted)}
+      .sg-topic-directory .sg-topic-chapter-toggle>.sg-topic-chapter-label{min-width:3.4em;font:400 12px var(--sg-serif);color:var(--sg-muted)}
+      .sg-topic-directory .sg-topic-chapter{padding:0 0 12px;border-bottom:0}
+      .sg-topic-directory .sg-topic-chapter-header{grid-template-columns:minmax(0,1fr);gap:0}
+      .sg-topic-directory .sg-topic-chapter-copy{min-width:0}
+      .sg-topic-directory .sg-topic-chapter-number{display:none}
+      .sg-topic-directory .sg-topic-description{display:none}
+      .sg-topic-directory .sg-topic-sections{padding-top:2px}
+      .sg-topic-directory .sg-topic-section-heading{margin:0}
+      .sg-topic-directory .sg-topic-section-toggle:before{content:"";flex:0 0 0}
+      .sg-topic-directory .sg-toc-cnt{min-width:1.8em;text-align:right;font:12px var(--sg-mono);color:var(--sg-muted)}
+      .sg-topic-directory .sg-leaf-sum{display:none}
+      .sg-topic-directory .sg-topic-overview-text{font-size:13px;line-height:1.75}
+      .sg-topic-directory .sg-topic-event{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:baseline;gap:10px;padding:7px 0;border:0;border-top:1px solid var(--sg-border);border-radius:0}
+      .sg-topic-directory .sg-topic-event:hover{background:none}
+      .sg-topic-directory .sg-topic-event>.sg-directory-number{font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-topic-directory .sg-topic-event-title{white-space:nowrap;font-size:13px;font-weight:500}
+      .sg-topic-directory .sg-topic-event:hover .sg-topic-event-title{color:var(--sg-accent)}
+      /* 宽屏：目录在左页，打开的节在右页；同一份事件数据，不重复读取。 */
+      @media (min-width:681px){
+        .sg-topic-directory .sg-book>.sg-leaf{padding-right:calc(50% + 28px);min-height:320px}
+        .sg-topic-directory .sg-book>.sg-leaf:after{content:"";position:absolute;left:50%;top:18px;bottom:18px;border-left:1px solid var(--sg-border);box-shadow:-1px 0 0 color-mix(in srgb,var(--sg-page) 70%,transparent);pointer-events:none}
+        .sg-topic-directory .sg-directory-fold.open>.sg-directory-fold-inner>.sg-topic-section-body{position:absolute;top:18px;right:22px;bottom:18px;width:calc(50% - 46px);padding:0 0 0 26px;overflow:auto;overscroll-behavior:contain}
+        .sg-topic-directory .sg-topic-section>.sg-directory-fold.open>.sg-directory-fold-inner{overflow:visible}
+        .sg-topic-directory .sg-topic-section>.sg-directory-fold.open{grid-template-rows:1fr;display:block}
+        .sg-topic-directory .sg-topic-section>.sg-directory-fold.open>.sg-directory-fold-inner{display:block;height:auto;overflow:visible}
+        .sg-topic-directory .sg-leaf-head{display:block;margin-bottom:4px}
+        .sg-topic-directory .sg-leaf h3{font:700 18px var(--sg-serif);margin:1px 0 8px}
+        .sg-topic-directory .sg-topic-overview{margin-bottom:2px}
+        .sg-topic-directory .sg-topic-overview-toggle{display:flex;padding:2px 0;color:var(--sg-muted);font-size:11px}
+        .sg-topic-directory .sg-topic-overview-toggle .sg-directory-number{min-width:2.4em;font:11px var(--sg-mono)}
+        .sg-topic-directory .sg-topic-overview-text{padding:0 0 8px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+        .sg-topic-directory .sg-leaf-folio{position:sticky;bottom:0;padding-top:10px;background:var(--sg-sheet)}
+      }
+      .sg-topic-directory .sg-topic-show-all{margin:6px 0;padding-left:0;color:var(--sg-accent)!important}
+
+      /* 事件时间线 */
+      .sg-tl-day{display:grid;grid-template-columns:76px 22px minmax(0,1fr);column-gap:10px}
+      .sg-tl-date{text-align:right;padding-top:2px}
+      .sg-tl-date b{display:block;font:400 22px/1.1 var(--sg-serif)}
+      .sg-tl-date span{font-size:11px;color:var(--sg-muted);white-space:nowrap}
+      .sg-tl-axis{position:relative}
+      .sg-tl-axis:before{content:"";position:absolute;left:50%;top:0;bottom:0;border-left:1.5px solid var(--sg-border);transform:translateX(-50%)}
+      .sg-tl-summary{margin:0 0 10px 86px;color:var(--sg-muted);font-size:11.5px}
+      .sg-tl-items{padding-bottom:16px;min-width:0}
+      .sg-ev{display:flex;align-items:baseline;gap:10px;padding:6px 0 7px;border-bottom:1px solid var(--sg-hair);min-width:0}
+      .sg-ev:last-child{border-bottom:0}
+      .sg-ev .sg-nd{position:absolute;left:-26px;top:12px;width:11px;height:11px;border-radius:50%;background:var(--sg-moss);box-shadow:0 0 0 3px var(--sg-page)}
+      .sg-memory .sg-ev{position:relative;display:flex;width:auto;margin:0;border-radius:0;border-left:0;border-right:0;border-top:0;background:none;text-align:left;cursor:pointer;color:var(--sg-text)}
+      .sg-memory .sg-ev.fade{color:var(--sg-muted)}
+      .sg-memory .sg-ev.fade .sg-nd{background:var(--sg-page);box-shadow:0 0 0 3px var(--sg-page),inset 0 0 0 1.5px var(--sg-muted)}
+      .sg-ev .sg-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;font-weight:500}
+      .sg-ev .sg-tp{flex:0 0 auto;color:var(--sg-muted);font-size:11.5px;white-space:nowrap}
+      .sg-ev .sg-used{margin-left:auto}
+      .sg-dream{margin:2px 0 14px;padding:7px 12px;display:flex;align-items:center;gap:10px;border-left:3px solid var(--sg-sand);background:color-mix(in srgb,var(--sg-sand) 14%,transparent);color:var(--sg-muted);font-size:12.5px}
+      .sg-dream .sg-m{display:flex;align-items:center;gap:4px}
+      .sg-dream .sg-m i{width:9px;height:9px;border-radius:50%;background:var(--sg-moss)}
+      .sg-dream .sg-m i.o{background:none;box-shadow:inset 0 0 0 1.3px var(--sg-muted)}
+      .sg-memory .sg-long-tabs{border-radius:8px;background:transparent}
+      .sg-memory .sg-long-tabs>button{border-radius:6px}
+      .sg-memory .sg-long-tabs>button.active{background:var(--sg-sheet);color:var(--sg-text);box-shadow:none}
+      @media (max-width:680px){
+        .sg-tl-day{grid-template-columns:40px 18px minmax(0,1fr);column-gap:8px}
+        .sg-tl-date b{font-size:17px}
+        .sg-ev .sg-tp{display:none}
+        .sg-leaf{padding:20px 16px 16px 24px}
+        .sg-book:before{left:14px}
+      }
+
+      /* 会话记忆：一块一条横条，越早越薄；右侧是选中块的详情 */
+      .sg-ss{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:26px;align-items:start}
+      .sg-ss-scale{display:flex;align-items:center;gap:8px;margin:-4px 0 12px;color:var(--sg-muted);font-size:11.5px;flex-wrap:wrap}
+      .sg-ss-scale .sg-r{display:flex;align-items:flex-end;gap:2px}
+      .sg-ss-scale .sg-r i{width:14px;border-radius:1.5px;background:var(--sg-water)}
+      .sg-ss-list{min-width:0;border:0;border-radius:0;background:none;overflow:visible}
+      .sg-memory .sg-ss-list .sg-block-unit+.sg-block-unit{border-top:0}
+      .sg-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+      .sg-memory .sg-ss-list .sg-block-toggle{display:grid;grid-template-columns:28px minmax(0,1fr) auto 24px;gap:10px;align-items:center;padding:0;border:0;background:none;cursor:pointer;margin-bottom:3px;min-height:0}
+      .sg-memory .sg-ss-list .sg-block-toggle:hover{background:none}
+      .sg-ss-num{font:11px var(--sg-mono);color:var(--sg-muted);text-align:right}
+      .sg-ss-bar{display:flex;align-items:center;padding:0 12px;border-radius:3px;min-width:0;color:var(--sg-text);font-size:12.5px;animation:sg-r6-rise .4s both}
+      .sg-ss-bar span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+      .sg-memory .sg-ss-list .sg-block-toggle[aria-expanded="true"] .sg-ss-bar{box-shadow:0 0 0 2px var(--sg-text)}
+      .sg-memory .sg-ss-list .sg-block-turn,.sg-memory .sg-ss-list .sg-block-distance{display:none}
+      .sg-memory .sg-ss-list .sg-level-cell{display:flex}
+      .sg-memory .sg-ss-list .sg-level-badge{display:inline-grid;place-items:center;min-width:26px;height:20px;padding:0 5px;border:1px solid var(--sg-border);border-radius:4px;background:var(--sg-page);font:11px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-ss-list .sg-row-chevron{display:block;color:var(--sg-muted);font-size:14px;text-align:right}
+      .sg-memory .sg-ss-list .sg-block-name{font-weight:inherit}
+      .sg-memory .sg-ss-list .sg-block-expanded{padding:6px 0 10px}
+      .sg-ss-open{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:10px;align-items:center;margin-bottom:3px}
+      .sg-ss-open .sg-ss-bar{justify-content:space-between;border:1.5px dashed var(--sg-water);background:none!important;color:var(--sg-muted)}
+      .sg-ss-dots{display:flex;gap:3px}
+      .sg-ss-dots i{width:7px;height:7px;border-radius:50%;background:var(--sg-water)}
+      .sg-ss-dots i.o{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-water)}
+      .sg-ss-side{padding-top:10px;border-top:1px solid var(--sg-text);min-width:0}
+      .sg-ss-side h3{margin:0 0 2px;font:700 16px var(--sg-serif)}
+      .sg-ss-side .sg-k{display:block;margin-bottom:10px;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-ss-side p{margin:0 0 12px;color:var(--sg-muted);font-size:12.5px;line-height:1.7}
+      .sg-lvl{display:flex;gap:3px;margin:4px 0}
+      .sg-lvl i{flex:1;height:6px;border-radius:2px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+      .sg-lvl i.on{background:var(--sg-water);box-shadow:none}
+      .sg-lvl-l{display:flex;justify-content:space-between;margin-bottom:12px;color:var(--sg-muted);font-size:10.5px}
+      @media (max-width:680px){.sg-ss{grid-template-columns:minmax(0,1fr)}.sg-ss-side{display:none}}
+
+      /* 短期记忆：按天排列 */
+      .sg-days{display:grid}
+      .sg-day{display:grid;grid-template-columns:64px 6px minmax(0,1fr);column-gap:14px;padding:12px 0;border-top:1px solid var(--sg-hair);animation:sg-r6-rise .4s both}
+      .sg-day-d{display:block;width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:right;cursor:pointer}
+      .sg-day-d b{display:block;font:400 26px/1 var(--sg-serif)}
+      .sg-day-d span{font-size:11px;color:var(--sg-muted)}
+      .sg-day-rail{border-radius:3px;background:var(--sg-sand)}
+      .sg-day.out .sg-day-rail{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-border)}
+      .sg-day.out{color:var(--sg-muted)}
+      .sg-day ul{margin:0;padding:0;list-style:none;min-width:0}
+      .sg-day li{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:baseline;gap:10px;padding:3px 0;font-size:13px}
+      .sg-memory .sg-day li .sg-day-t{font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-day li .sg-day-s{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sg-day.out li .sg-day-s{color:var(--sg-muted)}
+      .sg-day-cut{display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:14px;align-items:center;margin:2px 0;color:var(--sg-muted);font-size:11px}
+      .sg-day-cut span{display:flex;align-items:center;gap:8px}
+      .sg-day-cut span:before{content:"";flex:0 0 8px;border-top:1px dashed var(--sg-border)}
+      .sg-day-cut span:after{content:"";flex:1;border-top:1px dashed var(--sg-border)}
+      .sg-daily-actions{display:flex;align-items:center;gap:6px}
+      .sg-stp{display:inline-flex;align-items:center;overflow:hidden;border:1px solid var(--sg-border);border-radius:7px;font-size:12.5px}
+      .sg-memory .sg-stp button{width:26px;height:26px;padding:0;border:0;background:none;color:var(--sg-muted);font-size:14px;line-height:1;cursor:pointer}
+      .sg-memory .sg-stp button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-text)}
+      .sg-memory .sg-stp button:disabled{opacity:.4;cursor:default}
+      .sg-stp.sg-stp-wide{border:0;gap:0}
+      .sg-stp.sg-stp-wide .sg-number-input{width:66px;margin:0 0 0 -1px;height:28px;text-align:center;border-radius:0;font-family:var(--sg-mono);font-size:12.5px;padding:0 2px;-moz-appearance:textfield}
+      .sg-stp.sg-stp-wide .sg-number-input::-webkit-outer-spin-button,.sg-stp.sg-stp-wide .sg-number-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+      .sg-stp.sg-stp-wide button{width:26px;height:28px;border:1px solid var(--sg-border)}
+      .sg-stp.sg-stp-wide button:first-child{border-radius:7px 0 0 7px}
+      .sg-stp.sg-stp-wide button:last-child{border-radius:0 7px 7px 0;border-left:0}
+      .sg-stp span{min-width:48px;border-inline:1px solid var(--sg-border);text-align:center;line-height:26px;font-family:var(--sg-mono)}
+      .sg-memory .sg-daily-note,.sg-memory .sg-daily-item,.sg-memory .sg-daily-note-date h3{font-family:inherit}
+      .sg-memory .sg-daily-note-date h3{font-family:var(--sg-serif);font-weight:700}
+      @media (max-width:680px){.sg-day{grid-template-columns:42px 5px minmax(0,1fr);column-gap:10px}.sg-day-d b{font-size:20px}.sg-day-cut{grid-template-columns:42px minmax(0,1fr);column-gap:10px}}
+
+      /* 更多：与画像同一套分组列表 */
+      .sg-more{display:grid;grid-template-columns:1fr 1fr;gap:20px 26px;align-items:start}
+      .sg-more-col{display:grid;gap:20px;align-content:start}
+      .sg-more .sg-profile-group li{padding:10px 12px 10px 14px;border-top:1px solid var(--sg-hair)}
+      .sg-more .sg-profile-group li:first-child{border-top:0}
+      .sg-more .sg-k2{display:block;font-size:13.5px}
+      .sg-more .sg-s2{display:block;margin-top:1px;font-size:11.5px;color:var(--sg-muted)}
+      .sg-more .sg-row-go{display:flex;align-items:center;justify-content:flex-end;gap:8px;color:var(--sg-muted);font-size:16px;line-height:1}
+      .sg-more .sg-badge{font:12px var(--sg-mono);padding:0 8px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-sheet);color:var(--sg-text)}
+      .sg-memory .sg-setting-switch[aria-checked="true"]{border-color:var(--sg-good);background:var(--sg-good)}
+      .sg-memory .sg-setting-switch[aria-checked="true"]:before{background:#fff}
+      .sg-memory .sg-setting-switch{border-color:var(--sg-border);background:var(--sg-sheet);box-shadow:none}
+      .sg-dirty{display:flex;align-items:center;gap:8px;padding:10px 12px 10px 14px;border-top:1px solid var(--sg-border);background:color-mix(in srgb,var(--sg-accent) 7%,var(--sg-page));color:var(--sg-accent);font-size:12px}
+      .sg-dirty .sg-save-button{margin:0 0 0 auto}
+      .sg-dirty .sg-quiet-button{color:var(--sg-accent)}
+      .sg-mem-menu{display:grid;gap:0}
+      .sg-memory .sg-mem-menu .sg-menu-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 14px;border:0;border-top:1px solid var(--sg-hair);border-radius:0;background:none;box-shadow:none}
+      .sg-memory .sg-mem-menu .sg-menu-row:first-child{border-top:0}
+      .sg-memory .sg-mem-menu .sg-menu-row:hover{background:var(--sg-sheet);transform:none;box-shadow:none}
+      .sg-memory .sg-mem-menu .sg-menu-icon{display:none}
+      .sg-memory .sg-mem-menu .sg-menu-title{display:block;font-weight:500;font-size:13.5px;color:var(--sg-text)}
+      .sg-memory .sg-mem-menu .sg-menu-subtitle{display:block;margin-top:1px;font-size:11.5px;color:var(--sg-muted)}
+      .sg-memory .sg-mem-menu .sg-menu-row:hover .sg-menu-title{color:var(--sg-text)}
+      .sg-memory .sg-mem-menu .sg-chevron{color:var(--sg-muted)}
+      /* 高级设置：沿用画像的分组列表 */
+      .sg-memory .sg-settings-group{margin:0;padding:0 0 20px;border:0}
+      .sg-memory .sg-settings-group-title{margin:0 0 6px;font-size:12px;font-weight:500;color:var(--sg-muted)}
+      .sg-memory .sg-settings-group-copy{margin:0 0 10px;font-size:11.5px;line-height:1.6}
+      .sg-memory .sg-settings-panel{padding:0 14px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-page)}
+      .sg-memory .sg-settings-panel.sg-pipeline{gap:0}
+      .sg-memory .sg-settings-panel>.sg-stage{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--sg-hair);border-bottom:0;font-size:13px}
+      .sg-memory .sg-settings-panel>.sg-stage:first-child{border-top:0}
+      .sg-memory .sg-settings-panel>.sg-setting-note{margin:0 0 8px;padding-right:78px;font-size:11.5px}
+      .sg-memory .sg-settings-panel>.sg-stage+.sg-setting-note{margin-top:-4px}
+      .sg-memory .sg-settings-panel>.sg-setting-note:last-child{margin-bottom:10px;padding-right:0}
+      .sg-memory .sg-settings-panel .sg-display-setting{border-top:1px solid var(--sg-hair);border-bottom:0;padding:11px 0}
+      .sg-memory .sg-settings-panel .sg-display-setting:first-child{border-top:0}
+      .sg-memory .sg-settings-panel .sg-display-setting-copy{gap:2px}
+      .sg-memory .sg-settings-panel .sg-display-setting-title{font-size:13px;font-weight:500}
+      .sg-memory .sg-settings-panel .sg-display-setting-description{font-size:11.5px}
+      .sg-memory .sg-settings-panel .sg-display-setting.child{padding-left:14px}
+      .sg-memory .sg-settings-group .sg-menu.sg-settings-menu{margin-top:0;border:1px solid var(--sg-border);border-radius:10px;overflow:hidden;background:var(--sg-page)}
+      .sg-memory .sg-settings-group .sg-mem-menu .sg-menu-row{padding:11px 14px}
+      .sg-memory .sg-model-settings{margin:0 0 10px;padding:0 14px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-page)}
+      .sg-memory .sg-model-settings+.sg-settings-panel{margin-top:10px}
+      .sg-memory .sg-settings-panel .sg-save-button{align-self:flex-end;margin:10px 0 12px}
+      .sg-memory .sg-settings-panel .sg-dirty{margin:0 -14px -13px;border-radius:0 0 9px 9px}
+      .sg-memory .sg-settings-panel .sg-dirty~*{display:none}
+      .sg-memory .sg-storage-card{border-radius:10px;background:var(--sg-page)}
+      .sg-memory .sg-settings-panel .sg-storage-card{border:0;border-radius:0;padding:0 0 12px}
+      @media (max-width:680px){.sg-more{grid-template-columns:minmax(0,1fr);gap:16px}}
+
+      /* 弹窗 */
+      .sg-dlg{width:380px;max-width:100%;padding:22px 22px 18px;border-radius:12px;background:var(--sg-page);box-shadow:0 0 0 1px var(--sg-border),0 18px 50px color-mix(in srgb,#000 24%,transparent);animation:sg-r6-pop .18s both}
+      .sg-dlg h3{margin:0 0 12px;font:700 18px var(--sg-serif)}
+      .sg-dlg p{margin:0 0 12px;color:var(--sg-muted);font-size:13px;line-height:1.6}
+      .sg-dlg-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+      .sg-memory .sg-btn{height:30px;padding:0 14px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);color:var(--sg-text);font-size:12.5px;cursor:pointer}
+      .sg-memory .sg-dlg .sg-btn{height:30px;padding:0 14px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);color:var(--sg-text);font-size:12.5px;cursor:pointer}
+      .sg-memory .sg-dlg .sg-btn.primary{border-color:var(--sg-text);background:var(--sg-text);color:var(--sg-page)}
+      .sg-memory .sg-dlg .sg-btn.danger{border-color:var(--sg-danger);background:var(--sg-danger);color:#fff}
+      .sg-memory .sg-dlg .sg-btn.ghost{border-color:transparent;background:none;color:var(--sg-muted)}
+      .sg-steps{display:flex;gap:4px;margin:4px 0 8px}
+      .sg-steps i{flex:1;height:8px;border-radius:2px;background:var(--sg-sand)}
+      .sg-steps i.todo{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-border)}
+      .sg-steps-l{display:flex;justify-content:space-between;gap:10px;color:var(--sg-muted);font-size:11.5px}
+      .sg-steps-l b{color:var(--sg-text);font-weight:500}
+      .sg-memo{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:12px 14px;border:1px solid var(--sg-border);border-radius:8px}
+      .sg-memo b{display:block;font-weight:500}
+      .sg-memo span{font-size:11.5px;color:var(--sg-muted)}
+      .sg-memo .sg-flip{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--sg-muted);font-size:14px}
+      .sg-memo .sg-flip i{width:11px;height:11px;border-radius:50%;background:var(--sg-moss)}
+      .sg-memo .sg-flip i.o{background:none;box-shadow:inset 0 0 0 1.5px var(--sg-muted)}
+      .sg-keep{display:flex;align-items:center;gap:7px;color:var(--sg-muted);font-size:12px}
+      .sg-keep svg{width:13px;height:13px;flex:none;color:var(--sg-good)}
     `
 
     function api(path, params, options) {
@@ -1571,6 +1937,32 @@ window.__ModuleLoader__.load({
       return '整理中'
     }
 
+    function UsedMark({ count, title }) {
+      const numeric = Number(count)
+      return h('span', { className: 'sg-used', title: title || '被回答用到' },
+        h('svg', { viewBox: '0 0 13 11', 'aria-hidden': 'true', focusable: 'false' }, h('path', { d: 'M2 .5h9A1.5 1.5 0 0 1 12.5 2v4.5A1.5 1.5 0 0 1 11 8H6L3 10.5V8H2A1.5 1.5 0 0 1 .5 6.5V2A1.5 1.5 0 0 1 2 .5z', fill: 'currentColor' })),
+        Number.isFinite(numeric) && numeric > 0 ? String(numeric) : null)
+    }
+
+    function eventDayKey(value) {
+      const time = Date.parse(value)
+      if (!Number.isFinite(time)) return ''
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(time))
+    }
+
+    function eventDayLabel(value) {
+      const time = Date.parse(value)
+      if (!Number.isFinite(time)) return { day: '?', week: '时间未知' }
+      const date = new Date(time)
+      const today = eventDayKey(new Date().toISOString())
+      const key = eventDayKey(value)
+      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', day: '2-digit' }).format(date)
+      if (key === today) return { day, week: '今天' }
+      const yesterday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 86_400_000))
+      if (key === yesterday) return { day, week: '昨天' }
+      return { day, week: new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' }).format(date) }
+    }
+
     function Loading() {
       return h('div', { className: 'sg-loading', role: 'status' }, h('div', { className: 'sg-skeleton' }), h('div', { className: 'sg-skeleton' }), h('div', { className: 'sg-skeleton' }))
     }
@@ -1673,7 +2065,7 @@ window.__ModuleLoader__.load({
 
     const NODE_META = {
       person: ['人物', '#8b6ccf', '♙'], project: ['项目', '#6f55ae', '▣'], organization: ['组织', '#3978cf', '⌘'],
-      tool: ['工具', '#3b854d', '▤'], place: ['地点', '#a9632b', '⌂'],
+      tool: ['工具', '#3b854d', '▤'], place: ['地点', '#8a8378', '⌂'],
     }
     const EVENT_TYPE_TEXT = { decision: '决策', release: '发布', task_completed: '任务完成', plan: '计划', change: '变更', cancellation: '取消', incident: '事件', meeting: '会议', collaboration: '协作', migration: '迁移', other: '其他' }
     const EVENT_STATUS_TEXT = { occurred: '已发生', planned: '计划中', cancelled: '已取消', ongoing: '进行中', unknown: '未知' }
@@ -2225,7 +2617,7 @@ window.__ModuleLoader__.load({
         h('button', { className: 'sg-source-button', onClick: () => openSource(event) }, '查看来源与证据 →')))
     }
 
-    function TimelineList({ events, nodes, onSelect, selectedId, floating = false, onNode, openSource }) {
+    function TimelineList({ events, nodes, onSelect, selectedId, floating = false, onNode, openSource, dreaming = null }) {
       const [preview, setPreview] = React.useState(null)
       const pinnedId = React.useRef('')
       const hideTimer = React.useRef(null)
@@ -2247,19 +2639,40 @@ window.__ModuleLoader__.load({
         hideTimer.current = window.setTimeout(() => setPreview(null), 140)
       }
       React.useEffect(() => () => cancelHide(), [])
+      const sorted = events.slice().sort((a, b) => String(eventOccurrence(b).value).localeCompare(String(eventOccurrence(a).value)))
+      const days = []
+      for (const event of sorted) {
+        const info = eventOccurrence(event)
+        const key = eventDayKey(info.value) || 'unknown'
+        let group = days.find((item) => item.key === key)
+        if (!group) { group = { key, label: key === 'unknown' ? { day: '?', week: '发生时间未知' } : eventDayLabel(info.value), items: [] }; days.push(group) }
+        group.items.push({ event, info })
+      }
       const now = new Date(); const weekAgo = now.getTime() - 7 * 86400000
-      const groups = { '今天': [], '本周': [], '更早': [] }
-      events.slice()
-        .sort((a, b) => String(eventOccurrence(b).value).localeCompare(String(eventOccurrence(a).value)))
-        .forEach((event) => { const info = eventOccurrence(event); const time = Date.parse(info.value); const sameDay = Number.isFinite(time) && new Date(time).toDateString() === now.toDateString(); groups[sameDay ? '今天' : time >= weekAgo ? '本周' : '更早'].push(event) })
+      const groups = { '今天': 0, '本周': 0, '更早': 0 }
+      for (const event of sorted) {
+        const info = eventOccurrence(event); const time = Date.parse(info.value)
+        const sameDay = Number.isFinite(time) && new Date(time).toDateString() === now.toDateString()
+        groups[sameDay ? '今天' : time >= weekAgo ? '本周' : '更早'] += 1
+      }
       const nodeMap = new Map(nodes.map((node) => [node.id, node]))
-      return h('div', { className: 'sg-timeline' }, Object.entries(groups).map(([label, items]) => items.length ? h('section', { key: label, className: 'sg-time-group' }, h('h3', null, label), items.map((event) => {
-        const info = eventOccurrence(event); const temporal = event.temporal || {}
-        return h('button', { key: event.id, className: 'sg-timeline-card ' + (event.id === selectedId ? 'selected' : ''), onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
-          h('span', { className: 'sg-timeline-dot' }), h('div', { className: 'sg-event-clock' }, info.known ? exactTime(info.value).replace(/^\d{4}\//, '') : '发生时间未知', !info.known ? h('small', null, '提及于 ' + exactTime(info.value)) : null),
-          h('div', { className: 'sg-event-main' }, h('div', { className: 'sg-event-title-row' }, h('strong', null, event.title), h('span', { className: 'sg-type-badge' }, EVENT_TYPE_TEXT[temporal.eventType] || temporal.eventType || '其他')), h('p', null, event.summary || '暂无摘要'), h('div', { className: 'sg-tags' }, (temporal.participantNodeIds || []).flatMap((id) => nodeMap.get(id) || []).map((node) => h('span', { key: node.id, className: 'sg-tag' }, node.name)), !(temporal.participantNodeIds || []).length ? (temporal.participants || []).map((name) => h('span', { key: name, className: 'sg-tag' }, name)) : null)),
-          h('span', { className: 'sg-event-status ' + (temporal.status || 'unknown') }, EVENT_STATUS_TEXT[temporal.status] || '未知'))
-      })) : null), floating && preview ? h('div', { className: 'sg-event-popover', style: { left: preview.left + 'px', top: preview.top + 'px' }, onMouseEnter: cancelHide, onMouseLeave: scheduleHide },
+      const usedCount = (event) => Number(event?.weight?.mentionCount || 0) - 1
+      const dreamRun = dreaming && ['completed', 'terminated'].includes(dreaming.status) && dreaming.updatedAt ? dreaming : null
+      const dreamMerged = Number(dreamRun?.changedBatches || 0)
+      return h('div', { className: 'sg-timeline sg-tl' }, h('p', { className: 'sg-tl-summary' }, ['今天', '本周', '更早'].filter((label) => groups[label]).map((label) => label + ' ' + groups[label] + ' 条').join(' · ')),
+        dreamRun ? h('div', { className: 'sg-dream', 'aria-label': '上次整理记录' }, h('span', null, 'Dreaming 整理'), h('span', { className: 'sg-m', 'aria-hidden': 'true' }, Array.from({ length: 4 }, (_, index) => h('i', { key: index })), h('span', null, '→'), Array.from({ length: Math.max(0, Math.min(2, dreamMerged)) }, (_, index) => h('i', { key: 'n' + index }))), h('span', { className: 'sg-mono' }, formatTime(dreamRun.updatedAt))) : null,
+        days.map((group) => h('section', { key: group.key, className: 'sg-tl-day', 'aria-label': group.label.week },
+        h('div', { className: 'sg-tl-date' }, h('b', null, group.label.day), h('span', null, group.label.week)),
+        h('div', { className: 'sg-tl-axis', 'aria-hidden': 'true' }),
+        h('div', { className: 'sg-tl-items' }, group.items.map(({ event, info }) => {
+          const temporal = event.temporal || {}
+          const faded = event.status === 'forgotten' || event.status === 'archived' || temporal.status === 'cancelled'
+          return h('button', { key: event.id, className: 'sg-ev' + (faded ? ' fade' : '') + (event.id === selectedId ? ' selected' : ''), 'data-event-id': event.id, onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
+            h('i', { className: 'sg-nd', 'aria-hidden': 'true' }),
+            h('span', { className: 'sg-t' }, event.title || '记忆事件'),
+            h('span', { className: 'sg-tp' }, info.known ? exactTime(info.value).replace(/^\d{4}\//, '') : '发生时间未知'),
+            usedCount(event) > 0 ? h(UsedMark, { count: usedCount(event), title: '被回答用到 ' + usedCount(event) + ' 次' }) : h('span'))
+        })))), floating && preview ? h('div', { className: 'sg-event-popover', style: { left: preview.left + 'px', top: preview.top + 'px' }, onMouseEnter: cancelHide, onMouseLeave: scheduleHide },
         h('button', { type: 'button', className: 'sg-popover-close', 'aria-label': '关闭事件详情', onClick: hidePreview }, '×'),
         h(EventDetailPanel, { event: preview.event, nodes, events, onNode, openSource })) : null)
     }
@@ -2370,22 +2783,23 @@ window.__ModuleLoader__.load({
         page.total > 9 ? h('button', { type: 'button', className: 'sg-topic-show-all', disabled: !showAll && (page.loading || Boolean(page.error)), 'aria-expanded': showAll, onClick: () => setShowAll((value) => !value) }, showAll ? collapseLabel : '还有 ' + (page.total - 9) + ' 条事件 · ' + (expandLabel || '展开全部')) : null)
     }
 
-    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged }) {
-      const [open, setOpen] = React.useState(false)
+    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged, open = false, onToggle }) {
       const [overviewOpen, setOverviewOpen] = React.useState(true)
       const sectionNumber = chapter + '.' + index
       const regionId = 'sg-topic-' + encodeURIComponent(topicId) + '-' + encodeURIComponent(part.uiKey)
       const sourceCount = Number(part.sourceEventCount || 0)
       return h('section', { className: 'sg-topic-section', 'data-section-index': String(index) },
-        h('h3', { className: 'sg-topic-section-heading' }, h('button', { type: 'button', className: 'sg-topic-section-toggle', title: part.uiTitle, 'aria-expanded': open, 'aria-controls': regionId, onClick: () => setOpen((current) => !current) },
-          h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', null, part.uiTitle), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
+        h('h3', { className: 'sg-topic-section-heading' }, h('button', { type: 'button', className: 'sg-topic-section-toggle' + (open ? ' cur' : ''), title: part.uiTitle, 'data-count': String(sourceCount), 'aria-expanded': open, 'aria-controls': regionId, onClick: () => onToggle?.(open ? '' : part.uiKey) },
+          h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', { className: 'sg-toc-sec-title' }, part.uiTitle), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', 'data-count': String(sourceCount), 'aria-hidden': 'true' }), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-section-body' },
+          h('div', { className: 'sg-leaf-head' }, h('span', { className: 'sg-leaf-k' }, sectionNumber), h('h3', null, part.uiTitle), h('p', { className: 'sg-leaf-sum' }, (part.paragraphs || []).map(paragraph => paragraph.text || '').filter(Boolean).join('\n\n') || '这一节暂时没有概要。')),
           (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((current) => !current) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: overviewOpen, id: regionId + '-overview' }, (part.paragraphs || []).map((paragraph, paragraphIndex) => h('p', { key: paragraphIndex, className: 'sg-topic-overview-text', 'data-overview-paragraph-index': String(paragraphIndex) }, paragraph.text || '暂无总览')))) : null,
-          h(TopicEventList, { namespace, revision, topicId, sectionKey: part.uiKey, total: sourceCount, active: active && open, openEvent, numberPrefix: sectionNumber, onDirectoryChanged }))))
+          h(TopicEventList, { namespace, revision, topicId, sectionKey: part.uiKey, total: sourceCount, active: active && open, openEvent, numberPrefix: sectionNumber, onDirectoryChanged }),
+          h('div', { className: 'sg-leaf-folio', 'aria-hidden': 'true' }, '— 第' + chapterOrdinal(chapter) + '章 · ' + sectionNumber + ' —'))))
     }
 
-    function TopicChapter({ topic, number, namespace, revision, active, openEvent, onDirectoryChanged, expandRequest = 0 }) {
+    function TopicChapter({ topic, number, namespace, revision, active, openEvent, onDirectoryChanged, expandRequest = 0, openSection = '', onSectionToggle }) {
       const [open, setOpen] = React.useState(true)
       const [otherOpen, setOtherOpen] = React.useState(false)
       React.useEffect(() => { if (expandRequest > 0) setOpen(true) }, [expandRequest])
@@ -2394,9 +2808,9 @@ window.__ModuleLoader__.load({
       return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
         h('header', { className: 'sg-topic-chapter-header' },
           h('span', { className: 'sg-topic-chapter-number', 'aria-hidden': 'true' }, String(number).padStart(2, '0')),
-          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
+          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'data-count': String(topicSections(topic).reduce((sum, part) => sum + Number(part.sourceEventCount || 0), 0)), 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
-          topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: active && open, openEvent, onDirectoryChanged })),
+          topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, open: openSection === part.uiKey, onToggle: (key) => onSectionToggle?.(key, part), active: active && open, openEvent, onDirectoryChanged })),
           !(topic.sections || []).length ? h('p', { className: 'sg-topic-no-overview' }, '这个主题尚未建立小节，可查看待归类事件。') : null,
           (() => {
             const remaining = Number(topic.coverage?.unassignedEvents ?? topic.coverage?.omittedEvents ?? 0)
@@ -2499,6 +2913,25 @@ window.__ModuleLoader__.load({
       const [run, setRun] = React.useState(initialRun || null)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
+      const [confirmStop, setConfirmStop] = React.useState(false)
+      const stopDialog = React.useRef(null)
+      const stopTrigger = React.useRef(null)
+      React.useEffect(() => {
+        if (!confirmStop) return undefined
+        const previous = stopTrigger.current
+        stopDialog.current?.querySelector('button')?.focus?.()
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape' && !busy) { event.preventDefault(); setConfirmStop(false) }
+          if (event.key !== 'Tab') return
+          const buttons = [...(stopDialog.current?.querySelectorAll('button:not(:disabled)') || [])]
+          if (!buttons.length) return
+          const first = buttons[0]; const last = buttons.at(-1)
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+        }
+        document.addEventListener('keydown', onKeyDown)
+        return () => { document.removeEventListener('keydown', onKeyDown); if (previous?.isConnected) previous.focus?.() }
+      }, [confirmStop, busy])
       const [collapsed, setCollapsed] = React.useState(!initialRun)
       const request = React.useRef(null)
       const previousStatus = React.useRef(initialRun?.status)
@@ -2561,18 +2994,25 @@ window.__ModuleLoader__.load({
             !outstanding ? h('button', { type: 'button', disabled: busy, onClick: () => setCollapsed(true) }, '收起') : null,
             running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
             paused && !run.replanRequired ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
-            outstanding ? h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: () => control('terminate') }, '终止') : null)),
+            outstanding ? h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: (event) => { stopTrigger.current = event.currentTarget; setConfirmStop(true) } }, '终止') : null)),
         run ? h('div', { className: 'sg-dreaming-progress' }, h('progress', { max: Math.max(1, run.total), value: run.completed, 'aria-label': 'Dreaming 整理进度（批次）' }), h('span', null, Math.round(100 * run.completed / Math.max(1, run.total)) + '% · ' + run.completed + '/' + run.total + ' 批次')) : null,
         h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
         run?.reason ? h('p', null, run.reason) : null,
         run && ['completed', 'terminated'].includes(run.status) ? h('p', null, '已完成的修改已保留。') : null,
-        error ? h('p', { role: 'alert' }, error, h('button', { type: 'button', disabled: busy, onClick: () => api('dreaming', { namespace }).then(accept).catch(() => setError('状态读取失败，请稍后重试。')) }, '重新读取')) : null)
+        error ? h('p', { role: 'alert' }, error, h('button', { type: 'button', disabled: busy, onClick: () => api('dreaming', { namespace }).then(accept).catch(() => setError('状态读取失败，请稍后重试。')) }, '重新读取')) : null,
+        confirmStop ? h('div', { className: 'sg-import-overlay', role: 'presentation' }, h('section', { ref: stopDialog, className: 'sg-dlg', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'sg-stop-title', 'aria-describedby': 'sg-stop-copy' },
+          h('h3', { id: 'sg-stop-title' }, '终止这次整理？'),
+          h('div', { className: 'sg-steps', 'aria-hidden': 'true' }, Array.from({ length: 7 }, (_, index) => h('i', { key: index, className: index < Math.min(7, Math.max(0, Math.round(run.completed / Math.max(1, run.total) * 7))) ? '' : 'todo' }))),
+          h('div', { className: 'sg-steps-l' }, h('span', null, Math.min(7, Math.max(0, Math.round(run.completed / Math.max(1, run.total) * 7))) + ' 章整理好的会保留'), h('span', null, (7 - Math.min(7, Math.max(0, Math.round(run.completed / Math.max(1, run.total) * 7)))) + ' 章保持原样')),
+          h('p', { id: 'sg-stop-copy', style: { marginTop: '10px' } }, '已经整理好的章节会保留；未完成的章节保持原样。'),
+          h('div', { className: 'sg-dlg-acts' }, h('button', { type: 'button', className: 'sg-btn ghost', disabled: busy, onClick: () => setConfirmStop(false) }, '继续整理'), h('button', { type: 'button', className: 'sg-btn danger', disabled: busy, onClick: async () => { await control('terminate'); setConfirmStop(false) } }, '终止')))) : null)
     }
 
     function TopicDirectory({ directory, namespace, active = true, openEvent, onDirectoryChanged, onOpenDreamingSession }) {
       const [pendingOpen, setPendingOpen] = React.useState(false)
       const [invalidatedRevision, setInvalidatedRevision] = React.useState(null)
       const [expandRequest, setExpandRequest] = React.useState(0)
+      const [selectedSection, setSelectedSection] = React.useState('')
       const chaptersRef = React.useRef(null)
       const revision = directory?.revision || ''
       const blocked = invalidatedRevision === revision
@@ -2583,16 +3023,22 @@ window.__ModuleLoader__.load({
       const invalidate = React.useCallback(() => { setInvalidatedRevision(revision); return onDirectoryChanged?.() }, [revision, onDirectoryChanged])
       const topics = directory?.topics || []
       const pendingTotal = Number(directory?.pending?.total || 0)
+      const chapterCount = topics.length
+      const sectionCount = topics.reduce((sum, topic) => sum + topicSections(topic).length, 0)
       return h('section', { className: 'sg-topic-directory', 'data-testid': 'stratagate-topic-directory', 'aria-label': '主题目录' },
         h('header', { className: 'sg-topic-directory-intro' },
-          h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }),
           h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: topics.length > 0 && !blocked, onDirectoryChanged, onOpenDreamingSession })),
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
-          h('div', { ref: chaptersRef }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest }))),
-          pendingTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' }, h('h2', { className: 'sg-topic-pending-heading' }, h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', null, '待整理'), h('span', null, pendingTotal + ' 条事件'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
-            h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null))
+          topics.length || pendingTotal ? h('div', { className: 'sg-how' }, h('i', { className: 'sg-sw moss', 'aria-hidden': 'true' }), '目录一直带着', h('span', { 'aria-hidden': 'true' }, '→'), h('i', { className: 'sg-sw lib', 'aria-hidden': 'true' }), '需要时翻到具体事件') : null,
+          h('div', { className: 'sg-book' }, h('div', { className: 'sg-leaf' },
+            h('h3', { className: 'sg-toc-title' }, '目录'),
+            h('div', { className: 'sg-toc-col' }, chapterCount + ' 章 · ' + sectionCount + ' 节'),
+            h('div', { ref: chaptersRef }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, openSection: selectedSection, onSectionToggle: (key, part) => setSelectedSection(key) }))),
+            pendingTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' }, h('h2', { className: 'sg-topic-pending-heading' }, h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', null, '待整理'), h('span', null, pendingTotal + ' 条事件'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
+              h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null,
+            h('div', { className: 'sg-toc-foot sg-leaf-foot' }, h('span', null, directory?.dreaming?.updatedAt ? '上次整理 ' + formatTime(directory.dreaming.updatedAt) : '目录会随整理更新'), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
     }
 
     function LongTermPage({ events, eventPage, graph, graphSettings = {}, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, onOpenDreamingSession, extractionGap = false, active = true, refresh }) {
@@ -2706,7 +3152,7 @@ window.__ModuleLoader__.load({
             fullScreen ? h(NodeDetailPanel, { node: nodes.find((node) => node.id === selectedNodeId), nodes, edges, events, onEvent: selectEvent }) : null)
           : h(React.Fragment, null,
             h('div', { className: 'sg-long-layout ' + (fullScreen ? 'sg-timeline-layout' : 'sg-summary-layout') },
-              h(TimelineList, { events: timelineEvents, nodes, onSelect: setSelectedEventId, selectedId: selectedEventId, floating: !fullScreen, onNode: selectNode, openSource: openEvent }),
+              h(TimelineList, { events: timelineEvents, nodes, onSelect: setSelectedEventId, selectedId: selectedEventId, floating: !fullScreen, onNode: selectNode, openSource: openEvent, dreaming: topicDirectory?.dreaming }),
               fullScreen ? h(EventDetailPanel, { event: timelineEvents.find((event) => event.id === selectedEventId), nodes, events: timelineEvents, onNode: selectNode, openSource: openEvent }) : null),
             h(Pagination, { page: pagedEvents.page, loading: pagedEvents.loading, error: pagedEvents.error, onOffset: pagedEvents.loadOffset }))))
     }
@@ -2898,7 +3344,22 @@ window.__ModuleLoader__.load({
       }
       flushItem(); return output
     }
-    function DailyNotesPage({ namespace }) {
+    // Plain digest for the day list. The full note view keeps the original Markdown.
+    function dailyNoteDigest(markdown) {
+      const items = []
+      let current = null
+      for (const raw of String(markdown || '').split(/\r?\n/)) {
+        const line = raw.trim()
+        if (!line || /^# \d{4}-\d{2}-\d{2}$/.test(line)) continue
+        if (line.startsWith('## ')) { current = { title: line.slice(3), detail: '', time: '' }; items.push(current); continue }
+        if (!current) continue
+        const clock = line.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/)
+        if (clock && !current.time) current.time = clock[1].padStart(2, '0') + ':' + clock[2]
+        if (!current.detail) current.detail = line.replace(/^(当前|已完成)：\s*/, '').replace(/^[-*]\s+/, '')
+      }
+      return items
+    }
+    function DailyNotesPage({ namespace, setDailyInjectionDays }) {
       const [index, setIndex] = React.useState(null)
       const [indexLoading, setIndexLoading] = React.useState(true)
       const [indexError, setIndexError] = React.useState('')
@@ -2907,6 +3368,9 @@ window.__ModuleLoader__.load({
       const [revision, setRevision] = React.useState(0)
       const [noteRevision, setNoteRevision] = React.useState(0)
       const [calendarOpen, setCalendarOpen] = React.useState(false)
+      const [dayDigests, setDayDigests] = React.useState({})
+      const [daySaving, setDaySaving] = React.useState(false)
+      const [dayError, setDayError] = React.useState('')
       const [month, setMonth] = React.useState('')
       const [directoryOpening, setDirectoryOpening] = React.useState(false)
       const [directoryFeedback, setDirectoryFeedback] = React.useState('')
@@ -2939,6 +3403,36 @@ window.__ModuleLoader__.load({
       const choose = date => { setSelected(date); setCalendarOpen(false) }
       const dates = index?.dates || []; const injected = index?.injectedDates || []; const enabled = index?.enabled !== false
       const injectionDays = index?.injectionDays ?? 3
+      const digests = dayDigests && typeof dayDigests === 'object' ? dayDigests : {}
+      React.useEffect(() => {
+        let active = true
+        const controller = new AbortController()
+        const wanted = dates.slice(0, 14).filter(date => !(date in digests))
+        if (!wanted.length || indexError || !namespace) return () => controller.abort()
+        void Promise.all(wanted.map(async date => {
+          try {
+            const value = await api('daily/note', { namespace, date }, { signal: controller.signal })
+            return [date, dailyNoteDigest(value?.markdown)]
+          } catch { return [date, null] }
+        })).then(entries => {
+          if (!active || controller.signal.aborted) return
+          setDayDigests(current => {
+            const next = { ...current }
+            for (const [date, items] of entries) next[date] = items
+            return next
+          })
+        })
+        return () => { active = false; controller.abort() }
+      }, [namespace, indexError, dates.join(',')])
+      const stepDays = async (delta) => {
+        if (!setDailyInjectionDays || daySaving) return
+        const next = Math.min(30, Math.max(1, injectionDays + delta))
+        if (next === injectionDays) return
+        setDaySaving(true); setDayError('')
+        try { if (!await setDailyInjectionDays(next)) setDayError('天数未保存，请重试。') }
+        catch (reason) { setDayError('天数保存失败：' + String(reason?.message || reason)) }
+        finally { setDaySaving(false) }
+      }
       const months = [...new Set(dates.map(date => date.slice(0, 7)))].sort()
       const calendarMonth = month || selected.slice(0, 7) || months[months.length - 1]
       const calendar = () => {
@@ -2966,32 +3460,62 @@ window.__ModuleLoader__.load({
       }
       const failure = error => h('div', { className: 'sg-daily-state error', role: 'alert' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'alert' })), h('h3', null, '暂时无法读取笔记'), h('p', null, '文件可能被占用或权限不足，已有笔记不会丢失。'), h('button', { type: 'button', className: 'sg-daily-retry', onClick: () => indexError ? setRevision(v => v + 1) : setNoteRevision(v => v + 1) }, h(DailyIcon, { name: 'refresh' }), '重新读取'), h('details', null, h('summary', null, '错误详情'), error))
       const date = selected ? dailyParts(selected) : null
+      const days = dates.slice(0, 14)
+      const dayRows = () => {
+        const rows = []
+        let cutShown = false
+        days.forEach((day, position) => {
+          const parts = dailyParts(day)
+          const isInjected = enabled && injected.includes(day)
+          const items = digests[day]
+          if (!cutShown && !isInjected && days.slice(0, position).some(earlier => injected.includes(earlier))) {
+            cutShown = true
+            rows.push(h('div', { key: day + '-cut', className: 'sg-day-cut' }, h('span', null, '以下不带入')))
+          }
+          const entries = Array.isArray(items) && items.length ? items : [{ title: '查看当天笔记', detail: '', time: '' }]
+          const lines = entries.slice(0, 6).map((item, key) => h('li', { key },
+            h('span', { className: 'sg-day-t' }, item.time || ''),
+            h('button', {
+              type: 'button',
+              className: 'sg-daily-back sg-day-s',
+              onClick: () => choose(day),
+              'aria-label': parts.month + '月' + parts.day + '日 ' + item.title + '，查看当天笔记',
+            }, item.title + (item.detail ? ' · ' + item.detail.slice(0, 36) : '')),
+            h('span')))
+          rows.push(h('div', { key: day, className: 'sg-day' + (isInjected ? '' : ' out'), style: { animationDelay: position * 40 + 'ms' } },
+            h('button', { type: 'button', role: 'tab', id: 'sg-day-tab-' + day, 'aria-controls': 'sg-day-note', 'data-day': day, 'aria-selected': selected === day, tabIndex: selected === day || (!days.includes(selected) && position === 0) ? 0 : -1, className: 'sg-day-d', onClick: () => choose(day), onKeyDown: event => {
+              const next = event.key === 'ArrowDown' ? (position + 1) % days.length : event.key === 'ArrowUp' ? (position + days.length - 1) % days.length : event.key === 'Home' ? 0 : event.key === 'End' ? days.length - 1 : -1
+              if (next >= 0) { event.preventDefault(); choose(days[next]); event.currentTarget.closest('.sg-days')?.querySelector('[data-day="' + days[next] + '"]')?.focus() }
+            } }, h('b', null, parts.day), h('span', null, parts.week), h('span', { className: 'sg-visually-hidden' }, parts.month + '月 · ' + dailyRelative(day, index.today))),
+            h('div', { className: 'sg-day-rail', 'aria-hidden': 'true' }),
+            h('ul', null, lines)))
+        })
+        return rows
+      }
       return h('div', { className: 'sg-daily' },
-        h('div', { className: 'sg-daily-head' }, h('div', null, h('h2', null, '短期记忆'), h('p', null, '每天一份工作笔记，最近 ' + injectionDays + ' 个有笔记日期会带入新会话。')),
+        h('div', { className: 'sg-pg-head' }, h('h2', null, '短期记忆'),
+          h('span', { className: 'sg-pg-tag' }, h('i', { className: 'sg-sw sand', 'aria-hidden': 'true' }), enabled ? '新会话带入最近 ' + injectionDays + ' 个有笔记日期' : '已暂停注入'),
+          h('span', { className: 'sg-pg-end' }, setDailyInjectionDays ? h('span', { className: 'sg-stp', role: 'group', 'aria-label': '带入新会话的天数' },
+            h('button', { type: 'button', 'aria-label': '减少一天', disabled: daySaving || injectionDays <= 1, onClick: () => void stepDays(-1) }, '\u2212'),
+            h('span', { 'aria-live': 'polite' }, injectionDays + ' 天'),
+            h('button', { type: 'button', 'aria-label': '增加一天', disabled: daySaving || injectionDays >= 30, onClick: () => void stepDays(1) }, '+')) : null,
           h('div', { className: 'sg-daily-actions', ref: actions }, h('button', { type: 'button', ref: calendarButton, className: 'sg-daily-icon-btn', 'aria-label': '查看更早日期', title: '查看更早日期', 'data-tip': '查看更早日期', 'aria-haspopup': 'dialog', 'aria-expanded': calendarOpen, disabled: !dates.length || indexLoading || Boolean(indexError), onClick: () => { setMonth(selected.slice(0, 7) || months[months.length - 1]); setCalendarOpen(value => !value) } }, h(DailyIcon, { name: 'calendar' })),
             h('button', { type: 'button', className: 'sg-daily-icon-btn', 'aria-label': '打开笔记文件夹', title: '打开笔记文件夹', 'data-tip': '打开笔记文件夹', disabled: !namespace || directoryOpening, onClick: openDirectory }, h(DailyIcon, { name: 'folder' })), calendar())),
         directoryFeedback ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, directoryFeedback) : null,
+        dayError ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, dayError) : null,
         indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
           !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
           dates.length ? h(React.Fragment, null,
-            h('div', { className: 'sg-daily-strip', role: 'tablist', 'aria-label': '带入新会话的笔记' }, injected.map((date, i) => {
-              const parts = dailyParts(date)
-              return h('button', { key: date, type: 'button', role: 'tab', 'aria-selected': selected === date, tabIndex: selected === date || (!injected.includes(selected) && i === 0) ? 0 : -1, className: 'sg-daily-day' + (selected === date ? ' selected' : ''), onClick: () => choose(date), onKeyDown: event => {
-                const next = event.key === 'ArrowRight' ? (i + 1) % injected.length : event.key === 'ArrowLeft' ? (i + injected.length - 1) % injected.length : event.key === 'Home' ? 0 : event.key === 'End' ? injected.length - 1 : -1
-                if (next >= 0) { event.preventDefault(); choose(injected[next]); event.currentTarget.parentElement.children[next]?.focus() }
-              } }, h('span', { className: 'sg-daily-num' }, parts.day), h('span', { className: 'sg-daily-week' }, parts.month + '月 · ' + parts.week), h('span', { className: 'sg-daily-rel' }, dailyRelative(date, index.today)))
-            })),
-            note.loading || note.date !== selected ? h(Loading) : note.error ? failure(note.error) : date ? h('article', { key: selected, className: 'sg-daily-note' },
+            h('div', { className: 'sg-days', role: 'tablist', 'aria-label': '带入新会话的笔记' }, dayRows()),
+            note.loading || note.date !== selected ? h(Loading) : note.error ? failure(note.error) : date ? h('article', { key: selected, id: 'sg-day-note', role: 'tabpanel', 'aria-labelledby': 'sg-day-tab-' + selected, className: 'sg-daily-note' },
               h('div', { className: 'sg-daily-note-date' }, h('h3', null, date.month + ' 月 ' + date.day + ' 日'), h('span', null, date.week + ' · ' + dailyRelative(selected, index.today))),
               h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在带入范围内'), !injected.includes(selected) ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null), renderDailyMarkdown(note.markdown)) : null)
-            : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
+            : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。')))))
     }
 
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh }) {
       const pagedBlocks = usePagedMemory({ namespace, kind: 'blocks', initialItems: blocks, initialPage: blockPage, fallbackLimit: 40, extraParams: { threadId: activeThreadId } })
       const visible = [...pagedBlocks.items].sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || String(a.createdAt).localeCompare(String(b.createdAt)))
-      const distributionRef = React.useRef(null)
-      const [rail, setRail] = React.useState({ value: 0, max: 0 })
       const [expandedId, setExpandedId] = React.useState('')
       const [details, setDetails] = React.useState({})
       const [loadingId, setLoadingId] = React.useState('')
@@ -3019,19 +3543,6 @@ window.__ModuleLoader__.load({
         return () => window.clearTimeout(timer)
       }, [selectionFeedback])
 
-      React.useEffect(() => {
-        const node = distributionRef.current
-        if (!node) return undefined
-        const updateRail = () => {
-          const max = Math.max(0, node.scrollWidth - node.clientWidth)
-          setRail({ value: Math.min(max, Math.round(node.scrollLeft)), max })
-        }
-        node.scrollLeft = node.scrollWidth
-        updateRail()
-        const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(updateRail) : null
-        observer?.observe(node)
-        return () => observer?.disconnect()
-      }, [visible.length, activeThreadId])
 
       const toggleBlock = (block) => {
         if (expandedId === block.id) { setExpandedId(''); return }
@@ -3079,24 +3590,25 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const selectedBlock = visible.find((block) => block.id === expandedId) || visible[visible.length - 1] || null
+      const levelOf = (block) => { const level = visibleBlockLevel(block); return level === null ? 0 : Math.min(5, Math.max(0, level)) }
       return h(React.Fragment, null,
-        h('section', { className: 'sg-decay-overview', 'aria-labelledby': 'sg-decay-title' },
-          h('div', { className: 'sg-decay-head' },
-            h('h2', { className: 'sg-decay-title', id: 'sg-decay-title' }, '块衰减总览'),
-            h('label', { className: 'sg-conversation' }, h('span', null, '当前对话：'), h('select', { value: activeThreadId || '', disabled: !conversations.length, onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))),
-          h('p', { className: 'sg-decay-copy' }, 'L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。'),
-          h('div', { ref: distributionRef, className: 'sg-distribution', 'aria-label': 'Block 当前层级分布', onScroll: (event) => { const node = event.currentTarget; setRail({ value: Math.round(node.scrollLeft), max: Math.max(0, node.scrollWidth - node.clientWidth) }) }, onWheel: (event) => { if (rail.max <= 0) return; event.preventDefault(); event.currentTarget.scrollLeft += event.deltaY + event.deltaX } },
-            visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: 'Block #' + block.sequence }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
-            h('span', { className: 'sg-level-chip sg-open-chip' }, '开放块 · 未封存')),
-          h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: String(Math.max(1, rail.max)), step: '1', value: String(Math.min(rail.value, Math.max(1, rail.max))), disabled: rail.max <= 0, onChange: (event) => { const value = Number(event.target.value); if (distributionRef.current) distributionRef.current.scrollLeft = value; setRail((current) => ({ ...current, value })) }, 'aria-label': 'Block 分布滑轨' }),
-          h('div', { className: 'sg-time-direction', 'aria-hidden': 'true' }, h('span', null, '更旧'), h('span', { className: 'sg-time-line' }), h('span', null, '更新 →')),
-          h('div', { className: 'sg-overview-meta' }, h('span', null, '已封存块：本页 ' + visible.length + ' / 共 ' + pagedBlocks.page.total), h('span', null, '开放块：' + turnRangeText(currentOpen.turnRange) + '（未封存）'))),
-        h('section', { className: 'sg-block-list', 'aria-label': 'Block 列表' },
-          h('div', { className: 'sg-block-header', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
-          visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
-            h('button', { className: 'sg-block-toggle', type: 'button', onClick: () => toggleBlock(block), 'aria-expanded': expandedId === block.id ? 'true' : 'false' },
+        h('div', { className: 'sg-pg-head' }, h('h2', null, '会话记忆'),
+          h('span', { className: 'sg-pg-tag' }, h('i', { className: 'sg-sw water', 'aria-hidden': 'true' }), visible.length + ' 块 · 共 ' + pagedBlocks.page.total + ' 块'),
+          conversations.length ? h('span', { className: 'sg-pg-end' }, h('label', { className: 'sg-conversation' }, h('span', null, '当前对话：'), h('select', { value: activeThreadId || '', onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))) : null),
+        h('section', { className: 'sg-block-list sg-ss-list', 'aria-label': 'Block 列表' },
+          h('section', { className: 'sg-visually-hidden', 'aria-labelledby': 'sg-decay-title' },
+            h('h2', { id: 'sg-decay-title' }, '块衰减总览'),
+            h('div', { className: 'sg-distribution', 'aria-label': 'Block 当前层级分布' }, visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: 'Block #' + block.sequence }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)), h('span', { className: 'sg-level-chip sg-open-chip' }, '开放块 · 未封存')),
+            h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: '0', step: '1', value: '0', disabled: true, readOnly: true, 'aria-label': 'Block 分布滑轨' })),
+          h('div', { className: 'sg-block-header sg-visually-hidden', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
+          h('div', { className: 'sg-ss-scale' }, h('span', null, '更早'), h('span', { className: 'sg-r', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, style: { height: 5 + level * 3 + 'px', opacity: .3 + level * .14 } }))), h('span', null, '最近'), h('span', null, '越早的对话压得越薄')),
+          h('div', { className: 'sg-ss' },
+            h('div', { className: 'sg-ss-main' }, visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
+            h('button', { className: 'sg-block-toggle', type: 'button', onClick: () => toggleBlock(block), 'aria-expanded': expandedId === block.id ? 'true' : 'false', 'aria-label': '记忆块 ' + block.sequence + '，' + turnRangeText(block.turnRange) },
+              h('span', { className: 'sg-ss-num' }, String(block.sequence)),
+              h('span', { className: 'sg-ss-bar', style: { height: 20 + levelOf(block) * 5 + 'px', background: 'color-mix(in srgb, var(--sg-water) ' + (14 + levelOf(block) * 14) + '%, var(--sg-page))' } }, h('span', null, block.title || (block.virtual ? '旧 Block #' : 'Block #') + block.sequence)),
               h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-level-badge', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: '助手可参考的详细程度' }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
-              h('span', { className: 'sg-block-name' }, (block.virtual ? '旧 Block #' : 'Block #') + block.sequence),
               h('span', { className: 'sg-block-turn' }, turnRangeText(block.turnRange)),
               h('span', { className: 'sg-block-distance' }, block.distanceFromLatest === 0 ? '0（最新）' : block.distanceFromLatest + ' 个 Block'),
               h('span', { className: 'sg-row-chevron', 'aria-hidden': 'true' }, expandedId === block.id ? '⌃' : '›')),
@@ -3111,12 +3623,17 @@ window.__ModuleLoader__.load({
             previewError?.scope === scope && previewError.blockId === block.id ? h('div', { role: 'alert', className: 'sg-selection-feedback error' }, previewError.message) : null,
             summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
             expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
-          h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-block-toggle sg-open-row' },
-            h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-open-badge' }, '开放块')),
-            h('span', { className: 'sg-block-name' }, '未封存'),
-            h('span', { className: 'sg-block-turn' }, turnRangeText(currentOpen.turnRange)),
-            h('span', { className: 'sg-block-distance' }, '—'),
-            h('span')))),
+            h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-ss-open' },
+              h('span', { className: 'sg-ss-num' }, '·'),
+              h('div', { className: 'sg-ss-bar' }, h('span', null, '正在记录'), h('span', { className: 'sg-ss-dots', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((index) => h('i', { key: index, className: index < Math.min(6, Math.max(0, currentOpen.turns || 0)) ? '' : 'o' })))),
+              h('span')))),
+            selectedBlock ? h('aside', { className: 'sg-ss-side', 'aria-label': '选中记忆块详情' },
+              h('h3', null, selectedBlock.title || 'Block #' + selectedBlock.sequence),
+              h('span', { className: 'sg-k' }, '记忆块 ' + selectedBlock.sequence + ' · ' + turnRangeText(selectedBlock.turnRange)),
+              h('div', { className: 'sg-lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, className: level <= levelOf(selectedBlock) ? 'on' : '' }))),
+              h('div', { className: 'sg-lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
+              h('p', null, selectedBlock.summary || (selectedBlock.keypoints || []).join('；') || '这一块暂时没有摘要。'),
+              h('button', { type: 'button', className: 'sg-btn', onClick: () => toggleBlock(selectedBlock) }, expandedId === selectedBlock.id ? '收起详情' : '看原文')) : null)),
         h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }))
     }
 
@@ -3593,7 +4110,14 @@ window.__ModuleLoader__.load({
         ['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断'],
         ['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助'],
       ]
-      return h(React.Fragment, null, h('div', { className: 'sg-intro' }, h('h2', null, '更多'), h('p', null, '设置、导入与支持')), h('div', { className: 'sg-menu' }, rows.map(([id, icon, title, subtitle]) => h('button', { key: id, className: 'sg-menu-row', onClick: () => setView({ name: id }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›')))))
+      const menuRow = ([id, icon, title, subtitle]) => h('button', { key: id, type: 'button', className: 'sg-menu-row', onClick: () => setView({ name: id }) },
+        h('span', null, h('span', { className: 'sg-menu-title' }, title), h('span', { className: 'sg-menu-subtitle' }, subtitle)),
+        h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', { className: 'sg-chevron', 'aria-hidden': 'true' }, '›'))
+      return h(React.Fragment, null,
+        h('div', { className: 'sg-pg-head' }, h('h2', null, '更多')),
+        h('div', { className: 'sg-more' },
+          h('div', { className: 'sg-more-col' }, h('section', { className: 'sg-profile-group', 'aria-label': '记忆与数据' }, h('h4', null, '记忆与数据'), h('ul', { className: 'sg-mem-menu' }, rows.slice(0, 3).map(menuRow)))),
+          h('div', { className: 'sg-more-col' }, h('section', { className: 'sg-profile-group', 'aria-label': '设置与帮助' }, h('h4', null, '设置与帮助'), h('ul', { className: 'sg-mem-menu' }, rows.slice(3).map(menuRow))))))
     }
 
     function DisplayPage({ onBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry }) {
@@ -3615,8 +4139,9 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', className: 'sg-setting-switch', role: 'switch', 'aria-checked': checked, 'aria-label': title, disabled: !settingsWritable || disabled, onClick: () => { if (onChange) void onChange(!checked) } }))
       return h(React.Fragment, null,
         h(BackBar, { label: '更多', onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, '界面与显示'), h('p', null, '控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')),
-        h('div', { className: 'sg-display-settings' },
+        h('div', { className: 'sg-pg-head' }, h('h2', null, '界面与显示')),
+        h('p', { className: 'sg-settings-group-copy' }, '控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。'),
+        h('div', { className: 'sg-settings-panel sg-display-settings' },
           setting({ title: '在左侧栏显示 StrataGate', description: '关闭后隐藏侧栏入口，仍可从设置打开；记忆、检索和后台处理不受影响。', checked: pluginSettings?.value?.showSidebarEntry === true, disabled: sidebarSaving || !setSidebarEntry, onChange: changeSidebar }),
           sidebarError ? h('p', { role: 'alert', className: 'sg-error-note' }, sidebarError) : null,
           setting({ title: '显示 StrataGate 状态提示', description: '关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。', checked: showStrataGateStatus, onChange: setStrataGateStatus }),
@@ -4803,13 +5328,13 @@ window.__ModuleLoader__.load({
       }
       const total = profile ? profileFieldNames.reduce((sum, field) => sum + Array.from(profile[field] || '').length, 0) : 0
       return h(React.Fragment, null,
-        h('div', { className: 'sg-profile-head' }, h('div', { className: 'sg-intro' }, h('h2', null, '常驻用户画像'), h('p', null, '跨会话、跨项目持续生效，每轮自动进入上下文')), h('span', { className: 'sg-profile-sync ' + (syncStatus === '读取失败' ? 'failed' : syncStatus === '更新中…' ? 'pending' : ''), role: 'status' }, syncStatus)),
+        h('div', { className: 'sg-pg-head' }, h('h2', null, '常驻画像'), h('span', { className: 'sg-pg-tag' }, h('i', { className: 'sg-sw ink', 'aria-hidden': 'true' }), '每轮都带给 AI · 点任意一行修改'), h('span', { className: 'sg-pg-end' }, h('span', { className: 'sg-profile-sync ' + (syncStatus === '读取失败' ? 'failed' : syncStatus === '更新中…' ? 'pending' : ''), role: 'status' }, syncStatus))),
         error ? h('p', { className: 'sg-profile-error', role: 'alert' }, error) : null,
         profile ? h(React.Fragment, null,
-          h('p', { className: 'sg-settings-group-copy' }, '已用 ' + total + ' / 6000 字 · 每轮都会进入上下文，宜精简'),
-          profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
-            h('h3', null, title),
-            fields.filter(([field]) => field !== 'homeCity' || profile.homeCity || profileFieldDrafts.has(field)).map(([field, label, maximum]) => {
+          h('div', { className: 'sg-cap-row' }, h('div', { className: 'sg-cap-bar', role: 'img', 'aria-label': '常驻画像已用 ' + total + ' 字，上限 6000 字' }, h('i', { style: { width: Math.min(100, total / 6000 * 100) + '%' } })), h('span', { className: 'sg-cap-num' }, h('b', null, total), '/ 6,000 字')),
+          h('div', { className: 'sg-pf' }, profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
+            h('h4', null, title),
+            h('ul', null, fields.filter(([field]) => field !== 'homeCity' || profile.homeCity || profileFieldDrafts.has(field)).map(([field, label, maximum]) => {
               const value = profile[field] || ''
               const isEditing = editing?.field === field
               const changedElsewhere = isEditing && (value !== editing.baseValue || profile._revisions?.[field] !== editing.baseRevision)
@@ -4828,13 +5353,14 @@ window.__ModuleLoader__.load({
                     result.kind === 'unknown' ? h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => checkSave(result) }, reading ? '检查中…' : '检查保存结果')
                       : result.kind === 'invalid' ? h('p', null, result.detail) : null) : null,
                   h('div', { className: 'sg-profile-editor-foot' }, h('span', { className: 'sg-profile-count' }, draftLength + ' / ' + maximum, draftLength > maximum ? '，请缩短至 ' + maximum + ' 个字符以内。' : nextTotal > 6000 ? '，画像总字符数不能超过 6000。' : '', savedFeedback), h('div', { className: 'sg-profile-actions' }, h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving, onClick: () => { resetEdit(field); setEditing(null) } }, '取消编辑'), h('button', { type: 'button', className: 'sg-save-button', disabled: saving || reading || result?.kind === 'unknown' || draftLength > maximum || nextTotal > 6000 || editing.draft === editing.baseValue || changedElsewhere || conflict, onClick: save }, saving ? '保存中…' : result?.kind === 'failed' ? '重新保存' : '保存')))) : null
-              return h('div', { key: field, className: 'sg-profile-row' },
+              return h('li', { key: field, className: 'sg-profile-row', onClick: isEditing ? undefined : () => { if (!saving) beginEdit(field) } },
                 h('div', { className: 'sg-profile-summary' + (isEditing ? ' editing' : '') },
-                  h('span', { className: 'sg-profile-label' }, label),
-                  editor || h('span', { className: 'sg-profile-content' }, h('button', { type: 'button', className: 'sg-profile-value ' + (value ? '' : 'empty'), title: value || undefined, 'aria-label': label + '，点击编辑', disabled: saving, onClick: () => beginEdit(field) }, profileFieldDrafts.has(field) ? '继续编辑草稿' : value || PROFILE_EMPTY_HINTS[field] || '未设置'), savedFeedback),
-                  h('button', { type: 'button', className: 'sg-profile-action', onClick: () => beginEdit(field), disabled: saving, 'aria-hidden': isEditing || undefined }, !isEditing && profileFieldDrafts.has(field) ? '继续编辑' : value ? '编辑' : '添加')),
+                  h('div', { className: 'sg-profile-label-cell' }, h('span', { className: 'sg-profile-label' }, label),
+                    editor || h('span', { className: 'sg-profile-content' }, h('button', { type: 'button', className: 'sg-profile-value ' + (value ? '' : 'empty'), title: value || PROFILE_EMPTY_HINTS[field], 'aria-label': label + '，点击编辑', disabled: saving, onClick: (event) => { event?.stopPropagation?.(); beginEdit(field) } }, profileFieldDrafts.has(field) ? '继续编辑草稿' : value || '添加'), savedFeedback)),
+                  isEditing ? null : h('span', { className: 'sg-profile-chev', 'aria-hidden': 'true' }, '›'),
+                  h('button', { type: 'button', className: 'sg-profile-action', onClick: (event) => { event?.stopPropagation?.(); beginEdit(field) }, disabled: saving, 'aria-hidden': isEditing || undefined }, !isEditing && profileFieldDrafts.has(field) ? '继续编辑' : value ? '编辑' : '添加')),
                 savedReadError ? h('p', { className: 'sg-profile-save-feedback', role: 'status' }, h('span', null, '修改已保存，暂时无法读取最新内容。'), h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => refreshRef.current?.() }, '重新读取')) : null)
-            })))) : h('p', null, '正在读取常驻画像…'))
+            })))))) : h('p', null, '正在读取常驻画像…'))
     }
 
     const GRAPH_EXPLANATION = '由于知识图谱功能与事件记录和主题目录有部分重复，还需要额外消耗token维护实体关系，将会默认关闭知识图谱功能，已经生成的图谱数据会保留。'
@@ -5199,9 +5725,22 @@ window.__ModuleLoader__.load({
           .catch((reason) => setDirectoryFeedback({ kind: 'failed', text: '复制失败：' + String(reason?.message || reason) }))
       }
       const menu = (items) => h('div', { className: 'sg-menu sg-settings-menu' }, items.map(([id, icon, title, subtitle]) => h('button', { key: id, type: 'button', className: 'sg-menu-row', onClick: () => setView({ name: id, back: { name: 'settings' } }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›'))))
+      const stepper = ({ value, onChange, min, max, step, label, allowFloat }) => {
+        const current = Number(value)
+        const delta = allowFloat ? step : 1
+        const bump = (direction) => {
+          if (!Number.isFinite(current)) return
+          const next = Math.min(max, Math.max(min, Number((current + direction * delta).toFixed(2))))
+          onChange(String(next))
+        }
+        return h('span', { className: 'sg-stp sg-stp-wide' },
+          h('button', { type: 'button', 'aria-label': '减少' + label, disabled: !Number.isFinite(current) || current <= min, onClick: () => bump(-1) }, '\u2212'),
+          h('input', { className: 'sg-number-input', type: 'number', min: String(min), max: max === undefined ? undefined : String(max), step: String(step), value, onChange: (event) => onChange(event.target.value), 'aria-label': label }),
+          h('button', { type: 'button', 'aria-label': '增加' + label, disabled: !Number.isFinite(current) || max === undefined || current >= max, onClick: () => bump(1) }, '+'))
+      }
       return h(React.Fragment, null,
         h(BackBar, { label: '更多', onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, '高级设置'), h('p', null, '记忆配置、数据管理与运行诊断。')),
+        h('div', { className: 'sg-pg-head' }, h('h2', null, '高级设置'), h('span', { className: 'sg-pg-tag' }, '记忆配置、数据与运行诊断')),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-memory-settings-title' },
           h('h3', { id: 'sg-memory-settings-title', className: 'sg-settings-group-title' }, 'StrataGate 安装级设置'),
           h('p', { className: 'sg-settings-group-copy' }, '适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。设置保存在当前记忆数据库中，不会自动同步到其他设备或安装。'),
@@ -5210,15 +5749,18 @@ window.__ModuleLoader__.load({
           h(RetrievalModelSettings, { kind: 'embedding', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
           h(RetrievalModelSettings, { kind: 'rerank', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
           h('div', { className: 'sg-settings-panel sg-pipeline' },
-            h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
+            h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, stepper({ value: turnSize, onChange: setTurnSize, min: 1, max: 30, step: 1, label: '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
             h('p', { className: 'sg-setting-note' }, '1 轮是一次用户提问和 AI 完整回复。轮数越小，Block 生成越频繁，也会让相同长度的对话衰减得更快；已有 Block 不会重新切分，尚未封存的内容按新阈值继续处理。'),
-            h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: (event) => setLambda(event.target.value), 'aria-label': 'Block 衰减系数 λ' }))),
+            h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, stepper({ value: lambda, onChange: setLambda, min: 0, max: 0.4, step: 0.05, label: 'Block 衰减系数 λ', allowFloat: true }))),
             h('p', { className: 'sg-setting-note' }, '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。'),
             showSuggestion ? h('div', { className: 'sg-setting-suggestion' }, h('span', null, '为保持按对话轮数计算的遗忘速度，建议 λ 调整为 ' + suggestedLambda.toFixed(2) + '。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setLambda(String(Number(suggestedLambda.toFixed(2)))) }, '采用建议值')) : null,
-            h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', max: '5', step: '0.05', value: agentWeight, onChange: (event) => setAgentWeight(event.target.value), 'aria-label': '主动记忆检索占比' }))),
+            h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'sg-lambda-control' }, stepper({ value: agentWeight, onChange: setAgentWeight, min: 0, max: 5, step: 0.05, label: '主动记忆检索占比', allowFloat: true }))),
             h('p', { className: 'sg-setting-note' }, 'agent 主动记录与对话派生记忆分别独立排序后按此权重融合：1 为平权，0 为不浮现 agent 记录，更大值提升 agent 记录的排序权重。'),
             h('p', { className: 'sg-setting-note' }, '保存以上三项参数后，将应用于当前安装中的所有已有工作区，也作为新工作区的默认设置。'),
-            h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : changed ? '保存全局设置' : '全局设置已保存'))),
+            changed ? h('div', { className: 'sg-dirty' }, h('span', null, '3 项中 ' + [turnSizeValue !== selected.blockTurnSize, lambdaValue !== selected.blockDecayLambda, agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1)].filter(Boolean).length + ' 项未保存'),
+              h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: () => { setTurnSize(String(selected.blockTurnSize ?? 6)); setLambda(String(selected.blockDecayLambda ?? 0.3)); setAgentWeight(String(selected.agentMemoryRetrievalWeight ?? 1)) } }, '放弃'),
+              h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : '保存全局设置'))
+              : h('button', { type: 'button', className: 'sg-save-button', disabled: true }, '全局设置已保存'))),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-host-settings-title' },
           h('h3', { id: 'sg-host-settings-title', className: 'sg-settings-group-title' }, '宿主配置'),
           h('p', { className: 'sg-settings-group-copy' }, '所有工作区共用。'),
@@ -5255,6 +5797,7 @@ window.__ModuleLoader__.load({
     }
 
     function MemoryPage({ useWorkspaces, useSessions, navigationState, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, onOpenDreamingSession, onChooseSidebar, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }) {
+      const TAB_SWATCH = { profile: 'ink', short: 'water', daily: 'sand', long: 'lib' }
       const workspaceItems = useWorkspaces((state) => state.items)
       const sessionById = useSessions((state) => state.byId || {})
       const [overview, setOverview] = React.useState({ namespaces: [] })
@@ -5536,7 +6079,7 @@ window.__ModuleLoader__.load({
       else if (loading && !selected) content = h(Loading)
       else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
-      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace })
+      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
       else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })
       else if (view.name === 'status') content = h(ProcessingStatus, { key: namespace, overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
@@ -5553,7 +6096,7 @@ window.__ModuleLoader__.load({
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
 
       return h('main', { className: 'sg-memory' + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-testid': 'stratagate-memory-ui' },
-        h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS),
+        h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS + R6_STYLES),
         h('header', { className: 'sg-header' },
           h('div', { className: 'sg-header-row sg-header-row-primary' },
             h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
@@ -5563,7 +6106,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'sg-header-row sg-header-row-secondary' },
             h('div', { className: 'sg-project' }, h('span', { className: 'sg-project-label' }, '当前工作区：'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
             h(HeaderCommunityLinks))),
-        h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
+        h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, TAB_SWATCH[id] ? h('i', { key: 'sw', className: 'sg-tab-swatch ' + TAB_SWATCH[id], 'aria-hidden': 'true' }) : null, label))),
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
