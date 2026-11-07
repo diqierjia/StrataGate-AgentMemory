@@ -48,17 +48,26 @@ export function listLocalInternalNames(root = packageRoot) {
 // with the same pins.
 export function buildPinnedOverrides({ version, hostDependencies = {}, localInternalNames = [] }) {
   const internalVersion = internalVersionFor(version)
+  // Registry metadata and the published package.json list the same dependencies
+  // in different key orders. Sort so the pin does not depend on that order.
   const names = [...new Set([
     ...Object.keys(hostDependencies),
     ...localInternalNames,
     ...LEGACY_TRANSITIVE_NAMES,
-  ])].filter(name => name.startsWith('@deepseek-ai/dsh-'))
+  ])].filter(name => name.startsWith('@deepseek-ai/dsh-')).sort()
   const overrides = Object.fromEntries(names.map(name => [name, internalVersion]))
   const modernHost = isModernHost(version)
   overrides['@deepseek-ai/cordis'] = modernHost ? hostDependencies['@deepseek-ai/cordis'] : '4.0.2'
   overrides['@deepseek-ai/schemastery'] = modernHost ? hostDependencies['@deepseek-ai/schemastery'] : '3.18.2'
   if (!modernHost) overrides['@deepseek-ai/cordis-plugin-loader'] = '1.0.3'
   return JSON.parse(JSON.stringify(overrides))
+}
+
+export function sameOverrideMap(left, right) {
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  const leftKeys = Object.keys(left)
+  if (leftKeys.length !== Object.keys(right).length) return false
+  return leftKeys.every((key) => Object.hasOwn(right, key) && left[key] === right[key])
 }
 
 function cliPaths(root) {
@@ -141,7 +150,7 @@ export function validateIsolateTree(root, version, rootForLocalNames = packageRo
   } catch (error) {
     return fail(`overrides unavailable: ${error instanceof Error ? error.message : error}`)
   }
-  if (JSON.stringify(overrides) !== JSON.stringify(sentinel.overrides)) return fail('override drift')
+  if (!sameOverrideMap(overrides, sentinel.overrides)) return fail('override drift')
   return { ok: true, sentinel, fingerprint: sentinel.fingerprint }
 }
 
@@ -208,12 +217,17 @@ export function pinCopiedDependencies(packageJsonPath, nodeModules) {
   const manifest = readJson(packageJsonPath)
   if (!manifest) throw new Error(`package.json is missing: ${packageJsonPath}`)
   const dependencies = { ...(manifest.dependencies ?? {}) }
+  const overrides = manifest.overrides
   for (const spec of installedPackageVersions(nodeModules)) {
     const at = spec.lastIndexOf('@')
     const name = spec.slice(0, at)
     const version = spec.slice(at + 1)
     if (!name || name === 'stratagate-dsh' || !version) continue
     dependencies[name] = version
+    // npm compares the override string with the direct dependency string. A
+    // resolved 4.1.0 still conflicts with an override of ~4.1.0. Freeze both
+    // to the installed version so the copy cannot float or raise EOVERRIDE.
+    if (overrides && Object.hasOwn(overrides, name)) overrides[name] = version
   }
   manifest.dependencies = dependencies
   writeFileSync(packageJsonPath, JSON.stringify(manifest, null, 2))
@@ -348,7 +362,7 @@ export function installPinnedCli({ root, version, packageRoot: localRoot = packa
     hostDependencies: cli.dependencies ?? {},
     localInternalNames,
   })
-  if (JSON.stringify(used) !== JSON.stringify(recorded)) {
+  if (!sameOverrideMap(used, recorded)) {
     throw new Error(`Installed DSH ${version} dependencies do not reproduce the overrides used to install it`)
   }
   const sentinel = writeSentinel(root, version, recorded)

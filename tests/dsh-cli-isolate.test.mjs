@@ -308,6 +308,135 @@ test('a restored isolate reports that the cache does not need saving', () => {
   }
 })
 
+function installWithDependencyOrder(root, viewDependencies, installedDependencies) {
+  const run = (args, cwd) => {
+    if (args[0] === 'init') {
+      writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'isolate', version: '1.0.0' }))
+      return '{}'
+    }
+    if (args[0] === 'view') return JSON.stringify({ version, dependencies: viewDependencies })
+    if (args[0] === 'install') {
+      const scope = join(cwd, 'node_modules', '@deepseek-ai')
+      mkdirSync(join(scope, 'dsh', 'lib'), { recursive: true })
+      writeFileSync(join(scope, 'dsh', 'package.json'), JSON.stringify({
+        name: '@deepseek-ai/dsh', version, dependencies: installedDependencies,
+      }))
+      writeFileSync(join(scope, 'dsh', 'lib', 'bin.js'), 'process.stdout.write("dsh")\n')
+      for (const [name, spec] of Object.entries(installedDependencies)) {
+        if (typeof spec !== 'string' || spec.startsWith('~') || spec.startsWith('^')) continue
+        const folder = join(cwd, 'node_modules', ...name.split('/'))
+        mkdirSync(folder, { recursive: true })
+        writeFileSync(join(folder, 'package.json'), JSON.stringify({ name, version: spec }))
+      }
+      return ''
+    }
+    throw new Error(`unexpected npm ${args.join(' ')}`)
+  }
+  return ensureIsolateCli({ root, version, packageRoot: repo, run })
+}
+
+test('same dependency values in a different key order are accepted', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-order-'))
+  const viewDependencies = {
+    '@deepseek-ai/dsh-base': version,
+    '@deepseek-ai/dsh-acp-app': version,
+    '@deepseek-ai/cordis': '~4.1.0',
+    '@deepseek-ai/schemastery': '~3.19.0',
+  }
+  const installedDependencies = {
+    '@deepseek-ai/dsh-acp-app': version,
+    '@deepseek-ai/schemastery': '~3.19.0',
+    '@deepseek-ai/cordis': '~4.1.0',
+    '@deepseek-ai/dsh-base': version,
+  }
+  try {
+    const result = installWithDependencyOrder(root, viewDependencies, installedDependencies)
+    assert.equal(result.reused, false)
+    assert.equal(validateIsolateTree(root, version, repo).ok, true)
+    const sentinel = JSON.parse(readFileSync(join(root, '.stratagate-dsh-isolate.json'), 'utf8'))
+    const reordered = {}
+    for (const key of Object.keys(sentinel.overrides).reverse()) reordered[key] = sentinel.overrides[key]
+    sentinel.overrides = reordered
+    writeFileSync(join(root, '.stratagate-dsh-isolate.json'), JSON.stringify(sentinel))
+    assert.equal(validateIsolateTree(root, version, repo).ok, true)
+    sentinel.overrides['@deepseek-ai/cordis'] = '~4.9.0'
+    writeFileSync(join(root, '.stratagate-dsh-isolate.json'), JSON.stringify(sentinel))
+    assert.equal(validateIsolateTree(root, version, repo).reason, 'override drift')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a real dependency value change is still rejected', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-drift-'))
+  const viewDependencies = {
+    '@deepseek-ai/dsh-base': version,
+    '@deepseek-ai/cordis': '~4.1.0',
+    '@deepseek-ai/schemastery': '~3.19.0',
+  }
+  const installedDependencies = {
+    '@deepseek-ai/cordis': '~4.9.0',
+    '@deepseek-ai/dsh-base': version,
+    '@deepseek-ai/schemastery': '~3.19.0',
+  }
+  try {
+    assert.throws(
+      () => installWithDependencyOrder(root, viewDependencies, installedDependencies),
+      /dependencies do not reproduce the overrides used to install it/,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('copied exact versions match override strings and npm can install them', () => {
+  const cases = [
+    {
+      label: '0.1.2-rc.1',
+      packages: { '@deepseek-ai/cordis': '4.0.2', '@deepseek-ai/schemastery': '3.18.2' },
+      overrides: { '@deepseek-ai/cordis': '4.0.2', '@deepseek-ai/schemastery': '3.18.2' },
+    },
+    {
+      label: '0.1.7-rc.2',
+      packages: { '@deepseek-ai/cordis': '4.0.5', '@deepseek-ai/schemastery': '3.18.5' },
+      overrides: { '@deepseek-ai/cordis': '~4.0.4', '@deepseek-ai/schemastery': '~3.18.4' },
+    },
+    {
+      label: '0.2.2-rc.1',
+      packages: { '@deepseek-ai/cordis': '4.1.0', '@deepseek-ai/schemastery': '3.19.0' },
+      overrides: { '@deepseek-ai/cordis': '~4.1.0', '@deepseek-ai/schemastery': '~3.19.0' },
+    },
+  ]
+  for (const { label, packages, overrides } of cases) {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-pin-npm-'))
+    try {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'pin-probe', version: '1.0.0', overrides }, null, 2))
+      for (const [name, spec] of Object.entries(packages)) {
+        const folder = join(root, 'node_modules', ...name.split('/'))
+        mkdirSync(folder, { recursive: true })
+        writeFileSync(join(folder, 'package.json'), JSON.stringify({ name, version: spec }))
+      }
+      pinCopiedDependencies(join(root, 'package.json'), join(root, 'node_modules'))
+      const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+      for (const [name, spec] of Object.entries(packages)) {
+        assert.equal(manifest.dependencies[name], spec, `${label} ${name} dependency`)
+        assert.equal(manifest.overrides[name], spec, `${label} ${name} override`)
+      }
+      rmSync(join(root, 'node_modules'), { recursive: true, force: true })
+      const installed = spawnSync('npm', ['install', '--ignore-scripts', '--package-lock=false', '--no-audit', '--no-fund'], {
+        cwd: root, encoding: 'utf8',
+      })
+      assert.equal(installed.status, 0, `${label}\n${installed.stderr}`)
+      for (const [name, spec] of Object.entries(packages)) {
+        const actual = JSON.parse(readFileSync(join(root, 'node_modules', ...name.split('/'), 'package.json'), 'utf8')).version
+        assert.equal(actual, spec, `${label} installed ${name}`)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+})
+
 test('package seeding pins the copied tree for the tarball install', () => {
   const source = mkdtempSync(join(tmpdir(), 'dsh-seed-src-'))
   const dest = mkdtempSync(join(tmpdir(), 'dsh-seed-dest-'))
