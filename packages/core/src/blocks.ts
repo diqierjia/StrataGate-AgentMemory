@@ -371,17 +371,26 @@ export function formatRawTranscript(messages: readonly RawMessage[]): string {
 
 const ATTACHMENT_REFERENCE_PREFIX = '[StrataGate attachment] ';
 
+function attachmentReferenceLines(value: string): string[] {
+  return value.split(/\r?\n/u).filter((line) => line.startsWith(ATTACHMENT_REFERENCE_PREFIX));
+}
+
 function attachmentReferences(messages: readonly RawMessage[]): string[] {
-  return [...new Set(messages
-    .flatMap((message) => message.content.split(/\r?\n/u))
-    .filter((line) => line.startsWith(ATTACHMENT_REFERENCE_PREFIX)))];
+  const lines: string[] = [];
+  for (const message of messages) {
+    lines.push(...attachmentReferenceLines(message.content));
+    for (const trace of message.toolCalls ?? []) {
+      if (typeof trace.result === 'string') lines.push(...attachmentReferenceLines(trace.result));
+    }
+  }
+  return [...new Set(lines)];
 }
 
 /** Keep durable attachment identity visible in every rendered layer. */
 export function preserveAttachmentReferences(content: string, messages: readonly RawMessage[]): string {
-  const references = attachmentReferences(messages);
-  if (references.length === 0 || references.every((reference) => content.includes(reference))) return content;
-  return `${content}\n\nAttachments retained in source:\n${references.join('\n')}`;
+  const missing = attachmentReferences(messages).filter((reference) => !content.includes(reference));
+  if (missing.length === 0) return content;
+  return `${content}\n\nAttachments retained in source:\n${missing.join('\n')}`;
 }
 
 export function estimateTokens(value: string): number {

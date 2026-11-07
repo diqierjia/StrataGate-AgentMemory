@@ -118,4 +118,26 @@ describe('DSH turn folding', () => {
     expect(folded?.user).toContain('requirements.pdf')
     expect(folded?.user).toContain('sha256:file')
   })
+
+  it('keeps image and file references returned by a tool', () => {
+    const folder = new TurnFolder()
+    folder.accept(session, event('turn/start', { turn: 10 }, 1))
+    folder.accept(session, event('user/message', {
+      id: 'human', role: 'user', content: content('Read the spec'), source: { kind: 'user' },
+    }, 2))
+    folder.accept(session, event('tool/call', {
+      turn: 10, step: 1, callId: 'call', name: 'read_file', arguments: '{}',
+    }, 3))
+    folder.accept(session, { ...event('tool/result', {
+      turn: 10, step: 1,
+      message: {
+        source: { kind: 'tool', callId: 'call' },
+        content: [{ type: 'file', attachment: { attachmentId: 'sha256:tool-file' as never, name: 'spec.pdf', bytes: 99 } }],
+      },
+    }, 4), surfaceOp: 'append' } as SessionEvent)
+    const folded = folder.accept(session, event('turn/end', { turn: 10, reason: { kind: 'completed' } }, 5))
+    expect(folded?.assistantToolCalls?.[0]?.result).toContain('sha256:tool-file')
+    expect(folded?.assistantToolCalls?.[0]?.result).toContain('spec.pdf')
+    expect(folded?.userMessageId).toBe('dsh:session-1:turn:10:user')
+  })
 })
