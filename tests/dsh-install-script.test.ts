@@ -15,22 +15,12 @@ describe('DSH install verification failure probe', () => {
     expect(source).toContain('[...new Set([...historicalVersions, currentVersion])]')
   })
 
-  it.each(['0.1.2-rc.1', '0.1.5-rc.1', '0.1.6-alpha.1', '0.1.7-rc.1', '0.2.0-rc.2', '0.2.2-rc.1'])(
-    'keeps the loader compatible with the Cordis core for %s', version => {
-      const setup = source.match(/overrides\['@deepseek-ai\/cordis'\][\s\S]*?(?=    const freshManifestPath)/)?.[0]
-      if (!setup) throw new Error('Host dependency overrides missing')
-      const overrides: Record<string, string> = {}
-      runInNewContext(`${hostDeclaration}\n${setup}`, { version, satisfies, overrides,
-        hostManifest: { dependencies: { '@deepseek-ai/cordis': '~4.0.4', '@deepseek-ai/schemastery': '~3.18.4' } } })
-      if (satisfies(version, '>=0.1.7-rc.1', { includePrerelease: true })) {
-        expect(overrides['@deepseek-ai/cordis']).toBe('~4.0.4')
-        expect(overrides['@deepseek-ai/cordis-plugin-loader']).toBeUndefined()
-      } else {
-        expect(overrides['@deepseek-ai/cordis']).toBe('4.0.2')
-        expect(overrides['@deepseek-ai/cordis-plugin-loader']).toBe('1.0.3')
-      }
-    },
-  )
+  it('reuses the shared isolate pins instead of a second override implementation', () => {
+    expect(source).toContain('buildPinnedOverrides')
+    expect(source).toContain('validateIsolateTree')
+    expect(source).toContain('attachIsolatedCli')
+    expect(source).not.toContain("overrides['@deepseek-ai/cordis-plugin-loader']")
+  })
   it.each([
     ['0.1.2-rc.1', false],
     ['0.1.5-rc.1', false],

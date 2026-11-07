@@ -118,6 +118,11 @@ jobs:
             unset DSH_VERSION
           fi
           export DSH_VERSION
+          if [ -n "${DSH_VERSION:-}" ]; then
+            export DSH_ISOLATE_ROOT="${RUNNER_TEMP}/stratagate-dsh-isolate"
+            node scripts/dsh-cli-isolate.mjs
+            export DSH_ROOT="$DSH_ISOLATE_ROOT"
+          fi
           versioned="stratagate-dsh-${VERSION}.tgz"
           source_asset="stratagate-dsh-${VERSION}-source.tar.gz"
           npm pack --silent --ignore-scripts

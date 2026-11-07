@@ -67,7 +67,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs tests/classify-ci-risk.test.mjs tests/stage-candidate.test.mjs
+      - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs tests/classify-ci-risk.test.mjs tests/stage-candidate.test.mjs tests/dsh-cli-isolate.test.mjs
       - run: npm run check
       - run: npm test
       - run: npm run build
@@ -75,6 +75,10 @@ jobs:
   dsh-compatibility:
     needs: [reuse-pr-ci, classify]
     if: needs.reuse-pr-ci.outputs.reuse != 'true'
+    # Cache save needs actions: write. Keep the other jobs read-only.
+    permissions:
+      contents: read
+      actions: write
     # Successful Windows cells have taken about 47 minutes. Stop above that
     # bound so a hung install cannot run until the platform default of 6 hours.
     timeout-minutes: 90
@@ -95,6 +99,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
+        id: node
         with:
           node-version: 24.x
           cache: npm
@@ -104,7 +109,31 @@ jobs:
       - name: Install repository dependencies
         timeout-minutes: 20
         run: npm ci
+      # One pinned CLI tree per OS and DSH version. The script hash keeps a
+      # changed installer off an older tree. Restore does not use a prefix:
+      # a different version must not be treated as this host.
+      - name: Restore isolated DSH CLI
+        id: isolate-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/stratagate-dsh-isolate
+          key: dsh-isolate-v1-${{ runner.os }}-${{ matrix.dsh }}-${{ steps.node.outputs.node-version }}-${{ hashFiles('scripts/dsh-cli-isolate.mjs') }}
+      - name: Ensure isolated DSH CLI
+        id: isolate-cli
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+          DSH_ISOLATE_ROOT: ${{ runner.temp }}/stratagate-dsh-isolate
+        run: node scripts/dsh-cli-isolate.mjs
+      - name: Save isolated DSH CLI
+        if: steps.isolate-cli.outputs.cache_save == 'true' && steps.isolate-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/stratagate-dsh-isolate
+          key: dsh-isolate-v1-${{ runner.os }}-${{ matrix.dsh }}-${{ steps.node.outputs.node-version }}-${{ hashFiles('scripts/dsh-cli-isolate.mjs') }}
       - name: Run DSH compatibility suite in isolated CLI root
         run: node scripts/run-dsh-compatibility.mjs
         env:
           DSH_VERSION: ${{ matrix.dsh }}
+          DSH_ISOLATE_ROOT: ${{ runner.temp }}/stratagate-dsh-isolate
