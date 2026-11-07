@@ -1,32 +1,26 @@
 import { appendFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { hasRequiredJobs } from './ci-evidence-jobs.mjs'
 
-// Only a completed successful push to main for the exact release commit is
-// trusted. In particular, PR head_sha does not identify the merge checkout.
+export { hasRequiredJobs }
+
 export function findReusableRun(runs, sha) {
   return runs.find(run => run.head_sha === sha && run.head_branch === 'main' &&
     run.event === 'push' && run.status === 'completed' && run.conclusion === 'success' &&
     run.path === '.github/workflows/ci.yml')
 }
 
-export function hasRequiredJobs(jobs) {
-  const names = ['core (22.19.0)', 'core (24.x)']
-  for (const os of ['ubuntu-latest', 'windows-latest']) {
-    for (const host of ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.2-rc.1']) {
-      names.push(`dsh-compatibility (${os}, ${host})`)
-    }
-  }
-  return names.every(name => jobs.some(job => job.name === name && job.status === 'completed' && job.conclusion === 'success'))
-}
-
 export function hasReusablePrCiJob(jobs) {
-  return jobs.some(job => job.name === 'reuse-pr-ci' && job.status === 'completed' && job.conclusion === 'success')
+  return Array.isArray(jobs) && jobs.some(job => job.name === 'reuse-pr-ci' && job.status === 'completed' && job.conclusion === 'success')
 }
 
 export async function main(env = process.env, request = fetch) {
   let run
   {
     if (!env.GITHUB_SHA || !env.GITHUB_REPOSITORY || !env.GH_TOKEN) throw new Error('missing GitHub context')
+    // Manual releases stay on the main CI record. Tag releases may reuse the
+    // same-tree PR run, but that import has to happen after this module is
+    // done exporting: a static import back from find-pr-ci exits 13.
     if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch') {
       const { findPrCi } = await import('./find-pr-ci.mjs')
       try {

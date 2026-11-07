@@ -11,6 +11,9 @@ permissions:
 
 jobs:
   dsh-compatibility:
+    # Same bound as the PR matrix: successful Windows cells reach about 47
+    # minutes, and a hung install must not wait out the 6-hour default.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -26,7 +29,9 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - run: npm ci
+      - name: Install repository dependencies
+        timeout-minutes: 20
+        run: npm ci
       - name: Run full DSH compatibility suite in isolated CLI root
         run: node scripts/run-dsh-compatibility.mjs
         env:
