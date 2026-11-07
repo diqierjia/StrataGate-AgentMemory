@@ -453,6 +453,434 @@ window.__ModuleLoader__.load({
 @media(prefers-reduced-motion:reduce){.sg-memory .sg-daily *{animation:none!important;transition:none!important}}
 `
 
+    const r6Css = `
+      /* R6 visual system: editorial type, quiet surfaces, and one semantic color per memory layer. */
+      .sg-memory{
+        --sg-sheet:var(--dsw-alias-bg-layer-1,#fff);
+        --sg-card:var(--dsw-alias-bg-layer-1,#fff);
+        --sg-hair:color-mix(in srgb,var(--sg-border) 72%,transparent);
+        --sg-page:var(--dsw-alias-bg-layer-1,#fff);
+        --sg-ink:light-dark(#3d3b37,#d6d1c6);
+        --sg-moss:light-dark(#5f7f4d,#8fae7b);
+        --sg-sand:light-dark(#a9822f,#d2b066);
+        --sg-water:light-dark(#3f6d9c,#6f97c0);
+        --sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC",serif;
+        --sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+        container-type:inline-size;container-name:sg-memory;
+        background:var(--sg-page);font-family:var(--sg-body,"Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif)
+      }
+      .sg-memory :is(h1,h2,h3,.sg-detail-title,.sg-entry-title,.sg-block-name,.sg-topic-chapter-title,.sg-brand-name,.sg-decay-title,.sg-event-clock b){font-family:var(--sg-serif);letter-spacing:0}
+      .sg-memory :is(.sg-brand-version,.sg-usage-number,.sg-meta,.sg-event-clock,.sg-directory-number,.sg-profile-count,.sg-setting-value,.sg-toolbar-count,.sg-r6-figure b,.sg-r6-stock-value){font-family:var(--sg-mono);font-variant-numeric:tabular-nums}
+      .sg-memory .sg-header{margin:0 0 4px;padding:2px 0 12px;border:0;border-bottom:0;border-radius:0;background:transparent;box-shadow:none}
+      .sg-memory .sg-logo{width:26px;height:26px;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:var(--sg-text);filter:none}
+      .sg-memory .sg-brand:hover .sg-logo{transform:none}
+      .sg-memory .sg-brand-name{font:400 18px/1.2 var(--sg-serif);letter-spacing:0}
+      .sg-memory .sg-brand-version{font-size:12px;font-weight:500}
+      .sg-memory .sg-usage-count{padding:0;border-radius:0;background:transparent;color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-usage-number{font-size:13px;font-weight:650}
+      .sg-memory[data-section="overview"] .sg-usage-count{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+      .sg-memory .sg-header-row-secondary{align-items:center;flex-wrap:wrap;gap:8px 12px}
+      .sg-memory .sg-project{flex:1 1 220px;justify-content:space-between}
+      .sg-memory .sg-header-community{flex:1 1 auto;justify-content:flex-end}
+      .sg-memory .sg-project-select{margin-left:auto;max-width:220px;padding:7px 28px 7px 12px;border:1px solid var(--sg-border);border-radius:10px;background:var(--sg-card);font-weight:600}
+      .sg-memory .sg-header-star{border-color:var(--sg-border);background:transparent;color:var(--sg-text);box-shadow:none}
+      .sg-memory .sg-header-star:hover{border-color:var(--sg-text);background:var(--sg-soft);color:var(--sg-text)}
+      .sg-memory .sg-tabs{display:flex;gap:2px;margin:12px 0 18px;padding:0;border:0;border-bottom:1px solid var(--sg-border);border-radius:0;background:transparent;overflow-x:auto;scrollbar-width:none}
+      .sg-memory .sg-tabs::-webkit-scrollbar{display:none}
+      .sg-memory .sg-tab{display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:0 0 auto;min-height:36px;padding:8px 10px 10px;border-radius:0;background:transparent;color:var(--sg-muted);font-size:13px;font-weight:500}
+      .sg-memory .sg-tab:hover{background:transparent;color:var(--sg-text)}
+      .sg-memory .sg-tab.active{background:transparent;color:var(--sg-text);box-shadow:none;font-weight:600}
+      .sg-memory .sg-tab.active:after{display:block;left:8px;right:8px;bottom:-1px;height:2px;background:var(--sg-text)}
+      .sg-memory .sg-tab:before{content:none;display:none}
+      .sg-memory .sg-intro h2,.sg-memory .sg-detail-title,.sg-memory .sg-decay-title{font-size:22px;line-height:1.25;font-weight:650}
+      .sg-memory .sg-intro p{margin-top:7px;color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-primary-link{background:var(--sg-text);border-color:var(--sg-text);color:var(--sg-page)}
+      .sg-memory .sg-setting-switch[aria-checked="true"]{border-color:var(--sg-good);background:var(--sg-good)}
+      .sg-memory .sg-setting-switch[aria-checked="true"]:before{background:var(--sg-page)}
+
+      /* Profile: system-settings rows, with a restrained graphite capacity bar. */
+      .sg-memory .sg-profile-group{margin-top:22px;padding:0;border:0;border-radius:0;background:transparent}
+      .sg-memory .sg-profile-group h3{margin:0 0 7px 2px;color:var(--sg-muted);font-size:11px;font-weight:600;letter-spacing:.04em}
+      .sg-memory .sg-profile-group:before{content:"";display:block;height:2px;margin-bottom:7px;background:var(--sg-ink)}
+      .sg-memory .sg-profile-group:first-of-type{margin-top:8px}
+      .sg-memory .sg-profile-row{padding:0 2px;border:1px solid var(--sg-border);border-bottom:0;background:var(--sg-page)}
+      .sg-memory .sg-profile-row:first-of-type{border-radius:10px 10px 0 0}
+      .sg-memory .sg-profile-row:last-child{border-bottom:1px solid var(--sg-border);border-radius:0 0 10px 10px}
+      .sg-memory .sg-profile-summary{grid-template-columns:minmax(0,1fr) minmax(0,2fr) 24px;gap:12px;min-height:62px;padding:9px 11px}
+      .sg-memory .sg-profile-label{align-self:end;font-size:11px;color:var(--sg-muted);font-weight:500}
+      .sg-memory .sg-profile-content{display:block;align-self:center;min-width:0}
+      .sg-memory .sg-profile-value{display:block;color:var(--sg-text);font-size:13px;font-weight:550}
+      .sg-memory .sg-profile-value.empty{color:var(--sg-accent);opacity:1;font-weight:600}
+      .sg-memory .sg-profile-action{width:24px;height:28px;padding:0;color:var(--sg-muted)!important;font-size:0!important}
+      .sg-memory .sg-profile-action:after{content:"›";font-size:20px;font-weight:400}
+      .sg-memory .sg-profile-action:hover{background:var(--sg-soft);color:var(--sg-text)!important}
+      .sg-memory .sg-profile-summary.editing{grid-template-columns:minmax(0,1fr) minmax(0,2fr);padding:10px 11px}
+      .sg-memory .sg-profile-summary.editing>.sg-profile-label{padding-top:3px}
+      .sg-memory .sg-profile-editor :is(input,textarea){border-color:var(--sg-accent);border-radius:7px;background:var(--sg-sheet)}
+      .sg-memory .sg-settings-group-copy{color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-profile-capacity{display:flex;align-items:center;gap:10px;margin:4px 0 2px;color:var(--sg-muted);font:12px var(--sg-mono)}
+      .sg-memory .sg-profile-capacity-bar{display:block;height:6px;flex:1;border-radius:3px;overflow:hidden;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+      .sg-memory .sg-profile-capacity-bar i{display:block;height:100%;border-radius:3px;background:var(--sg-ink)}
+      .sg-memory .sg-profile-head .sg-intro p{max-width:42ch}
+
+      /* Session memory: one horizontal sediment bar per block. */
+      .sg-memory .sg-decay-overview{padding:0 0 8px;border:0;border-radius:0;background:transparent;box-shadow:none}
+      .sg-memory .sg-decay-title{margin:0;font:650 22px/1.25 inherit}
+      .sg-memory .sg-decay-copy{margin:4px 0 0;color:var(--sg-muted);font-size:13px}
+      .sg-memory .sg-distribution{display:none}
+      .sg-memory .sg-distribution-rail{display:none}
+      .sg-memory .sg-time-direction{display:none}
+      .sg-memory .sg-overview-meta{display:none}
+      .sg-memory .sg-block-list{display:grid;gap:6px;margin-top:16px;border:0;border-radius:0;background:transparent;overflow:visible}
+      .sg-memory .sg-block-header{display:none}
+      .sg-memory .sg-block-unit{min-width:0;border:0}
+      .sg-memory .sg-block-unit+.sg-block-unit{border:0}
+      .sg-memory .sg-block-toggle{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto auto 16px;align-items:center;gap:10px;min-height:28px;padding:0 12px;border:0;border-radius:3px;background:color-mix(in srgb,var(--sg-water) 16%,var(--sg-page));color:var(--sg-text);text-align:left;box-shadow:none}
+      .sg-memory .sg-block-toggle:hover,.sg-memory .sg-block-toggle[aria-expanded="true"]{box-shadow:0 0 0 2px var(--sg-text);transform:none}
+      .sg-memory .sg-block-toggle:before{display:none}
+      .sg-memory .sg-block-toggle:has(.sg-level-badge[data-level="0"]){min-height:28px;background:color-mix(in srgb,var(--sg-water) 16%,var(--sg-page))}
+      .sg-memory .sg-block-toggle:has(.sg-level-badge[data-level="1"]){min-height:34px;background:color-mix(in srgb,var(--sg-water) 29%,var(--sg-page))}
+      .sg-memory .sg-block-toggle:has(.sg-level-badge[data-level="2"]){min-height:40px;background:color-mix(in srgb,var(--sg-water) 42%,var(--sg-page))}
+      .sg-memory .sg-block-toggle:has(.sg-level-badge[data-level="3"]){min-height:46px;background:color-mix(in srgb,var(--sg-water) 55%,var(--sg-page))}
+      .sg-memory .sg-block-toggle:has(.sg-level-badge[data-level="4"]){min-height:52px;background:color-mix(in srgb,var(--sg-water) 68%,var(--sg-page))}
+      .sg-memory .sg-block-toggle:has(.sg-level-badge[data-level="5"]){min-height:58px;background:color-mix(in srgb,var(--sg-water) 81%,var(--sg-page))}
+      .sg-memory .sg-level-cell{order:3;grid-column:auto;grid-row:auto;font:12px var(--sg-mono);color:var(--sg-muted);text-align:right}
+      .sg-memory .sg-level-badge{display:block;min-width:0;height:auto;padding:0;border:0;border-radius:0;background:transparent;color:inherit;font-weight:500}
+      .sg-memory .sg-block-name{order:1;grid-column:auto;grid-row:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 14px/1.35 inherit}
+      .sg-memory .sg-block-turn{order:2;grid-column:auto;grid-row:auto;font:12px var(--sg-mono);color:var(--sg-muted);white-space:nowrap}
+      .sg-memory .sg-block-distance{display:none}
+      .sg-memory .sg-row-chevron{order:4;color:var(--sg-muted);font-size:16px}
+      .sg-memory .sg-block-toggle.sg-open-row{grid-template-columns:minmax(0,1fr) auto auto auto;min-height:46px;border:1.5px dashed var(--sg-water);background:transparent;color:var(--sg-muted)}
+      @media(max-width:480px){.sg-memory .sg-tab{padding:8px 6px 10px;font-size:12px}}
+      .sg-memory .sg-open-dots{display:inline-flex;gap:3px;margin-left:8px}
+      .sg-memory .sg-open-dots i{width:7px;height:7px;border-radius:50%;background:var(--sg-water)}
+      .sg-memory .sg-open-dots i.o{background:transparent;box-shadow:inset 0 0 0 1.2px var(--sg-water)}
+      .sg-memory .sg-open-row:hover{background:color-mix(in srgb,var(--sg-accent) 6%,transparent)}
+      .sg-memory .sg-open-badge{height:auto;padding:0;border:0;font:12px var(--sg-mono);color:var(--sg-accent)}
+      .sg-memory .sg-block-expanded{margin:0 0 6px 0;padding:10px 12px;border:0;border-left:2px solid var(--sg-accent);border-radius:0;background:var(--sg-card)}
+
+      /* Daily notes: sand rail and the injection boundary remain obvious. */
+      .sg-memory .sg-daily-head h2{font:400 28px/1.12 var(--sg-serif)}
+      .sg-memory .sg-daily-head p{font-size:12px}
+      .sg-memory .sg-daily-head{position:relative}
+      .sg-memory .sg-daily-stepper{display:inline-flex;align-items:center;border:1px solid var(--sg-border);border-radius:7px;overflow:hidden;color:var(--sg-text);font:12px var(--sg-mono)}
+      .sg-memory .sg-daily-stepper button{width:32px;height:30px;padding:0;border:0;background:transparent;color:var(--sg-muted);font-size:17px;cursor:pointer}
+      .sg-memory .sg-daily-stepper button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-text)}
+      .sg-memory .sg-daily-stepper button:disabled{opacity:.35;cursor:default}
+      .sg-memory .sg-daily-stepper span{min-width:54px;padding:6px 8px;border-inline:1px solid var(--sg-border);text-align:center}
+      .sg-memory .sg-days{display:grid}
+      .sg-memory .sg-day-row{display:grid;grid-template-columns:72px 6px minmax(0,1fr);column-gap:16px;padding:12px 0;border-top:1px solid var(--sg-hair);align-items:start}
+      .sg-memory .sg-day-hit{display:grid;grid-template-columns:72px 6px;grid-column:1 / 3;grid-row:1;gap:16px;padding:0;border:0;background:transparent;text-align:right;cursor:pointer}
+      .sg-memory .sg-day-body{grid-column:3;grid-row:1;min-width:0}
+      .sg-memory .sg-day-date b{display:block;font:400 26px/1 var(--sg-serif)}
+      .sg-memory .sg-day-date span,.sg-memory .sg-daily-rel{color:var(--sg-muted);font-size:11px}
+      .sg-memory .sg-day-rail{display:block;width:6px;min-height:36px;border-radius:3px;background:var(--sg-sand)}
+      .sg-memory .sg-day-row.out .sg-day-rail,.sg-memory .sg-day-row.paused .sg-day-rail{background:transparent;box-shadow:inset 0 0 0 1.2px var(--sg-border)}
+      .sg-memory .sg-day-row.out{color:var(--sg-muted)}
+      .sg-memory .sg-day-points{margin:6px 0 0;padding:0;list-style:none}
+      .sg-memory .sg-day-points li{display:flex;gap:10px;align-items:baseline;padding:3px 0;font-size:13px}
+      .sg-memory .sg-day-time{flex:0 0 auto;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-day-cut{display:grid;grid-template-columns:72px minmax(0,1fr);column-gap:16px;align-items:center;margin:2px 0;color:var(--sg-muted);font-size:11px}
+      .sg-memory .sg-day-cut span{grid-column:2;display:flex;align-items:center;gap:8px}
+      .sg-memory .sg-day-cut span:before,.sg-memory .sg-day-cut span:after{content:"";flex:1;border-top:1px dashed var(--sg-border)}
+      .sg-memory .sg-day-cut span:before{flex:0 0 8px}
+      .sg-memory .sg-daily-note{max-width:none;margin:8px 0 0;padding-top:0;border-top:0}
+      .sg-memory .sg-daily-note-date h3{font:400 20px/1.3 var(--sg-serif)}
+      .sg-memory .sg-daily-pill{border-radius:4px;background:color-mix(in srgb,var(--sg-sand) 18%,transparent);color:var(--sg-sand)}
+      .sg-memory .sg-daily-pill.muted{background:transparent;color:var(--sg-muted);border:1px solid var(--sg-border)}
+
+      /* Long-term memory: the directory reads like a two-page book on wide screens. */
+      .sg-memory .sg-long-tabs{display:inline-flex;gap:2px;width:max-content;max-width:100%;margin:0 0 16px;padding:2px;border:1px solid var(--sg-border);border-radius:7px;background:transparent}
+      .sg-memory .sg-long-tabs>button{position:relative;padding:3px 12px;border:0;border-radius:5px;background:transparent;color:var(--sg-muted)}
+      .sg-memory .sg-long-tabs>button.active{background:var(--sg-sheet);color:var(--sg-text);box-shadow:0 0 0 1px var(--sg-border);font-weight:600}
+      .sg-memory .sg-long-tabs>button.active:after{display:none}
+      .sg-memory .sg-topic-directory{max-width:none;padding:0}
+      .sg-memory .sg-topic-directory-intro{padding:0 0 13px;border:0}
+      .sg-memory .sg-topic-directory-intro .sg-context-trigger{margin-left:auto}
+      .sg-memory .sg-topic-directory>div[hidden]+*{display:block}
+      .sg-memory .sg-topic-directory:before{content:"目录一直带着  →  需要时翻到具体事件";display:block;margin:0 0 12px;color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-topic-directory>div:not([hidden]){display:block;border:0;background:transparent;box-shadow:none}
+      .sg-memory .sg-book{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);background:var(--sg-sheet);border:1px solid var(--sg-border);border-radius:4px;box-shadow:0 1px 0 var(--sg-border),0 3px 0 -1px var(--sg-sheet),0 3px 0 0 var(--sg-border)}
+      .sg-memory .sg-book-toc,.sg-memory .sg-book-page{min-width:0;padding:26px 26px 20px}
+      .sg-memory .sg-book-toc{grid-column:1}
+      .sg-memory .sg-book-page{grid-column:2;grid-row:1;border-left:1px solid var(--sg-border);box-shadow:inset 1px 0 0 var(--sg-page)}
+      .sg-memory .sg-book .sg-directory-fold.open,.sg-memory .sg-book .sg-directory-fold.open>.sg-directory-fold-inner{overflow:visible;display:block}
+      .sg-memory .sg-book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:absolute;z-index:1;top:0;left:50%;width:50%;max-height:100%;overflow:auto;box-sizing:border-box;padding:26px 26px 20px;background:var(--sg-sheet)}
+      .sg-memory .sg-book:has(.sg-topic-section.cur){min-height:520px}
+      .sg-memory .sg-toc-title{margin:0 0 18px;padding-left:.6em;text-align:center;font:400 15px var(--sg-serif);letter-spacing:.6em}
+      .sg-memory .sg-book .sg-topic-chapter{padding:0 0 14px;border:0}
+      .sg-memory .sg-book .sg-topic-chapter-header{display:block}
+      .sg-memory .sg-book .sg-topic-chapter-toggle{display:flex;align-items:baseline;gap:8px;width:100%;font:700 14.5px var(--sg-serif)}
+      .sg-memory .sg-book .sg-topic-chapter-label{min-width:3.2em;font:400 12px var(--sg-serif);color:var(--sg-muted)}
+      .sg-memory .sg-book .sg-toc-lead{flex:1;min-width:16px;border-bottom:1.5px dotted color-mix(in srgb,var(--sg-muted) 55%,transparent);transform:translateY(-4px)}
+      .sg-memory .sg-book .sg-toc-count{min-width:1.6em;font:12px var(--sg-mono);color:var(--sg-muted);text-align:right}
+      .sg-memory .sg-book .sg-topic-sections{padding:4px 0 0}
+      .sg-memory .sg-book .sg-topic-section-heading{display:flex;align-items:baseline;gap:8px;margin:0}
+      .sg-memory .sg-book .sg-topic-section-toggle{position:relative;flex:1;margin-left:3.2em;color:var(--sg-muted);font-size:13px;font-weight:400}
+      .sg-memory .sg-book .sg-topic-section.cur>.sg-topic-section-heading .sg-topic-section-toggle{color:var(--sg-text);font-weight:600}
+      .sg-memory .sg-book .sg-topic-section.cur>.sg-topic-section-heading .sg-topic-section-toggle:before{content:"";position:absolute;left:-12px;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--sg-text)}
+      .sg-memory .sg-book .sg-topic-section-heading .sg-directory-chevron{display:none}
+      .sg-memory .sg-book .sg-topic-chapter-number,.sg-memory .sg-book .sg-topic-description{display:none}
+      .sg-memory .sg-book-k{margin:0;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-book-section-title{margin:2px 0 8px;font:700 19px var(--sg-serif)}
+      .sg-memory .sg-book .sg-topic-section-body .sg-topic-overview-toggle{display:none}
+      .sg-memory .sg-book .sg-topic-section-body .sg-directory-number{display:block;margin-bottom:4px;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-book .sg-topic-section-body .sg-topic-overview-text{display:block;margin:0 0 12px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+      .sg-memory .sg-book .sg-topic-section-body{margin:0;padding:0;border:0}
+      .sg-memory .sg-book .sg-topic-section-body .sg-topic-section-toggle{display:none}
+      .sg-memory .sg-folio{margin:16px 0 0;text-align:center;font:11px var(--sg-serif);color:var(--sg-muted)}
+      .sg-memory .sg-book-back{display:none;margin:0 0 12px;padding:0;border:0;background:transparent;color:var(--sg-muted);cursor:pointer}
+      .sg-memory .sg-toc-foot{display:flex;align-items:center;gap:8px;margin-top:18px;padding-top:10px;border-top:1px solid var(--sg-border);color:var(--sg-muted);font-size:11.5px}
+      .sg-memory .sg-toc-foot .sg-context-trigger{margin-left:auto}
+      .sg-memory .sg-topic-event.fade{color:var(--sg-muted)}
+      .sg-memory .sg-topic-chapter-number{font:400 24px/1 var(--sg-serif);color:var(--sg-muted)}
+      .sg-memory .sg-topic-chapter-copy h2{font:400 17px/1.35 var(--sg-serif)}
+      .sg-memory .sg-topic-chapter-toggle{display:flex;align-items:baseline}
+      .sg-memory .sg-topic-sections{padding:9px 0 0 42px}
+      .sg-memory .sg-topic-section-toggle{gap:7px;padding:6px 0;border-radius:0}
+      .sg-memory .sg-topic-section-toggle>span:nth-child(2){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sg-memory .sg-topic-section-toggle:after{content:"";order:3;flex:1;border-bottom:1px dotted var(--sg-muted);transform:translateY(-3px)}
+      .sg-memory .sg-topic-section-toggle .sg-directory-chevron{display:none}
+      .sg-memory .sg-topic-section-body{margin-left:0;padding-left:12px;border-left:1px solid var(--sg-border)}
+      .sg-memory .sg-topic-overview-toggle,.sg-memory .sg-topic-overview-text{display:none}
+      .sg-memory .sg-topic-event{padding:7px 0;border-bottom:1px solid var(--sg-hair);border-radius:0}
+      .sg-memory .sg-topic-event-title{font-size:12px}
+      .sg-memory .sg-used-bubble{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:var(--sg-text);font-size:11px;line-height:1}
+      .sg-memory .sg-topic-event-arrow{opacity:1}
+      .sg-memory .sg-topic-event:last-child{border-bottom:0}
+      .sg-memory .sg-topic-pending{grid-column:1;padding:12px 28px}
+      .sg-memory .sg-session-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,280px);gap:28px;align-items:start}
+      .sg-memory .sg-session-side{border-top:1px solid var(--sg-text);padding-top:12px}
+      .sg-memory .sg-session-side h4{margin:0 0 2px;font:700 16px var(--sg-serif)}
+      .sg-memory .sg-side-k{display:block;margin-bottom:10px;color:var(--sg-muted);font:11.5px var(--sg-mono)}
+      .sg-memory .sg-lvl{display:flex;gap:3px;margin:4px 0}
+      .sg-memory .sg-lvl i{flex:1;height:6px;border-radius:2px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+      .sg-memory .sg-lvl i.on{background:var(--sg-water);box-shadow:none}
+      .sg-memory .sg-lvl-l{display:flex;justify-content:space-between;margin-bottom:12px;color:var(--sg-muted);font-size:10.5px}
+      .sg-memory .sg-session-side p{margin:0 0 12px;color:var(--sg-muted);font-size:12.5px;line-height:1.7}
+      .sg-memory .sg-steps{display:flex;gap:4px;margin:4px 0 8px}
+      .sg-memory .sg-steps i{flex:1;height:8px;border-radius:2px;background:var(--sg-sand)}
+      .sg-memory .sg-steps i.todo{background:transparent;box-shadow:inset 0 0 0 1.2px var(--sg-border)}
+      .sg-memory .sg-steps-l{display:flex;justify-content:space-between;gap:8px;color:var(--sg-muted);font-size:11.5px}
+      .sg-memory .sg-steps-l b{color:var(--sg-text);font-weight:600}
+      @container sg-memory (max-width:680px){
+        .sg-memory .sg-book{grid-template-columns:1fr;min-height:0}
+        .sg-memory .sg-book-page{display:none}
+        .sg-memory .sg-book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:static;left:auto;width:auto;max-height:none;padding:8px 0 0}
+        .sg-memory .sg-book:not(.show-leaf) .sg-topic-section.cur>.sg-directory-fold{display:none}
+        .sg-memory .sg-book.show-leaf .sg-toc-title,.sg-memory .sg-book.show-leaf .sg-topic-chapter-header,.sg-memory .sg-book.show-leaf .sg-topic-section:not(.cur),.sg-memory .sg-book.show-leaf .sg-topic-section.cur>.sg-topic-section-heading,.sg-memory .sg-book.show-leaf .sg-toc-foot{display:none}
+        .sg-memory .sg-book.show-leaf .sg-book-back{display:inline-flex}
+        .sg-memory .sg-book-toc{padding:20px 16px}
+        .sg-memory .sg-session-layout{grid-template-columns:1fr}
+        .sg-memory .sg-session-side{display:none}
+        .sg-memory .sg-day-row,.sg-memory .sg-day-hit,.sg-memory .sg-day-cut{grid-template-columns:44px 5px minmax(0,1fr);column-gap:12px}
+        .sg-memory .sg-day-hit{grid-template-columns:44px 5px}
+        .sg-memory .sg-day-cut{grid-template-columns:44px minmax(0,1fr)}
+        .sg-memory .sg-day-date b,.sg-memory .sg-tl-date b{font-size:18px}
+        .sg-memory .sg-tl-day{grid-template-columns:40px 18px minmax(0,1fr);column-gap:8px}
+        .sg-memory .sg-tl:before{left:57px}
+        .sg-memory .sg-timeline-dot{left:-23px}
+      }
+
+      /* Timeline: an editorial date rail with neutral graph accents. */
+      .sg-memory .sg-timeline{position:relative;padding:8px 0 22px;background:transparent}
+      .sg-memory .sg-tl:before{content:"";position:absolute;left:95px;top:6px;bottom:18px;border-left:1.5px solid var(--sg-border)}
+      .sg-memory .sg-tl-day{display:grid;grid-template-columns:84px 22px minmax(0,1fr);column-gap:10px}
+      .sg-memory .sg-tl-date{padding-top:2px;text-align:right}
+      .sg-memory .sg-tl-date b{display:block;font:400 22px/1.1 var(--sg-serif)}
+      .sg-memory .sg-tl-date span{color:var(--sg-muted);font-size:11px;white-space:nowrap}
+      .sg-memory .sg-tl-axis{position:relative}
+      .sg-memory .sg-timeline-dot{left:-26px}
+      .sg-memory .sg-tl-items{min-width:0;padding-bottom:18px}
+      .sg-memory .sg-timeline-card{position:relative;display:flex;align-items:baseline;gap:10px;grid-template-columns:none;margin:0;padding:6px 0 7px;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;background:transparent}
+      .sg-memory .sg-timeline-card:hover,.sg-memory .sg-timeline-card.selected{border-color:var(--sg-hair);background:transparent}
+      .sg-memory .sg-month-rail{display:none}
+      .sg-memory .sg-event-clock,.sg-memory .sg-event-main{min-width:0}
+      .sg-memory .sg-event-clock b{display:block;font:400 22px/1.1 var(--sg-serif);color:var(--sg-text)}
+      .sg-memory .sg-event-clock>span{display:block;font-size:11px;color:var(--sg-muted)}
+      .sg-memory .sg-timeline-dot{left:-26px;top:11px;width:11px;height:11px;border:0;background:var(--sg-moss);box-shadow:0 0 0 3px var(--sg-page)}
+      @container sg-memory (max-width:680px){.sg-memory .sg-timeline-dot{left:-23px}.sg-memory .sg-tl:before{left:57px}}
+      .sg-memory .sg-timeline-dot.fade{background:var(--sg-page);box-shadow:0 0 0 3px var(--sg-page),inset 0 0 0 1.5px var(--sg-muted)}
+      .sg-memory .sg-timeline-card.fade{color:var(--sg-muted)}
+      .sg-memory .sg-event-main p,.sg-memory .sg-timeline .sg-tags{display:none}
+      .sg-memory .sg-type-badge{border:0;background:transparent;color:var(--sg-muted);padding:0;font-size:12px}
+      .sg-memory .sg-event-clock{font:11px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-event-main p{font-size:12px}
+      .sg-memory .sg-event-status{border:0;border-radius:0;padding:0;background:transparent;font:11px var(--sg-mono)}
+      .sg-memory .sg-timeline .sg-event-status.occurred{display:none}
+      .sg-memory .sg-event-status.cancelled{color:var(--sg-faint,#8d8b84)}
+
+      /* Overview: one readable landing page for the current workspace. */
+      .sg-memory .sg-overview{display:grid;gap:24px}
+      .sg-memory .sg-overview-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+      .sg-memory .sg-overview-head h2{margin:0;font:400 30px/1.1 var(--sg-serif)}
+      .sg-memory .sg-overview-head p{margin:6px 0 0;color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-overview-status{display:flex;align-items:baseline;gap:8px;color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-overview-status strong{font:400 40px/1 var(--sg-serif);color:var(--sg-text)}
+      .sg-memory .sg-overview-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:18px;align-items:start}
+      .sg-memory .sg-overview-card{min-width:0;border-top:2px solid var(--sg-ink);border-bottom:1px solid var(--sg-border)}
+      .sg-memory .sg-overview-card h3{margin:0;padding:10px 2px 8px;font-size:12px;color:var(--sg-muted);font-weight:650}
+      .sg-memory .sg-overview-layer{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;min-width:0;padding:11px 2px;border-top:1px solid var(--sg-hair);cursor:pointer;text-align:left}
+      .sg-memory .sg-overview-layer:hover{background:var(--sg-soft)}
+      .sg-memory .sg-overview-layer-name{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px;font-weight:650}
+      .sg-memory .sg-overview-layer-name i{width:10px;height:10px;flex:0 0 10px;border-radius:2px;background:var(--sg-ink)}
+      .sg-memory .sg-overview-layer-name i.water{background:var(--sg-water)}
+      .sg-memory .sg-overview-layer-name i.sand{background:var(--sg-sand)}
+      .sg-memory .sg-overview-layer-name i.moss{background:transparent;box-shadow:inset 0 0 0 1.5px var(--sg-moss)}
+      .sg-memory .sg-overview-layer-used,.sg-memory .sg-overview-layer-count{font:11px var(--sg-mono);color:var(--sg-muted);white-space:nowrap}
+      .sg-memory .sg-overview-layer-count{color:var(--sg-text)}
+      .sg-memory .sg-overview-legend{display:flex;flex-wrap:wrap;gap:8px 14px;padding:12px 2px;color:var(--sg-muted);font-size:11px}
+      .sg-memory .sg-overview-legend span{display:inline-flex;align-items:center;gap:5px}
+      .sg-memory .sg-overview-legend i{width:9px;height:9px;border-radius:2px;background:var(--sg-ink)}
+      .sg-memory .sg-overview-legend i.dashed{background:transparent;box-shadow:inset 0 0 0 1px var(--sg-moss)}
+      .sg-memory .sg-overview-activity{display:grid;gap:8px;padding:0 2px 12px}
+      .sg-memory .sg-overview-activity-row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--sg-hair);font-size:12px}
+      .sg-memory .sg-overview-activity-row span{color:var(--sg-muted)}
+      .sg-memory .sg-overview-activity-row strong{font:12px var(--sg-mono);font-weight:600}
+      .sg-memory .sg-overview-recent{margin:0;padding:0 2px 13px;list-style:none}
+      .sg-memory .sg-overview-recent li{display:grid;grid-template-columns:10px minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--sg-hair);font-size:12px}
+      .sg-memory .sg-overview-recent li:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sg-text)}
+      .sg-memory .sg-overview-recent time{color:var(--sg-muted);font:10px var(--sg-mono);white-space:nowrap}
+      .sg-memory .sg-overview-empty{padding:9px 2px 13px;color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-overview-heatmap{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));gap:3px;padding:11px 2px 13px}
+      .sg-memory .sg-overview-heatmap i{display:block;aspect-ratio:1;border-radius:2px;background:var(--sg-soft);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+      .sg-memory .sg-overview-heatmap i[data-level="1"]{background:color-mix(in srgb,var(--sg-ink) 22%,var(--sg-page))}
+      .sg-memory .sg-overview-heatmap i[data-level="2"]{background:color-mix(in srgb,var(--sg-ink) 42%,var(--sg-page))}
+      .sg-memory .sg-overview-heatmap i[data-level="3"]{background:color-mix(in srgb,var(--sg-ink) 62%,var(--sg-page))}
+      .sg-memory .sg-overview-heatmap i[data-level="4"]{background:var(--sg-ink)}
+
+      /* Overview: a result figure, clickable inventory, and a separate injection group. */
+      .sg-memory .sg-ov{display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px;align-items:start}
+      .sg-memory .sg-ov-big{display:flex;align-items:baseline;gap:8px;color:var(--sg-text)}
+      .sg-memory .sg-ov-big b{font:400 76px/.9 var(--sg-serif);letter-spacing:-.03em}
+      .sg-memory .sg-ov-big svg{width:30px;height:24px;flex:none}
+      .sg-memory .sg-ov-stat p{margin:10px 0 0;color:var(--sg-muted);font-size:12.5px}
+      .sg-memory .sg-ov-health{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:12px;color:var(--sg-muted)}
+      .sg-memory .sg-ov-health i{width:7px;height:7px;border-radius:50%;background:var(--sg-good)}
+      .sg-memory .sg-ov-health i.bad{background:var(--sg-danger)}
+      .sg-memory .sg-pillar{display:grid;grid-template-columns:84px minmax(0,1fr) auto}
+      .sg-memory .sg-p-top{grid-column:1;display:flex;flex-direction:column;align-items:center;padding-bottom:6px;color:var(--sg-text)}
+      .sg-memory .sg-p-top svg{width:30px;height:24px}
+      .sg-memory .sg-p-top i{width:1.5px;height:10px;margin-top:4px;background:var(--sg-text)}
+      .sg-memory .sg-p-row{display:grid;grid-template-columns:subgrid;grid-column:1/-1;align-items:stretch;padding:0;border:0;background:transparent;color:var(--sg-text);text-align:left;cursor:pointer}
+      .sg-memory .sg-p-row:hover{background:color-mix(in srgb,var(--sg-text) 4%,transparent)}
+      .sg-memory .sg-p-bar{display:block;border-bottom:3px solid var(--sg-page);border-radius:2px}
+      .sg-memory .sg-p-bar.ink{background:var(--sg-ink)}
+      .sg-memory .sg-p-bar.moss{background:var(--sg-moss)}
+      .sg-memory .sg-p-bar.water{background:var(--sg-water)}
+      .sg-memory .sg-p-bar.sand{background:var(--sg-sand)}
+      .sg-memory .sg-p-bar.lib{border:1.5px dashed var(--sg-moss);background:color-mix(in srgb,var(--sg-moss) 12%,transparent)}
+      .sg-memory .sg-p-gap{grid-column:1/-1;height:16px;position:relative}
+      .sg-memory .sg-p-gap:after{content:"";position:absolute;left:96px;right:0;top:50%;border-top:1px dashed var(--sg-border)}
+      .sg-memory .sg-p-name{display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--sg-hair);font-size:14px;font-weight:600}
+      .sg-memory .sg-p-val{display:flex;align-items:center;justify-content:flex-end;gap:5px;padding-left:8px;border-bottom:1px solid var(--sg-hair);color:var(--sg-muted);font-size:12px;white-space:nowrap}
+      .sg-memory .sg-p-val b{font:400 22px var(--sg-serif);color:var(--sg-text)}
+      .sg-memory .sg-p-key{display:flex;gap:18px;margin:14px 0 0;color:var(--sg-muted);font-size:11.5px}
+      .sg-memory .sg-p-key span{display:flex;align-items:center;gap:6px}
+      .sg-memory .sg-p-key i{width:10px;height:10px;border-radius:2px;background:var(--sg-muted)}
+      .sg-memory .sg-p-key i.dash{background:transparent;box-shadow:inset 0 0 0 1.2px var(--sg-muted)}
+      .sg-memory .sg-hm{grid-column:1/-1;margin-top:28px;padding-top:16px;border-top:1px solid var(--sg-hair)}
+      .sg-memory .sg-hm-h{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px;color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-hm-h>span:first-child{color:var(--sg-text);font-weight:600}
+      .sg-memory .sg-hm-grid{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));gap:4px}
+      .sg-memory .sg-hm-grid i{display:block;aspect-ratio:1;border-radius:3px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+      .sg-memory .sg-hm-grid i[data-level="1"]{background:color-mix(in srgb,var(--sg-ink) 28%,var(--sg-sheet));box-shadow:none}
+      .sg-memory .sg-hm-grid i[data-level="2"]{background:color-mix(in srgb,var(--sg-ink) 48%,var(--sg-sheet));box-shadow:none}
+      .sg-memory .sg-hm-grid i[data-level="3"]{background:color-mix(in srgb,var(--sg-ink) 68%,var(--sg-sheet));box-shadow:none}
+      .sg-memory .sg-hm-grid i[data-level="4"]{background:var(--sg-ink);box-shadow:none}
+      .sg-memory .sg-hm-l{display:flex;justify-content:space-between;margin-top:6px;color:var(--sg-muted);font:10.5px var(--sg-mono)}
+      @media(max-width:680px){.sg-memory .sg-ov{grid-template-columns:1fr;gap:22px}.sg-memory .sg-ov-big b{font-size:58px}.sg-memory .sg-pillar{grid-template-columns:56px minmax(0,1fr) auto}.sg-memory .sg-p-gap:after{left:68px}.sg-memory .sg-hm-grid{grid-template-columns:repeat(14,minmax(0,1fr))}}
+      .sg-memory .sg-r6-overview{display:grid;gap:14px;max-width:720px}
+      .sg-memory .sg-r6-hero{position:relative;padding:6px 2px 8px}
+      .sg-memory .sg-r6-hero-top{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px}
+      .sg-memory .sg-r6-hero-top p{margin:0;color:var(--sg-muted);font-size:13px}
+      .sg-memory .sg-r6-figure{display:flex;align-items:baseline;gap:8px;margin-top:6px;color:var(--sg-text)}
+      .sg-memory .sg-r6-figure b{font:650 56px/0.95 inherit;letter-spacing:-.04em}
+      .sg-memory .sg-r6-figure span{font-size:18px;font-weight:600}
+      .sg-memory .sg-r6-sub{margin:6px 0 0;color:var(--sg-muted);font-size:13px}
+      .sg-memory .sg-r6-badge{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:0 10px;border:0;border-radius:999px;background:var(--sg-warn-soft);color:var(--sg-warn);font:600 12px/1 inherit;cursor:pointer}
+      .sg-memory .sg-r6-badge i{width:7px;height:7px;border-radius:50%;background:currentColor}
+      .sg-memory .sg-r6-badge.bad{background:var(--sg-danger-soft);color:var(--sg-danger)}
+      .sg-memory .sg-r6-card{padding:6px 16px 8px;border:1px solid var(--sg-border);border-radius:14px;background:var(--sg-card)}
+      .sg-memory .sg-r6-card h2{margin:10px 0 2px;color:var(--sg-muted);font-size:13px;font-weight:600;letter-spacing:0}
+      .sg-memory .sg-r6-stock-row{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;min-height:72px;padding:12px 0;border:0;border-top:1px solid var(--sg-hair);background:transparent;text-align:left;cursor:pointer}
+      .sg-memory .sg-r6-stock-row:first-child{border-top:0}
+      .sg-memory .sg-r6-stock-row:hover{background:color-mix(in srgb,var(--sg-text) 3%,transparent)}
+      .sg-memory .sg-r6-stock-copy{display:grid;gap:3px;min-width:0}
+      .sg-memory .sg-r6-stock-copy strong{font-size:15px;font-weight:650}
+      .sg-memory .sg-r6-stock-copy small{color:var(--sg-muted);font-size:12px}
+      .sg-memory .sg-r6-stock-value{display:inline-flex;align-items:baseline;gap:6px;color:var(--sg-text);font-size:20px;font-weight:650;white-space:nowrap}
+      .sg-memory .sg-r6-stock-value span{color:var(--sg-muted);font-size:16px;font-weight:500}
+      .sg-memory .sg-r6-chips{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0 12px}
+      .sg-memory .sg-r6-chip{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;border:1px solid var(--sg-border);border-radius:999px;background:var(--sg-card);color:var(--sg-text);font:inherit;font-size:12px}
+      .sg-memory button.sg-r6-chip{cursor:pointer}
+      .sg-memory button.sg-r6-chip:hover{border-color:color-mix(in srgb,var(--sg-accent) 45%,var(--sg-border));background:var(--sg-accent-soft)}
+      .sg-memory .sg-r6-chip b{font-weight:650}
+      .sg-memory .sg-r6-chip span{color:var(--sg-muted);font-weight:500}
+      .sg-memory .sg-r6-health{display:inline-flex;align-items:center;gap:7px;color:var(--sg-text);font-size:13px;font-weight:650}
+      .sg-memory .sg-r6-health i{width:8px;height:8px;border-radius:50%;background:var(--sg-good)}
+      .sg-memory .sg-r6-health i.bad{background:var(--sg-danger)}
+      .sg-memory .sg-r6-health i.wait{background:var(--sg-warn)}
+      .sg-memory .sg-r6-runline{display:flex;align-items:center;min-height:36px;margin-bottom:4px}
+      .sg-memory .sg-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+      .sg-memory .sg-graph-canvas,.sg-memory .sg-citation-graph-frame{background-image:none}
+      .sg-memory .sg-graph-zoom,.sg-memory .sg-import-overlay,.sg-memory .sg-node-bubble{backdrop-filter:none}
+      @media(max-width:760px){.sg-memory .sg-r6-figure b{font-size:48px}.sg-memory .sg-r6-stock-value{font-size:18px}}
+
+      /* More / settings: grouped rows and inline draft state. */
+      .sg-memory .sg-more-merged{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;align-items:start}
+      .sg-memory .sg-more-merged-column{min-width:0}
+      .sg-memory .sg-more-merged-column>.sg-intro h2{font:400 30px/1.1 var(--sg-serif)}
+      .sg-memory .sg-more-merged-column>.sg-intro p{font-size:12px}
+      .sg-memory .sg-more-merged .sg-settings-group:first-of-type{margin-top:0}
+      .sg-memory .sg-more-merged .sg-settings-group{margin-top:20px}
+      .sg-memory .sg-more-merged .sg-settings-group-copy{max-width:58ch}
+      .sg-memory .sg-more-merged .sg-settings-group-title{font-size:12px}
+      .sg-memory .sg-more-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:8px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-card)}
+      .sg-memory .sg-more-stat{min-width:0;padding:13px 7px 11px;border-right:1px solid var(--sg-border);text-align:center}
+      .sg-memory .sg-more-stat:last-child{border-right:0}
+      .sg-memory .sg-more-stat strong{display:block;font:400 22px/1.05 var(--sg-serif)}
+      .sg-memory .sg-more-stat span{display:block;margin-top:5px;color:var(--sg-muted);font-size:11px;white-space:nowrap}
+      .sg-memory .sg-more-merged .sg-menu{margin-top:0}
+      .sg-memory .sg-more-merged .sg-menu-row{padding-inline:4px}
+      .sg-memory .sg-more-merged .sg-display-settings{border-top:0}
+      .sg-memory .sg-more-merged .sg-settings-panel{padding-inline:2px}
+      .sg-memory .sg-more-merged .sg-storage-card{border:1px solid var(--sg-border);border-radius:12px;padding:12px;background:var(--sg-card)}
+      @media(max-width:760px){
+        .sg-memory .sg-overview-grid,.sg-memory .sg-more-merged{grid-template-columns:1fr}
+        .sg-memory .sg-overview-head{align-items:flex-start;flex-direction:column}
+        .sg-memory .sg-more-merged{gap:18px}
+      }
+
+      .sg-memory .sg-menu{display:grid;gap:0;border-top:0}
+      .sg-memory .sg-menu-row{display:grid;grid-template-columns:26px minmax(0,1fr) 20px;align-items:center;gap:10px;padding:13px 4px;border:0;border-bottom:1px solid var(--sg-border);background:transparent;text-align:left}
+      .sg-memory .sg-menu-row:hover{background:var(--sg-soft)}
+      .sg-memory .sg-menu-icon{color:var(--sg-muted);font-size:17px}
+      .sg-memory .sg-menu-title{font-size:14px;font-weight:650}
+      .sg-memory .sg-menu-subtitle{color:var(--sg-muted);font-size:11px}
+      .sg-memory .sg-settings-group{margin-top:22px}
+      .sg-memory .sg-settings-group-title{margin:0 0 7px;font-size:12px;color:var(--sg-muted);font-weight:600}
+      .sg-memory .sg-settings-panel{border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-card)}
+      .sg-memory .sg-stage{padding:11px 2px;border-bottom:1px solid var(--sg-border)}
+      .sg-memory .sg-model-settings,.sg-memory .sg-retrieval-settings{padding:12px 2px;border:0;border-bottom:1px solid var(--sg-border);border-radius:0;background:transparent}
+      .sg-memory .sg-model-draft-note,.sg-memory .sg-model-pending{color:var(--sg-accent)}
+      .sg-memory .sg-r6-danger-dialog{width:min(390px,calc(100vw - 28px));padding:22px;border-radius:11px;background:var(--sg-page);box-shadow:0 0 0 1px var(--sg-border),0 18px 50px color-mix(in srgb,var(--sg-text) 22%,transparent)}
+      .sg-memory .sg-r6-danger-dialog .sg-import-dialog-title{font:400 19px/1.25 var(--sg-serif)}
+      .sg-memory .sg-r6-danger-dialog .sg-dreaming-stop{min-height:32px;padding:0 13px;border:1px solid var(--sg-danger);border-radius:6px;background:var(--sg-danger);color:#fff;cursor:pointer}
+      .sg-memory .sg-r6-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:17px}
+
+      @media(max-width:680px){
+        .sg-memory .sg-header{margin:0 -12px;padding-inline:12px}
+        .sg-memory .sg-tabs{margin-inline:-12px;padding-inline:12px}
+        .sg-memory .sg-tab{padding-inline:8px;font-size:12px}
+        .sg-memory .sg-topic-directory>div:not([hidden])>.sg-topic-chapter{padding-inline:16px}
+        .sg-memory .sg-topic-pending{padding-inline:16px}
+        .sg-memory .sg-daily-note{margin-left:0}
+      }
+      @keyframes sg-r6-grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+      @media(prefers-reduced-motion:reduce){.sg-memory .sg-view,.sg-memory .sg-topic-chapter,.sg-memory .sg-block-toggle{animation:none!important}}
+    `
+
     const css = `
       .sg-feedback-wizard .sg-primary-link{color:#fff}.sg-feedback-wizard .sg-support-field{display:grid;gap:6px;margin:14px 0}.sg-feedback-wizard .sg-support-preview{white-space:pre-wrap;overflow-wrap:anywhere}.sg-feedback-step-back{margin-bottom:14px}
       .sg-memory {
@@ -490,7 +918,7 @@ window.__ModuleLoader__.load({
       .sg-header{display:grid;gap:9px;margin-bottom:12px;padding:12px 13px;border:1px solid color-mix(in srgb,var(--sg-accent) 16%,var(--sg-border));border-radius:12px;background:color-mix(in srgb,var(--sg-surface) 84%,transparent);box-shadow:0 8px 24px color-mix(in srgb,var(--sg-text) 6%,transparent)}.sg-header-row{display:flex;align-items:center;justify-content:space-between;gap:14px;min-width:0}.sg-header-row-primary{min-height:38px}.sg-header-row-secondary{align-items:center}.sg-brand{display:flex;align-items:center;gap:10px;min-width:0;color:var(--sg-text);text-decoration:none}.sg-brand:hover .sg-logo{transform:translateY(-1px) rotate(-1.5deg)}.sg-logo{width:38px;height:38px;display:block;object-fit:cover;flex:0 0 auto;border-radius:11px;box-shadow:0 5px 14px color-mix(in srgb,var(--sg-accent) 22%,transparent);transition:transform var(--sg-medium) var(--sg-ease)}.sg-brand-copy{display:grid;min-width:0;gap:1px}.sg-brand-title{display:flex;align-items:baseline;gap:7px;min-width:0}.sg-brand-name{min-width:0;font-size:15px;font-weight:740;letter-spacing:-.018em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sg-brand-version{flex:0 0 auto;color:var(--sg-muted);font-size:10px;font-weight:560;font-variant-numeric:tabular-nums}.sg-brand-kicker{color:var(--sg-muted);font-size:11px;white-space:nowrap}.sg-header-usage{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;color:var(--sg-muted);font-size:11px;line-height:1.4;text-align:right}.sg-usage-count{display:inline-flex;align-items:baseline;gap:4px;padding:4px 8px;border-radius:7px;background:var(--sg-soft)}.sg-usage-number{color:var(--sg-text);font-size:14px;font-weight:760}.sg-header-community{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;min-width:0}.sg-header-star,.sg-header-contribute{white-space:nowrap;text-decoration:none}.sg-header-star{display:inline-flex;align-items:center;padding:6px 10px;border:1px solid color-mix(in srgb,var(--sg-accent) 28%,var(--sg-border));border-radius:7px;background:var(--sg-accent-soft);color:var(--sg-accent);font-size:12px;font-weight:720;box-shadow:0 4px 12px color-mix(in srgb,var(--sg-accent) 12%,transparent)}.sg-header-contribute{color:var(--sg-muted);font-size:12px;font-weight:600}.sg-header-star:hover,.sg-header-contribute:hover{color:var(--sg-accent);opacity:.86}.sg-header-star:hover{border-color:var(--sg-accent);background:color-mix(in srgb,var(--sg-accent-soft) 75%,var(--sg-surface));transform:translateY(-1px)}
       .sg-icon-button,.sg-back,.sg-quiet-button{border:0;background:transparent;cursor:pointer}.sg-icon-button{width:32px;height:32px;border-radius:6px;font-size:20px}.sg-icon-button:hover,.sg-back:hover,.sg-quiet-button:hover{background:var(--sg-soft);transform:translateY(-1px)}
       .sg-project{display:flex;align-items:center;gap:7px;flex:1;min-width:0;margin:0;color:var(--sg-muted);font-size:12px}.sg-project-label{flex:0 0 auto}.sg-project-select{min-width:0;max-width:100%;padding:3px 22px 3px 5px;border:0;border-radius:5px;background:transparent;color:var(--sg-text);font-weight:620;cursor:pointer;text-overflow:ellipsis}
-      .sg-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:22px;padding:4px;border:1px solid var(--sg-border);border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 58%,transparent)}.sg-tab{position:relative;min-width:0;padding:9px 6px;border:0;border-radius:7px;background:transparent;color:var(--sg-muted);cursor:pointer;white-space:nowrap}.sg-tab:hover{color:var(--sg-text);background:color-mix(in srgb,var(--sg-soft) 70%,transparent)}.sg-tab.active{color:var(--sg-accent);background:var(--sg-surface);font-weight:720;box-shadow:0 3px 12px color-mix(in srgb,var(--sg-text) 7%,transparent)}
+      .sg-tabs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;margin-bottom:22px;padding:4px;border:1px solid var(--sg-border);border-radius:11px;background:color-mix(in srgb,var(--sg-surface) 58%,transparent)}.sg-tab{position:relative;min-width:0;padding:9px 6px;border:0;border-radius:7px;background:transparent;color:var(--sg-muted);cursor:pointer;white-space:nowrap}.sg-tab:hover{color:var(--sg-text);background:color-mix(in srgb,var(--sg-soft) 70%,transparent)}.sg-tab.active{color:var(--sg-accent);background:var(--sg-surface);font-weight:720;box-shadow:0 3px 12px color-mix(in srgb,var(--sg-text) 7%,transparent)}
       .sg-alert{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:11px 12px;margin:0 0 18px;border:1px solid color-mix(in srgb,var(--sg-warn) 28%,var(--sg-border));border-radius:8px;background:var(--sg-warn-soft);text-align:left;cursor:pointer}.sg-alert-mark{color:var(--sg-warn);font-size:17px}.sg-alert-title{font-weight:700}.sg-alert-copy{color:var(--sg-muted);font-size:12px}.sg-chevron{color:var(--sg-muted);font-size:18px}.sg-memory-alert{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;padding:11px 12px;margin:0 0 18px;border:1px solid var(--sg-border);border-radius:8px;background:var(--sg-soft);color:var(--sg-text);text-align:left;cursor:pointer}.sg-memory-alert.processing{border-color:color-mix(in srgb,var(--sg-accent) 30%,var(--sg-border));background:var(--sg-accent-soft)}.sg-memory-alert.attention{border-color:color-mix(in srgb,var(--sg-warn) 34%,var(--sg-border));background:var(--sg-warn-soft)}.sg-memory-alert:hover{box-shadow:0 6px 18px color-mix(in srgb,var(--sg-text) 7%,transparent);transform:translateY(-1px)}.sg-memory-alert-mark{display:inline-grid;place-items:center;width:20px;height:20px;flex:0 0 auto;color:var(--sg-accent);font-size:19px;font-weight:700;line-height:1}.sg-memory-alert.attention .sg-memory-alert-mark{color:var(--sg-warn)}.sg-memory-alert.processing .sg-memory-alert-mark{animation:sg-spin 1s linear infinite}.sg-memory-alert-title{display:block;font-weight:720}.sg-memory-alert-copy{display:block;margin-top:2px;color:var(--sg-muted);font-size:12px}.sg-processing-icon{display:inline-grid;place-items:center;width:20px;height:20px;flex:0 0 auto;font-size:19px;font-weight:700;line-height:1;animation:sg-spin 1s linear infinite}@keyframes sg-spin{to{transform:rotate(360deg)}}
       .sg-intro{margin-bottom:17px}.sg-intro h2,.sg-detail-title{margin:0;font-size:19px;line-height:1.28;font-weight:760;letter-spacing:-.025em;text-wrap:balance}.sg-intro p,.sg-detail-subtitle{max-width:65ch;margin:5px 0 0;color:var(--sg-muted);font-size:13px;text-wrap:pretty}.sg-search{position:relative;margin-bottom:7px}.sg-search-mark{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--sg-muted);font-size:16px;pointer-events:none}.sg-search input{width:100%;height:41px;padding:0 12px 0 37px;border:1px solid var(--sg-border);border-radius:9px;background:var(--sg-surface);outline:0}.sg-search input:hover{border-color:color-mix(in srgb,var(--sg-accent) 35%,var(--sg-border))}.sg-search input:focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}
       .sg-feed{border-top:1px solid var(--sg-border)}.sg-entry{position:relative;width:100%;min-width:0;padding:17px 10px;margin:0 -10px;border:0;border-bottom:1px solid var(--sg-border);border-radius:8px;background:transparent;text-align:left}.sg-entry-button{cursor:pointer}.sg-entry-button:hover{background:color-mix(in srgb,var(--sg-accent) 5%,transparent);transform:translateX(2px)}.sg-entry-button:hover .sg-entry-title{color:var(--sg-accent)}.sg-entry-title{padding-right:22px;font-size:15px;line-height:1.42;font-weight:720;letter-spacing:-.01em}.sg-entry-summary{margin-top:5px;color:var(--sg-text);white-space:pre-wrap}.sg-entry-chevron{position:absolute;right:9px;top:18px;color:var(--sg-muted);font-size:18px}.sg-entry-button:hover .sg-entry-chevron{color:var(--sg-accent);transform:translateX(2px)}.sg-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:9px;color:var(--sg-muted);font-size:12px}.sg-meta-sep:before{content:"·";margin-right:7px}.sg-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.sg-tag{max-width:100%;padding:3px 8px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-soft);color:var(--sg-text);font-size:12px;line-height:1.45;text-overflow:ellipsis;overflow:hidden;white-space:nowrap}.sg-tag-button{cursor:pointer}.sg-tag-button:hover{border-color:var(--sg-accent);color:var(--sg-accent);transform:translateY(-1px)}
@@ -542,7 +970,7 @@ window.__ModuleLoader__.load({
       .sg-support-ai-notice{position:sticky;top:8px;z-index:8;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px;margin:12px 0;padding:13px 14px;border:1px solid color-mix(in srgb,var(--sg-good) 45%,var(--sg-border));border-radius:8px;background:color-mix(in srgb,var(--sg-good-soft) 92%,var(--sg-surface));color:var(--sg-text);box-shadow:0 8px 24px rgba(0,0,0,.16);scroll-margin-top:8px}.sg-support-ai-notice-mark{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--sg-good);color:#fff;font-weight:800}.sg-support-ai-notice strong{display:block;color:var(--sg-good);font-size:13px}.sg-support-ai-notice p{margin:4px 0 0;color:var(--sg-text);font-size:12px;line-height:1.5}.sg-support-ai-notice .sg-quiet-button{margin-top:9px}.sg-support-ai-notice-close{display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--sg-muted);font-size:20px;line-height:1;cursor:pointer}.sg-support-ai-notice-close:hover{background:var(--sg-soft);color:var(--sg-text)}
       @media (max-width:560px){.sg-decay-head{align-items:flex-start;flex-direction:column}.sg-conversation{width:100%;justify-content:flex-start}.sg-conversation select{max-width:100%;flex:1}}
       @media (prefers-reduced-motion:reduce){.sg-memory *,.sg-memory *:before,.sg-memory *:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}.sg-processing-icon,.sg-memory-alert-mark{animation:none}.sg-skeleton:after{display:none}}
-      .sg-tabs{grid-template-columns:repeat(5,1fr)}
+      .sg-tabs{grid-template-columns:repeat(6,minmax(0,1fr))}
       .sg-profile-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-profile-sync{color:var(--sg-muted);font-size:11px;white-space:nowrap}.sg-profile-sync:before{content:'●';margin-right:5px;color:var(--sg-good)}.sg-profile-sync.pending:before{color:var(--sg-accent)}.sg-profile-sync.failed:before{color:var(--sg-danger)}
       .sg-profile-group{margin-top:19px;padding:14px 16px 3px;border:1px solid var(--sg-border);border-radius:10px;background:color-mix(in srgb,var(--sg-surface) 62%,transparent)}.sg-profile-group h3{margin:0 0 4px;font-size:14px}.sg-profile-row{border-bottom:1px solid var(--sg-border)}.sg-profile-row:last-child{border-bottom:0}.sg-profile-summary{display:grid;grid-template-columns:minmax(170px,1fr) minmax(0,2fr) auto;align-items:center;gap:14px;min-height:51px}.sg-profile-label{font-size:13px;font-weight:650}.sg-profile-value{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sg-muted);font-size:13px}.sg-profile-value.empty{opacity:.66}.sg-profile-action{padding:5px 8px;border:0;border-radius:6px;background:transparent;color:var(--sg-accent)!important;cursor:pointer;font-size:12px!important}.sg-profile-action:hover{background:var(--sg-accent-soft)}.sg-profile-editor{padding:0 0 14px}.sg-profile-editor :is(input,textarea){width:100%;padding:9px 10px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-surface);color:var(--sg-text);outline:0}.sg-profile-editor textarea{min-height:104px;resize:vertical;font:inherit}.sg-profile-editor :is(input,textarea):focus{border-color:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-focus)}.sg-profile-editor-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px}.sg-profile-count{color:var(--sg-muted);font-size:11px}.sg-profile-actions{display:flex;align-items:center;gap:6px}.sg-profile-actions .sg-save-button{margin-top:0}.sg-profile-conflict{margin:8px 0 0;color:var(--sg-warn);font-size:12px}.sg-profile-error{margin:8px 0 0;color:var(--sg-danger);font-size:12px}
       .sg-profile-action:disabled{opacity:.45;cursor:default}.sg-profile-action:disabled:hover{background:transparent}
@@ -552,6 +980,328 @@ window.__ModuleLoader__.load({
       .sg-layer-item{grid-template-columns:39px minmax(0,1fr) auto}.sg-layer-use,.sg-layer-using{display:flex;align-items:center;justify-content:center;min-width:0;max-width:10rem;padding:7px 10px;border:0;border-left:1px solid var(--sg-border);border-radius:0 6px 6px 0;background:transparent;color:var(--sg-accent);font:inherit;font-size:12px;line-height:1.45;white-space:normal;text-align:center}.sg-layer-use{cursor:pointer}.sg-layer-use:hover:not(:disabled){background:color-mix(in srgb,var(--sg-accent) 10%,transparent)}.sg-layer-use:focus-visible{outline:2px solid var(--sg-accent);outline-offset:-3px}.sg-layer-use:disabled{cursor:wait;opacity:.6}.sg-layer-using{color:var(--sg-muted)}.sg-layer-hint{margin:0 0 10px;color:var(--sg-muted);font-size:12px;line-height:1.6}.sg-selection-feedback{margin:0 12px 10px;padding:8px 10px;border-radius:6px;background:var(--sg-soft);color:var(--sg-muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere}.sg-selection-feedback.error{background:var(--sg-danger-soft);color:var(--sg-danger)}
       ${eventDetailCss}
       ${topicDirectoryCss}
+       ${r6Css}
+    `
+
+    const previewCss = `
+@scope (.sg-memory) {
+*{box-sizing:border-box}
+body{margin:0;background:#111;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+html[data-theme=light] body{background:#d9d7d0}
+.frame{margin:24px auto;background:var(--dsw-alias-bg-layer-1);border-radius:10px;overflow:hidden;box-shadow:0 0 0 1px var(--dsw-alias-border-l2)}
+.frame.wide{width:920px}.frame.narrow{width:420px}
+button{font:inherit;color:inherit;cursor:pointer}
+.mono{font-family:var(--sg-mono);font-variant-numeric:tabular-nums}
+.serif{font-family:var(--sg-serif)}
+
+/* 头部与标签栏：标签前是该记忆的实色小方块，和记忆柱同色同形 */
+.sg-head{display:flex;align-items:center;gap:12px;padding:18px 24px 0}
+.sg-mark{width:26px;height:26px;flex:none}
+.sg-brand{display:flex;align-items:baseline;gap:8px}
+.sg-brand b{font-family:var(--sg-serif);font-size:18px}
+.sg-brand .mono{font-size:11px;color:var(--sg-faint)}
+.sg-head-end{margin-left:auto;display:flex;gap:8px}
+.sg-ws,.sg-gh{display:inline-flex;align-items:center;gap:6px;height:28px;border:1px solid var(--sg-rule);border-radius:6px;font-size:12px;color:var(--sg-muted);background:none;text-decoration:none}
+.sg-ws{padding:0 10px}.sg-ws i{width:6px;height:6px;border-radius:50%;background:var(--sg-ok)}
+.sg-gh span{display:flex;align-items:center;gap:6px;padding:0 9px;height:100%}
+.sg-gh span+span{border-left:1px solid var(--sg-rule);font-family:var(--sg-mono);color:var(--sg-text)}
+.sg-gh svg{width:14px;height:14px}
+.sg-tabs{display:flex;gap:2px;padding:14px 24px 0;border-bottom:1px solid var(--sg-rule);overflow-x:auto;scrollbar-width:none}
+.sg-tab{display:flex;align-items:center;gap:7px;padding:8px 10px 10px;border:0;background:none;color:var(--sg-muted);font-size:13px;position:relative;white-space:nowrap}
+.sg-tab[aria-selected=true]{color:var(--sg-text);font-weight:600}
+.sg-tab[aria-selected=true]::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--sg-text)}
+.sw{width:10px;height:10px;border-radius:2px;flex:none}
+.sw.lib{background:color-mix(in srgb,var(--sg-moss) 18%,transparent);box-shadow:inset 0 0 0 1.2px var(--sg-moss)}
+.sg-body{padding:24px 24px 8px}
+.sg-foot{display:flex;justify-content:space-between;gap:12px;padding:14px 24px 18px;margin-top:16px;border-top:1px solid var(--sg-hair);color:var(--sg-faint);font-size:11.5px}
+.sg-foot a{color:var(--sg-muted);text-decoration:none}
+.narrow .sg-foot{flex-direction:column;gap:4px}
+.narrow .sg-gh span:first-child b{display:none}
+.narrow .sg-ws{display:none}
+.narrow .sg-body{padding:20px 16px 4px}.narrow .sg-head,.narrow .sg-tabs{padding-left:16px;padding-right:16px}
+
+.btn{height:30px;padding:0 14px;border-radius:6px;border:1px solid var(--sg-rule);background:var(--sg-page);font-size:12.5px}
+.btn.primary{background:var(--sg-text);color:var(--sg-page);border-color:var(--sg-text)}
+.btn.danger{background:var(--sg-err);color:#fff;border-color:var(--sg-err)}
+.btn.ghost{border-color:transparent;background:none;color:var(--sg-muted)}
+.cap{font-size:11px;color:var(--sg-faint);letter-spacing:.08em}
+.used-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sg-clay);flex:none}
+
+/* ==== 第 6 轮：红色只留给出错；“被用到”改用气泡图标；画像改石墨色 ==== */
+.sg{--sg-ink:#d6d1c6}
+html[data-theme=light] .sg{--sg-ink:#3d3b37}
+.used{display:inline-flex;align-items:center;gap:3px;color:var(--sg-text);font:12px var(--sg-mono);white-space:nowrap}
+.used svg{width:13px;height:11px;flex:none}
+.used.soft{color:var(--sg-muted)}
+
+/* ---------- 总览 ---------- */
+.ov{display:grid;grid-template-columns:200px 1fr;gap:40px}
+.narrow .ov{grid-template-columns:1fr;gap:22px}
+.ov-big{display:flex;align-items:baseline;gap:8px}
+.ov-big b{font:400 76px/.9 var(--sg-serif);letter-spacing:-.03em}
+.ov-big svg{width:30px;height:24px;color:var(--sg-text)}
+.ov-stat p{margin:10px 0 0;color:var(--sg-muted);font-size:12.5px}
+.ov-health{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:12px;color:var(--sg-faint)}
+.ov-health i{width:7px;height:7px;border-radius:50%;background:var(--sg-ok)}
+.narrow .ov-stat{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.narrow .ov-big b{font-size:58px}
+.narrow .ov-stat p{margin:0 0 4px}
+.narrow .ov-health{width:100%;margin-top:0}
+
+/* 记忆柱：只留名字和数字，含义靠颜色和实/虚 */
+.pillar{display:grid;grid-template-columns:84px 1fr 52px auto;align-items:stretch}
+.narrow .pillar{grid-template-columns:56px 1fr 40px auto}
+.p-top{grid-column:1;display:flex;flex-direction:column;align-items:center;padding-bottom:6px}
+.p-top svg{width:30px;height:24px}
+.p-top i{width:1.5px;height:10px;background:var(--sg-text);margin-top:4px}
+.p-bar{grid-column:1;border-bottom:3px solid var(--sg-page);animation:rise .5s both;border-radius:2px}
+.p-bar.lib{border:1.5px dashed var(--sg-moss);background:color-mix(in srgb,var(--sg-moss) 12%,transparent)!important}
+.p-gap{grid-column:1/-1;height:16px;position:relative}
+.p-gap::after{content:"";position:absolute;left:96px;right:0;top:50%;border-top:1px dashed var(--sg-rule)}
+.narrow .p-gap::after{left:68px}
+.p-name{grid-column:2;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--sg-hair)}
+.p-name b{font-size:14px;font-weight:600;white-space:nowrap}
+.p-use{grid-column:3;display:flex;align-items:center;border-bottom:1px solid var(--sg-hair)}
+.p-val{grid-column:4;display:flex;align-items:center;justify-content:flex-end;gap:5px;border-bottom:1px solid var(--sg-hair);color:var(--sg-faint);font-size:12px;white-space:nowrap;padding-left:8px}
+.p-val b{font:400 22px var(--sg-serif);color:var(--sg-text)}
+.narrow .p-val b{font-size:19px}
+.p-key{display:flex;gap:18px;margin:14px 0 0;font-size:11.5px;color:var(--sg-faint);flex-wrap:wrap}
+.p-key span{display:flex;align-items:center;gap:6px}
+.p-key .sw{background:var(--sg-muted)}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+.hm-wrap{margin-top:28px;padding-top:16px;border-top:1px solid var(--sg-hair)}
+.hm-h{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;font-size:12px;color:var(--sg-faint)}
+.hm-h .used{font-family:inherit;color:var(--sg-text);font-weight:600;font-size:13px;gap:6px}
+.hm{display:grid;grid-template-columns:repeat(28,1fr);gap:4px}
+.narrow .hm{grid-template-columns:repeat(14,1fr)}
+.hm i{aspect-ratio:1;background:var(--sg-sheet);border-radius:3px;box-shadow:inset 0 0 0 1px var(--sg-hair)}
+.hm-l{display:flex;justify-content:space-between;color:var(--sg-faint);font:10.5px var(--sg-mono);margin-top:6px}
+
+/* ---------- 页内标题 ---------- */
+.pg-h{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.pg-h h2{margin:0;font:700 22px var(--sg-serif)}
+.pg-h .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--sg-muted)}
+.pg-h .end{margin-left:auto;display:flex;gap:6px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--sg-rule);border-radius:7px;padding:2px;gap:2px}
+.seg button{border:0;background:none;padding:3px 12px;border-radius:5px;font-size:12px;color:var(--sg-muted)}
+.seg button[aria-pressed=true]{background:var(--sg-sheet);color:var(--sg-text);font-weight:600;box-shadow:0 0 0 1px var(--sg-rule)}
+.plus{width:28px;height:28px;border-radius:50%;border:0;background:none;color:var(--sg-faint);font-size:18px;line-height:1}
+
+/* ---------- 常驻画像：像系统设置里的分组列表，每一行就是一项可改的内容 ---------- */
+.cap-row{display:flex;align-items:center;gap:12px;margin:0 0 22px}
+.cap-bar{flex:1;height:6px;border-radius:3px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair);overflow:hidden}
+.cap-bar i{display:block;height:100%;background:var(--sg-ink);animation:grow .6s both;transform-origin:left;border-radius:3px}
+@keyframes grow{from{transform:scaleX(0)}to{transform:none}}
+.cap-row .n{font-size:12px;color:var(--sg-faint);white-space:nowrap}
+.cap-row .n b{font:400 17px var(--sg-serif);color:var(--sg-text);margin-right:3px}
+.cap-row a{font-size:12px;color:var(--sg-accent);text-decoration:none;white-space:nowrap}
+.pf{display:grid;grid-template-columns:1fr 1fr;gap:22px 28px;align-items:start}
+.narrow .pf{grid-template-columns:1fr;gap:18px}
+.grp h4{margin:0 0 7px 2px;font-size:12px;font-weight:500;color:var(--sg-faint)}
+.grp ul{margin:0;padding:0;list-style:none;border:1px solid var(--sg-rule);border-radius:10px;overflow:hidden;background:var(--sg-page)}
+.grp li{display:grid;grid-template-columns:1fr auto 14px;align-items:center;gap:10px;padding:10px 12px 10px 14px;border-top:1px solid var(--sg-hair);cursor:pointer}
+.grp li:first-child{border-top:0}
+.grp li:hover{background:var(--sg-sheet)}
+.grp li .k{display:block;font-size:11.5px;color:var(--sg-faint)}
+.grp li .v{display:block;font-size:13.5px;color:var(--sg-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp li .v.empty{color:var(--sg-accent)}
+.grp li>div{min-width:0}
+.grp li .chev{color:var(--sg-faint);font-size:16px;line-height:1}
+.grp li.on{background:var(--sg-sheet);cursor:default}
+.grp li.on>div{grid-column:1/-1}
+.grp textarea{display:block;width:100%;margin-top:6px;min-height:58px;resize:none;border:1px solid var(--sg-accent);border-radius:7px;padding:8px 10px;font:13px/1.6 inherit;font-family:inherit;background:var(--sg-page);color:var(--sg-text);outline:3px solid color-mix(in srgb,var(--sg-accent) 18%,transparent)}
+.grp .ed-f{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11.5px;color:var(--sg-faint)}
+.grp .ed-f .btn{height:26px;padding:0 11px;font-size:12px}
+.grp .ed-f .btn:first-of-type{margin-left:auto}
+
+/* ---------- 长期记忆：一本书。左页是目录（AI 每轮都看），右页是翻开的一节（需要时才翻） ---------- */
+.how{display:flex;align-items:center;gap:8px;margin:-6px 0 16px;font-size:12px;color:var(--sg-faint)}
+.how .sw{width:9px;height:9px}
+.how s{text-decoration:none;margin:0 2px}
+.book{display:grid;grid-template-columns:1fr 1fr;background:var(--sg-sheet);border:1px solid var(--sg-rule);border-radius:4px 4px 4px 4px;position:relative;box-shadow:0 1px 0 var(--sg-rule),0 3px 0 -1px var(--sg-sheet),0 3px 0 0 var(--sg-rule)}
+.narrow .book{grid-template-columns:1fr}
+.leaf{padding:26px 26px 20px;min-width:0;position:relative}
+.leaf+.leaf{border-left:1px solid var(--sg-rule);box-shadow:inset 1px 0 0 var(--sg-page)}
+.toc-t{text-align:center;font:400 15px var(--sg-serif);letter-spacing:.6em;margin:0 0 18px;padding-left:.6em}
+.toc-col{display:flex;justify-content:flex-end;font-size:10.5px;color:var(--sg-faint);margin-bottom:2px}
+.ch{margin:0 0 14px}
+.ch-h,.sec{display:flex;align-items:baseline;gap:8px}
+.ch-h{font:700 14.5px var(--sg-serif);padding:3px 0}
+.ch-h .no{font:400 12px var(--sg-serif);color:var(--sg-faint);min-width:3.2em}
+.lead{flex:1;border-bottom:1.5px dotted color-mix(in srgb,var(--sg-faint) 55%,transparent);transform:translateY(-4px);min-width:16px}
+.cnt{font:12px var(--sg-mono);color:var(--sg-muted);min-width:1.6em;text-align:right}
+.sec{padding:3px 6px 3px 0;margin-left:3.2em;font-size:13px;color:var(--sg-muted);border-radius:4px;position:relative;cursor:pointer}
+.sec .no{font:11.5px var(--sg-mono);color:var(--sg-faint);min-width:2.4em}
+.sec .used{margin-left:2px}
+.sec.cur{color:var(--sg-text);font-weight:600}
+.sec.cur::before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--sg-text)}
+.toc-f{margin-top:18px;padding-top:10px;border-top:1px solid var(--sg-rule);display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--sg-faint)}
+.toc-f .m{display:flex;align-items:center;gap:3px}
+.toc-f .m i{width:7px;height:7px;border-radius:50%;background:var(--sg-moss)}
+.toc-f a{margin-left:auto;color:var(--sg-muted);text-decoration:none}
+.ribbon{position:absolute;top:-1px;right:26px;width:16px;height:34px;background:var(--sg-ink);clip-path:polygon(0 0,100% 0,100% 100%,50% 76%,0 100%);animation:drop .5s .2s both}
+@keyframes drop{from{transform:translateY(-10px);opacity:0}to{transform:none;opacity:1}}
+.pg-k{font:11.5px var(--sg-mono);color:var(--sg-faint)}
+.leaf h3{margin:2px 0 4px;font:700 19px var(--sg-serif)}
+.leaf .sum{margin:0 0 16px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+.evl{margin:0;padding:0;list-style:none}
+.evl li{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:baseline;padding:8px 0;border-top:1px solid var(--sg-rule)}
+.evl li .d{font:11.5px var(--sg-mono);color:var(--sg-faint)}
+.evl li b{font-weight:500;font-size:13px}
+.evl li.fade b{color:var(--sg-faint);font-weight:400}
+.evl li.fade .d::after{content:" · 淡出";font-family:-apple-system,sans-serif}
+.folio{margin-top:16px;text-align:center;font:11px var(--sg-serif);color:var(--sg-faint)}
+
+/* ---------- 事件时间线 ---------- */
+.tl-day{display:grid;grid-template-columns:84px 22px 1fr;column-gap:10px}
+.narrow .tl-day{grid-template-columns:40px 18px 1fr;column-gap:8px}
+.tl-date{text-align:right;padding-top:2px}
+.tl-date b{display:block;font:400 22px/1.1 var(--sg-serif)}
+.narrow .tl-date b{font-size:17px}
+.tl-date span{font-size:11px;color:var(--sg-faint);white-space:nowrap}
+.tl-axis{position:relative}
+.tl-axis::before{content:"";position:absolute;left:50%;top:0;bottom:0;border-left:1.5px solid var(--sg-rule);transform:translateX(-50%)}
+.tl-items{padding-bottom:18px;min-width:0}
+.ev{position:relative;display:flex;align-items:baseline;gap:10px;padding:6px 0 7px;border-bottom:1px solid var(--sg-hair)}
+.ev:last-child{border-bottom:0}
+.ev .nd{position:absolute;left:-26px;top:11px;width:11px;height:11px;border-radius:50%;background:var(--sg-moss);box-shadow:0 0 0 3px var(--sg-page)}
+.narrow .ev .nd{left:-22px}
+.ev.fade .nd{background:var(--sg-page);box-shadow:0 0 0 3px var(--sg-page),inset 0 0 0 1.5px var(--sg-faint)}
+.ev.fade{color:var(--sg-faint)}
+.ev b{font-weight:500;font-size:13.5px;min-width:0}
+.ev .tp{font-size:11.5px;color:var(--sg-faint);white-space:nowrap}
+.ev .used{margin-left:auto}
+.dream{margin:2px 0 18px;padding:7px 12px;background:color-mix(in srgb,var(--sg-sand) 14%,transparent);border-left:3px solid var(--sg-sand);font-size:12.5px;color:var(--sg-muted);display:flex;align-items:center;gap:10px}
+.dream .m{display:flex;align-items:center;gap:4px}
+.dream .m i{width:9px;height:9px;border-radius:50%;background:var(--sg-moss)}
+.dream .m s{text-decoration:none;color:var(--sg-faint);margin:0 3px}
+
+/* ---------- 弹窗 ---------- */
+.scrim{position:absolute;inset:0;background:color-mix(in srgb,#000 38%,transparent);display:flex;align-items:center;justify-content:center;padding:20px}
+html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
+.dlg{width:380px;max-width:100%;background:var(--sg-page);border-radius:12px;padding:22px 22px 18px;box-shadow:0 0 0 1px var(--sg-rule),0 18px 50px rgba(0,0,0,.22);animation:pop .18s both}
+@keyframes pop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+.dlg h3{margin:0 0 14px;font:700 18px var(--sg-serif)}
+.dlg p{margin:0 0 12px;color:var(--sg-muted);font-size:13px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.steps{display:flex;gap:4px;margin:4px 0 8px}
+.steps i{flex:1;height:8px;border-radius:2px;background:var(--sg-sand)}
+.steps i.todo{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-rule)}
+.steps-l{display:flex;justify-content:space-between;font-size:11.5px;color:var(--sg-faint)}
+.steps-l b{color:var(--sg-text);font-weight:500}
+.memo{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--sg-rule);border-radius:8px;margin-bottom:12px}
+.memo .flip{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--sg-faint);font-size:14px}
+.memo .flip i{width:11px;height:11px;border-radius:50%;background:var(--sg-moss)}
+.memo .flip i.o{background:none;box-shadow:inset 0 0 0 1.5px var(--sg-faint)}
+.memo b{display:block;font-weight:500}
+.memo span{font-size:11.5px;color:var(--sg-faint)}
+.keep{font-size:12px;color:var(--sg-muted);display:flex;gap:7px;align-items:center}
+.keep svg{width:13px;height:13px;color:var(--sg-ok);flex:none}
+/* ---------- 会话记忆：越早越薄越淡，最新在下，和聊天同向 ---------- */
+.ss{display:grid;grid-template-columns:1fr 250px;gap:28px}
+.narrow .ss{grid-template-columns:1fr}
+.ss-scale{display:flex;align-items:center;gap:8px;margin:-6px 0 14px;font-size:11.5px;color:var(--sg-faint)}
+.ss-scale .r{display:flex;align-items:flex-end;gap:2px}
+.ss-scale .r i{width:14px;background:var(--sg-water);border-radius:1.5px}
+.blk{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:12px;margin-bottom:3px;animation:rise .4s both}
+.blk .n{font:11px var(--sg-mono);color:var(--sg-faint);text-align:right}
+.blk .bar{border-radius:3px;display:flex;align-items:center;padding:0 12px;min-width:0;cursor:pointer;color:var(--sg-text);font-size:12.5px}
+.blk .bar span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.blk.sel .bar{box-shadow:0 0 0 2px var(--sg-text)}
+.blk .used{min-width:22px}
+.blk.open .bar{background:none!important;border:1.5px dashed var(--sg-water);color:var(--sg-muted);justify-content:space-between}
+.blk.open .dots{display:flex;gap:3px}
+.blk.open .dots i{width:7px;height:7px;border-radius:50%;background:var(--sg-water)}
+.blk.open .dots i.o{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-water)}
+.side{border-top:1px solid var(--sg-text);padding-top:12px;align-self:start}
+.side h4{margin:0 0 2px;font:700 16px var(--sg-serif)}
+.side .pg-k{display:block;margin-bottom:10px}
+.side p{margin:0 0 12px;color:var(--sg-muted);font-size:12.5px;line-height:1.75}
+.lvl{display:flex;gap:3px;margin:4px 0 4px}
+.lvl i{flex:1;height:6px;border-radius:2px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+.lvl i.on{background:var(--sg-water);box-shadow:none}
+.lvl-l{display:flex;justify-content:space-between;font-size:10.5px;color:var(--sg-faint);margin-bottom:14px}
+
+/* ---------- 短期记忆：按天的笔记，实色条 = 会带入新会话 ---------- */
+.days{display:grid;gap:0}
+.day{display:grid;grid-template-columns:72px 6px 1fr;column-gap:16px;padding:12px 0;border-top:1px solid var(--sg-hair);animation:rise .4s both}
+.narrow .day{grid-template-columns:44px 5px 1fr;column-gap:12px}
+.day .d{text-align:right}
+.day .d b{display:block;font:400 26px/1 var(--sg-serif)}
+.narrow .day .d b{font-size:20px}
+.day .d span{font-size:11px;color:var(--sg-faint)}
+.day .rail{border-radius:3px;background:var(--sg-sand)}
+.day.out .rail{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-rule)}
+.day.out{color:var(--sg-faint)}
+.day ul{margin:0;padding:0;list-style:none}
+.day li{display:grid;grid-template-columns:44px 1fr auto;gap:10px;padding:3px 0;font-size:13px;align-items:baseline}
+.day li .t{font:11.5px var(--sg-mono);color:var(--sg-faint)}
+.day.out li span:not(.t){color:var(--sg-faint)}
+.cut{display:grid;grid-template-columns:72px 1fr;column-gap:16px;align-items:center;margin:2px 0;font-size:11px;color:var(--sg-faint)}
+.narrow .cut{grid-template-columns:44px 1fr;column-gap:12px}
+.cut span{grid-column:2;display:flex;align-items:center;gap:8px}
+.cut span::before,.cut span::after{content:"";flex:1;border-top:1px dashed var(--sg-rule)}
+.cut span::before{flex:0 0 8px}
+.off{display:flex;align-items:center;gap:10px;margin-left:auto}
+
+/* ---------- 更多：和画像同一套分组列表 ---------- */
+.more{display:grid;grid-template-columns:1fr 1fr;gap:22px 28px;align-items:start}
+.narrow .more{grid-template-columns:1fr;gap:18px}
+.more>div{display:grid;gap:22px}
+.grp li.st{cursor:default;grid-template-columns:1fr auto}
+.grp li.st:hover{background:none}
+.grp li .k2{display:block;font-size:13.5px}
+.grp li .s{display:block;font-size:11.5px;color:var(--sg-faint)}
+.tg{width:36px;height:21px;border-radius:11px;background:var(--sg-rule);position:relative;flex:none}
+.tg::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .2s}
+.tg.on{background:var(--sg-ok)}.tg.on::after{left:17px}
+.stp{display:inline-flex;align-items:center;border:1px solid var(--sg-rule);border-radius:7px;overflow:hidden;font-size:12.5px}
+.stp button{width:26px;height:26px;border:0;background:none;color:var(--sg-muted)}
+.stp span{min-width:48px;text-align:center;font-family:var(--sg-mono);border-inline:1px solid var(--sg-rule);line-height:26px}
+.stp.ch span{color:var(--sg-accent);font-weight:600}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);padding:14px 4px 12px}
+.kpi div{text-align:center}
+.kpi b{display:block;font:400 24px/1.1 var(--sg-serif)}
+.kpi span{font-size:11px;color:var(--sg-faint);display:inline-flex;align-items:center;gap:4px;justify-content:center}
+.kpi .used{color:var(--sg-faint);font-family:inherit;font-size:11px}
+.badge{font:12px var(--sg-mono);background:var(--sg-sheet);border:1px solid var(--sg-rule);border-radius:10px;padding:0 8px;color:var(--sg-text)}
+.dirty{display:flex;align-items:center;gap:8px;padding:10px 12px 10px 14px;border-top:1px solid var(--sg-rule);background:color-mix(in srgb,var(--sg-accent) 7%,var(--sg-page));font-size:12px;color:var(--sg-accent)}
+.dirty .btn{height:26px;font-size:12px;padding:0 11px}
+.dirty .btn:first-of-type{margin-left:auto}
+.gh-row{display:flex;align-items:center;gap:12px}
+.gh-row svg{width:22px;height:22px;flex:none}
+
+/* 接入适配：原稿选择器原样生效；下面只补宿主里原稿模板没有的行为 */
+:scope{--sg-page:var(--dsw-alias-bg-layer-1,#fff);--sg-sheet:var(--dsw-alias-bg-layer-2,#f6f6f4);--sg-text:var(--dsw-alias-label-primary,#1d1d1b);--sg-muted:var(--dsw-alias-label-secondary,#55534d);--sg-faint:var(--dsw-alias-label-tertiary,#7a776f);--sg-rule:var(--dsw-alias-border-l2,#e3e1da);--sg-hair:color-mix(in srgb,var(--sg-rule) 70%,transparent);--sg-accent:var(--dsw-alias-state-business-primary,#2f6bdc);--sg-ok:var(--dsw-alias-state-success-primary,#2f8a55);--sg-err:var(--dsw-alias-state-error-primary,#c8402c);--sg-ink:light-dark(#3d3b37,#d6d1c6);--sg-clay:light-dark(#a8472c,#c2694c);--sg-moss:light-dark(#5f7f4d,#8fae7b);--sg-sand:light-dark(#a9822f,#d2b066);--sg-water:light-dark(#3f6d9c,#6f97c0);--sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC",serif;--sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;color:var(--sg-text);background:var(--sg-page);font-size:13px;line-height:1.6;position:relative}
+.day>.sg-day-hit{display:contents}
+.book-back{display:none}
+.narrow .book:not(.show-leaf)>.leaf+.leaf{display:none}
+.narrow .book.show-leaf .toc-t,.narrow .book.show-leaf .ch-h,.narrow .book.show-leaf .sec,.narrow .book.show-leaf .toc-f{display:none}
+.book .sg-topic-overview-text{display:block;margin:0 0 16px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+.book .sg-topic-chapter{padding:0;margin:0;border:0}
+.book .sg-topic-sections{padding:0}
+.book .sg-topic-chapter-toggle,.book .sg-topic-section-toggle{display:contents}
+.book .sg-directory-chevron,.book .sg-topic-section-toggle:after,.book .sg-topic-chapter-toggle:after{display:none;content:none}
+.book .ch{margin:0 0 14px}
+.book .ch-h{display:flex;align-items:baseline;gap:8px;margin:0;padding:3px 0;font:700 14.5px var(--sg-serif)}
+.book .sec{display:flex;align-items:baseline;gap:8px;margin:0 0 0 3.2em;padding:3px 0;font-size:13px;font-weight:400;color:var(--sg-muted)}
+.book .sec.cur{color:var(--sg-text);font-weight:600}
+.pillar .sg-p-row{display:contents}
+.sg-head .sg-ws select{border:0;background:transparent;font:inherit;color:inherit;max-width:180px}
+.side details{margin-top:12px}
+.side details summary{cursor:pointer;color:var(--sg-muted);font-size:12px}
+.narrow .book.show-leaf .book-back{display:inline-flex}
+.book{position:relative}
+.book>.leaf{position:static}
+.book:has(.sg-topic-section.cur){min-height:420px}
+.book .sg-topic-section.cur>.sg-directory-fold,.book .sg-topic-section.cur>.sg-directory-fold>.sg-directory-fold-inner{overflow:visible;display:block}
+.book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:absolute;z-index:1;top:0;left:50%;width:50%;max-height:100%;overflow:auto;box-sizing:border-box;padding:26px 26px 20px;background:var(--sg-sheet)}
+.narrow .book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:static;left:auto;width:auto;max-height:none;padding:8px 0 0}
+.sg-profile-group{margin-top:22px;padding:0;border:0;background:transparent}
+.ev .sg-event-status.cancelled{color:var(--sg-faint)}
+
+}
     `
 
     const citationCss = `
@@ -1515,6 +2265,10 @@ window.__ModuleLoader__.load({
       const currentPage = Math.min(totalPages, Math.floor(page.offset / page.limit) + 1)
       const start = page.total ? page.offset + 1 : 0
       const end = Math.min(page.total, page.offset + page.limit)
+      // total 0 is an empty result: there is no next page to offer.
+      // A first page that already contains every row is the same.
+      // Any later offset, a larger total, a load, or an error keeps the controls.
+      if (!error && !loading && page.offset === 0 && page.total <= page.limit) return null
       return h('div', { className: 'sg-pagination', role: 'navigation', 'aria-label': '分页' },
         h('button', { type: 'button', className: 'sg-page-button', disabled: loading || page.offset <= 0, onClick: () => onOffset(Math.max(0, page.offset - page.limit)) }, '上一页'),
         h('span', null, loading ? '加载中…' : '第 ' + currentPage + ' / ' + totalPages + ' 页 · 显示 ' + start + '–' + end + ' / 共 ' + page.total + ' 条'),
@@ -2249,17 +3003,45 @@ window.__ModuleLoader__.load({
       React.useEffect(() => () => cancelHide(), [])
       const now = new Date(); const weekAgo = now.getTime() - 7 * 86400000
       const groups = { '今天': [], '本周': [], '更早': [] }
-      events.slice()
-        .sort((a, b) => String(eventOccurrence(b).value).localeCompare(String(eventOccurrence(a).value)))
-        .forEach((event) => { const info = eventOccurrence(event); const time = Date.parse(info.value); const sameDay = Number.isFinite(time) && new Date(time).toDateString() === now.toDateString(); groups[sameDay ? '今天' : time >= weekAgo ? '本周' : '更早'].push(event) })
+      const sortedEvents = events.slice().sort((a, b) => String(eventOccurrence(b).value).localeCompare(String(eventOccurrence(a).value)))
+      sortedEvents.forEach((event) => { const info = eventOccurrence(event); const time = Date.parse(info.value); const sameDay = Number.isFinite(time) && new Date(time).toDateString() === now.toDateString(); groups[sameDay ? '今天' : time >= weekAgo ? '本周' : '更早'].push(event) })
+      const days = []
+      for (const event of sortedEvents) {
+        const info = eventOccurrence(event)
+        const time = Date.parse(info.value || '')
+        const key = Number.isFinite(time) ? new Date(time).toDateString() : 'unknown'
+        const existing = days.find((day) => day.key === key)
+        if (existing) existing.events.push(event)
+        else days.push({ key, time, events: [event] })
+      }
+      void groups
       const nodeMap = new Map(nodes.map((node) => [node.id, node]))
-      return h('div', { className: 'sg-timeline' }, Object.entries(groups).map(([label, items]) => items.length ? h('section', { key: label, className: 'sg-time-group' }, h('h3', null, label), items.map((event) => {
-        const info = eventOccurrence(event); const temporal = event.temporal || {}
-        return h('button', { key: event.id, className: 'sg-timeline-card ' + (event.id === selectedId ? 'selected' : ''), onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
-          h('span', { className: 'sg-timeline-dot' }), h('div', { className: 'sg-event-clock' }, info.known ? exactTime(info.value).replace(/^\d{4}\//, '') : '发生时间未知', !info.known ? h('small', null, '提及于 ' + exactTime(info.value)) : null),
-          h('div', { className: 'sg-event-main' }, h('div', { className: 'sg-event-title-row' }, h('strong', null, event.title), h('span', { className: 'sg-type-badge' }, EVENT_TYPE_TEXT[temporal.eventType] || temporal.eventType || '其他')), h('p', null, event.summary || '暂无摘要'), h('div', { className: 'sg-tags' }, (temporal.participantNodeIds || []).flatMap((id) => nodeMap.get(id) || []).map((node) => h('span', { key: node.id, className: 'sg-tag' }, node.name)), !(temporal.participantNodeIds || []).length ? (temporal.participants || []).map((name) => h('span', { key: name, className: 'sg-tag' }, name)) : null)),
-          h('span', { className: 'sg-event-status ' + (temporal.status || 'unknown') }, EVENT_STATUS_TEXT[temporal.status] || '未知'))
-      })) : null), floating && preview ? h('div', { className: 'sg-event-popover', style: { left: preview.left + 'px', top: preview.top + 'px' }, onMouseEnter: cancelHide, onMouseLeave: scheduleHide },
+      const monthMarks = []
+      const seenMonths = new Set()
+      for (const event of events) {
+        const time = Date.parse(eventOccurrence(event).value || '')
+        if (!Number.isFinite(time)) continue
+        const date = new Date(time)
+        const key = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0')
+        if (seenMonths.has(key)) continue
+        seenMonths.add(key)
+        monthMarks.push({ key, label: (date.getMonth() + 1) + '月' })
+      }
+      monthMarks.sort((left, right) => left.key.localeCompare(right.key))
+      const rail = monthMarks.slice(-8)
+      return h('div', { className: 'sg-timeline' },
+        rail.length > 1 ? h('div', { className: 'sg-month-rail', 'aria-hidden': 'true' }, rail.map((mark) => h('span', { key: mark.key }, h('i'), mark.label))) : null,
+        days.map((day) => h('div', { key: day.key, className: 'tl-day' },
+          h('div', { className: 'tl-date' }, Number.isFinite(day.time) ? h(React.Fragment, null, h('b', null, String(new Date(day.time).getDate())), h('span', null, new Date(day.time).toDateString() === now.toDateString() ? '今天' : ['周日','周一','周二','周三','周四','周五','周六'][new Date(day.time).getDay()])) : h('span', null, '时间未知')),
+          h('div', { className: 'tl-axis', 'aria-hidden': 'true' }),
+          h('div', { className: 'tl-items' }, day.events.map((event) => {
+            const temporal = event.temporal || {}
+            const faded = temporal.status === 'cancelled'
+            return h('button', { key: event.id, className: 'ev' + (event.id === selectedId ? ' selected' : '') + (faded ? ' fade' : ''), onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
+              h('i', { className: 'nd' }),
+              h('div', { className: 'sg-event-main' }, h('div', { className: 'sg-event-title-row' }, h('strong', null, event.title), h('span', { className: 'sg-type-badge' }, EVENT_TYPE_TEXT[temporal.eventType] || temporal.eventType || '其他')), h('p', null, event.summary || '暂无摘要'), h('div', { className: 'sg-tags' }, (temporal.participantNodeIds || []).flatMap((id) => nodeMap.get(id) || []).map((node) => h('span', { key: node.id, className: 'sg-tag' }, node.name)), !(temporal.participantNodeIds || []).length ? (temporal.participants || []).map((name) => h('span', { key: name, className: 'sg-tag' }, name)) : null)),
+              h('span', { className: 'sg-event-status ' + (temporal.status || 'unknown') }, EVENT_STATUS_TEXT[temporal.status] || '未知'))
+          })))), floating && preview ? h('div', { className: 'sg-event-popover', style: { left: preview.left + 'px', top: preview.top + 'px' }, onMouseEnter: cancelHide, onMouseLeave: scheduleHide },
         h('button', { type: 'button', className: 'sg-popover-close', 'aria-label': '关闭事件详情', onClick: hidePreview }, '×'),
         h(EventDetailPanel, { event: preview.event, nodes, events, onNode, openSource })) : null)
     }
@@ -2293,11 +3075,12 @@ window.__ModuleLoader__.load({
     }
 
     function TopicEventRow({ event, number, openEvent }) {
+      const used = Boolean(event?.weight?.lastRetrievedAt) || Number(event?.weight?.lastAdoptedTurn) >= 0 || (Array.isArray(event?.weightTrajectory?.adoptionHistory) && event.weightTrajectory.adoptionHistory.length > 0)
       return h('button', {
-        type: 'button', className: 'sg-topic-event', 'data-topic-event-id': event.id,
+        type: 'button', className: 'sg-topic-event' + ((event?.temporal?.status === 'cancelled' || event?.status === 'cancelled') ? ' fade' : ''), 'data-topic-event-id': event.id,
         onClick: (click) => openEvent(event, click.currentTarget), title: event.title || event.summary || undefined,
       }, number ? h('span', { className: 'sg-directory-number' }, number) : h('span', { className: 'sg-topic-pending-mark', 'aria-hidden': 'true' }, '·'),
-      h('span', { className: 'sg-topic-event-title' }, event.title || event.summary || '记忆事件'), h('span', { className: 'sg-topic-event-arrow', 'aria-hidden': 'true' }, '↗'))
+      h('span', { className: 'sg-topic-event-title' }, event.title || event.summary || '记忆事件'), used ? h('span', { className: 'sg-used-bubble', title: '曾被用于回答', 'aria-label': '曾被用于回答' }, '▰') : null, h('span', { className: 'sg-topic-event-arrow', 'aria-hidden': 'true' }, '↗'))
     }
 
     function useTopicEventPages({ namespace, revision, topicId, sectionKey = '', total, active, wantAll, onDirectoryChanged }) {
@@ -2370,38 +3153,64 @@ window.__ModuleLoader__.load({
         page.total > 9 ? h('button', { type: 'button', className: 'sg-topic-show-all', disabled: !showAll && (page.loading || Boolean(page.error)), 'aria-expanded': showAll, onClick: () => setShowAll((value) => !value) }, showAll ? collapseLabel : '还有 ' + (page.total - 9) + ' 条事件 · ' + (expandLabel || '展开全部')) : null)
     }
 
-    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged }) {
+    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged, leaf = false, onPick = null, current = false }) {
       const [open, setOpen] = React.useState(false)
       const [overviewOpen, setOverviewOpen] = React.useState(true)
       const sectionNumber = chapter + '.' + index
       const regionId = 'sg-topic-' + encodeURIComponent(topicId) + '-' + encodeURIComponent(part.uiKey)
       const sourceCount = Number(part.sourceEventCount || 0)
-      return h('section', { className: 'sg-topic-section', 'data-section-index': String(index) },
-        h('h3', { className: 'sg-topic-section-heading' }, h('button', { type: 'button', className: 'sg-topic-section-toggle', title: part.uiTitle, 'aria-expanded': open, 'aria-controls': regionId, onClick: () => setOpen((current) => !current) },
-          h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', null, part.uiTitle), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
-        h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-section-body' },
-          (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((current) => !current) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
+      const shown = leaf || open
+      return h('section', { className: 'sg-topic-section' + (shown ? ' cur' : '') + (leaf ? ' leaf' : ''), 'data-section-index': String(index) },
+        h('h3', { className: 'sg-topic-section-heading sec' + (shown ? ' cur' : '') },
+          h('button', { type: 'button', className: 'sg-topic-section-toggle', title: part.uiTitle, 'aria-expanded': shown, 'aria-controls': regionId, 'aria-current': current || shown ? 'true' : undefined, onClick: () => { onPick?.(); if (!leaf) setOpen((value) => !value) } },
+            h('span', { className: 'no' }, sectionNumber), h('span', null, part.uiTitle), leaf ? null : h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')),
+          h('span', { className: 'lead', 'aria-hidden': 'true' }),
+          h('span', { className: 'cnt' }, String(sourceCount))),
+        h(DirectoryFold, { open: shown, id: regionId }, h('div', { className: 'sg-topic-section-body' },
+          h('p', { className: 'pg-k' }, sectionNumber),
+          h('h3', null, part.uiTitle),
+          (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((value) => !value) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: overviewOpen, id: regionId + '-overview' }, (part.paragraphs || []).map((paragraph, paragraphIndex) => h('p', { key: paragraphIndex, className: 'sg-topic-overview-text', 'data-overview-paragraph-index': String(paragraphIndex) }, paragraph.text || '暂无总览')))) : null,
-          h(TopicEventList, { namespace, revision, topicId, sectionKey: part.uiKey, total: sourceCount, active: active && open, openEvent, numberPrefix: sectionNumber, onDirectoryChanged }))))
+          h(TopicEventList, { namespace, revision, topicId, sectionKey: part.uiKey, total: sourceCount, active: active && shown, openEvent, numberPrefix: sectionNumber, onDirectoryChanged }),
+          h('p', { className: 'folio' }, '— 第' + chapterOrdinal(chapter) + '章 · ' + sectionNumber + ' —'))))
     }
 
-    function TopicChapter({ topic, number, namespace, revision, active, openEvent, onDirectoryChanged, expandRequest = 0 }) {
+    function TopicChapter({ topic, number, namespace, revision, active, openEvent, onDirectoryChanged, expandRequest = 0, variant = 'full', leafSectionKey = '', onPickSection = null }) {
       const [open, setOpen] = React.useState(true)
       const [otherOpen, setOtherOpen] = React.useState(false)
       React.useEffect(() => { if (expandRequest > 0) setOpen(true) }, [expandRequest])
       const regionId = 'sg-topic-chapter-' + encodeURIComponent(topic.id)
       const chapterLabel = '第' + chapterOrdinal(number) + '章'
+      const sections = topicSections(topic)
+      if (variant === 'leaf') {
+        const index = sections.findIndex((part) => part.uiKey === leafSectionKey)
+        const part = index >= 0 ? sections[index] : null
+        return part ? h('article', { className: 'sg-topic-chapter sg-book-leaf', 'data-topic-id': topic.id },
+          h(TopicSection, { part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active, openEvent, onDirectoryChanged, leaf: true })) : null
+      }
+      if (variant === 'toc') {
+        const count = sections.reduce((sum, part) => sum + Number(part.sourceEventCount || 0), 0)
+        return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
+          h('header', { className: 'sg-topic-chapter-header' },
+            h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-count' }, String(count)))))),
+          h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
+            sections.map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: false, openEvent, onDirectoryChanged, current: leafSectionKey === part.uiKey, onPick: () => onPickSection?.(topic.id, part.uiKey) })))))
+      }
+      const chapterCount = sections.reduce((sum, part) => sum + Number(part.sourceEventCount || 0), 0)
       return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
-        h('header', { className: 'sg-topic-chapter-header' },
-          h('span', { className: 'sg-topic-chapter-number', 'aria-hidden': 'true' }, String(number).padStart(2, '0')),
-          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
+        h('div', { className: 'ch' },
+        h('div', { className: 'ch-h' },
+          h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'no' }, chapterLabel), h('span', null, topic.title), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')),
+          h('span', { className: 'lead', 'aria-hidden': 'true' }),
+          h('span', { className: 'cnt' }, String(chapterCount))),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
-          topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: active && open, openEvent, onDirectoryChanged })),
+          topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: active && open, openEvent, onDirectoryChanged, onPick: () => onPickSection?.(topic.id, part.uiKey) })),
           !(topic.sections || []).length ? h('p', { className: 'sg-topic-no-overview' }, '这个主题尚未建立小节，可查看待归类事件。') : null,
           (() => {
             const remaining = Number(topic.coverage?.unassignedEvents ?? topic.coverage?.omittedEvents ?? 0)
             return remaining ? h('details', { className: 'sg-topic-other-events', open: otherOpen, onToggle: (event) => setOtherOpen(event.currentTarget.open) }, h('summary', null, '待归类事件 · ' + remaining), h(TopicEventList, { namespace, revision, topicId: topic.id, sectionKey: 'uncovered', total: remaining, active: active && open && otherOpen, openEvent, onDirectoryChanged })) : null
-          })())))
+          })()))
+        ))
     }
 
     function TopicRetryButton({ failure, namespace, revision, onDirectoryChanged }) {
@@ -2500,6 +3309,15 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
       const [collapsed, setCollapsed] = React.useState(!initialRun)
+      const [confirmTerminate, setConfirmTerminate] = React.useState(false)
+      const terminateCancelRef = React.useRef(null)
+      React.useEffect(() => {
+        if (!confirmTerminate) return undefined
+        terminateCancelRef.current?.focus?.()
+        const onKeyDown = (event) => { if (event.key === 'Escape') setConfirmTerminate(false) }
+        document.addEventListener('keydown', onKeyDown)
+        return () => document.removeEventListener('keydown', onKeyDown)
+      }, [confirmTerminate])
       const request = React.useRef(null)
       const previousStatus = React.useRef(initialRun?.status)
       React.useEffect(() => {
@@ -2534,6 +3352,10 @@ window.__ModuleLoader__.load({
         } catch (reason) { if (!controller.signal.aborted) setError(reason?.message || '操作失败，请重试。') }
         finally { if (request.current === controller) { request.current = null; setBusy(false) } }
       }
+      const requestTerminate = () => {
+        if (busy) return
+        setConfirmTerminate(true)
+      }
       const running = run?.status === 'running'
       const pausing = run?.status === 'pausing'
       const paused = run?.status === 'paused'
@@ -2561,12 +3383,20 @@ window.__ModuleLoader__.load({
             !outstanding ? h('button', { type: 'button', disabled: busy, onClick: () => setCollapsed(true) }, '收起') : null,
             running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
             paused && !run.replanRequired ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
-            outstanding ? h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: () => control('terminate') }, '终止') : null)),
+             outstanding ? h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: requestTerminate }, '终止') : null)),
         run ? h('div', { className: 'sg-dreaming-progress' }, h('progress', { max: Math.max(1, run.total), value: run.completed, 'aria-label': 'Dreaming 整理进度（批次）' }), h('span', null, Math.round(100 * run.completed / Math.max(1, run.total)) + '% · ' + run.completed + '/' + run.total + ' 批次')) : null,
         h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
         run?.reason ? h('p', null, run.reason) : null,
         run && ['completed', 'terminated'].includes(run.status) ? h('p', null, '已完成的修改已保留。') : null,
-        error ? h('p', { role: 'alert' }, error, h('button', { type: 'button', disabled: busy, onClick: () => api('dreaming', { namespace }).then(accept).catch(() => setError('状态读取失败，请稍后重试。')) }, '重新读取')) : null)
+         error ? h('p', { role: 'alert' }, error, h('button', { type: 'button', disabled: busy, onClick: () => api('dreaming', { namespace }).then(accept).catch(() => setError('状态读取失败，请稍后重试。')) }, '重新读取')) : null,
+         confirmTerminate ? h('div', { className: 'sg-import-overlay', onClick: () => setConfirmTerminate(false) },
+           h('section', { className: 'sg-import-dialog sg-r6-danger-dialog dlg', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': '终止整理确认', onClick: event => event.stopPropagation() },
+             h('h3', { className: 'sg-import-dialog-title' }, '终止这次整理？'),
+             Number(run?.total) > 0 && Number(run.total) <= 24 ? h('div', { className: 'steps', 'aria-hidden': 'true' }, Array.from({ length: Number(run.total) }, (_, index) => h('i', { key: index, className: index < Number(run.completed || 0) ? '' : 'todo' }))) : null,
+             Number(run?.total) > 0 ? h('div', { className: 'steps-l' }, h('span', null, h('b', null, String(Math.min(Number(run.completed || 0), Number(run.total))) + ' 批'), '已整理的会保留'), h('span', null, Math.max(0, Number(run.total) - Number(run.completed || 0)) + ' 批保持原样')) : h('p', { className: 'sg-setting-note' }, '已完成的章节会保留，尚未完成的章节保持原样。'),
+             h('div', { className: 'sg-r6-dialog-actions' },
+               h('button', { type: 'button', className: 'sg-quiet-button', ref: terminateCancelRef, onClick: () => setConfirmTerminate(false) }, '继续整理'),
+               h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: () => { setConfirmTerminate(false); void control('terminate') } }, '终止')))) : null)
     }
 
     function TopicDirectory({ directory, namespace, active = true, openEvent, onDirectoryChanged, onOpenDreamingSession }) {
@@ -2583,14 +3413,29 @@ window.__ModuleLoader__.load({
       const invalidate = React.useCallback(() => { setInvalidatedRevision(revision); return onDirectoryChanged?.() }, [revision, onDirectoryChanged])
       const topics = directory?.topics || []
       const pendingTotal = Number(directory?.pending?.total || 0)
+      const [picked, setPicked] = React.useState(null)
+      const [showLeaf, setShowLeaf] = React.useState(false)
+      React.useEffect(() => {
+        if (!picked) return
+        const stillThere = topics.some((topic) => topic.id === picked.topicId && topicSections(topic).some((part) => part.uiKey === picked.sectionKey))
+        if (!stillThere) { setPicked(null); setShowLeaf(false) }
+      }, [revision, topics, picked])
+      const pickSection = (topicId, sectionKey) => { setPicked({ topicId, sectionKey }); setShowLeaf(true) }
+      const organizedAt = directory?.dreaming?.updatedAt && ['completed', 'terminated'].includes(directory.dreaming.status) ? formatTime(directory.dreaming.updatedAt) : ''
       return h('section', { className: 'sg-topic-directory', 'data-testid': 'stratagate-topic-directory', 'aria-label': '主题目录' },
         h('header', { className: 'sg-topic-directory-intro' },
-          h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }),
+          topics.length ? null : h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }),
           h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: topics.length > 0 && !blocked, onDirectoryChanged, onOpenDreamingSession })),
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
-          h('div', { ref: chaptersRef }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest }))),
+          topics.length ? h('div', { className: 'book' + (showLeaf ? ' show-leaf' : ''), ref: chaptersRef },
+            h('div', { className: 'leaf' },
+              h('button', { type: 'button', className: 'btn ghost book-back', onClick: () => setShowLeaf(false) }, '目录'),
+              h('h3', { className: 'toc-t' }, '目录'),
+              topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, onPickSection: pickSection })),
+              h('div', { className: 'toc-f' }, organizedAt ? h('span', null, organizedAt) : null, h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))),
+            h('div', { className: 'leaf', 'aria-hidden': 'true' })) : null,
           pendingTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' }, h('h2', { className: 'sg-topic-pending-heading' }, h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', null, '待整理'), h('span', null, pendingTotal + ' 条事件'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null))
     }
@@ -2687,8 +3532,8 @@ window.__ModuleLoader__.load({
       const tabButton = ([id, label]) => h('button', { key: id, type: 'button', className: mode === id ? 'active' : '', 'aria-current': mode === id ? 'page' : undefined, 'aria-label': id === 'graph-add' ? '重新打开知识图谱' : label, onClick: () => { setMode(id === 'graph-add' ? 'graph' : id); setGraphMenuOpen(id === 'graph-add' || (id === 'graph' && graphSettings.enabled !== true && graphSettings.noticeSeen !== true)); if (id === 'topics') { setFullScreen(false); setFiltersOpen(false) } } }, label)
       const graphMenu = h('div', { ref: graphMenuRef, className: 'sg-graph-menu' }, h('button', { type: 'button', className: 'sg-graph-menu-trigger', 'aria-label': '知识图谱设置', 'aria-expanded': graphMenuOpen, onClick: () => setGraphMenuOpen((value) => !value) }, h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' }, h('path', { d: 'M12 5v14M5 12h14', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' }))), graphMenuOpen ? h('div', { className: 'sg-graph-menu-popover' }, h('strong', { className: 'sg-graph-menu-title' }, '知识图谱'), h(GraphControlPanel, { state: graphSettings, refresh, page: true, onGraphHidden: () => { setGraphMenuOpen(false); setMode('topics') } })) : null)
       const tabChildren = [...longTabs.map(tabButton), graphMenu]
-      return h('section', { className: 'sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
-        h('nav', { className: 'sg-long-tabs', 'aria-label': '长期记忆视角' }, tabChildren),
+      return h('section', { className: 'sg-body sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
+        h('div', { className: 'pg-h' }, h('h2', null, '长期记忆'), h('div', { className: 'end' }, h('nav', { className: 'sg-long-tabs seg', 'aria-label': '长期记忆视角' }, tabChildren))),
         h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged, onOpenDreamingSession })),
         mode === 'topics' ? null : h(React.Fragment, null,
         mode === 'graph' && migrationNotice ? h('p', { className: 'sg-muted' }, migrationNotice) : null,
@@ -2718,7 +3563,7 @@ window.__ModuleLoader__.load({
 
     function turnRangeText(range) {
       if (!Array.isArray(range) || range.length < 2 || range[1] < range[0]) return '等待新对话'
-      return 'Turn ' + range[0] + '–' + range[1]
+      return '第 ' + range[0] + '–' + range[1] + ' 轮'
     }
 
     function LayerPreview({ layer, currentLevel, expanding, busy, pendingSelection, allowExpand, onExpand }) {
@@ -2882,6 +3727,21 @@ window.__ModuleLoader__.load({
     function dailyInline(text) {
       return String(text).split(/(`[^`\n]+`)/g).map((part, key) =>  /^`[^`\n]+`$/.test(part) ? h('code', { key }, part.slice(1, -1)) : part)
     }
+    function dailyPoints(markdown) {
+      const points = []
+      for (const raw of String(markdown || '').split(/\r?\n/)) {
+        const line = raw.trim()
+        if (!line || /^# \d{4}-\d{2}-\d{2}$/.test(line)) continue
+        const status = line.match(/^(当前|已完成)：\s*(.*)$/)
+        const bullet = line.match(/^[-*] |^## /)
+        if (!status && !bullet) continue
+        const text = (status ? status[2] : line.replace(/^[-*] |^## /, '')).trim()
+        if (!text) continue
+        const timed = text.match(/^(\d{1,2}:\d{2})\s+(.+)$/)
+        points.push(timed ? { time: timed[1], text: timed[2] } : { time: '', text })
+      }
+      return points
+    }
     function renderDailyMarkdown(markdown) {
       const output = []; let children = []; let title = null; let list = []
       const flushList = () => { if (list.length) { children.push(h('ul', { key: 'list-' + children.length }, list)); list = [] } }
@@ -2898,12 +3758,13 @@ window.__ModuleLoader__.load({
       }
       flushItem(); return output
     }
-    function DailyNotesPage({ namespace }) {
+    function DailyNotesPage({ namespace, setDailyInjectionDays }) {
       const [index, setIndex] = React.useState(null)
       const [indexLoading, setIndexLoading] = React.useState(true)
       const [indexError, setIndexError] = React.useState('')
       const [selected, setSelected] = React.useState('')
       const [note, setNote] = React.useState({ loading: false, date: '', markdown: '', error: '' })
+      const [notes, setNotes] = React.useState({})
       const [revision, setRevision] = React.useState(0)
       const [noteRevision, setNoteRevision] = React.useState(0)
       const [calendarOpen, setCalendarOpen] = React.useState(false)
@@ -2925,10 +3786,20 @@ window.__ModuleLoader__.load({
         const abort = new AbortController()
         setNote({ loading: Boolean(selected), date: selected, markdown: '', error: '' })
         if (selected) void api('daily/note', { namespace, date: selected }, { signal: abort.signal }).then(data => {
-          if (!abort.signal.aborted) setNote({ loading: false, date: selected, markdown: data.markdown, error: '' })
+          if (!abort.signal.aborted) setNote({ loading: false, date: selected, markdown: String(data?.markdown || ''), error: '' })
         }).catch(error => { if (!abort.signal.aborted) setNote({ loading: false, date: selected, markdown: '', error: String(error.message || error) }) })
         return () => abort.abort()
       }, [namespace, selected, noteRevision])
+      React.useEffect(() => {
+        const abort = new AbortController()
+        for (const date of index?.dates || []) {
+          if (!date || date === selected) continue
+          void api('daily/note', { namespace, date }, { signal: abort.signal }).then((data) => {
+            if (!abort.signal.aborted) setNotes((current) => ({ ...current, [date]: String(data?.markdown || '') }))
+          }).catch(() => {})
+        }
+        return () => abort.abort()
+      }, [namespace, index, selected, noteRevision])
       React.useEffect(() => {
         if (!calendarOpen) return
         const outside = event => { if (!calendarButton.current?.contains(event.target) && !calendarPopup.current?.contains(event.target)) setCalendarOpen(false) }
@@ -2939,6 +3810,17 @@ window.__ModuleLoader__.load({
       const choose = date => { setSelected(date); setCalendarOpen(false) }
       const dates = index?.dates || []; const injected = index?.injectedDates || []; const enabled = index?.enabled !== false
       const injectionDays = index?.injectionDays ?? 3
+      const adjustInjectionDays = (delta) => {
+        if (!enabled || typeof setDailyInjectionDays !== 'function') return
+        const next = Math.max(1, Math.min(30, Number(injectionDays) + delta))
+        if (next === injectionDays) return
+        try {
+          const result = setDailyInjectionDays(next)
+          Promise.resolve(result).then(() => setRevision(value => value + 1), () => setRevision(value => value + 1))
+        } catch {
+          setRevision(value => value + 1)
+        }
+      }
       const months = [...new Set(dates.map(date => date.slice(0, 7)))].sort()
       const calendarMonth = month || selected.slice(0, 7) || months[months.length - 1]
       const calendar = () => {
@@ -2966,25 +3848,36 @@ window.__ModuleLoader__.load({
       }
       const failure = error => h('div', { className: 'sg-daily-state error', role: 'alert' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'alert' })), h('h3', null, '暂时无法读取笔记'), h('p', null, '文件可能被占用或权限不足，已有笔记不会丢失。'), h('button', { type: 'button', className: 'sg-daily-retry', onClick: () => indexError ? setRevision(v => v + 1) : setNoteRevision(v => v + 1) }, h(DailyIcon, { name: 'refresh' }), '重新读取'), h('details', null, h('summary', null, '错误详情'), error))
       const date = selected ? dailyParts(selected) : null
-      return h('div', { className: 'sg-daily' },
-        h('div', { className: 'sg-daily-head' }, h('div', null, h('h2', null, '短期记忆'), h('p', null, '每天一份工作笔记，最近 ' + injectionDays + ' 个有笔记日期会带入新会话。')),
+      return h('div', { className: 'sg-body' },
+        h('div', { className: 'pg-h' }, h('div', null, h('h2', null, '短期记忆'), h('span', { className: 'tag' }, '每天一份工作笔记，最近 ' + injectionDays + ' 个有笔记日期会带入新会话。')),
+          h('span', { className: 'stp', 'aria-label': '带入新会话的天数' },
+            h('button', { type: 'button', disabled: !enabled || !setDailyInjectionDays || injectionDays <= 1, onClick: () => adjustInjectionDays(-1), 'aria-label': '减少带入天数' }, '−'),
+            h('span', null, injectionDays + ' 天'),
+            h('button', { type: 'button', disabled: !enabled || !setDailyInjectionDays || injectionDays >= 30, onClick: () => adjustInjectionDays(1), 'aria-label': '增加带入天数' }, '+'))),
           h('div', { className: 'sg-daily-actions', ref: actions }, h('button', { type: 'button', ref: calendarButton, className: 'sg-daily-icon-btn', 'aria-label': '查看更早日期', title: '查看更早日期', 'data-tip': '查看更早日期', 'aria-haspopup': 'dialog', 'aria-expanded': calendarOpen, disabled: !dates.length || indexLoading || Boolean(indexError), onClick: () => { setMonth(selected.slice(0, 7) || months[months.length - 1]); setCalendarOpen(value => !value) } }, h(DailyIcon, { name: 'calendar' })),
-            h('button', { type: 'button', className: 'sg-daily-icon-btn', 'aria-label': '打开笔记文件夹', title: '打开笔记文件夹', 'data-tip': '打开笔记文件夹', disabled: !namespace || directoryOpening, onClick: openDirectory }, h(DailyIcon, { name: 'folder' })), calendar())),
+            h('button', { type: 'button', className: 'sg-daily-icon-btn', 'aria-label': '打开笔记文件夹', title: '打开笔记文件夹', 'data-tip': '打开笔记文件夹', disabled: !namespace || directoryOpening, onClick: openDirectory }, h(DailyIcon, { name: 'folder' })), calendar()),
         directoryFeedback ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, directoryFeedback) : null,
         indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
           !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
-          dates.length ? h(React.Fragment, null,
-            h('div', { className: 'sg-daily-strip', role: 'tablist', 'aria-label': '带入新会话的笔记' }, injected.map((date, i) => {
+          dates.length ? h('div', { className: 'days', role: 'list', 'aria-label': '带入新会话的笔记' }, [...dates].sort((left, right) => right.localeCompare(left)).flatMap((date, position, ordered) => {
               const parts = dailyParts(date)
-              return h('button', { key: date, type: 'button', role: 'tab', 'aria-selected': selected === date, tabIndex: selected === date || (!injected.includes(selected) && i === 0) ? 0 : -1, className: 'sg-daily-day' + (selected === date ? ' selected' : ''), onClick: () => choose(date), onKeyDown: event => {
-                const next = event.key === 'ArrowRight' ? (i + 1) % injected.length : event.key === 'ArrowLeft' ? (i + injected.length - 1) % injected.length : event.key === 'Home' ? 0 : event.key === 'End' ? injected.length - 1 : -1
-                if (next >= 0) { event.preventDefault(); choose(injected[next]); event.currentTarget.parentElement.children[next]?.focus() }
-              } }, h('span', { className: 'sg-daily-num' }, parts.day), h('span', { className: 'sg-daily-week' }, parts.month + '月 · ' + parts.week), h('span', { className: 'sg-daily-rel' }, dailyRelative(date, index.today)))
-            })),
-            note.loading || note.date !== selected ? h(Loading) : note.error ? failure(note.error) : date ? h('article', { key: selected, className: 'sg-daily-note' },
-              h('div', { className: 'sg-daily-note-date' }, h('h3', null, date.month + ' 月 ' + date.day + ' 日'), h('span', null, date.week + ' · ' + dailyRelative(selected, index.today))),
-              h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在带入范围内'), !injected.includes(selected) ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null), renderDailyMarkdown(note.markdown)) : null)
-            : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
+              const inRange = enabled && injected.includes(date)
+              const previousInRange = position > 0 && enabled && injected.includes(ordered[position - 1])
+              const cut = enabled && previousInRange && !inRange ? h('div', { key: 'cut', className: 'cut' }, h('span', null, '以下不带入')) : null
+              const active = selected === date
+              const markdown = active && note.date === date ? note.markdown : (notes[date] || '')
+              const points = dailyPoints(markdown)
+              return [cut, h('article', { key: date, className: 'day' + (inRange && enabled ? '' : ' out') + (active ? ' selected' : '') },
+                h('button', { type: 'button', className: 'sg-day-hit', 'aria-pressed': active, onClick: () => choose(date) },
+                  h('span', { className: 'd' }, h('b', null, String(parts.day)), h('span', null, parts.week)),
+                  h('div', { className: 'rail', 'aria-hidden': 'true' })),
+                h('div', null,
+                  h('span', { className: 'sg-daily-rel' }, dailyRelative(date, index.today)),
+                  points.length ? h('ul', null, points.map((point, pointIndex) => h('li', { key: pointIndex }, point.time ? h('span', { className: 't' }, point.time) : null, h('span', null, point.text)))) : null,
+                  active ? (note.loading || note.date !== date ? h(Loading) : note.error ? failure(note.error) : h('div', { className: 'sg-daily-note' },
+                    h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(date) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(date) ? '会带入新会话' : '不在带入范围内'), !injected.includes(date) && injected[0] ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null),
+                    points.length ? null : renderDailyMarkdown(note.markdown))) : null))]
+            })) : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
     }
 
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh }) {
@@ -2998,11 +3891,24 @@ window.__ModuleLoader__.load({
       const [expanding, setExpanding] = React.useState({ blockId: '', level: -1 })
       const [previewError, setPreviewError] = React.useState(null)
       const [selectionFeedback, setSelectionFeedback] = React.useState({})
+      const [rawId, setRawId] = React.useState('')
       const scope = namespace + '\u0000' + activeThreadId
       const activeScope = React.useRef(scope)
       activeScope.current = scope
       const selectionRequest = React.useRef(null)
       const currentOpen = openBlock || { turnRange: null, messages: 0, status: 'open' }
+      const sessionRef = React.useRef(null)
+      const [sessionNarrow, setSessionNarrow] = React.useState(false)
+      React.useEffect(() => {
+        const node = sessionRef.current
+        if (!node || typeof ResizeObserver !== 'function') return undefined
+        const observer = new ResizeObserver((entries) => {
+          const width = entries[0]?.contentRect?.width || 0
+          setSessionNarrow(width > 0 && width <= 680)
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+      }, [])
 
       React.useEffect(() => {
         setExpandedId(''); setDetails({}); setLoadingId(''); setPreviewError(null); setSelectionFeedback({})
@@ -3079,27 +3985,24 @@ window.__ModuleLoader__.load({
         }
       }
 
-      return h(React.Fragment, null,
-        h('section', { className: 'sg-decay-overview', 'aria-labelledby': 'sg-decay-title' },
-          h('div', { className: 'sg-decay-head' },
-            h('h2', { className: 'sg-decay-title', id: 'sg-decay-title' }, '块衰减总览'),
-            h('label', { className: 'sg-conversation' }, h('span', null, '当前对话：'), h('select', { value: activeThreadId || '', disabled: !conversations.length, onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))),
-          h('p', { className: 'sg-decay-copy' }, 'L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。'),
-          h('div', { ref: distributionRef, className: 'sg-distribution', 'aria-label': 'Block 当前层级分布', onScroll: (event) => { const node = event.currentTarget; setRail({ value: Math.round(node.scrollLeft), max: Math.max(0, node.scrollWidth - node.clientWidth) }) }, onWheel: (event) => { if (rail.max <= 0) return; event.preventDefault(); event.currentTarget.scrollLeft += event.deltaY + event.deltaX } },
-            visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: 'Block #' + block.sequence }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
-            h('span', { className: 'sg-level-chip sg-open-chip' }, '开放块 · 未封存')),
-          h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: String(Math.max(1, rail.max)), step: '1', value: String(Math.min(rail.value, Math.max(1, rail.max))), disabled: rail.max <= 0, onChange: (event) => { const value = Number(event.target.value); if (distributionRef.current) distributionRef.current.scrollLeft = value; setRail((current) => ({ ...current, value })) }, 'aria-label': 'Block 分布滑轨' }),
-          h('div', { className: 'sg-time-direction', 'aria-hidden': 'true' }, h('span', null, '更旧'), h('span', { className: 'sg-time-line' }), h('span', null, '更新 →')),
-          h('div', { className: 'sg-overview-meta' }, h('span', null, '已封存块：本页 ' + visible.length + ' / 共 ' + pagedBlocks.page.total), h('span', null, '开放块：' + turnRangeText(currentOpen.turnRange) + '（未封存）'))),
-        h('section', { className: 'sg-block-list', 'aria-label': 'Block 列表' },
-          h('div', { className: 'sg-block-header', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
-          visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
-            h('button', { className: 'sg-block-toggle', type: 'button', onClick: () => toggleBlock(block), 'aria-expanded': expandedId === block.id ? 'true' : 'false' },
-              h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-level-badge', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: '助手可参考的详细程度' }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
-              h('span', { className: 'sg-block-name' }, (block.virtual ? '旧 Block #' : 'Block #') + block.sequence),
-              h('span', { className: 'sg-block-turn' }, turnRangeText(block.turnRange)),
-              h('span', { className: 'sg-block-distance' }, block.distanceFromLatest === 0 ? '0（最新）' : block.distanceFromLatest + ' 个 Block'),
-              h('span', { className: 'sg-row-chevron', 'aria-hidden': 'true' }, expandedId === block.id ? '⌃' : '›')),
+      const openTurns = Math.max(0, Number(currentOpen.turns || 0))
+      const openCapacity = Math.max(1, Number(currentOpen.capacity || 6))
+      return h('section', { className: 'sg-body' },
+        h('div', { className: 'pg-h' },
+          h('h2', null, '会话记忆'),
+          h('span', { className: 'tag' }, (pagedBlocks.page.total || visible.length) + ' 块 · 开放块 ' + Math.min(openTurns, openCapacity) + '/' + openCapacity),
+          h('div', { className: 'end' }, h('label', { className: 'sg-ws' }, h('span', null, '当前对话'), h('select', { value: activeThreadId || '', disabled: !conversations.length, onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label)))))),
+        h('div', { className: 'ss-scale' }, '更早 ', h('span', { className: 'r' }, [0, 1, 2, 3, 4, 5].map((step) => h('i', { key: step, style: { height: (5 + step * 3) + 'px', opacity: 0.3 + step * 0.14 } }))), ' 最近', h('span', { style: { marginLeft: '8px' } }, '越早的对话压得越薄')),
+        h('div', { className: 'ss', ref: sessionRef },
+        h('div', null,
+          visible.map((block) => {
+            const level = visibleBlockLevel(block)
+            const known = level !== null
+            return h('div', { key: block.id, className: 'blk' + (expandedId === block.id ? ' sel' : '') },
+            h('span', { className: 'n' }, String(block.sequence)),
+            h('button', { className: 'bar sg-block-toggle', type: 'button', 'data-level': known ? String(level) : undefined, onClick: () => toggleBlock(block), 'aria-expanded': expandedId === block.id ? 'true' : 'false', style: known ? { height: (18 + level * 6) + 'px', background: 'color-mix(in srgb, var(--sg-water) ' + (16 + level * 13) + '%, var(--sg-page))' } : { height: '28px' } },
+              h('span', null, (block.virtual ? '旧块 ' : '块 ') + block.sequence + ' · ' + turnRangeText(block.turnRange) + (known ? '' : ' · 尚未确认'))),
+            h('span', { className: 'used', 'aria-hidden': 'true' }),
             h(BlockSelectionFeedback, { block, feedback: selectionFeedback[block.id]?.scope === scope ? selectionFeedback[block.id] : null, onRefresh: async () => {
               try {
                 await refresh()
@@ -3110,13 +4013,25 @@ window.__ModuleLoader__.load({
             } }),
             previewError?.scope === scope && previewError.blockId === block.id ? h('div', { role: 'alert', className: 'sg-selection-feedback error' }, previewError.message) : null,
             summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
-            expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
-          h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-block-toggle sg-open-row' },
-            h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-open-badge' }, '开放块')),
-            h('span', { className: 'sg-block-name' }, '未封存'),
-            h('span', { className: 'sg-block-turn' }, turnRangeText(currentOpen.turnRange)),
-            h('span', { className: 'sg-block-distance' }, '—'),
-            h('span')))),
+            expandedId === block.id && sessionNarrow ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)}),
+          h('div', { className: 'blk open' },
+            h('span', { className: 'n' }, ''),
+            h('div', { className: 'bar', style: { height: '46px' } }, h('span', null, '正在记录'), h('span', { className: 'dots', 'aria-hidden': 'true' }, Array.from({ length: openCapacity }, (_, index) => h('i', { key: index, className: index < Math.min(openTurns, openCapacity) ? '' : 'o' })))),
+            h('span', { className: 'used', 'aria-hidden': 'true' }))),
+        !sessionNarrow && expandedId ? h('aside', { className: 'side', 'aria-label': '会话记忆详情' }, visible.filter((block) => block.id === expandedId).map((block) => {
+          const level = visibleBlockLevel(block)
+          const layers = Array.isArray(details[block.id]?.layers) ? details[block.id].layers : []
+          const summary = layers.find((layer) => Number(layer.level) === level)?.content || layers.slice().sort((a, b) => Number(b.level) - Number(a.level))[0]?.content || ''
+          return h(React.Fragment, { key: block.id },
+            h('h4', null, (block.virtual ? '旧块 ' : '块 ') + block.sequence),
+            h('span', { className: 'pg-k' }, '记忆块 ' + block.sequence + (block.turnRange ? ' · ' + turnRangeText(block.turnRange) : '')),
+            level === null ? null : h('div', { className: 'lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((step) => h('i', { key: step, className: step <= level ? 'on' : '' }))),
+            level === null ? null : h('div', { className: 'lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
+            summary ? h('p', null, summary) : h('p', null, '这段的分层摘要还没有读到。'),
+            h('button', { type: 'button', className: 'btn', onClick: () => setRawId((current) => current === block.id ? '' : block.id) }, rawId === block.id ? '收起原文' : '看原文'),
+            rawId === block.id ? h('div', { className: 'sg-summary-raw' }, (Array.isArray(details[block.id]?.messages) ? details[block.id].messages : []).map((message) => h('div', { key: message.id, className: 'sg-raw-message' }, h('div', { className: 'sg-muted' }, String(message.role || '')), h('div', null, String(message.content || '')))) ) : null,
+            h('details', null, h('summary', null, '调整助手可见层级'), h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (levelChoice) => expandTo(block, levelChoice) })))
+        })) : null),
         h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }))
     }
 
@@ -3585,18 +4500,85 @@ window.__ModuleLoader__.load({
                       : h('button', { type: 'button', className: 'sg-import-button', disabled: restoring || busy || !text.trim(), onClick: analyze }, busy ? '正在创建任务…' : '分析并预览'))))
     }
 
-    function MoreHome({ setView }) {
-      const rows = [
-        ['duplicates', '⇄', '重复记忆整理', '查看保留原因、合并候选与重新扫描'],
-        ['display', '◐', '界面与显示', '控制会话记忆、检索状态等前端提示'],
-        ['import', '⇄', '导入其他 AI 的记忆', '将其他 AI 的历史记忆导入 StrataGate'],
-        ['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断'],
-        ['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助'],
+    function OverviewPage({ selected, data, namespace, onNavigate, narrow = false }) {
+      const [profileChars, setProfileChars] = React.useState(null)
+      const [dailyCount, setDailyCount] = React.useState(null)
+      React.useEffect(() => {
+        if (!namespace) return undefined
+        const controller = new AbortController()
+        Promise.allSettled([
+          api('profile', {}, { signal: controller.signal }),
+          api('daily', { namespace }, { signal: controller.signal }),
+        ]).then(([profileResult, dailyResult]) => {
+          if (controller.signal.aborted) return
+          if (profileResult.status === 'fulfilled') setProfileChars(profileFieldNames.reduce((sum, field) => sum + Array.from(profileResult.value?.[field] || '').length, 0))
+          if (dailyResult.status === 'fulfilled') setDailyCount(Array.isArray(dailyResult.value?.dates) ? dailyResult.value.dates.length : 0)
+        })
+        return () => controller.abort()
+      }, [namespace])
+      const layerCount = (value) => value === null || value === undefined || value === '' ? '' : Number.isFinite(Number(value)) ? Math.max(0, Number(value)).toLocaleString('en-US') : ''
+      const audit = Array.isArray(data?.audit) ? data.audit : []
+      const auditTotal = Number(data?.pagination?.audit?.total ?? audit.length)
+      const auditComplete = auditTotal <= audit.length
+      const heat = auditComplete ? Array.from({ length: 28 }, (_, index) => {
+        const day = new Date(); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() - (27 - index))
+        const next = new Date(day); next.setDate(next.getDate() + 1)
+        const count = audit.filter((item) => { const time = Date.parse(item.createdAt || ''); return Number.isFinite(time) && time >= day.getTime() && time < next.getTime() }).length
+        return { key: day.toISOString().slice(0, 10), count }
+      }) : null
+      const lastSeven = heat ? heat.slice(-7).reduce((sum, item) => sum + item.count, 0) : null
+      const topics = data?.topicDirectory && Array.isArray(data.topicDirectory.topics) ? data.topicDirectory.topics.length : null
+      const processing = Math.max(0, Number(selected?.processingJobs || 0))
+      const failed = Math.max(0, Number(selected?.failedJobs || 0))
+      const open = (section) => onNavigate?.(section)
+      const bubble = h('svg', { viewBox: '0 0 30 24', 'aria-hidden': 'true' }, h('path', { d: 'M4 2h22a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H13l-6 5v-5H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z', fill: 'none', stroke: 'currentColor', strokeWidth: '1.6' }), h('path', { d: 'M8 8h14M8 12h9', stroke: 'currentColor', strokeWidth: '1.6' }))
+      const layers = [
+        { id: 'profile', name: '常驻画像', count: profileChars, unit: '字', tone: 'ink', height: 46 },
+        { id: 'long', name: '记忆目录', count: topics, unit: '章', tone: 'moss', height: 36 },
+        { id: 'short', name: '会话记忆', count: data?.pagination?.blocks?.total ?? selected?.blocks, unit: '块', tone: 'water', height: 50 },
+        { id: 'daily', name: '短期记忆', count: dailyCount, unit: '条', tone: 'sand', height: 42 },
+        { id: 'long', name: '长期记忆', count: data?.pagination?.events?.total ?? selected?.events, unit: '个事件', tone: 'moss', height: 62, library: true },
       ]
-      return h(React.Fragment, null, h('div', { className: 'sg-intro' }, h('h2', null, '更多'), h('p', null, '设置、导入与支持')), h('div', { className: 'sg-menu' }, rows.map(([id, icon, title, subtitle]) => h('button', { key: id, className: 'sg-menu-row', onClick: () => setView({ name: id }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›')))))
+      const health = failed ? '有失败任务' : processing ? '整理中' : '运行正常'
+      const shownHeat = heat ? (narrow ? heat.slice(14) : heat) : null
+      return h('section', { className: 'sg-body', 'aria-label': 'StrataGate 总览' },
+        h('div', { className: 'ov' },
+          h('div', { className: 'ov-stat' },
+            lastSeven === null ? null : h('div', { className: 'ov-big' }, h('b', null, lastSeven.toLocaleString('en-US')), bubble),
+            lastSeven === null ? null : h('p', null, '最近 7 天，记忆帮到了 ' + lastSeven.toLocaleString('en-US') + ' 次回答'),
+            h('div', { className: 'ov-health' }, h('i', { className: failed ? 'bad' : '' }), health)),
+          h('div', null,
+            h('div', { className: 'pillar' },
+              h('div', { className: 'p-top' }, bubble, h('i')),
+              layers.map((layer) => h(React.Fragment, { key: layer.name },
+                layer.library ? h('div', { className: 'p-gap' }) : null,
+                h('button', { type: 'button', className: 'sg-p-row', onClick: () => open(layer.id), 'aria-label': '打开' + layer.name },
+                  h('span', { className: 'p-bar ' + (layer.library ? 'lib' : ''), style: { height: layer.height + 'px', background: layer.library ? undefined : 'var(--sg-' + layer.tone + ')' } }),
+                  h('div', { className: 'p-name' }, h('b', null, layer.name)),
+                  h('div', { className: 'p-use' }),
+                  h('div', { className: 'p-val' }, layerCount(layer.count) === '' ? null : h('b', null, layerCount(layer.count)), layerCount(layer.count) === '' ? '' : layer.unit))))),
+            h('div', { className: 'p-key' }, h('span', null, h('i', { className: 'sw' }), '一直带着'), h('span', null, h('i', { className: 'sw', style: { background: 'none', border: '1.2px dashed var(--sg-muted)' } }), '需要时去找')))),
+        shownHeat ? h('div', { className: 'hm-wrap', 'aria-label': narrow ? '最近 2 周采用记录' : '最近 4 周采用记录' },
+          h('div', { className: 'hm-h' }, h('span', null, '每天被回答用到几次'), h('span', null, '颜色越深越多')),
+          h('div', { className: 'hm' }, shownHeat.map((item) => h('i', { key: item.key, title: item.key + ' · ' + item.count + ' 次', style: item.count ? { background: 'color-mix(in srgb, var(--sg-ink) ' + Math.min(90, 18 + item.count * 20) + '%, var(--sg-sheet))', boxShadow: 'none' } : undefined }))),
+          h('div', { className: 'hm-l' }, h('span', null, narrow ? '2 周前' : '4 周前'), h('span', null, '今天'))) : null)
     }
 
-    function DisplayPage({ onBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry }) {
+    function MoreHome({ setView, selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, updateSettings, savingSettings }) {
+      const rows = [['duplicates', '⇄', '重复记忆整理', '只有拿不准的候选需要你确认'], ['system', '✓', '系统状态', '处理概览与最近整理时间'], ['import', '⇄', '导入其他 AI 的记忆', '把已有记忆带回 StrataGate'], ['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助']]
+      const fallback = { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }
+      return h('div', { className: 'sg-more-merged' + ' more', 'aria-label': '更多与设置' },
+        h('div', { className: 'sg-more-merged-column' },
+          h('div', { className: 'sg-intro' }, h('h2', null, '更多'), h('p', null, '运行状态、数据与支持。')),
+          h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-more-runtime-title' }, h('h3', { id: 'sg-more-runtime-title', className: 'sg-settings-group-title' }, '运行'), h('div', { className: 'sg-r6-runline' }, h('span', { className: 'sg-r6-health' }, h('i', { className: Number(selected?.failedJobs || 0) ? 'bad' : Number(selected?.processingJobs || 0) ? 'wait' : '' }), Number(selected?.failedJobs || 0) ? '有失败任务' : Number(selected?.processingJobs || 0) ? '整理中' : '运行正常')), h('div', { className: 'sg-more-stat-grid' }, h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.blocks ?? 0), h('span', null, '记忆块')), h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.processingJobs ?? 0), h('span', null, '待处理')), h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.failedJobs ?? 0), h('span', null, '失败')), h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.memoryUseCount ?? 0), h('span', null, '被用到'))), h('div', { className: 'sg-menu' }, rows.slice(0, 2).map(([id, icon, title, subtitle]) => h('button', { key: id, type: 'button', className: 'sg-menu-row', onClick: () => setView({ name: id }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›'))))),
+          h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-more-data-title' }, h('h3', { id: 'sg-more-data-title', className: 'sg-settings-group-title' }, '数据'), h('div', { className: 'sg-menu' }, rows.slice(2, 3).map(([id, icon, title, subtitle]) => h('button', { key: id, type: 'button', className: 'sg-menu-row', onClick: () => setView({ name: id }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›'))))),
+          h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-more-support-title' }, h('h3', { id: 'sg-more-support-title', className: 'sg-settings-group-title' }, '反馈'), h('div', { className: 'sg-menu' }, h('button', { type: 'button', className: 'sg-menu-row', onClick: () => setView({ name: 'support' }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, '?'), h('span', null, h('span', { className: 'sg-menu-title' }, rows[3][2]), h('br'), h('span', { className: 'sg-menu-subtitle' }, rows[3][3])), h('span', { className: 'sg-chevron' }, '›'))))),
+        h('div', { className: 'sg-more-merged-column' },
+          h(DisplayPage, { embedded: true, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry }),
+          h(SettingsPage, { embedded: true, selected: selected || fallback, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack: () => {}, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })))
+    }
+
+    function DisplayPage({ onBack, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, embedded = false }) {
       const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
       const settingsWritable = pluginSettings?.writable === true
       const [sidebarSaving, setSidebarSaving] = React.useState(false)
@@ -3612,10 +4594,11 @@ window.__ModuleLoader__.load({
       const showRetrievalStatus = pluginSettings?.value?.showRetrievalStatus !== false
       const setting = ({ title, description, checked, disabled = false, onChange, child = false }) => h('div', { className: 'sg-display-setting ' + (child ? 'child ' : '') + (disabled ? 'sg-display-disabled' : '') },
         h('span', { className: 'sg-display-setting-copy' }, h('span', { className: 'sg-display-setting-title' }, title), h('span', { className: 'sg-display-setting-description' }, description)),
-        h('button', { type: 'button', className: 'sg-setting-switch', role: 'switch', 'aria-checked': checked, 'aria-label': title, disabled: !settingsWritable || disabled, onClick: () => { if (onChange) void onChange(!checked) } }))
+        h('button', { type: 'button', className: 'sg-setting-switch tg' + (checked ? ' on' : ''), role: 'switch', 'aria-checked': checked, 'aria-label': title, disabled: !settingsWritable || disabled, onClick: () => { if (onChange) void onChange(!checked) } }))
       return h(React.Fragment, null,
-        h(BackBar, { label: '更多', onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, '界面与显示'), h('p', null, '控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')),
+        embedded ? null : h(BackBar, { label: '更多', onBack }),
+        embedded ? null : h('div', { className: 'sg-intro' }, h('h2', null, '界面与显示'), h('p', null, '控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')),
+        embedded ? h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-embedded-display-title' }, h('h3', { id: 'sg-embedded-display-title', className: 'sg-settings-group-title' }, '显示')) : null,
         h('div', { className: 'sg-display-settings' },
           setting({ title: '在左侧栏显示 StrataGate', description: '关闭后隐藏侧栏入口，仍可从设置打开；记忆、检索和后台处理不受影响。', checked: pluginSettings?.value?.showSidebarEntry === true, disabled: sidebarSaving || !setSidebarEntry, onChange: changeSidebar }),
           sidebarError ? h('p', { role: 'alert', className: 'sg-error-note' }, sidebarError) : null,
@@ -4803,12 +5786,14 @@ window.__ModuleLoader__.load({
       }
       const total = profile ? profileFieldNames.reduce((sum, field) => sum + Array.from(profile[field] || '').length, 0) : 0
       return h(React.Fragment, null,
-        h('div', { className: 'sg-profile-head' }, h('div', { className: 'sg-intro' }, h('h2', null, '常驻用户画像'), h('p', null, '跨会话、跨项目持续生效，每轮自动进入上下文')), h('span', { className: 'sg-profile-sync ' + (syncStatus === '读取失败' ? 'failed' : syncStatus === '更新中…' ? 'pending' : ''), role: 'status' }, syncStatus)),
+        h('div', { className: 'pg-h' }, h('h2', null, '常驻画像'), h('span', { className: 'tag' }, '每轮都带给 AI · 点任意一行修改'), h('span', { className: 'sg-profile-sync ' + (syncStatus === '读取失败' ? 'failed' : syncStatus === '更新中…' ? 'pending' : ''), role: 'status' }, syncStatus)),
         error ? h('p', { className: 'sg-profile-error', role: 'alert' }, error) : null,
         profile ? h(React.Fragment, null,
-          h('p', { className: 'sg-settings-group-copy' }, '已用 ' + total + ' / 6000 字 · 每轮都会进入上下文，宜精简'),
-          profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
-            h('h3', null, title),
+          h('div', { className: 'cap-row', 'aria-label': '画像容量' },
+            h('div', { className: 'cap-bar' }, h('i', { style: { width: Math.min(100, Math.round(total / 6000 * 100)) + '%' } })),
+            h('span', { className: 'n' }, h('b', null, String(total)), ' / 6,000 字')),
+          h('div', { className: 'pf' }, profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
+            h('div', { className: 'grp' }, h('h4', null, title), h('ul', null,
             fields.filter(([field]) => field !== 'homeCity' || profile.homeCity || profileFieldDrafts.has(field)).map(([field, label, maximum]) => {
               const value = profile[field] || ''
               const isEditing = editing?.field === field
@@ -4828,13 +5813,13 @@ window.__ModuleLoader__.load({
                     result.kind === 'unknown' ? h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => checkSave(result) }, reading ? '检查中…' : '检查保存结果')
                       : result.kind === 'invalid' ? h('p', null, result.detail) : null) : null,
                   h('div', { className: 'sg-profile-editor-foot' }, h('span', { className: 'sg-profile-count' }, draftLength + ' / ' + maximum, draftLength > maximum ? '，请缩短至 ' + maximum + ' 个字符以内。' : nextTotal > 6000 ? '，画像总字符数不能超过 6000。' : '', savedFeedback), h('div', { className: 'sg-profile-actions' }, h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving, onClick: () => { resetEdit(field); setEditing(null) } }, '取消编辑'), h('button', { type: 'button', className: 'sg-save-button', disabled: saving || reading || result?.kind === 'unknown' || draftLength > maximum || nextTotal > 6000 || editing.draft === editing.baseValue || changedElsewhere || conflict, onClick: save }, saving ? '保存中…' : result?.kind === 'failed' ? '重新保存' : '保存')))) : null
-              return h('div', { key: field, className: 'sg-profile-row' },
+              return h('li', { key: field, className: 'sg-profile-row' + (isEditing ? ' on' : '') },
                 h('div', { className: 'sg-profile-summary' + (isEditing ? ' editing' : '') },
                   h('span', { className: 'sg-profile-label' }, label),
                   editor || h('span', { className: 'sg-profile-content' }, h('button', { type: 'button', className: 'sg-profile-value ' + (value ? '' : 'empty'), title: value || undefined, 'aria-label': label + '，点击编辑', disabled: saving, onClick: () => beginEdit(field) }, profileFieldDrafts.has(field) ? '继续编辑草稿' : value || PROFILE_EMPTY_HINTS[field] || '未设置'), savedFeedback),
                   h('button', { type: 'button', className: 'sg-profile-action', onClick: () => beginEdit(field), disabled: saving, 'aria-hidden': isEditing || undefined }, !isEditing && profileFieldDrafts.has(field) ? '继续编辑' : value ? '编辑' : '添加')),
                 savedReadError ? h('p', { className: 'sg-profile-save-feedback', role: 'status' }, h('span', null, '修改已保存，暂时无法读取最新内容。'), h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => refreshRef.current?.() }, '重新读取')) : null)
-            })))) : h('p', null, '正在读取常驻画像…'))
+            }))))))) : h('p', null, '正在读取常驻画像…'))
     }
 
     const GRAPH_EXPLANATION = '由于知识图谱功能与事件记录和主题目录有部分重复，还需要额外消耗token维护实体关系，将会默认关闭知识图谱功能，已经生成的图谱数据会保留。'
@@ -5147,7 +6132,7 @@ window.__ModuleLoader__.load({
         !saved || feedback.kind === 'failed' ? h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving || reading, onClick: () => void readSaved() }, reading ? '正在读取…' : '重新读取配置') : null)
     }
 
-    function SettingsPage({ selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays }) {
+    function SettingsPage({ selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, embedded = false }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       const [agentWeight, setAgentWeight] = React.useState(String(selected.agentMemoryRetrievalWeight ?? 1))
@@ -5200,8 +6185,8 @@ window.__ModuleLoader__.load({
       }
       const menu = (items) => h('div', { className: 'sg-menu sg-settings-menu' }, items.map(([id, icon, title, subtitle]) => h('button', { key: id, type: 'button', className: 'sg-menu-row', onClick: () => setView({ name: id, back: { name: 'settings' } }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›'))))
       return h(React.Fragment, null,
-        h(BackBar, { label: '更多', onBack }),
-        h('div', { className: 'sg-intro' }, h('h2', null, '高级设置'), h('p', null, '记忆配置、数据管理与运行诊断。')),
+        embedded ? null : h(BackBar, { label: '更多', onBack }),
+        embedded ? h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-embedded-settings-title' }, h('h3', { id: 'sg-embedded-settings-title', className: 'sg-settings-group-title' }, '引擎参数 · 所有工作区')) : h('div', { className: 'sg-intro' }, h('h2', null, '高级设置'), h('p', null, '记忆配置、数据管理与运行诊断。')),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-memory-settings-title' },
           h('h3', { id: 'sg-memory-settings-title', className: 'sg-settings-group-title' }, 'StrataGate 安装级设置'),
           h('p', { className: 'sg-settings-group-copy' }, '适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。设置保存在当前记忆数据库中，不会自动同步到其他设备或安装。'),
@@ -5210,15 +6195,27 @@ window.__ModuleLoader__.load({
           h(RetrievalModelSettings, { kind: 'embedding', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
           h(RetrievalModelSettings, { kind: 'rerank', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
           h('div', { className: 'sg-settings-panel sg-pipeline' },
-            h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
+            h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'stp' + (turnSizeValue !== selected.blockTurnSize ? ' ch' : '') },
+              h('button', { type: 'button', 'aria-label': '减少每个 Block 的对话轮数', disabled: !Number.isFinite(turnSizeValue) || turnSizeValue <= 1, onClick: () => setTurnSize(String(Math.max(1, turnSizeValue - 1))) }, '−'),
+              h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }),
+              h('button', { type: 'button', 'aria-label': '增加每个 Block 的对话轮数', onClick: () => setTurnSize(String((Number.isFinite(turnSizeValue) ? turnSizeValue : 6) + 1)) }, '+'))),
             h('p', { className: 'sg-setting-note' }, '1 轮是一次用户提问和 AI 完整回复。轮数越小，Block 生成越频繁，也会让相同长度的对话衰减得更快；已有 Block 不会重新切分，尚未封存的内容按新阈值继续处理。'),
-            h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: (event) => setLambda(event.target.value), 'aria-label': 'Block 衰减系数 λ' }))),
+            h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'stp' + (lambdaValue !== selected.blockDecayLambda ? ' ch' : '') },
+              h('button', { type: 'button', 'aria-label': '减小 Block 衰减系数 λ', disabled: !Number.isFinite(lambdaValue) || lambdaValue <= 0, onClick: () => setLambda(Math.max(0, lambdaValue - 0.05).toFixed(2)) }, '−'),
+              h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: (event) => setLambda(event.target.value), 'aria-label': 'Block 衰减系数 λ' }),
+              h('button', { type: 'button', 'aria-label': '增大 Block 衰减系数 λ', onClick: () => setLambda(((Number.isFinite(lambdaValue) ? lambdaValue : 0.3) + 0.05).toFixed(2)) }, '+'))),
             h('p', { className: 'sg-setting-note' }, '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。'),
             showSuggestion ? h('div', { className: 'sg-setting-suggestion' }, h('span', null, '为保持按对话轮数计算的遗忘速度，建议 λ 调整为 ' + suggestedLambda.toFixed(2) + '。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setLambda(String(Number(suggestedLambda.toFixed(2)))) }, '采用建议值')) : null,
-            h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', max: '5', step: '0.05', value: agentWeight, onChange: (event) => setAgentWeight(event.target.value), 'aria-label': '主动记忆检索占比' }))),
+            h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'stp' + (agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1) ? ' ch' : '') },
+              h('button', { type: 'button', 'aria-label': '减小主动记忆检索占比', disabled: !Number.isFinite(agentWeightValue) || agentWeightValue <= 0, onClick: () => setAgentWeight(Math.max(0, agentWeightValue - 0.05).toFixed(2)) }, '−'),
+              h('input', { className: 'sg-number-input', type: 'number', min: '0', max: '5', step: '0.05', value: agentWeight, onChange: (event) => setAgentWeight(event.target.value), 'aria-label': '主动记忆检索占比' }),
+              h('button', { type: 'button', 'aria-label': '增大主动记忆检索占比', disabled: Number.isFinite(agentWeightValue) && agentWeightValue >= 5, onClick: () => setAgentWeight(Math.min(5, (Number.isFinite(agentWeightValue) ? agentWeightValue : 1) + 0.05).toFixed(2)) }, '+'))),
             h('p', { className: 'sg-setting-note' }, 'agent 主动记录与对话派生记忆分别独立排序后按此权重融合：1 为平权，0 为不浮现 agent 记录，更大值提升 agent 记录的排序权重。'),
             h('p', { className: 'sg-setting-note' }, '保存以上三项参数后，将应用于当前安装中的所有已有工作区，也作为新工作区的默认设置。'),
-            h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : changed ? '保存全局设置' : '全局设置已保存'))),
+            changed ? h('div', { className: 'dirty' },
+              h('span', null, [turnSizeValue !== selected.blockTurnSize, lambdaValue !== selected.blockDecayLambda, agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1)].filter(Boolean).length + ' 项未保存'),
+              h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: () => { setTurnSize(String(selected.blockTurnSize ?? 6)); setLambda(String(selected.blockDecayLambda ?? 0.3)); setAgentWeight(String(selected.agentMemoryRetrievalWeight ?? 1)) } }, '放弃'),
+              h('button', { type: 'button', className: 'sg-save-button', 'aria-label': '保存全局设置', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : '保存')) : null)),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-host-settings-title' },
           h('h3', { id: 'sg-host-settings-title', className: 'sg-settings-group-title' }, '宿主配置'),
           h('p', { className: 'sg-settings-group-copy' }, '所有工作区共用。'),
@@ -5262,7 +6259,7 @@ window.__ModuleLoader__.load({
       const [workspaceTitles, setWorkspaceTitles] = React.useState({})
       const [workspaceSessionIds, setWorkspaceSessionIds] = React.useState({})
       const [conversationId, setConversationId] = React.useState('')
-      const [section, setSection] = React.useState('short')
+      const [section, setSection] = React.useState('overview')
       const [view, setView] = React.useState({ name: 'root' })
       const [graphFocusNodeId, setGraphFocusNodeId] = React.useState('')
       const consumeGraphFocus = React.useCallback(() => setGraphFocusNodeId(''), [])
@@ -5530,13 +6527,26 @@ window.__ModuleLoader__.load({
       }
       const onRetrievalSettingsSaved = vectorSettings => setOverview(current => ({ ...current, vectorSettings }))
       const moreBack = () => setView({ name: 'root' })
+      const memoryRef = React.useRef(null)
+      const [narrowLayout, setNarrowLayout] = React.useState(false)
+      React.useEffect(() => {
+        const node = memoryRef.current
+        if (!node || typeof ResizeObserver !== 'function') return undefined
+        const observer = new ResizeObserver((entries) => {
+          const width = entries[0]?.contentRect?.width || 0
+          setNarrowLayout(width > 0 && width <= 680)
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+      }, [])
 
       let content = null
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
       else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
+      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, data, namespace, onNavigate: goSection, narrow: narrowLayout })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
-      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace })
+      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
       else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })
       else if (view.name === 'status') content = h(ProcessingStatus, { key: namespace, overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
@@ -5550,31 +6560,44 @@ window.__ModuleLoader__.load({
       else if (view.name === 'settings') content = h(SettingsPage, { selected, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
       else if (view.name === 'support') content = h(SupportPage, { key: namespace, namespace, overview, selected, data, recentError, onBack: moreBack })
       else content = h(React.Fragment, null,
-        loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView }))
+        loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView, selected, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, updateSettings, savingSettings }))
 
-      return h('main', { className: 'sg-memory' + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-testid': 'stratagate-memory-ui' },
-        h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS),
-        h('header', { className: 'sg-header' },
-          h('div', { className: 'sg-header-row sg-header-row-primary' },
-            h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
-              h('img', { className: 'sg-logo', src: MASCOT_DATA_URL, alt: 'StrataGate 吉祥物' }),
-              h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null), onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
-            h('span', { className: 'sg-usage-count', 'aria-label': 'StrataGate 已在当前工作区中帮助使用记忆 ' + Number(selected?.memoryUseCount || 0) + ' 次。' }, h('strong', { className: 'sg-usage-number' }, Number(selected?.memoryUseCount || 0)), h('span', { title: '当前工作区有记忆采用记录的回答次数' }, '次记忆被用到'))),
-          h('div', { className: 'sg-header-row sg-header-row-secondary' },
-            h('div', { className: 'sg-project' }, h('span', { className: 'sg-project-label' }, '当前工作区：'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
-            h(HeaderCommunityLinks))),
-        h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
+      return h('main', { ref: memoryRef, className: 'sg-memory sg' + (narrowLayout ? ' narrow' : '') + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-section': section, 'data-testid': 'stratagate-memory-ui' },
+        h('style', null, css + previewCss + DUPLICATE_STYLES + DAILY_NOTES_CSS),
+        h('header', { className: 'sg-head' },
+          h(StrataGateMark, { className: 'sg-mark' }),
+          h('div', { className: 'sg-brand' }, h('b', null, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'mono' }, 'v' + overview.pluginVersion) : null),
+          h('div', { className: 'sg-head-end' },
+            h('label', { className: 'sg-ws' }, h('i'), h('select', { value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
+            onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
+        h('nav', { className: 'sg-tabs', 'aria-label': '总览与记忆视图' }, [['overview', '总览'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['profile', '常驻画像'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab', 'aria-selected': section === id, 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, id === 'short' ? h('i', { className: 'sw', style: { background: 'var(--sg-water)' } }) : id === 'daily' ? h('i', { className: 'sw', style: { background: 'var(--sg-sand)' } }) : id === 'long' ? h('i', { className: 'sw lib' }) : id === 'profile' ? h('i', { className: 'sw', style: { background: 'var(--sg-ink)' } }) : null, label))),
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
-        h('section', { key: section, className: 'sg-view', 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
+        h('section', { key: section, className: 'sg-view' + (narrowLayout ? ' narrow' : ''), 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
           h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { graphSettings: overview.graphSettings, extractionGap: selected?.longTermExtractionGap === true, key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, refresh, active: view.name === 'root' })),
           view.name === 'root' ? null : content) : content),
-        h('footer', { className: 'sg-footer' }, '发现问题？ ', h('button', { type: 'button', onClick: () => { setSection('more'); setView({ name: 'support' }); setSource(null) } }, '提交反馈')))
+        h('footer', { className: 'sg-foot' },
+          h('span', null, 'StrataGate-AgentMemory · MIT'),
+          h('span', null,
+            h('a', { href: 'https://github.com/diqierjia/StrataGate-AgentMemory', target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 仓库'),
+            ' · ',
+            h('a', { href: 'https://github.com/diqierjia/StrataGate-AgentMemory/issues', target: '_blank', rel: 'noopener noreferrer' }, '提 Issue'),
+            ' · ',
+            h('a', { href: 'https://github.com/diqierjia/StrataGate-AgentMemory/releases', target: '_blank', rel: 'noopener noreferrer' }, '更新记录'))))
     }
 
     function MemoryPanel(props) {
       return h('div', { className: 'sg-memory-panel', style: { flex: '1 1 0%', minHeight: 0, width: '100%', overflowY: 'auto', overflowX: 'hidden' } }, h(MemoryPage, props))
+    }
+
+    function StrataGateMark({ className = 'sg-logo' }) {
+      return h('svg', { className, viewBox: '0 0 28 28', fill: 'none', 'aria-hidden': 'true', focusable: 'false' },
+        h('path', { d: 'M4 26V12a10 10 0 0 1 20 0v14', stroke: 'currentColor', strokeWidth: '2' }),
+        h('rect', { x: '8', y: '13', width: '12', height: '3', fill: 'currentColor' }),
+        h('rect', { x: '8', y: '18', width: '12', height: '3', fill: 'currentColor', opacity: '.6' }),
+        h('rect', { x: '8', y: '23', width: '12', height: '3', fill: 'currentColor', opacity: '.3' }),
+        h('path', { d: 'M2 26h24', stroke: 'currentColor', strokeWidth: '2' }))
     }
 
     function readSidebarPromptState() {

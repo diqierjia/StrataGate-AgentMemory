@@ -797,10 +797,32 @@ describe('Topic Directory client interactions', () => {
     buttons(tree, '事件时间线')[0]!.props.onClick()
     tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '事件时间线')[0]!.props['aria-current']).toBe('page')
-    expect(buttons(tree, '下一页')).toHaveLength(1)
+    expect(find(tree, (node) => node.visible && node.props.className === 'sg-long-toolbar')).toHaveLength(1)
+    expect(buttons(tree, '下一页')).toHaveLength(0)
     buttons(tree, '主题目录')[0]!.props.onClick()
     tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '1.1发展脉络›')[0]!.props['aria-expanded']).toBe(true)
+  })
+
+  it('pages a timeline only when the reported total does not fit on the current page', () => {
+    const base = { events: [], graph: { nodes: [], edges: [], clusters: [] }, project: '当前工作区', query: '', setQuery: vi.fn(), openEvent: vi.fn(), namespace: 'dsh:project:test', topicDirectory: fixture(), graphSettings: { enabled: false, noticeSeen: true } }
+    const openTimeline = (page: { total: number, offset: number, limit: number }) => {
+      const client = clientRenderer()
+      const props = { ...base, eventPage: page }
+      buttons(client.render(client.LongTermPage, props), '事件时间线')[0]!.props.onClick()
+      return client.render(client.LongTermPage, props)
+    }
+    const empty = openTimeline({ total: 0, offset: 0, limit: 40 })
+    expect(buttons(empty, '下一页')).toHaveLength(0)
+    expect(buttons(empty, '上一页')).toHaveLength(0)
+    const first = openTimeline({ total: 90, offset: 0, limit: 40 })
+    expect(buttons(first, '下一页')[0]!.props.disabled).toBe(false)
+    expect(buttons(first, '上一页')[0]!.props.disabled).toBe(true)
+    const second = openTimeline({ total: 90, offset: 40, limit: 40 })
+    expect(buttons(second, '上一页')[0]!.props.disabled).toBe(false)
+    expect(buttons(second, '下一页')[0]!.props.disabled).toBe(false)
+    const last = openTimeline({ total: 90, offset: 80, limit: 40 })
+    expect(buttons(last, '下一页')[0]!.props.disabled).toBe(true)
   })
 
   describe('filtered graph relation counts', () => {

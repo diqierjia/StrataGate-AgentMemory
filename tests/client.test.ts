@@ -127,7 +127,7 @@ describe('StrataGate Web client contract', () => {
     })
     const props = { blocks: [block], conversations: [], namespace: 'test', activeThreadId: 'thread-1', refresh }
     const render = () => { cursor = 0; return ShortTermPage(props) }
-    const toggle = deepElementProps(render()).find((item) => item.className === 'sg-block-toggle')!
+    const toggle = deepElementProps(render()).find((item) => String(item.className || '').split(/\s+/).includes('sg-block-toggle'))!
     toggle.onClick()
     const expand = deepElementProps(render()).find((item) => typeof item.onExpand === 'function')!
     await Promise.all([expand.onExpand(4), expand.onExpand(4)])
@@ -1194,7 +1194,8 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("'StrataGate'")
     expect(source).not.toContain('有来源、可追溯的跨会话记忆')
     expect(source).toContain('__STRATAGATE_MASCOT_DATA_URL__')
-    expect(source).toContain('StrataGate 已在当前工作区中帮助使用记忆 ')
+    expect(source).toContain("className: 'sg-head'")
+    expect(source).toContain('https://github.com/diqierjia/StrataGate-AgentMemory')
     expect(source).toContain("'v' + overview.pluginVersion")
     expect(source).toContain('给 StrataGate 点个 🌟')
     expect(source).toContain('参与开发 · Issue / PR →')
@@ -1376,24 +1377,21 @@ describe('StrataGate Web client contract', () => {
     expect(source).not.toContain("title: '重新加载', onClick: refresh")
   })
 
-  it('uses the memory-first three-part information architecture', () => {
+  it('uses the overview-first six-part information architecture', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain("'/' + run.total + ' 批次'")
     expect(source).toContain('Dreaming 整理进度（批次）')
-    expect(source).toContain("const [section, setSection] = React.useState('short')")
-    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
-    expect(source).toContain('块衰减总览')
-    expect(source).toContain('开放块 · 未封存')
-    expect(source).toContain('距最新封存块')
+    expect(source).toContain("const [section, setSection] = React.useState('overview')")
+    expect(source).toContain("[['overview', '总览'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['profile', '常驻画像'], ['more', '更多']]")
+    expect(source).toContain('看原文')
+    expect(source).toContain('调整助手可见层级')
     expect(source).toContain('分层内容预览')
     expect(source).toContain('让助手参考 L')
     expect(source).toContain("api('blocks/expand'")
-    expect(source).toContain('助手可见层级')
+    expect(source).toContain('越早的对话压得越薄')
     expect(source).not.toContain('用户展开')
     expect(source).not.toContain('Agent 展开')
-    expect(source).toContain('当前对话：')
-    expect(source).toContain('Block 分布滑轨')
-    expect(source).toContain('L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。')
+    expect(source).toContain('当前对话')
     expect(source).toContain('document.body.appendChild(popover)')
     expect(source).toContain('BlockSelectionFeedback')
     expect(source).toContain('完整内容')
@@ -1435,23 +1433,21 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("onOpenGraphNode: (namespace, nodeId) => navigateToGraphNode(ctx, namespace, nodeId)")
     expect(source).toContain('当前图谱尚未更新完整。')
     expect(source).toContain('搜索记忆、人物、项目、概念')
-    expect(source).not.toContain("['overview', '概览']")
+    expect(source).toContain("['overview', '总览']")
     expect(source).not.toContain('sg-stats')
     expect(source).not.toContain('封存时为 L5')
   })
 
-  it('keeps exactly the four requested primary entries in More and nests diagnostics under Advanced', () => {
+  it('merges More and settings while keeping diagnostics and display controls available', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const moreSource = source.slice(source.indexOf('function MoreHome'), source.indexOf('function DisplayPage'))
-    expect(moreSource).toContain("['display', '◐', '界面与显示', '控制会话记忆、检索状态等前端提示']")
-    expect(moreSource).toContain("['import', '⇄', '导入其他 AI 的记忆', '将其他 AI 的历史记忆导入 StrataGate']")
-    expect(moreSource).toContain("['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断']")
+    expect(moreSource).toContain("['duplicates', '⇄', '重复记忆整理', '只有拿不准的候选需要你确认']")
+    expect(moreSource).toContain("['system', '✓', '系统状态', '处理概览与最近整理时间']")
+    expect(moreSource).toContain("['import', '⇄', '导入其他 AI 的记忆', '把已有记忆带回 StrataGate']")
     expect(moreSource).toContain("['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助']")
-    expect(moreSource.match(/^\s*\['(?:display|import|settings|support)'/gm)).toHaveLength(4)
-    expect(moreSource).not.toContain("['structure'")
-    expect(moreSource).not.toContain("['system'")
-    expect(moreSource).not.toContain("['audit'")
-    expect(moreSource).not.toContain("['raw'")
+    expect(moreSource).toContain("className: 'sg-more-merged'")
+    expect(moreSource).toContain("h(DisplayPage, { embedded: true")
+    expect(moreSource).toContain("h(SettingsPage, { embedded: true")
     const displaySource = source.slice(source.indexOf('function DisplayPage'), source.indexOf('function redactedJson'))
     expect(displaySource).toContain('控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')
     expect(displaySource).toContain('关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。')
@@ -2225,7 +2221,8 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('没有记录技术错误。')
     expect(source).toContain("['raw', '{}', '查看原始数据'")
     expect(source).toContain("['audit', '↗', '使用记录'")
-    expect(source).toContain("['settings', '⚙', '高级设置'")
+    expect(source).toContain("className: 'sg-more-merged'")
+    expect(source).toContain("h(SettingsPage, { embedded: true")
     expect(source).not.toContain("['responses', '模型响应']")
     expect(source).toContain("type: 'number'")
     expect(source).toContain("step: '1'")
@@ -2244,8 +2241,10 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('附加诊断日志')
     expect(source).toContain('附加记忆数据（可能包含对话内容）')
     expect(source).toContain('默认诊断不包含原始聊天、L5、Event 或 Graph 内容。')
-    expect(source).toContain('发现问题？ ')
-    expect(source).toContain("'提交反馈'")
+    expect(source).toContain('GitHub 仓库')
+    expect(source).toContain('提 Issue')
+    expect(source).toContain('更新记录')
+    expect(source).toContain('https://github.com/diqierjia/StrataGate-AgentMemory')
   })
 
   it('has no global background task banner and retains dashboard read/error handling', () => {
@@ -2488,11 +2487,11 @@ describe('StrataGate Web client contract', () => {
 
 
 describe('daily notes client', () => {
-  it('keeps the default session page and five untruncated navigation labels', () => {
+  it('keeps the overview default and six untruncated navigation labels', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain("React.useState('short')")
-    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
-    expect(source).toContain('repeat(5,1fr)')
+    expect(source).toContain("React.useState('overview')")
+    expect(source).toContain("[['overview', '总览'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['profile', '常驻画像'], ['more', '更多']]")
+    expect(source).toContain('grid-template-columns:repeat(6,minmax(0,1fr))')
     expect(source).toContain('会话记忆详情')
     expect(source).toContain('会话记忆状态')
     expect(source).toContain('完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。')
