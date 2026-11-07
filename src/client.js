@@ -613,13 +613,14 @@ window.__ModuleLoader__.load({
       /* Timeline: an editorial date rail with neutral graph accents. */
       .sg-memory .sg-timeline{padding:16px 24px 22px;background:transparent}
       .sg-memory .sg-time-group>h3{margin:5px 0 8px;padding-left:0;font:400 21px/1.1 var(--sg-serif)}
-      .sg-memory .sg-time-group:before{left:77px;top:35px;background:var(--sg-border)}
-      .sg-memory .sg-timeline-card{grid-template-columns:64px minmax(0,1fr) auto;gap:14px;margin:0;padding:10px 0 11px;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;background:transparent}
+      .sg-memory .sg-time-group:before{left:84px;top:35px;background:var(--sg-border)}
+      .sg-memory .sg-timeline-card{grid-template-columns:68px minmax(0,1fr) auto;column-gap:32px;row-gap:0;margin:0;padding:10px 0 11px;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;background:transparent}
       .sg-memory .sg-timeline-card:hover,.sg-memory .sg-timeline-card.selected{border-color:var(--sg-hair);background:transparent}
       .sg-memory .sg-month-rail{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin:0 0 14px;padding:12px 14px 10px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-card)}
       .sg-memory .sg-month-rail span{display:grid;justify-items:center;gap:6px;min-width:0;color:var(--sg-muted);font:11px var(--sg-mono)}
       .sg-memory .sg-month-rail i{width:8px;height:8px;border-radius:50%;background:var(--sg-accent)}
-      .sg-memory .sg-timeline-dot{left:73px;top:18px;width:8px;height:8px;border:0;background:var(--sg-accent);box-shadow:0 0 0 3px var(--sg-page)}
+      .sg-memory .sg-event-clock,.sg-memory .sg-event-main{min-width:0}
+      .sg-memory .sg-timeline-dot{left:80px;top:18px;width:8px;height:8px;border:0;background:var(--sg-accent);box-shadow:0 0 0 2px var(--sg-page)}
       .sg-memory .sg-timeline-dot[data-type="decision"]{background:var(--sg-moss)}
       .sg-memory .sg-timeline-dot[data-type="plan"],.sg-memory .sg-timeline-dot[data-type="change"]{background:var(--sg-sand)}
       .sg-memory .sg-timeline-dot[data-type="incident"],.sg-memory .sg-timeline-dot[data-type="cancellation"]{background:var(--sg-danger)}
