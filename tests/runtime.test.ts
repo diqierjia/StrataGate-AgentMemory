@@ -1535,15 +1535,12 @@ describe('DSH runtime ingestion', () => {
     try {
       append('turn/start', { turn: 1 })
       append('step/start', { turn: 1, step: 1 })
-      append('user/message', createUserMessage({ content: [{ type: 'text', text: 'old turn' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
+      const oldUser = append('user/message', createUserMessage({ content: [{ type: 'text', text: 'old turn' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
       const callId = 'old-call' as never
-      append('assistant/message', { turn: 1, step: 1, message: createAssistantMessage({
+      const oldCall = append('assistant/message', { turn: 1, step: 1, message: createAssistantMessage({
         content: [{ type: 'tool-call', id: callId, name: 'inspect', arguments: '{}' }], source: { provider: 'test', model: 'test' },
       }), stream: [] }, { surfaceOp: 'append' })
       append('tool/call', { turn: 1, step: 1, callId, name: 'inspect', arguments: '{}' })
-      const oldResult = append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
-        callId, content: [{ type: 'text', text: 'old tool output' }], isError: false,
-      }) }, { surfaceOp: 'append' })
       append('step/end', { turn: 1, step: 1 })
       const oldEnd = append('turn/end', { turn: 1, reason: { kind: 'completed' } })
       await memory.appendTurn({ user: 'old turn', assistant: 'old tool output', threadId: String(activeSession.id), createdAt: new Date(oldEnd.time).toISOString(), assistantToolCalls: [{ name: 'inspect', arguments: {}, result: 'old tool output' }] })
@@ -1551,9 +1548,15 @@ describe('DSH runtime ingestion', () => {
       await new Promise(resolve => setTimeout(resolve, 2))
       append('turn/start', { turn: 2 })
       append('step/start', { turn: 2, step: 1 })
-      append('user/message', createUserMessage({ content: [{ type: 'text', text: 'new turn' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
+      const newUser = append('user/message', createUserMessage({ content: [{ type: 'text', text: 'new turn' }], source: { kind: 'user' } }), { surfaceOp: 'append' })
+      // The old turn's tool result lands after the next user message, then its
+      // content is replaced in place. The session fold keeps that replacement
+      // between the new turn's own surface nodes.
+      const oldResult = append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
+        callId, content: [{ type: 'text', text: 'old tool output' }], isError: false,
+      }) }, { surfaceOp: 'append' })
       const oldResultData = oldResult.data as Extract<SessionEvent, { type: 'tool/result' }>['data']
-      append('tool/result', { ...oldResultData, message: { ...oldResultData.message, content: [{ type: 'text', text: 'short old output' }] } }, {
+      const replacement = append('tool/result', { ...oldResultData, message: { ...oldResultData.message, content: [{ type: 'text', text: 'short old output' }] } }, {
         surfaceOp: { op: 'replace', startSeq: oldResult.seq, endSeq: oldResult.seq }, sourceEventSeqs: [oldResult.seq],
       })
       const newAnswer = append('assistant/message', { turn: 2, step: 1, message: createAssistantMessage({
@@ -1565,10 +1568,12 @@ describe('DSH runtime ingestion', () => {
 
       const block = memory.listBlocks()[1]!
       const context = memory.getBlockContext(String(activeSession.id), new Set([block.id]))[0]!
-      activeSession.surface.nodes.splice(0, activeSession.surface.nodes.length, 2, 3, 10, 11, 12)
+      const surface = [...activeSession.surface.nodes]
+      expect(surface).toEqual([oldUser.seq, oldCall.seq, newUser.seq, replacement.seq, newAnswer.seq])
       const changed = (runtime as unknown as { applySealedSurface: (...args: unknown[]) => boolean })
         .applySealedSurface(activeSession, block, context, 2, new Map())
       expect(changed).toBe(false)
+      expect([...activeSession.surface.nodes]).toEqual(surface)
       expect(newAnswer.seq).toBeGreaterThan(oldResult.seq)
     } finally {
       await runtime.close()

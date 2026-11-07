@@ -696,10 +696,23 @@ describe('Event-backed knowledge graph', () => {
       nodes, edges, events: [source], allowedEventIds: new Set([source.id]), now,
       idFactory: prefix => `${prefix}_${edges.length + 1}`,
       result: {
-        reason: 'explicit replacement', nodes: projection.nodes.slice(0, 2),
+        reason: 'unknown edge id',
+        nodes: [projection.nodes[0]!, projection.nodes[2]!],
+        edges: [{ fromRef: 'atlas', toRef: 'redis', relation: 'uses', supersedesEdgeIds: ['missing-edge'], sourceEventIds: [source.id] }],
+      },
+    });
+    expect(edges.every(edge => edge.status === 'active')).toBe(true);
+    applyGraphProjection({
+      nodes, edges, events: [source], allowedEventIds: new Set([source.id]), now,
+      idFactory: prefix => `${prefix}_${edges.length + 1}`,
+      result: {
+        reason: 'explicit replacement',
+        // fromRef/toRef resolve only to nodes declared in this projection.
+        nodes: [projection.nodes[0]!, projection.nodes[2]!],
         edges: [{ fromRef: 'atlas', toRef: 'redis', relation: 'uses', supersedesEdgeIds: [edges[0]!.id], sourceEventIds: [source.id] }],
       },
     });
     expect(edges.find(edge => edge.toNodeId === 'postgres')).toMatchObject({ status: 'superseded' });
+    expect(edges.find(edge => edge.toNodeId === 'redis')).toMatchObject({ status: 'active' });
   });
 });
