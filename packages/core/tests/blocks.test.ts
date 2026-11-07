@@ -8,6 +8,8 @@ import {
   getBlockWeight,
   getDecayedBlockLevel,
   normalizeBlockLevel,
+  renderBlock,
+  type MemoryBlock,
   type RawMessage,
 } from '../src/index.js';
 
@@ -134,6 +136,43 @@ describe('progressive conversation blocks', () => {
     expect(derived[1]?.content).toContain('begin');
     expect(derived[1]?.content).toContain('end');
     expect(derived[1]!.content.length).toBeLessThan(toolOutput.length * 0.5);
+  });
+
+  it('keeps user and tool attachment identity in every rendered layer', () => {
+    const imageId = `sha256:${'cd'.repeat(40)}`;
+    const fileId = `sha256:${'ef'.repeat(40)}`;
+    const image = `[StrataGate attachment] ${JSON.stringify({
+      type: 'image', name: 'architecture.png', attachmentId: imageId,
+      mediaType: 'image/png', bytes: 123, width: 640, height: 480,
+    })}`;
+    const file = `[StrataGate attachment] ${JSON.stringify({
+      type: 'file', name: 'requirements.pdf', attachmentId: fileId, bytes: 456789,
+    })}`;
+    const messages: RawMessage[] = [
+      { id: 'u1', role: 'user', content: image, createdAt: '2026-09-21T08:00:00Z', threadId: 'thread' },
+      {
+        id: 'a1', role: 'assistant', content: 'Saved the file.', createdAt: '2026-09-21T08:00:01Z', threadId: 'thread',
+        toolCalls: [{ name: 'read_file', arguments: {}, result: file }],
+      },
+    ];
+    const layers = deterministicBlockLayers(messages);
+    const block: MemoryBlock = {
+      id: 'blk-attachment', sequence: 1, startTurn: 1, endTurn: 1, createdAt: messages[1]!.createdAt,
+      processingStatus: 'ready', l0Title: 'Saved files', l0Tags: ['files'],
+      l1Summary: 'The user sent an image and a tool returned a file.', l2Keypoints: ['Files were exchanged.'],
+      ...layers,
+      pointerCurrentLevel: 0, surfaceCurrentLevel: 0, pointerAnchorLevel: 0, pointerAnchorBlockPosition: 1,
+      lastLiftedAt: null, lastLiftedBy: null,
+    };
+
+    expect(layers.l3Condensed).not.toContain(file);
+    for (const level of [0, 1, 2, 3, 4, 5] as const) {
+      const text = renderBlock(block, level);
+      expect(text).toContain(image);
+      expect(text).toContain(file);
+      expect(text.split(image).length - 1).toBe(1);
+      expect(text.split(file).length - 1).toBe(1);
+    }
   });
 
   it('decays through six levels and expands only to the requested level', () => {

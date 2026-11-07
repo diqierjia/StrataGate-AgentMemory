@@ -1086,7 +1086,20 @@ describe('DSH runtime ingestion', () => {
       expect(context).not.toContain('We chose pnpm earlier.')
       expect(context).not.toContain('toolCalls:')
       expect(context).toContain(relevant.id)
-      expect(context).toContain('"temporal":{"status":"ongoing"}')
+      expect(context).toContain('"status":"active"')
+      expect(context).toContain('"scope":"user"')
+      const relevantLine = context.split('\n').map((line) => line.startsWith('- ') ? line.slice(2) : '').find((line) => line.includes(`"id":"${relevant.id}"`))
+      expect(JSON.parse(relevantLine!)).toMatchObject({
+        id: relevant.id,
+        status: 'active',
+        scope: 'user',
+        temporal: {
+          happenedStart: '2026-08-20T10:00:00+08:00',
+          happenedEnd: '2026-08-20T11:00:00+08:00',
+          status: 'ongoing',
+          eventType: 'other',
+        },
+      })
       expect(context).toContain('"summary":"The project package manager is pnpm."')
       expect(context).toContain(pinned.id)
       expect(context).toContain(safety.id)
@@ -1651,6 +1664,63 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
+  it('renders superseded status, successor and scope in automatic context', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-auto-context-superseded-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
+    const activeSession = {
+      ...session,
+      deriveMessages: () => [{
+        id: 'current-user', role: 'user', content: [{ type: 'text', text: 'Which database connection is current?' }],
+        source: { kind: 'user' },
+      }],
+    } as unknown as Session
+    try {
+      const memory = await (runtime as unknown as { space(s: Session): Promise<StrataGate> }).space(activeSession)
+      const block = (await memory.appendTurn({ user: 'The service used Redis.', assistant: 'Recorded.', threadId: 'history' })).sealedBlock!
+      const old = await memory.addEvent({
+        title: 'Redis connection', summary: 'The service connects to Redis.', scope: 'project',
+        sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id],
+        temporal: {
+          status: 'ongoing', happenedStart: '2024-05-01T00:00:00.000Z', happenedEnd: '2024-06-01T00:00:00.000Z',
+          precision: 'day', participants: ['ops'],
+        },
+      })
+      const successor = await memory.addEvent({
+        title: 'PostgreSQL connection', summary: 'The service migrated to PostgreSQL.', scope: 'project',
+        sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id], temporal: { supersedesEventIds: [old.id] },
+      })
+
+      const context = await runtime.buildAutoContext(activeSession)
+      const injected = context.split('\n').flatMap((line) => {
+        if (!line.startsWith('- {')) return []
+        const value = JSON.parse(line.slice(2)) as { id?: string }
+        return value.id ? [value] : []
+      })
+      expect(injected).toContainEqual(expect.objectContaining({
+        id: old.id,
+        status: 'superseded',
+        supersededBy: successor.id,
+        scope: 'project',
+        temporal: expect.objectContaining({
+          status: 'ongoing',
+          happenedStart: '2024-05-01T00:00:00.000Z',
+          happenedEnd: '2024-06-01T00:00:00.000Z',
+          precision: 'day',
+          participants: ['ops'],
+        }),
+      }))
+      expect(injected).toContainEqual(expect.objectContaining({
+        id: successor.id,
+        status: 'active',
+        scope: 'project',
+        temporal: expect.objectContaining({ supersedesEventIds: [old.id] }),
+      }))
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('persists the retrieval assessment as an answer-to-source usage audit', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-audit-'))
     const database = join(directory, 'memory.db')
@@ -2020,6 +2090,81 @@ function sessionWithId(id: string): Session {
 }
 
 describe('DSH runtime agent memory', () => {
+  it('binds memory_remember to the current user message before the turn is ingested', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-current-source-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
+    const activeSession = {
+      ...session,
+      snapshotEvents: () => turnEvents(2).slice(0, 2),
+    } as unknown as Session
+    try {
+      const memory = await (runtime as unknown as { space(s: Session): Promise<StrataGate> }).space(activeSession)
+      await memory.appendTurn({ user: 'Hello.', assistant: 'How can I help?', threadId: String(activeSession.id) }, { deferProcessing: true })
+      const recorded = await runtime.recordAgentMemory(activeSession, 'Atlas 部署到 eu-west-1。', 'decision') as Record<string, unknown>
+      const event = memory.listAgentEvents().find(({ id }) => id === recorded.eventId)!
+      expect(event.sourceMessageIds).toEqual(['dsh:session-runtime:turn:2:user'])
+      expect(memory.listOpenTail(String(activeSession.id)).map(({ id }) => id)).toContain('dsh:session-runtime:turn:2:user')
+
+      const threadId = String(activeSession.id)
+      await memory.appendTurn({
+        user: 'remember pnpm 2', assistant: '已记录。', threadId,
+        userMessageId: 'dsh:session-runtime:turn:2:user',
+      }, { deferDerivation: true })
+      // blockTurnSize is 1 and the earlier deferred turn occupies that slot, so
+      // this completed reservation stays open until the next seal. It must
+      // still exist exactly once, with the original text.
+      const stored = () => [
+        ...memory.listOpenTail(threadId),
+        ...memory.listBlocks().flatMap(({ l5Raw }) => l5Raw),
+      ].filter(({ id }) => id === 'dsh:session-runtime:turn:2:user')
+      expect(stored()).toHaveLength(1)
+      expect(stored()[0]?.content).toBe('remember pnpm 2')
+      await memory.resumePendingWork({ deferDerivation: true })
+      expect(memory.listOpenTail(threadId).some(({ id }) => id === 'dsh:session-runtime:turn:2:user')).toBe(false)
+      expect(memory.listBlocks().flatMap(({ l5Raw }) => l5Raw).filter(({ id }) => id === 'dsh:session-runtime:turn:2:user')).toHaveLength(1)
+      expect(memory.listAgentEvents().find(({ id }) => id === recorded.eventId)!.sourceMessageIds)
+        .toEqual(['dsh:session-runtime:turn:2:user'])
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not seal the reserved current user message when that message fills the block', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-reserve-seal-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db'), { blockTurnSize: 2 }), fakeModels)
+    const activeSession = {
+      ...session,
+      snapshotEvents: () => turnEvents(2).slice(0, 2),
+    } as unknown as Session
+    try {
+      const memory = await (runtime as unknown as { space(s: Session): Promise<StrataGate> }).space(activeSession)
+      await memory.appendTurn({
+        user: 'Hello.', assistant: 'How can I help?', threadId: String(activeSession.id),
+      })
+      expect(memory.listBlocks()).toHaveLength(0)
+      const recorded = await runtime.recordAgentMemory(activeSession, 'Atlas 部署到 eu-west-1。', 'decision') as { eventId: string }
+      await memory.resumePendingWork({ deferDerivation: true })
+      expect(memory.hasSealableTail()).toBe(false)
+      expect(memory.listBlocks()).toHaveLength(0)
+      expect(memory.listOpenTail(String(activeSession.id)).map(({ id }) => id))
+        .toContain('dsh:session-runtime:turn:2:user')
+
+      await memory.appendTurn({
+        user: 'remember pnpm 2', assistant: '已记录。', threadId: String(activeSession.id),
+        userMessageId: 'dsh:session-runtime:turn:2:user',
+      }, { deferDerivation: true })
+      const copies = memory.listBlocks().flatMap(({ l5Raw }) => l5Raw).filter(({ id }) => id === 'dsh:session-runtime:turn:2:user')
+      expect(copies).toHaveLength(1)
+      expect(copies[0]?.content).toBe('remember pnpm 2')
+      expect(memory.listAgentEvents().find(({ id }) => id === recorded.eventId)!.sourceMessageIds)
+        .toEqual(['dsh:session-runtime:turn:2:user'])
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('records a long-term agent event, merges it into searchEvents, and reinforces it on use', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-runtime-'))
     const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
