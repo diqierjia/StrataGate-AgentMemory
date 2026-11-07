@@ -127,7 +127,7 @@ describe('StrataGate Web client contract', () => {
     })
     const props = { blocks: [block], conversations: [], namespace: 'test', activeThreadId: 'thread-1', refresh }
     const render = () => { cursor = 0; return ShortTermPage(props) }
-    const toggle = deepElementProps(render()).find((item) => item.className === 'sg-block-toggle')!
+    const toggle = deepElementProps(render()).find((item) => String(item.className || '').split(/\s+/).includes('sg-block-toggle'))!
     toggle.onClick()
     const expand = deepElementProps(render()).find((item) => typeof item.onExpand === 'function')!
     await Promise.all([expand.onExpand(4), expand.onExpand(4)])

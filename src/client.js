@@ -713,7 +713,7 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-event-main p{font-size:12px}
       .sg-memory .sg-event-status{border:0;border-radius:0;padding:0;background:transparent;font:11px var(--sg-mono)}
       .sg-memory .sg-timeline .sg-event-status.occurred{display:none}
-      .sg-memory .sg-event-status.cancelled{color:var(--sg-danger)}
+      .sg-memory .sg-event-status.cancelled{color:var(--sg-faint,#8d8b84)}
 
       /* Overview: one readable landing page for the current workspace. */
       .sg-memory .sg-overview{display:grid;gap:24px}
@@ -986,6 +986,315 @@ window.__ModuleLoader__.load({
       ${eventDetailCss}
       ${topicDirectoryCss}
        ${r6Css}
+    `
+
+    const previewCss = `
+@scope (.sg-memory) {
+*{box-sizing:border-box}
+body{margin:0;background:#111;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+html[data-theme=light] body{background:#d9d7d0}
+.frame{margin:24px auto;background:var(--dsw-alias-bg-layer-1);border-radius:10px;overflow:hidden;box-shadow:0 0 0 1px var(--dsw-alias-border-l2)}
+.frame.wide{width:920px}.frame.narrow{width:420px}
+button{font:inherit;color:inherit;cursor:pointer}
+.mono{font-family:var(--sg-mono);font-variant-numeric:tabular-nums}
+.serif{font-family:var(--sg-serif)}
+
+/* 头部与标签栏：标签前是该记忆的实色小方块，和记忆柱同色同形 */
+.sg-head{display:flex;align-items:center;gap:12px;padding:18px 24px 0}
+.sg-mark{width:26px;height:26px;flex:none}
+.sg-brand{display:flex;align-items:baseline;gap:8px}
+.sg-brand b{font-family:var(--sg-serif);font-size:18px}
+.sg-brand .mono{font-size:11px;color:var(--sg-faint)}
+.sg-head-end{margin-left:auto;display:flex;gap:8px}
+.sg-ws,.sg-gh{display:inline-flex;align-items:center;gap:6px;height:28px;border:1px solid var(--sg-rule);border-radius:6px;font-size:12px;color:var(--sg-muted);background:none;text-decoration:none}
+.sg-ws{padding:0 10px}.sg-ws i{width:6px;height:6px;border-radius:50%;background:var(--sg-ok)}
+.sg-gh span{display:flex;align-items:center;gap:6px;padding:0 9px;height:100%}
+.sg-gh span+span{border-left:1px solid var(--sg-rule);font-family:var(--sg-mono);color:var(--sg-text)}
+.sg-gh svg{width:14px;height:14px}
+.sg-tabs{display:flex;gap:2px;padding:14px 24px 0;border-bottom:1px solid var(--sg-rule);overflow-x:auto;scrollbar-width:none}
+.sg-tab{display:flex;align-items:center;gap:7px;padding:8px 10px 10px;border:0;background:none;color:var(--sg-muted);font-size:13px;position:relative;white-space:nowrap}
+.sg-tab[aria-selected=true]{color:var(--sg-text);font-weight:600}
+.sg-tab[aria-selected=true]::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--sg-text)}
+.sw{width:10px;height:10px;border-radius:2px;flex:none}
+.sw.lib{background:color-mix(in srgb,var(--sg-moss) 18%,transparent);box-shadow:inset 0 0 0 1.2px var(--sg-moss)}
+.sg-body{padding:24px 24px 8px}
+.sg-foot{display:flex;justify-content:space-between;gap:12px;padding:14px 24px 18px;margin-top:16px;border-top:1px solid var(--sg-hair);color:var(--sg-faint);font-size:11.5px}
+.sg-foot a{color:var(--sg-muted);text-decoration:none}
+.narrow .sg-foot{flex-direction:column;gap:4px}
+.narrow .sg-gh span:first-child b{display:none}
+.narrow .sg-ws{display:none}
+.narrow .sg-body{padding:20px 16px 4px}.narrow .sg-head,.narrow .sg-tabs{padding-left:16px;padding-right:16px}
+
+.btn{height:30px;padding:0 14px;border-radius:6px;border:1px solid var(--sg-rule);background:var(--sg-page);font-size:12.5px}
+.btn.primary{background:var(--sg-text);color:var(--sg-page);border-color:var(--sg-text)}
+.btn.danger{background:var(--sg-err);color:#fff;border-color:var(--sg-err)}
+.btn.ghost{border-color:transparent;background:none;color:var(--sg-muted)}
+.cap{font-size:11px;color:var(--sg-faint);letter-spacing:.08em}
+.used-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sg-clay);flex:none}
+
+/* ==== 第 6 轮：红色只留给出错；“被用到”改用气泡图标；画像改石墨色 ==== */
+.sg{--sg-ink:#d6d1c6}
+html[data-theme=light] .sg{--sg-ink:#3d3b37}
+.used{display:inline-flex;align-items:center;gap:3px;color:var(--sg-text);font:12px var(--sg-mono);white-space:nowrap}
+.used svg{width:13px;height:11px;flex:none}
+.used.soft{color:var(--sg-muted)}
+
+/* ---------- 总览 ---------- */
+.ov{display:grid;grid-template-columns:200px 1fr;gap:40px}
+.narrow .ov{grid-template-columns:1fr;gap:22px}
+.ov-big{display:flex;align-items:baseline;gap:8px}
+.ov-big b{font:400 76px/.9 var(--sg-serif);letter-spacing:-.03em}
+.ov-big svg{width:30px;height:24px;color:var(--sg-text)}
+.ov-stat p{margin:10px 0 0;color:var(--sg-muted);font-size:12.5px}
+.ov-health{display:flex;align-items:center;gap:7px;margin-top:12px;font-size:12px;color:var(--sg-faint)}
+.ov-health i{width:7px;height:7px;border-radius:50%;background:var(--sg-ok)}
+.narrow .ov-stat{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.narrow .ov-big b{font-size:58px}
+.narrow .ov-stat p{margin:0 0 4px}
+.narrow .ov-health{width:100%;margin-top:0}
+
+/* 记忆柱：只留名字和数字，含义靠颜色和实/虚 */
+.pillar{display:grid;grid-template-columns:84px 1fr 52px auto;align-items:stretch}
+.narrow .pillar{grid-template-columns:56px 1fr 40px auto}
+.p-top{grid-column:1;display:flex;flex-direction:column;align-items:center;padding-bottom:6px}
+.p-top svg{width:30px;height:24px}
+.p-top i{width:1.5px;height:10px;background:var(--sg-text);margin-top:4px}
+.p-bar{grid-column:1;border-bottom:3px solid var(--sg-page);animation:rise .5s both;border-radius:2px}
+.p-bar.lib{border:1.5px dashed var(--sg-moss);background:color-mix(in srgb,var(--sg-moss) 12%,transparent)!important}
+.p-gap{grid-column:1/-1;height:16px;position:relative}
+.p-gap::after{content:"";position:absolute;left:96px;right:0;top:50%;border-top:1px dashed var(--sg-rule)}
+.narrow .p-gap::after{left:68px}
+.p-name{grid-column:2;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--sg-hair)}
+.p-name b{font-size:14px;font-weight:600;white-space:nowrap}
+.p-use{grid-column:3;display:flex;align-items:center;border-bottom:1px solid var(--sg-hair)}
+.p-val{grid-column:4;display:flex;align-items:center;justify-content:flex-end;gap:5px;border-bottom:1px solid var(--sg-hair);color:var(--sg-faint);font-size:12px;white-space:nowrap;padding-left:8px}
+.p-val b{font:400 22px var(--sg-serif);color:var(--sg-text)}
+.narrow .p-val b{font-size:19px}
+.p-key{display:flex;gap:18px;margin:14px 0 0;font-size:11.5px;color:var(--sg-faint);flex-wrap:wrap}
+.p-key span{display:flex;align-items:center;gap:6px}
+.p-key .sw{background:var(--sg-muted)}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+.hm-wrap{margin-top:28px;padding-top:16px;border-top:1px solid var(--sg-hair)}
+.hm-h{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;font-size:12px;color:var(--sg-faint)}
+.hm-h .used{font-family:inherit;color:var(--sg-text);font-weight:600;font-size:13px;gap:6px}
+.hm{display:grid;grid-template-columns:repeat(28,1fr);gap:4px}
+.narrow .hm{grid-template-columns:repeat(14,1fr)}
+.hm i{aspect-ratio:1;background:var(--sg-sheet);border-radius:3px;box-shadow:inset 0 0 0 1px var(--sg-hair)}
+.hm-l{display:flex;justify-content:space-between;color:var(--sg-faint);font:10.5px var(--sg-mono);margin-top:6px}
+
+/* ---------- 页内标题 ---------- */
+.pg-h{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.pg-h h2{margin:0;font:700 22px var(--sg-serif)}
+.pg-h .tag{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--sg-muted)}
+.pg-h .end{margin-left:auto;display:flex;gap:6px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--sg-rule);border-radius:7px;padding:2px;gap:2px}
+.seg button{border:0;background:none;padding:3px 12px;border-radius:5px;font-size:12px;color:var(--sg-muted)}
+.seg button[aria-pressed=true]{background:var(--sg-sheet);color:var(--sg-text);font-weight:600;box-shadow:0 0 0 1px var(--sg-rule)}
+.plus{width:28px;height:28px;border-radius:50%;border:0;background:none;color:var(--sg-faint);font-size:18px;line-height:1}
+
+/* ---------- 常驻画像：像系统设置里的分组列表，每一行就是一项可改的内容 ---------- */
+.cap-row{display:flex;align-items:center;gap:12px;margin:0 0 22px}
+.cap-bar{flex:1;height:6px;border-radius:3px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair);overflow:hidden}
+.cap-bar i{display:block;height:100%;background:var(--sg-ink);animation:grow .6s both;transform-origin:left;border-radius:3px}
+@keyframes grow{from{transform:scaleX(0)}to{transform:none}}
+.cap-row .n{font-size:12px;color:var(--sg-faint);white-space:nowrap}
+.cap-row .n b{font:400 17px var(--sg-serif);color:var(--sg-text);margin-right:3px}
+.cap-row a{font-size:12px;color:var(--sg-accent);text-decoration:none;white-space:nowrap}
+.pf{display:grid;grid-template-columns:1fr 1fr;gap:22px 28px;align-items:start}
+.narrow .pf{grid-template-columns:1fr;gap:18px}
+.grp h4{margin:0 0 7px 2px;font-size:12px;font-weight:500;color:var(--sg-faint)}
+.grp ul{margin:0;padding:0;list-style:none;border:1px solid var(--sg-rule);border-radius:10px;overflow:hidden;background:var(--sg-page)}
+.grp li{display:grid;grid-template-columns:1fr auto 14px;align-items:center;gap:10px;padding:10px 12px 10px 14px;border-top:1px solid var(--sg-hair);cursor:pointer}
+.grp li:first-child{border-top:0}
+.grp li:hover{background:var(--sg-sheet)}
+.grp li .k{display:block;font-size:11.5px;color:var(--sg-faint)}
+.grp li .v{display:block;font-size:13.5px;color:var(--sg-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grp li .v.empty{color:var(--sg-accent)}
+.grp li>div{min-width:0}
+.grp li .chev{color:var(--sg-faint);font-size:16px;line-height:1}
+.grp li.on{background:var(--sg-sheet);cursor:default}
+.grp li.on>div{grid-column:1/-1}
+.grp textarea{display:block;width:100%;margin-top:6px;min-height:58px;resize:none;border:1px solid var(--sg-accent);border-radius:7px;padding:8px 10px;font:13px/1.6 inherit;font-family:inherit;background:var(--sg-page);color:var(--sg-text);outline:3px solid color-mix(in srgb,var(--sg-accent) 18%,transparent)}
+.grp .ed-f{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11.5px;color:var(--sg-faint)}
+.grp .ed-f .btn{height:26px;padding:0 11px;font-size:12px}
+.grp .ed-f .btn:first-of-type{margin-left:auto}
+
+/* ---------- 长期记忆：一本书。左页是目录（AI 每轮都看），右页是翻开的一节（需要时才翻） ---------- */
+.how{display:flex;align-items:center;gap:8px;margin:-6px 0 16px;font-size:12px;color:var(--sg-faint)}
+.how .sw{width:9px;height:9px}
+.how s{text-decoration:none;margin:0 2px}
+.book{display:grid;grid-template-columns:1fr 1fr;background:var(--sg-sheet);border:1px solid var(--sg-rule);border-radius:4px 4px 4px 4px;position:relative;box-shadow:0 1px 0 var(--sg-rule),0 3px 0 -1px var(--sg-sheet),0 3px 0 0 var(--sg-rule)}
+.narrow .book{grid-template-columns:1fr}
+.leaf{padding:26px 26px 20px;min-width:0;position:relative}
+.leaf+.leaf{border-left:1px solid var(--sg-rule);box-shadow:inset 1px 0 0 var(--sg-page)}
+.toc-t{text-align:center;font:400 15px var(--sg-serif);letter-spacing:.6em;margin:0 0 18px;padding-left:.6em}
+.toc-col{display:flex;justify-content:flex-end;font-size:10.5px;color:var(--sg-faint);margin-bottom:2px}
+.ch{margin:0 0 14px}
+.ch-h,.sec{display:flex;align-items:baseline;gap:8px}
+.ch-h{font:700 14.5px var(--sg-serif);padding:3px 0}
+.ch-h .no{font:400 12px var(--sg-serif);color:var(--sg-faint);min-width:3.2em}
+.lead{flex:1;border-bottom:1.5px dotted color-mix(in srgb,var(--sg-faint) 55%,transparent);transform:translateY(-4px);min-width:16px}
+.cnt{font:12px var(--sg-mono);color:var(--sg-muted);min-width:1.6em;text-align:right}
+.sec{padding:3px 6px 3px 0;margin-left:3.2em;font-size:13px;color:var(--sg-muted);border-radius:4px;position:relative;cursor:pointer}
+.sec .no{font:11.5px var(--sg-mono);color:var(--sg-faint);min-width:2.4em}
+.sec .used{margin-left:2px}
+.sec.cur{color:var(--sg-text);font-weight:600}
+.sec.cur::before{content:"";position:absolute;left:-12px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--sg-text)}
+.toc-f{margin-top:18px;padding-top:10px;border-top:1px solid var(--sg-rule);display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--sg-faint)}
+.toc-f .m{display:flex;align-items:center;gap:3px}
+.toc-f .m i{width:7px;height:7px;border-radius:50%;background:var(--sg-moss)}
+.toc-f a{margin-left:auto;color:var(--sg-muted);text-decoration:none}
+.ribbon{position:absolute;top:-1px;right:26px;width:16px;height:34px;background:var(--sg-ink);clip-path:polygon(0 0,100% 0,100% 100%,50% 76%,0 100%);animation:drop .5s .2s both}
+@keyframes drop{from{transform:translateY(-10px);opacity:0}to{transform:none;opacity:1}}
+.pg-k{font:11.5px var(--sg-mono);color:var(--sg-faint)}
+.leaf h3{margin:2px 0 4px;font:700 19px var(--sg-serif)}
+.leaf .sum{margin:0 0 16px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+.evl{margin:0;padding:0;list-style:none}
+.evl li{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:baseline;padding:8px 0;border-top:1px solid var(--sg-rule)}
+.evl li .d{font:11.5px var(--sg-mono);color:var(--sg-faint)}
+.evl li b{font-weight:500;font-size:13px}
+.evl li.fade b{color:var(--sg-faint);font-weight:400}
+.evl li.fade .d::after{content:" · 淡出";font-family:-apple-system,sans-serif}
+.folio{margin-top:16px;text-align:center;font:11px var(--sg-serif);color:var(--sg-faint)}
+
+/* ---------- 事件时间线 ---------- */
+.tl-day{display:grid;grid-template-columns:84px 22px 1fr;column-gap:10px}
+.narrow .tl-day{grid-template-columns:40px 18px 1fr;column-gap:8px}
+.tl-date{text-align:right;padding-top:2px}
+.tl-date b{display:block;font:400 22px/1.1 var(--sg-serif)}
+.narrow .tl-date b{font-size:17px}
+.tl-date span{font-size:11px;color:var(--sg-faint);white-space:nowrap}
+.tl-axis{position:relative}
+.tl-axis::before{content:"";position:absolute;left:50%;top:0;bottom:0;border-left:1.5px solid var(--sg-rule);transform:translateX(-50%)}
+.tl-items{padding-bottom:18px;min-width:0}
+.ev{position:relative;display:flex;align-items:baseline;gap:10px;padding:6px 0 7px;border-bottom:1px solid var(--sg-hair)}
+.ev:last-child{border-bottom:0}
+.ev .nd{position:absolute;left:-26px;top:11px;width:11px;height:11px;border-radius:50%;background:var(--sg-moss);box-shadow:0 0 0 3px var(--sg-page)}
+.narrow .ev .nd{left:-22px}
+.ev.fade .nd{background:var(--sg-page);box-shadow:0 0 0 3px var(--sg-page),inset 0 0 0 1.5px var(--sg-faint)}
+.ev.fade{color:var(--sg-faint)}
+.ev b{font-weight:500;font-size:13.5px;min-width:0}
+.ev .tp{font-size:11.5px;color:var(--sg-faint);white-space:nowrap}
+.ev .used{margin-left:auto}
+.dream{margin:2px 0 18px;padding:7px 12px;background:color-mix(in srgb,var(--sg-sand) 14%,transparent);border-left:3px solid var(--sg-sand);font-size:12.5px;color:var(--sg-muted);display:flex;align-items:center;gap:10px}
+.dream .m{display:flex;align-items:center;gap:4px}
+.dream .m i{width:9px;height:9px;border-radius:50%;background:var(--sg-moss)}
+.dream .m s{text-decoration:none;color:var(--sg-faint);margin:0 3px}
+
+/* ---------- 弹窗 ---------- */
+.scrim{position:absolute;inset:0;background:color-mix(in srgb,#000 38%,transparent);display:flex;align-items:center;justify-content:center;padding:20px}
+html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
+.dlg{width:380px;max-width:100%;background:var(--sg-page);border-radius:12px;padding:22px 22px 18px;box-shadow:0 0 0 1px var(--sg-rule),0 18px 50px rgba(0,0,0,.22);animation:pop .18s both}
+@keyframes pop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+.dlg h3{margin:0 0 14px;font:700 18px var(--sg-serif)}
+.dlg p{margin:0 0 12px;color:var(--sg-muted);font-size:13px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.steps{display:flex;gap:4px;margin:4px 0 8px}
+.steps i{flex:1;height:8px;border-radius:2px;background:var(--sg-sand)}
+.steps i.todo{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-rule)}
+.steps-l{display:flex;justify-content:space-between;font-size:11.5px;color:var(--sg-faint)}
+.steps-l b{color:var(--sg-text);font-weight:500}
+.memo{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--sg-rule);border-radius:8px;margin-bottom:12px}
+.memo .flip{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--sg-faint);font-size:14px}
+.memo .flip i{width:11px;height:11px;border-radius:50%;background:var(--sg-moss)}
+.memo .flip i.o{background:none;box-shadow:inset 0 0 0 1.5px var(--sg-faint)}
+.memo b{display:block;font-weight:500}
+.memo span{font-size:11.5px;color:var(--sg-faint)}
+.keep{font-size:12px;color:var(--sg-muted);display:flex;gap:7px;align-items:center}
+.keep svg{width:13px;height:13px;color:var(--sg-ok);flex:none}
+/* ---------- 会话记忆：越早越薄越淡，最新在下，和聊天同向 ---------- */
+.ss{display:grid;grid-template-columns:1fr 250px;gap:28px}
+.narrow .ss{grid-template-columns:1fr}
+.ss-scale{display:flex;align-items:center;gap:8px;margin:-6px 0 14px;font-size:11.5px;color:var(--sg-faint)}
+.ss-scale .r{display:flex;align-items:flex-end;gap:2px}
+.ss-scale .r i{width:14px;background:var(--sg-water);border-radius:1.5px}
+.blk{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:12px;margin-bottom:3px;animation:rise .4s both}
+.blk .n{font:11px var(--sg-mono);color:var(--sg-faint);text-align:right}
+.blk .bar{border-radius:3px;display:flex;align-items:center;padding:0 12px;min-width:0;cursor:pointer;color:var(--sg-text);font-size:12.5px}
+.blk .bar span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.blk.sel .bar{box-shadow:0 0 0 2px var(--sg-text)}
+.blk .used{min-width:22px}
+.blk.open .bar{background:none!important;border:1.5px dashed var(--sg-water);color:var(--sg-muted);justify-content:space-between}
+.blk.open .dots{display:flex;gap:3px}
+.blk.open .dots i{width:7px;height:7px;border-radius:50%;background:var(--sg-water)}
+.blk.open .dots i.o{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-water)}
+.side{border-top:1px solid var(--sg-text);padding-top:12px;align-self:start}
+.side h4{margin:0 0 2px;font:700 16px var(--sg-serif)}
+.side .pg-k{display:block;margin-bottom:10px}
+.side p{margin:0 0 12px;color:var(--sg-muted);font-size:12.5px;line-height:1.75}
+.lvl{display:flex;gap:3px;margin:4px 0 4px}
+.lvl i{flex:1;height:6px;border-radius:2px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+.lvl i.on{background:var(--sg-water);box-shadow:none}
+.lvl-l{display:flex;justify-content:space-between;font-size:10.5px;color:var(--sg-faint);margin-bottom:14px}
+
+/* ---------- 短期记忆：按天的笔记，实色条 = 会带入新会话 ---------- */
+.days{display:grid;gap:0}
+.day{display:grid;grid-template-columns:72px 6px 1fr;column-gap:16px;padding:12px 0;border-top:1px solid var(--sg-hair);animation:rise .4s both}
+.narrow .day{grid-template-columns:44px 5px 1fr;column-gap:12px}
+.day .d{text-align:right}
+.day .d b{display:block;font:400 26px/1 var(--sg-serif)}
+.narrow .day .d b{font-size:20px}
+.day .d span{font-size:11px;color:var(--sg-faint)}
+.day .rail{border-radius:3px;background:var(--sg-sand)}
+.day.out .rail{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-rule)}
+.day.out{color:var(--sg-faint)}
+.day ul{margin:0;padding:0;list-style:none}
+.day li{display:grid;grid-template-columns:44px 1fr auto;gap:10px;padding:3px 0;font-size:13px;align-items:baseline}
+.day li .t{font:11.5px var(--sg-mono);color:var(--sg-faint)}
+.day.out li span:not(.t){color:var(--sg-faint)}
+.cut{display:grid;grid-template-columns:72px 1fr;column-gap:16px;align-items:center;margin:2px 0;font-size:11px;color:var(--sg-faint)}
+.narrow .cut{grid-template-columns:44px 1fr;column-gap:12px}
+.cut span{grid-column:2;display:flex;align-items:center;gap:8px}
+.cut span::before,.cut span::after{content:"";flex:1;border-top:1px dashed var(--sg-rule)}
+.cut span::before{flex:0 0 8px}
+.off{display:flex;align-items:center;gap:10px;margin-left:auto}
+
+/* ---------- 更多：和画像同一套分组列表 ---------- */
+.more{display:grid;grid-template-columns:1fr 1fr;gap:22px 28px;align-items:start}
+.narrow .more{grid-template-columns:1fr;gap:18px}
+.more>div{display:grid;gap:22px}
+.grp li.st{cursor:default;grid-template-columns:1fr auto}
+.grp li.st:hover{background:none}
+.grp li .k2{display:block;font-size:13.5px}
+.grp li .s{display:block;font-size:11.5px;color:var(--sg-faint)}
+.tg{width:36px;height:21px;border-radius:11px;background:var(--sg-rule);position:relative;flex:none}
+.tg::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .2s}
+.tg.on{background:var(--sg-ok)}.tg.on::after{left:17px}
+.stp{display:inline-flex;align-items:center;border:1px solid var(--sg-rule);border-radius:7px;overflow:hidden;font-size:12.5px}
+.stp button{width:26px;height:26px;border:0;background:none;color:var(--sg-muted)}
+.stp span{min-width:48px;text-align:center;font-family:var(--sg-mono);border-inline:1px solid var(--sg-rule);line-height:26px}
+.stp.ch span{color:var(--sg-accent);font-weight:600}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);padding:14px 4px 12px}
+.kpi div{text-align:center}
+.kpi b{display:block;font:400 24px/1.1 var(--sg-serif)}
+.kpi span{font-size:11px;color:var(--sg-faint);display:inline-flex;align-items:center;gap:4px;justify-content:center}
+.kpi .used{color:var(--sg-faint);font-family:inherit;font-size:11px}
+.badge{font:12px var(--sg-mono);background:var(--sg-sheet);border:1px solid var(--sg-rule);border-radius:10px;padding:0 8px;color:var(--sg-text)}
+.dirty{display:flex;align-items:center;gap:8px;padding:10px 12px 10px 14px;border-top:1px solid var(--sg-rule);background:color-mix(in srgb,var(--sg-accent) 7%,var(--sg-page));font-size:12px;color:var(--sg-accent)}
+.dirty .btn{height:26px;font-size:12px;padding:0 11px}
+.dirty .btn:first-of-type{margin-left:auto}
+.gh-row{display:flex;align-items:center;gap:12px}
+.gh-row svg{width:22px;height:22px;flex:none}
+
+/* 接入适配：原稿选择器原样生效；下面只补宿主里原稿模板没有的行为 */
+:scope{--sg-page:var(--dsw-alias-bg-layer-1,#fff);--sg-sheet:var(--dsw-alias-bg-layer-2,#f6f6f4);--sg-text:var(--dsw-alias-label-primary,#1d1d1b);--sg-muted:var(--dsw-alias-label-secondary,#55534d);--sg-faint:var(--dsw-alias-label-tertiary,#7a776f);--sg-rule:var(--dsw-alias-border-l2,#e3e1da);--sg-hair:color-mix(in srgb,var(--sg-rule) 70%,transparent);--sg-accent:var(--dsw-alias-state-business-primary,#2f6bdc);--sg-ok:var(--dsw-alias-state-success-primary,#2f8a55);--sg-err:var(--dsw-alias-state-error-primary,#c8402c);--sg-ink:light-dark(#3d3b37,#d6d1c6);--sg-clay:light-dark(#a8472c,#c2694c);--sg-moss:light-dark(#5f7f4d,#8fae7b);--sg-sand:light-dark(#a9822f,#d2b066);--sg-water:light-dark(#3f6d9c,#6f97c0);--sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC",serif;--sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;color:var(--sg-text);background:var(--sg-page);font-size:13px;line-height:1.6;position:relative}
+.day>.sg-day-hit{display:contents}
+.book-back{display:none}
+.narrow .book:not(.show-leaf)>.leaf+.leaf{display:none}
+.narrow .book.show-leaf .toc-t,.narrow .book.show-leaf .ch-h,.narrow .book.show-leaf .sec,.narrow .book.show-leaf .toc-f{display:none}
+.book .sg-topic-overview-text{display:block;margin:0 0 16px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+.narrow .book.show-leaf .book-back{display:inline-flex}
+.book{position:relative}
+.book>.leaf{position:static}
+.book:has(.sg-topic-section.cur){min-height:420px}
+.book .sg-topic-section.cur>.sg-directory-fold,.book .sg-topic-section.cur>.sg-directory-fold>.sg-directory-fold-inner{overflow:visible;display:block}
+.book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:absolute;z-index:1;top:0;left:50%;width:50%;max-height:100%;overflow:auto;box-sizing:border-box;padding:26px 26px 20px;background:var(--sg-sheet)}
+.narrow .book .sg-topic-section.cur>.sg-directory-fold .sg-topic-section-body{position:static;left:auto;width:auto;max-height:none;padding:8px 0 0}
+.sg-profile-group{margin-top:22px;padding:0;border:0;background:transparent}
+.ev .sg-event-status.cancelled{color:var(--sg-faint)}
+
+}
     `
 
     const citationCss = `
@@ -1949,7 +2258,10 @@ window.__ModuleLoader__.load({
       const currentPage = Math.min(totalPages, Math.floor(page.offset / page.limit) + 1)
       const start = page.total ? page.offset + 1 : 0
       const end = Math.min(page.total, page.offset + page.limit)
-      if (!error && !loading && page.total <= page.limit) return null
+      // total 0 is an empty result: there is no next page to offer.
+      // A first page that already contains every row is the same.
+      // Any later offset, a larger total, a load, or an error keeps the controls.
+      if (!error && !loading && page.offset === 0 && page.total <= page.limit) return null
       return h('div', { className: 'sg-pagination', role: 'navigation', 'aria-label': '分页' },
         h('button', { type: 'button', className: 'sg-page-button', disabled: loading || page.offset <= 0, onClick: () => onOffset(Math.max(0, page.offset - page.limit)) }, '上一页'),
         h('span', null, loading ? '加载中…' : '第 ' + currentPage + ' / ' + totalPages + ' 页 · 显示 ' + start + '–' + end + ' / 共 ' + page.total + ' 条'),
@@ -2710,16 +3022,16 @@ window.__ModuleLoader__.load({
       }
       monthMarks.sort((left, right) => left.key.localeCompare(right.key))
       const rail = monthMarks.slice(-8)
-      return h('div', { className: 'sg-timeline sg-tl' },
+      return h('div', { className: 'sg-timeline' },
         rail.length > 1 ? h('div', { className: 'sg-month-rail', 'aria-hidden': 'true' }, rail.map((mark) => h('span', { key: mark.key }, h('i'), mark.label))) : null,
-        days.map((day) => h('div', { key: day.key, className: 'sg-tl-day' },
-          h('div', { className: 'sg-tl-date' }, Number.isFinite(day.time) ? h(React.Fragment, null, h('b', null, String(new Date(day.time).getDate())), h('span', null, new Date(day.time).toDateString() === now.toDateString() ? '今天' : ['周日','周一','周二','周三','周四','周五','周六'][new Date(day.time).getDay()])) : h('span', null, '时间未知')),
-          h('div', { className: 'sg-tl-axis', 'aria-hidden': 'true' }),
-          h('div', { className: 'sg-tl-items' }, day.events.map((event) => {
+        days.map((day) => h('div', { key: day.key, className: 'tl-day' },
+          h('div', { className: 'tl-date' }, Number.isFinite(day.time) ? h(React.Fragment, null, h('b', null, String(new Date(day.time).getDate())), h('span', null, new Date(day.time).toDateString() === now.toDateString() ? '今天' : ['周日','周一','周二','周三','周四','周五','周六'][new Date(day.time).getDay()])) : h('span', null, '时间未知')),
+          h('div', { className: 'tl-axis', 'aria-hidden': 'true' }),
+          h('div', { className: 'tl-items' }, day.events.map((event) => {
             const temporal = event.temporal || {}
             const faded = temporal.status === 'cancelled'
-            return h('button', { key: event.id, className: 'sg-timeline-card' + (event.id === selectedId ? ' selected' : '') + (faded ? ' fade' : ''), onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
-              h('span', { className: 'sg-timeline-dot' + (faded ? ' fade' : '') }),
+            return h('button', { key: event.id, className: 'ev' + (event.id === selectedId ? ' selected' : '') + (faded ? ' fade' : ''), onMouseEnter: (hover) => showPreview(event, hover.currentTarget), onMouseLeave: scheduleHide, onFocus: (focus) => showPreview(event, focus.currentTarget), onBlur: scheduleHide, onClick: (click) => { onSelect(event.id); showPreview(event, click.currentTarget, true) } },
+              h('i', { className: 'nd' }),
               h('div', { className: 'sg-event-main' }, h('div', { className: 'sg-event-title-row' }, h('strong', null, event.title), h('span', { className: 'sg-type-badge' }, EVENT_TYPE_TEXT[temporal.eventType] || temporal.eventType || '其他')), h('p', null, event.summary || '暂无摘要'), h('div', { className: 'sg-tags' }, (temporal.participantNodeIds || []).flatMap((id) => nodeMap.get(id) || []).map((node) => h('span', { key: node.id, className: 'sg-tag' }, node.name)), !(temporal.participantNodeIds || []).length ? (temporal.participants || []).map((name) => h('span', { key: name, className: 'sg-tag' }, name)) : null)),
               h('span', { className: 'sg-event-status ' + (temporal.status || 'unknown') }, EVENT_STATUS_TEXT[temporal.status] || '未知'))
           })))), floating && preview ? h('div', { className: 'sg-event-popover', style: { left: preview.left + 'px', top: preview.top + 'px' }, onMouseEnter: cancelHide, onMouseLeave: scheduleHide },
@@ -2842,17 +3154,18 @@ window.__ModuleLoader__.load({
       const sourceCount = Number(part.sourceEventCount || 0)
       const shown = leaf || open
       return h('section', { className: 'sg-topic-section' + (shown ? ' cur' : '') + (leaf ? ' leaf' : ''), 'data-section-index': String(index) },
-        h('h3', { className: 'sg-topic-section-heading' },
+        h('h3', { className: 'sg-topic-section-heading sec' + (shown ? ' cur' : '') },
           h('button', { type: 'button', className: 'sg-topic-section-toggle', title: part.uiTitle, 'aria-expanded': shown, 'aria-controls': regionId, 'aria-current': current || shown ? 'true' : undefined, onClick: () => { onPick?.(); if (!leaf) setOpen((value) => !value) } },
-            h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', null, part.uiTitle), leaf ? null : h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')),
-          h('span', { className: 'sg-toc-count' }, String(sourceCount))),
+            h('span', { className: 'no' }, sectionNumber), h('span', null, part.uiTitle), leaf ? null : h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')),
+          h('span', { className: 'lead', 'aria-hidden': 'true' }),
+          h('span', { className: 'cnt' }, String(sourceCount))),
         h(DirectoryFold, { open: shown, id: regionId }, h('div', { className: 'sg-topic-section-body' },
-          h('p', { className: 'sg-book-k' }, sectionNumber),
-          h('h3', { className: 'sg-book-section-title' }, part.uiTitle),
+          h('p', { className: 'pg-k' }, sectionNumber),
+          h('h3', null, part.uiTitle),
           (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((value) => !value) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: overviewOpen, id: regionId + '-overview' }, (part.paragraphs || []).map((paragraph, paragraphIndex) => h('p', { key: paragraphIndex, className: 'sg-topic-overview-text', 'data-overview-paragraph-index': String(paragraphIndex) }, paragraph.text || '暂无总览')))) : null,
           h(TopicEventList, { namespace, revision, topicId, sectionKey: part.uiKey, total: sourceCount, active: active && shown, openEvent, numberPrefix: sectionNumber, onDirectoryChanged }),
-          h('p', { className: 'sg-folio' }, '— 第' + chapterOrdinal(chapter) + '章 · ' + sectionNumber + ' —'))))
+          h('p', { className: 'folio' }, '— 第' + chapterOrdinal(chapter) + '章 · ' + sectionNumber + ' —'))))
     }
 
     function TopicChapter({ topic, number, namespace, revision, active, openEvent, onDirectoryChanged, expandRequest = 0, variant = 'full', leafSectionKey = '', onPickSection = null }) {
@@ -2876,17 +3189,21 @@ window.__ModuleLoader__.load({
           h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
             sections.map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: false, openEvent, onDirectoryChanged, current: leafSectionKey === part.uiKey, onPick: () => onPickSection?.(topic.id, part.uiKey) })))))
       }
+      const chapterCount = sections.reduce((sum, part) => sum + Number(part.sourceEventCount || 0), 0)
       return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
-        h('header', { className: 'sg-topic-chapter-header' },
-          h('span', { className: 'sg-topic-chapter-number', 'aria-hidden': 'true' }, String(number).padStart(2, '0')),
-          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
+        h('div', { className: 'ch' },
+        h('div', { className: 'ch-h' },
+          h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'no' }, chapterLabel), h('span', null, topic.title), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')),
+          h('span', { className: 'lead', 'aria-hidden': 'true' }),
+          h('span', { className: 'cnt' }, String(chapterCount))),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
           topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, active: active && open, openEvent, onDirectoryChanged, onPick: () => onPickSection?.(topic.id, part.uiKey) })),
           !(topic.sections || []).length ? h('p', { className: 'sg-topic-no-overview' }, '这个主题尚未建立小节，可查看待归类事件。') : null,
           (() => {
             const remaining = Number(topic.coverage?.unassignedEvents ?? topic.coverage?.omittedEvents ?? 0)
             return remaining ? h('details', { className: 'sg-topic-other-events', open: otherOpen, onToggle: (event) => setOtherOpen(event.currentTarget.open) }, h('summary', null, '待归类事件 · ' + remaining), h(TopicEventList, { namespace, revision, topicId: topic.id, sectionKey: 'uncovered', total: remaining, active: active && open && otherOpen, openEvent, onDirectoryChanged })) : null
-          })())))
+          })()))
+        ))
     }
 
     function TopicRetryButton({ failure, namespace, revision, onDirectoryChanged }) {
@@ -3066,10 +3383,10 @@ window.__ModuleLoader__.load({
         run && ['completed', 'terminated'].includes(run.status) ? h('p', null, '已完成的修改已保留。') : null,
          error ? h('p', { role: 'alert' }, error, h('button', { type: 'button', disabled: busy, onClick: () => api('dreaming', { namespace }).then(accept).catch(() => setError('状态读取失败，请稍后重试。')) }, '重新读取')) : null,
          confirmTerminate ? h('div', { className: 'sg-import-overlay', onClick: () => setConfirmTerminate(false) },
-           h('section', { className: 'sg-import-dialog sg-r6-danger-dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': '终止整理确认', onClick: event => event.stopPropagation() },
+           h('section', { className: 'sg-import-dialog sg-r6-danger-dialog dlg', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': '终止整理确认', onClick: event => event.stopPropagation() },
              h('h3', { className: 'sg-import-dialog-title' }, '终止这次整理？'),
-             Number(run?.total) > 0 && Number(run.total) <= 24 ? h('div', { className: 'sg-steps', 'aria-hidden': 'true' }, Array.from({ length: Number(run.total) }, (_, index) => h('i', { key: index, className: index < Number(run.completed || 0) ? 'done' : 'todo' }))) : null,
-             Number(run?.total) > 0 ? h('div', { className: 'sg-steps-l' }, h('span', null, h('b', null, String(Math.min(Number(run.completed || 0), Number(run.total))) + ' 批'), '已整理的会保留'), h('span', null, Math.max(0, Number(run.total) - Number(run.completed || 0)) + ' 批保持原样')) : h('p', { className: 'sg-setting-note' }, '已完成的章节会保留，尚未完成的章节保持原样。'),
+             Number(run?.total) > 0 && Number(run.total) <= 24 ? h('div', { className: 'steps', 'aria-hidden': 'true' }, Array.from({ length: Number(run.total) }, (_, index) => h('i', { key: index, className: index < Number(run.completed || 0) ? '' : 'todo' }))) : null,
+             Number(run?.total) > 0 ? h('div', { className: 'steps-l' }, h('span', null, h('b', null, String(Math.min(Number(run.completed || 0), Number(run.total))) + ' 批'), '已整理的会保留'), h('span', null, Math.max(0, Number(run.total) - Number(run.completed || 0)) + ' 批保持原样')) : h('p', { className: 'sg-setting-note' }, '已完成的章节会保留，尚未完成的章节保持原样。'),
              h('div', { className: 'sg-r6-dialog-actions' },
                h('button', { type: 'button', className: 'sg-quiet-button', ref: terminateCancelRef, onClick: () => setConfirmTerminate(false) }, '继续整理'),
                h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: () => { setConfirmTerminate(false); void control('terminate') } }, '终止')))) : null)
@@ -3105,13 +3422,13 @@ window.__ModuleLoader__.load({
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
-          topics.length ? h('div', { className: 'sg-book' + (showLeaf ? ' show-leaf' : ''), ref: chaptersRef },
-            h('button', { type: 'button', className: 'sg-book-back', onClick: () => setShowLeaf(false) }, '目录'),
-            h('div', { className: 'sg-book-toc' },
-              h('h3', { className: 'sg-toc-title' }, '目录'),
+          topics.length ? h('div', { className: 'book' + (showLeaf ? ' show-leaf' : ''), ref: chaptersRef },
+            h('div', { className: 'leaf' },
+              h('button', { type: 'button', className: 'btn ghost book-back', onClick: () => setShowLeaf(false) }, '目录'),
+              h('h3', { className: 'toc-t' }, '目录'),
               topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, onPickSection: pickSection })),
-              h('div', { className: 'sg-toc-foot' }, organizedAt ? h('span', null, organizedAt) : null, h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))),
-            h('div', { className: 'sg-book-page', 'aria-hidden': 'true' })) : null,
+              h('div', { className: 'toc-f' }, organizedAt ? h('span', null, organizedAt) : null, h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))),
+            h('div', { className: 'leaf', 'aria-hidden': 'true' })) : null,
           pendingTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' }, h('h2', { className: 'sg-topic-pending-heading' }, h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', null, '待整理'), h('span', null, pendingTotal + ' 条事件'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
             h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null))
     }
@@ -3535,21 +3852,21 @@ window.__ModuleLoader__.load({
         directoryFeedback ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, directoryFeedback) : null,
         indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
           !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
-          dates.length ? h('div', { className: 'sg-days', role: 'list', 'aria-label': '带入新会话的笔记' }, [...dates].sort((left, right) => right.localeCompare(left)).flatMap((date, position, ordered) => {
+          dates.length ? h('div', { className: 'days', role: 'list', 'aria-label': '带入新会话的笔记' }, [...dates].sort((left, right) => right.localeCompare(left)).flatMap((date, position, ordered) => {
               const parts = dailyParts(date)
               const inRange = enabled && injected.includes(date)
               const previousInRange = position > 0 && enabled && injected.includes(ordered[position - 1])
-              const cut = enabled && previousInRange && !inRange ? h('div', { key: 'cut', className: 'sg-day-cut' }, h('span', null, '以下不带入')) : null
+              const cut = enabled && previousInRange && !inRange ? h('div', { key: 'cut', className: 'cut' }, h('span', null, '以下不带入')) : null
               const active = selected === date
               const markdown = active && note.date === date ? note.markdown : (notes[date] || '')
               const points = dailyPoints(markdown)
-              return [cut, h('article', { key: date, className: 'sg-day-row' + (inRange || !enabled ? '' : ' out') + (active ? ' selected' : '') + (!enabled ? ' paused' : '') },
+              return [cut, h('article', { key: date, className: 'day' + (inRange && enabled ? '' : ' out') + (active ? ' selected' : '') },
                 h('button', { type: 'button', className: 'sg-day-hit', 'aria-pressed': active, onClick: () => choose(date) },
-                  h('span', { className: 'sg-day-date' }, h('b', null, String(parts.day)), h('span', null, parts.week)),
-                  h('i', { className: 'sg-day-rail', 'aria-hidden': 'true' })),
-                h('div', { className: 'sg-day-body' },
+                  h('span', { className: 'd' }, h('b', null, String(parts.day)), h('span', null, parts.week)),
+                  h('div', { className: 'rail', 'aria-hidden': 'true' })),
+                h('div', null,
                   h('span', { className: 'sg-daily-rel' }, dailyRelative(date, index.today)),
-                  points.length ? h('ul', { className: 'sg-day-points' }, points.map((point, pointIndex) => h('li', { key: pointIndex }, point.time ? h('span', { className: 'sg-day-time' }, point.time) : null, h('span', null, point.text)))) : null,
+                  points.length ? h('ul', null, points.map((point, pointIndex) => h('li', { key: pointIndex }, point.time ? h('span', { className: 't' }, point.time) : null, h('span', null, point.text)))) : null,
                   active ? (note.loading || note.date !== date ? h(Loading) : note.error ? failure(note.error) : h('div', { className: 'sg-daily-note' },
                     h('div', { className: 'sg-daily-meta' }, h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(date) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(date) ? '会带入新会话' : '不在带入范围内'), !injected.includes(date) && injected[0] ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null),
                     points.length ? null : renderDailyMarkdown(note.markdown))) : null))]
@@ -3676,16 +3993,17 @@ window.__ModuleLoader__.load({
           h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: String(Math.max(1, rail.max)), step: '1', value: String(Math.min(rail.value, Math.max(1, rail.max))), disabled: rail.max <= 0, onChange: (event) => { const value = Number(event.target.value); if (distributionRef.current) distributionRef.current.scrollLeft = value; setRail((current) => ({ ...current, value })) }, 'aria-label': 'Block 分布滑轨' }),
           h('div', { className: 'sg-time-direction', 'aria-hidden': 'true' }, h('span', null, '更旧'), h('span', { className: 'sg-time-line' }), h('span', null, '更新 →')),
           h('div', { className: 'sg-overview-meta' }, h('span', null, '已封存块：本页 ' + visible.length + ' / 共 ' + pagedBlocks.page.total), h('span', null, '开放块：' + turnRangeText(currentOpen.turnRange) + '（未封存）'))),
-        h('div', { className: 'sg-session-layout', ref: sessionRef },
-        h('section', { className: 'sg-block-list', 'aria-label': 'Block 列表' },
+        h('div', { className: 'ss', ref: sessionRef },
+        h('div', { className: 'sg-block-list', 'aria-label': 'Block 列表' },
           h('div', { className: 'sg-block-header', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
-          visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
-            h('button', { className: 'sg-block-toggle', type: 'button', 'data-depth': String(Math.max(0, Math.min(5, 5 - Math.min(5, Math.max(0, Number(block.distanceFromLatest ?? 5)))))), onClick: () => toggleBlock(block), 'aria-expanded': expandedId === block.id ? 'true' : 'false' },
-              h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-level-badge', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: '助手可参考的详细程度' }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
-              h('span', { className: 'sg-block-name' }, (block.virtual ? '旧块 ' : '块 ') + block.sequence),
-              h('span', { className: 'sg-block-turn' }, turnRangeText(block.turnRange)),
-              h('span', { className: 'sg-block-distance' }, block.distanceFromLatest === 0 ? '0（最新）' : block.distanceFromLatest + ' 个 Block'),
-              h('span', { className: 'sg-row-chevron', 'aria-hidden': 'true' }, expandedId === block.id ? '⌃' : '›')),
+          visible.map((block) => {
+            const level = visibleBlockLevel(block)
+            const known = level !== null
+            return h('div', { key: block.id, className: 'blk' + (expandedId === block.id ? ' sel' : '') },
+            h('span', { className: 'n' }, String(block.sequence)),
+            h('button', { className: 'bar sg-block-toggle', type: 'button', 'data-level': known ? String(level) : undefined, onClick: () => toggleBlock(block), 'aria-expanded': expandedId === block.id ? 'true' : 'false', style: known ? { height: (18 + level * 6) + 'px', background: 'color-mix(in srgb, var(--sg-water) ' + (16 + level * 13) + '%, var(--sg-page))' } : { height: '28px' } },
+              h('span', null, (block.virtual ? '旧块 ' : '块 ') + block.sequence + ' · ' + turnRangeText(block.turnRange) + (known ? '' : ' · 尚未确认'))),
+            h('span', { className: 'used', 'aria-hidden': 'true' }),
             h(BlockSelectionFeedback, { block, feedback: selectionFeedback[block.id]?.scope === scope ? selectionFeedback[block.id] : null, onRefresh: async () => {
               try {
                 await refresh()
@@ -3696,22 +4014,20 @@ window.__ModuleLoader__.load({
             } }),
             previewError?.scope === scope && previewError.blockId === block.id ? h('div', { role: 'alert', className: 'sg-selection-feedback error' }, previewError.message) : null,
             summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
-            expandedId === block.id && sessionNarrow ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
-          h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-block-toggle sg-open-row', 'data-depth': '5' },
-            h('span', { className: 'sg-level-cell' }, h('span', { className: 'sg-open-badge' }, '未封存')),
-            h('span', { className: 'sg-block-name' }, '开放块'),
-            h('span', { className: 'sg-block-turn' }, turnRangeText(currentOpen.turnRange), h('span', { className: 'sg-open-dots', 'aria-hidden': 'true' }, Array.from({ length: openCapacity }, (_, index) => h('i', { key: index, className: index < Math.min(openTurns, openCapacity) ? '' : 'o' })))),
-            h('span', { className: 'sg-block-distance' }, '—'),
-            h('span', { className: 'sg-row-chevron', 'aria-hidden': 'true' })))),
-        !sessionNarrow && expandedId ? h('aside', { className: 'sg-session-side', 'aria-label': '会话记忆详情' }, visible.filter((block) => block.id === expandedId).map((block) => {
+            expandedId === block.id && sessionNarrow ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)}),
+          h('div', { className: 'blk open' },
+            h('span', { className: 'n' }, ''),
+            h('div', { className: 'bar', style: { height: '46px' } }, h('span', null, '正在记录'), h('span', { className: 'dots', 'aria-hidden': 'true' }, Array.from({ length: openCapacity }, (_, index) => h('i', { key: index, className: index < Math.min(openTurns, openCapacity) ? '' : 'o' })))),
+            h('span', { className: 'used', 'aria-hidden': 'true' }))),
+        !sessionNarrow && expandedId ? h('aside', { className: 'side', 'aria-label': '会话记忆详情' }, visible.filter((block) => block.id === expandedId).map((block) => {
           const level = visibleBlockLevel(block)
           const layers = Array.isArray(details[block.id]?.layers) ? details[block.id].layers : []
           const summary = layers.find((layer) => Number(layer.level) === level)?.content || layers.slice().sort((a, b) => Number(b.level) - Number(a.level))[0]?.content || ''
           return h(React.Fragment, { key: block.id },
             h('h4', null, (block.virtual ? '旧块 ' : '块 ') + block.sequence),
-            h('span', { className: 'sg-side-k' }, '记忆块 ' + block.sequence + (block.turnRange ? ' · ' + turnRangeText(block.turnRange) : '')),
-            level === null ? null : h('div', { className: 'sg-lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((step) => h('i', { key: step, className: step <= level ? 'on' : '' }))),
-            level === null ? null : h('div', { className: 'sg-lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
+            h('span', { className: 'pg-k' }, '记忆块 ' + block.sequence + (block.turnRange ? ' · ' + turnRangeText(block.turnRange) : '')),
+            level === null ? null : h('div', { className: 'lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((step) => h('i', { key: step, className: step <= level ? 'on' : '' }))),
+            level === null ? null : h('div', { className: 'lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
             summary ? h('p', null, summary) : null,
             h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (levelChoice) => expandTo(block, levelChoice) }))
         })) : null),
@@ -4247,7 +4563,7 @@ window.__ModuleLoader__.load({
     function MoreHome({ setView, selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, updateSettings, savingSettings }) {
       const rows = [['duplicates', '⇄', '重复记忆整理', '只有拿不准的候选需要你确认'], ['system', '✓', '系统状态', '处理概览与最近整理时间'], ['import', '⇄', '导入其他 AI 的记忆', '把已有记忆带回 StrataGate'], ['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助']]
       const fallback = { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }
-      return h('div', { className: 'sg-more-merged', 'aria-label': '更多与设置' },
+      return h('div', { className: 'sg-more-merged' + ' more', 'aria-label': '更多与设置' },
         h('div', { className: 'sg-more-merged-column' },
           h('div', { className: 'sg-intro' }, h('h2', null, '更多'), h('p', null, '运行状态、数据与支持。')),
           h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-more-runtime-title' }, h('h3', { id: 'sg-more-runtime-title', className: 'sg-settings-group-title' }, '运行'), h('div', { className: 'sg-r6-runline' }, h('span', { className: 'sg-r6-health' }, h('i', { className: Number(selected?.failedJobs || 0) ? 'bad' : Number(selected?.processingJobs || 0) ? 'wait' : '' }), Number(selected?.failedJobs || 0) ? '有失败任务' : Number(selected?.processingJobs || 0) ? '整理中' : '运行正常')), h('div', { className: 'sg-more-stat-grid' }, h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.blocks ?? 0), h('span', null, '记忆块')), h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.processingJobs ?? 0), h('span', null, '待处理')), h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.failedJobs ?? 0), h('span', null, '失败')), h('div', { className: 'sg-more-stat' }, h('strong', null, selected?.memoryUseCount ?? 0), h('span', null, '被用到'))), h('div', { className: 'sg-menu' }, rows.slice(0, 2).map(([id, icon, title, subtitle]) => h('button', { key: id, type: 'button', className: 'sg-menu-row', onClick: () => setView({ name: id }) }, h('span', { className: 'sg-menu-icon', 'aria-hidden': 'true' }, icon), h('span', null, h('span', { className: 'sg-menu-title' }, title), h('br'), h('span', { className: 'sg-menu-subtitle' }, subtitle)), h('span', { className: 'sg-chevron' }, '›'))))),
@@ -4274,7 +4590,7 @@ window.__ModuleLoader__.load({
       const showRetrievalStatus = pluginSettings?.value?.showRetrievalStatus !== false
       const setting = ({ title, description, checked, disabled = false, onChange, child = false }) => h('div', { className: 'sg-display-setting ' + (child ? 'child ' : '') + (disabled ? 'sg-display-disabled' : '') },
         h('span', { className: 'sg-display-setting-copy' }, h('span', { className: 'sg-display-setting-title' }, title), h('span', { className: 'sg-display-setting-description' }, description)),
-        h('button', { type: 'button', className: 'sg-setting-switch', role: 'switch', 'aria-checked': checked, 'aria-label': title, disabled: !settingsWritable || disabled, onClick: () => { if (onChange) void onChange(!checked) } }))
+        h('button', { type: 'button', className: 'sg-setting-switch tg' + (checked ? ' on' : ''), role: 'switch', 'aria-checked': checked, 'aria-label': title, disabled: !settingsWritable || disabled, onClick: () => { if (onChange) void onChange(!checked) } }))
       return h(React.Fragment, null,
         embedded ? null : h(BackBar, { label: '更多', onBack }),
         embedded ? null : h('div', { className: 'sg-intro' }, h('h2', null, '界面与显示'), h('p', null, '控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')),
@@ -5473,7 +5789,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'sg-profile-capacity-bar' }, h('i', { style: { width: Math.min(100, Math.round(total / 6000 * 100)) + '%' } })),
             h('span', null, total + ' / 6000 字')),
           profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
-            h('h3', null, title),
+            h('div', { className: 'grp' }, h('h4', null, title), h('ul', null,
             fields.filter(([field]) => field !== 'homeCity' || profile.homeCity || profileFieldDrafts.has(field)).map(([field, label, maximum]) => {
               const value = profile[field] || ''
               const isEditing = editing?.field === field
@@ -5493,13 +5809,13 @@ window.__ModuleLoader__.load({
                     result.kind === 'unknown' ? h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => checkSave(result) }, reading ? '检查中…' : '检查保存结果')
                       : result.kind === 'invalid' ? h('p', null, result.detail) : null) : null,
                   h('div', { className: 'sg-profile-editor-foot' }, h('span', { className: 'sg-profile-count' }, draftLength + ' / ' + maximum, draftLength > maximum ? '，请缩短至 ' + maximum + ' 个字符以内。' : nextTotal > 6000 ? '，画像总字符数不能超过 6000。' : '', savedFeedback), h('div', { className: 'sg-profile-actions' }, h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving, onClick: () => { resetEdit(field); setEditing(null) } }, '取消编辑'), h('button', { type: 'button', className: 'sg-save-button', disabled: saving || reading || result?.kind === 'unknown' || draftLength > maximum || nextTotal > 6000 || editing.draft === editing.baseValue || changedElsewhere || conflict, onClick: save }, saving ? '保存中…' : result?.kind === 'failed' ? '重新保存' : '保存')))) : null
-              return h('div', { key: field, className: 'sg-profile-row' },
+              return h('li', { key: field, className: 'sg-profile-row' + (isEditing ? ' on' : '') },
                 h('div', { className: 'sg-profile-summary' + (isEditing ? ' editing' : '') },
                   h('span', { className: 'sg-profile-label' }, label),
                   editor || h('span', { className: 'sg-profile-content' }, h('button', { type: 'button', className: 'sg-profile-value ' + (value ? '' : 'empty'), title: value || undefined, 'aria-label': label + '，点击编辑', disabled: saving, onClick: () => beginEdit(field) }, profileFieldDrafts.has(field) ? '继续编辑草稿' : value || PROFILE_EMPTY_HINTS[field] || '未设置'), savedFeedback),
                   h('button', { type: 'button', className: 'sg-profile-action', onClick: () => beginEdit(field), disabled: saving, 'aria-hidden': isEditing || undefined }, !isEditing && profileFieldDrafts.has(field) ? '继续编辑' : value ? '编辑' : '添加')),
                 savedReadError ? h('p', { className: 'sg-profile-save-feedback', role: 'status' }, h('span', null, '修改已保存，暂时无法读取最新内容。'), h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => refreshRef.current?.() }, '重新读取')) : null)
-            })))) : h('p', null, '正在读取常驻画像…'))
+            })))))) : h('p', null, '正在读取常驻画像…'))
     }
 
     const GRAPH_EXPLANATION = '由于知识图谱功能与事件记录和主题目录有部分重复，还需要额外消耗token维护实体关系，将会默认关闭知识图谱功能，已经生成的图谱数据会保留。'
@@ -5875,15 +6191,27 @@ window.__ModuleLoader__.load({
           h(RetrievalModelSettings, { kind: 'embedding', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
           h(RetrievalModelSettings, { kind: 'rerank', settings: vectorSettings, writable: retrievalSettingsWritable, onSaved: onRetrievalSettingsSaved }),
           h('div', { className: 'sg-settings-panel sg-pipeline' },
-            h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }), h('span', { className: 'sg-stage-value waiting' }, '轮'))),
+            h('div', { className: 'sg-stage' }, h('span', null, '每个 Block 的对话轮数'), h('span', { className: 'stp' + (turnSizeValue !== selected.blockTurnSize ? ' ch' : '') },
+              h('button', { type: 'button', 'aria-label': '减少每个 Block 的对话轮数', disabled: !Number.isFinite(turnSizeValue) || turnSizeValue <= 1, onClick: () => setTurnSize(String(Math.max(1, turnSizeValue - 1))) }, '−'),
+              h('input', { className: 'sg-number-input', type: 'number', min: '1', step: '1', value: turnSize, onChange: (event) => setTurnSize(event.target.value), 'aria-label': '每个 Block 的对话轮数' }),
+              h('button', { type: 'button', 'aria-label': '增加每个 Block 的对话轮数', onClick: () => setTurnSize(String((Number.isFinite(turnSizeValue) ? turnSizeValue : 6) + 1)) }, '+'))),
             h('p', { className: 'sg-setting-note' }, '1 轮是一次用户提问和 AI 完整回复。轮数越小，Block 生成越频繁，也会让相同长度的对话衰减得更快；已有 Block 不会重新切分，尚未封存的内容按新阈值继续处理。'),
-            h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: (event) => setLambda(event.target.value), 'aria-label': 'Block 衰减系数 λ' }))),
+            h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'stp' + (lambdaValue !== selected.blockDecayLambda ? ' ch' : '') },
+              h('button', { type: 'button', 'aria-label': '减小 Block 衰减系数 λ', disabled: !Number.isFinite(lambdaValue) || lambdaValue <= 0, onClick: () => setLambda(Math.max(0, lambdaValue - 0.05).toFixed(2)) }, '−'),
+              h('input', { className: 'sg-number-input', type: 'number', min: '0', step: '0.05', value: lambda, onChange: (event) => setLambda(event.target.value), 'aria-label': 'Block 衰减系数 λ' }),
+              h('button', { type: 'button', 'aria-label': '增大 Block 衰减系数 λ', onClick: () => setLambda(((Number.isFinite(lambdaValue) ? lambdaValue : 0.3) + 0.05).toFixed(2)) }, '+'))),
             h('p', { className: 'sg-setting-note' }, '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。'),
             showSuggestion ? h('div', { className: 'sg-setting-suggestion' }, h('span', null, '为保持按对话轮数计算的遗忘速度，建议 λ 调整为 ' + suggestedLambda.toFixed(2) + '。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setLambda(String(Number(suggestedLambda.toFixed(2)))) }, '采用建议值')) : null,
-            h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'sg-lambda-control' }, h('input', { className: 'sg-number-input', type: 'number', min: '0', max: '5', step: '0.05', value: agentWeight, onChange: (event) => setAgentWeight(event.target.value), 'aria-label': '主动记忆检索占比' }))),
+            h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'stp' + (agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1) ? ' ch' : '') },
+              h('button', { type: 'button', 'aria-label': '减小主动记忆检索占比', disabled: !Number.isFinite(agentWeightValue) || agentWeightValue <= 0, onClick: () => setAgentWeight(Math.max(0, agentWeightValue - 0.05).toFixed(2)) }, '−'),
+              h('input', { className: 'sg-number-input', type: 'number', min: '0', max: '5', step: '0.05', value: agentWeight, onChange: (event) => setAgentWeight(event.target.value), 'aria-label': '主动记忆检索占比' }),
+              h('button', { type: 'button', 'aria-label': '增大主动记忆检索占比', disabled: Number.isFinite(agentWeightValue) && agentWeightValue >= 5, onClick: () => setAgentWeight(Math.min(5, (Number.isFinite(agentWeightValue) ? agentWeightValue : 1) + 0.05).toFixed(2)) }, '+'))),
             h('p', { className: 'sg-setting-note' }, 'agent 主动记录与对话派生记忆分别独立排序后按此权重融合：1 为平权，0 为不浮现 agent 记录，更大值提升 agent 记录的排序权重。'),
             h('p', { className: 'sg-setting-note' }, '保存以上三项参数后，将应用于当前安装中的所有已有工作区，也作为新工作区的默认设置。'),
-            h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : changed ? '保存全局设置' : '全局设置已保存'))),
+            changed ? h('div', { className: 'dirty' },
+              h('span', null, [turnSizeValue !== selected.blockTurnSize, lambdaValue !== selected.blockDecayLambda, agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1)].filter(Boolean).length + ' 项未保存'),
+              h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: () => { setTurnSize(String(selected.blockTurnSize ?? 6)); setLambda(String(selected.blockDecayLambda ?? 0.3)); setAgentWeight(String(selected.agentMemoryRetrievalWeight ?? 1)) } }, '放弃'),
+              h('button', { type: 'button', className: 'sg-save-button', 'aria-label': '保存全局设置', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : '保存')) : null)),
         h('section', { className: 'sg-settings-group', 'aria-labelledby': 'sg-host-settings-title' },
           h('h3', { id: 'sg-host-settings-title', className: 'sg-settings-group-title' }, '宿主配置'),
           h('p', { className: 'sg-settings-group-copy' }, '所有工作区共用。'),
@@ -6218,8 +6546,20 @@ window.__ModuleLoader__.load({
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView, selected, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, updateSettings, savingSettings }))
 
-      return h('main', { className: 'sg-memory' + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-section': section, 'data-testid': 'stratagate-memory-ui' },
-        h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS),
+      const memoryRef = React.useRef(null)
+      const [narrowLayout, setNarrowLayout] = React.useState(false)
+      React.useEffect(() => {
+        const node = memoryRef.current
+        if (!node || typeof ResizeObserver !== 'function') return undefined
+        const observer = new ResizeObserver((entries) => {
+          const width = entries[0]?.contentRect?.width || 0
+          setNarrowLayout(width > 0 && width <= 680)
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+      }, [])
+      return h('main', { ref: memoryRef, className: 'sg-memory sg' + (narrowLayout ? ' narrow' : '') + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-section': section, 'data-testid': 'stratagate-memory-ui' },
+        h('style', null, css + previewCss + DUPLICATE_STYLES + DAILY_NOTES_CSS),
         h('header', { className: 'sg-header' },
           h('div', { className: 'sg-header-row sg-header-row-primary' },
             h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
@@ -6233,7 +6573,7 @@ window.__ModuleLoader__.load({
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
-        h('section', { key: section, className: 'sg-view', 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
+        h('section', { key: section, className: 'sg-view' + (narrowLayout ? ' narrow' : ''), 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
           h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { graphSettings: overview.graphSettings, extractionGap: selected?.longTermExtractionGap === true, key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, refresh, active: view.name === 'root' })),
           view.name === 'root' ? null : content) : content),
         h('footer', { className: 'sg-footer' }, '发现问题？ ', h('button', { type: 'button', onClick: () => { setSection('more'); setView({ name: 'support' }); setSource(null) } }, '提交反馈')))
