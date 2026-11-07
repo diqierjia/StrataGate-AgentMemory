@@ -1086,6 +1086,8 @@ describe('DSH runtime ingestion', () => {
       expect(context).not.toContain('We chose pnpm earlier.')
       expect(context).not.toContain('toolCalls:')
       expect(context).toContain(relevant.id)
+      expect(context).toContain('"status":"active"')
+      expect(context).toContain('"scope":"user"')
       expect(context).toContain('"temporal":{"status":"ongoing"}')
       expect(context).toContain('"summary":"The project package manager is pnpm."')
       expect(context).toContain(pinned.id)
@@ -1651,6 +1653,39 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
+  it('renders superseded status, successor and scope in automatic context', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-auto-context-superseded-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
+    const activeSession = {
+      ...session,
+      deriveMessages: () => [{
+        id: 'current-user', role: 'user', content: [{ type: 'text', text: 'Which database connection is current?' }],
+        source: { kind: 'user' },
+      }],
+    } as unknown as Session
+    try {
+      const memory = await (runtime as unknown as { space(s: Session): Promise<StrataGate> }).space(activeSession)
+      const block = (await memory.appendTurn({ user: 'The service used Redis.', assistant: 'Recorded.', threadId: 'history' })).sealedBlock!
+      const old = await memory.addEvent({
+        title: 'Redis connection', summary: 'The service connects to Redis.', scope: 'project',
+        sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id], temporal: { status: 'ongoing' },
+      })
+      const successor = await memory.addEvent({
+        title: 'PostgreSQL connection', summary: 'The service migrated to PostgreSQL.', scope: 'project',
+        sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id], temporal: { supersedesEventIds: [old.id] },
+      })
+
+      const context = await runtime.buildAutoContext(activeSession)
+      expect(context).toContain(old.id)
+      expect(context).toContain(`"status":"superseded"`)
+      expect(context).toContain(`"supersededBy":"${successor.id}"`)
+      expect(context).toContain(`"scope":"project"`)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('persists the retrieval assessment as an answer-to-source usage audit', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-audit-'))
     const database = join(directory, 'memory.db')
@@ -2020,6 +2055,34 @@ function sessionWithId(id: string): Session {
 }
 
 describe('DSH runtime agent memory', () => {
+  it('binds memory_remember to the current user message before the turn is ingested', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-current-source-'))
+    const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)
+    const activeSession = {
+      ...session,
+      snapshotEvents: () => turnEvents(2).slice(0, 2),
+    } as unknown as Session
+    try {
+      const memory = await (runtime as unknown as { space(s: Session): Promise<StrataGate> }).space(activeSession)
+      await memory.appendTurn({ user: 'Hello.', assistant: 'How can I help?', threadId: String(activeSession.id) }, { deferProcessing: true })
+      const recorded = await runtime.recordAgentMemory(activeSession, 'Atlas 部署到 eu-west-1。', 'decision') as Record<string, unknown>
+      const event = memory.listAgentEvents().find(({ id }) => id === recorded.eventId)!
+      expect(event.sourceMessageIds).toEqual(['dsh:session-runtime:turn:2:user'])
+      expect(memory.listOpenTail(String(activeSession.id)).map(({ id }) => id)).toContain('dsh:session-runtime:turn:2:user')
+
+      await memory.appendTurn({
+        user: 'remember pnpm 2', assistant: '已记录。', threadId: String(activeSession.id),
+        userMessageId: 'dsh:session-runtime:turn:2:user',
+      }, { deferDerivation: true })
+      expect(memory.listBlocks().flatMap(({ l5Raw }) => l5Raw).filter(({ id }) => id === 'dsh:session-runtime:turn:2:user')).toHaveLength(1)
+      expect(memory.listAgentEvents().find(({ id }) => id === recorded.eventId)!.sourceMessageIds)
+        .toEqual(['dsh:session-runtime:turn:2:user'])
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('records a long-term agent event, merges it into searchEvents, and reinforces it on use', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-runtime-'))
     const runtime = new StrataGateRuntime(agentRuntimeConfig(join(directory, 'memory.db')), fakeModels)

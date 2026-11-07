@@ -5,6 +5,7 @@ import { toUtc8Iso } from '@diqier/stratagate'
 
 interface PendingTurn {
   turn: number
+  userMessageId: string
   user: string[]
   assistant: string[]
   tools: Map<string, ToolTrace>
@@ -17,7 +18,28 @@ export interface FoldedTurn extends TurnInput {
   dshTurn: number
 }
 
-function renderBlocks(blocks: readonly ContentBlock[]): string {
+function renderAttachment(block: Extract<ContentBlock, { type: 'image' | 'file' }>): string {
+  const payload = block.type === 'image'
+    ? {
+        type: 'image',
+        ...(block.attachment.name ? { name: block.attachment.name } : {}),
+        attachmentId: String(block.attachment.attachmentId),
+        mediaType: block.attachment.mediaType,
+        bytes: block.attachment.bytes,
+        width: block.attachment.width,
+        height: block.attachment.height,
+        ...(block.attachment.originalDimensions ? { originalDimensions: block.attachment.originalDimensions } : {}),
+      }
+    : {
+        type: 'file',
+        name: block.attachment.name,
+        attachmentId: String(block.attachment.attachmentId),
+        bytes: block.attachment.bytes,
+      }
+  return `[StrataGate attachment] ${JSON.stringify(payload)}`
+}
+
+export function renderBlocks(blocks: readonly ContentBlock[]): string {
   const output: string[] = []
   for (const block of blocks) {
     switch (block.type) {
@@ -27,7 +49,8 @@ function renderBlocks(blocks: readonly ContentBlock[]): string {
       case 'reasoning':
         break
       case 'image':
-        output.push('[image]')
+      case 'file':
+        output.push(renderAttachment(block))
         break
       case 'tool-call':
         break
@@ -120,6 +143,7 @@ export class TurnFolder {
           user: pending.user.join('\n\n'),
           assistant: pending.assistant.join('\n\n') || reasonLabel(event.data.reason),
           threadId: sessionId,
+          userMessageId: pending.userMessageId,
           assistantToolCalls: [...pending.tools.values()],
           createdAt: toUtc8Iso(event.time),
           receiptId: `dsh:${sessionId}:turn:${event.data.turn}`,
@@ -139,7 +163,14 @@ export class TurnFolder {
     }
     let pending = byTurn.get(turn)
     if (!pending) {
-      pending = { turn, user: [], assistant: [], tools: new Map(), ignoredTools: new Set() }
+      pending = {
+        turn,
+        userMessageId: `dsh:${sessionId}:turn:${turn}:user`,
+        user: [],
+        assistant: [],
+        tools: new Map(),
+        ignoredTools: new Set(),
+      }
       byTurn.set(turn, pending)
     }
     return pending

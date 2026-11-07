@@ -369,6 +369,21 @@ export function formatRawTranscript(messages: readonly RawMessage[]): string {
     .join('\n\n');
 }
 
+const ATTACHMENT_REFERENCE_PREFIX = '[StrataGate attachment] ';
+
+function attachmentReferences(messages: readonly RawMessage[]): string[] {
+  return [...new Set(messages
+    .flatMap((message) => message.content.split(/\r?\n/u))
+    .filter((line) => line.startsWith(ATTACHMENT_REFERENCE_PREFIX)))];
+}
+
+/** Keep durable attachment identity visible in every rendered layer. */
+export function preserveAttachmentReferences(content: string, messages: readonly RawMessage[]): string {
+  const references = attachmentReferences(messages);
+  if (references.length === 0 || references.every((reference) => content.includes(reference))) return content;
+  return `${content}\n\nAttachments retained in source:\n${references.join('\n')}`;
+}
+
 export function estimateTokens(value: string): number {
   let tokens = 0;
   let asciiRun = 0;

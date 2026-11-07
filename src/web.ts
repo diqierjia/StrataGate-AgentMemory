@@ -18,6 +18,7 @@ import {
   memoryTopicEventFingerprint,
   memoryTopicUnfinishedJobEventIds,
   memoryWeightAt,
+  preserveAttachmentReferences,
   TOPIC_MAX_ATTEMPTS,
   safeTopicDiagnostics,
   type ElementCard,
@@ -234,9 +235,9 @@ function blockLayers(block: MemoryBlock): DisplayLayer[] {
     ])
   }
   return withLayerMetrics([
-    { level: 0, content: `${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}` },
-    { level: 1, content: block.l1Summary || block.l0Title },
-    { level: 2, content: block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary || block.l0Title },
+    { level: 0, content: preserveAttachmentReferences(`${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}`, block.l5Raw) },
+    { level: 1, content: preserveAttachmentReferences(block.l1Summary || block.l0Title, block.l5Raw) },
+    { level: 2, content: preserveAttachmentReferences(block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary || block.l0Title, block.l5Raw) },
     { level: 3, content: deterministic.l3Condensed || block.l2Keypoints.join('\n') || block.l1Summary },
     { level: 4, content: deterministic.l4Readable || deterministic.l3Condensed },
     { level: 5, content: formatRawTranscript(block.l5Raw) },

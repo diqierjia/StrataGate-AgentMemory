@@ -95,4 +95,27 @@ describe('DSH turn folding', () => {
     }, 2))
     expect(folder.accept(session, event('turn/end', { turn: 8, reason: { kind: 'completed' } }, 3))).toBeNull()
   })
+
+  it('retains durable image and file references in L5 text, including attachment-only turns', () => {
+    const folder = new TurnFolder()
+    folder.accept(session, event('turn/start', { turn: 9 }, 1))
+    folder.accept(session, event('user/message', {
+      id: 'attachment-message', role: 'user', source: { kind: 'user' }, content: [
+        { type: 'image', attachment: {
+          attachmentId: 'sha256:image' as never, mediaType: 'image/png', bytes: 123,
+          width: 640, height: 480, name: 'architecture.png',
+        } },
+        { type: 'file', attachment: {
+          attachmentId: 'sha256:file' as never, name: 'requirements.pdf', bytes: 456,
+        } },
+      ],
+    }, 2))
+    const folded = folder.accept(session, event('turn/end', { turn: 9, reason: { kind: 'completed' } }, 3))
+
+    expect(folded).toMatchObject({ userMessageId: 'dsh:session-1:turn:9:user' })
+    expect(folded?.user).toContain('architecture.png')
+    expect(folded?.user).toContain('sha256:image')
+    expect(folded?.user).toContain('requirements.pdf')
+    expect(folded?.user).toContain('sha256:file')
+  })
 })
