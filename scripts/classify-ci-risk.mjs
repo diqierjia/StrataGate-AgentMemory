@@ -13,7 +13,7 @@ const HIGH_RISK_PATTERNS = [
   /^packages\/core\/src\//,
   /^packages\/core\/package\.json$/,
   /^packages\/core\/tsconfig(?:\.build)?\.json$/,
-  /^scripts\/(?:run-dsh-compatibility|build-client|check-feedback-policy|verify-package|verify-dsh-install)\.mjs$/,
+  /^scripts\/(?:run-dsh-compatibility|dsh-cli-isolate|build-client|check-feedback-policy|verify-package|verify-dsh-install)\.mjs$/,
   /^(?:tsconfig(?:\.base)?\.json|vitest\.config\.ts|tsup\.config\.ts|cordis\.patch\.yml)$/,
   /^(?:pnpm-lock\.yaml|yarn\.lock)$/,
 ]
