@@ -95,6 +95,7 @@ const DRAIN_BASE_BACKOFF_MS = 2_000
 const DRAIN_MAX_BACKOFF_MS = 60_000
 const BACKGROUND_WORKER_INITIAL_DELAY_MS = 250
 const BACKGROUND_WORKER_INTERVAL_MS = 3_000
+const SURFACE_MAINTENANCE_MAX_ATTEMPTS = 3
 
 function graphProjectionCanRun(
   job: { status: string; attempts: number; nextRetryAt?: string | null },
@@ -346,6 +347,8 @@ interface SurfaceMaintenance {
   run?: Promise<void> | undefined
   failures: number
   checkpointLimit: number
+  capacityKey?: string
+  blockedAt?: string
 }
 
 /**
@@ -947,8 +950,21 @@ export class StrataGateRuntime {
         this.scheduleSurfaceMaintenance(surface)
       } else if (event.type === 'request/context') {
         const limit = surfaceCheckpointLimit(session)
-        if (surface.checkpointLimit !== limit) {
-          surface.checkpointLimit = limit
+        const capacityKey = surfaceCapacityKey(session)
+        const limitChanged = surface.checkpointLimit !== limit
+        const capacityChanged = surface.capacityKey !== undefined && surface.capacityKey !== capacityKey
+        surface.checkpointLimit = limit
+        surface.capacityKey = capacityKey
+        if (limitChanged || capacityChanged
+          || surface.blockedAt !== undefined && surface.blockedAt !== surfaceMaintenanceInput(surface)) {
+          this.markSurfaceDirty(session, surface.memory)
+        }
+      } else if (event.type === 'request/header') {
+        const capacityKey = surfaceCapacityKey(session)
+        const capacityChanged = surface.capacityKey !== undefined && surface.capacityKey !== capacityKey
+        surface.capacityKey = capacityKey
+        if (capacityChanged
+          || surface.blockedAt !== undefined && surface.blockedAt !== surfaceMaintenanceInput(surface)) {
           this.markSurfaceDirty(session, surface.memory)
         }
       } else if (String(event.type).startsWith('compaction/') || event.type === 'session/end-seed'
@@ -1995,13 +2011,19 @@ export class StrataGateRuntime {
   }
 
   /** Finish deferred sealing or user expansion only after the target surface is applied. */
-  private async syncPendingRetrySurface(session: Session, memory: StrataGate, userOnly = false): Promise<void> {
+  private async syncPendingRetrySurface(session: Session, memory: StrataGate, userOnly = false, force = false): Promise<void> {
+    if (!force && this.surfaceRetryBlocked(session, memory)) return
     const levels = new Map<string, BlockLevel>()
-    const completed = this.applyPendingRetrySurface(session, memory, levels, userOnly)
-    if (completed.length === 0) return
-    await this.commitSurfaceLevels(memory, levels)
-    await this.flushSurface(session)
-    this.completeSurfaceRequests(completed)
+    try {
+      const completed = this.applyPendingRetrySurface(session, memory, levels, userOnly)
+      if (completed.length === 0) return
+      await this.commitSurfaceLevels(memory, levels)
+      await this.flushSurface(session)
+      this.completeSurfaceRequests(completed)
+    } catch (error) {
+      this.recordSurfaceFailure(session, memory, error)
+      throw error
+    }
   }
 
   private applyPendingRetrySurface(
@@ -2077,6 +2099,7 @@ export class StrataGateRuntime {
   /** Read-only in the common case; render only explicit lifts or oversized checkpoints. */
   private async syncRequestSurface(session: Session, memory: StrataGate): Promise<void> {
     if (hostCompactionActive(session)) return
+    if (this.surfaceRetryBlocked(session, memory)) return
     const current = currentBlockSurfaceMessages(session)
     const limit = surfaceCheckpointLimit(session)
     const repair = new Set<string>()
@@ -2106,22 +2129,62 @@ export class StrataGateRuntime {
 
   private markSurfaceDirty(session: Session, memory: StrataGate): void {
     if (this.closed) return
+    const state = this.ensureSurfaceMaintenanceState(session, memory)
+    state.dirty = true
+    state.generation += 1
+    if (state.blockedAt !== undefined && state.blockedAt !== surfaceMaintenanceInput(state)) {
+      delete state.blockedAt
+      state.failures = 0
+    }
+    this.scheduleSurfaceMaintenance(state)
+  }
+
+  private ensureSurfaceMaintenanceState(session: Session, memory: StrataGate): SurfaceMaintenance {
     const key = String(session.id)
     let state = this.surfaceMaintenance.get(key)
     if (!state || state.session !== session || state.memory !== memory) {
       if (state?.timer) clearTimeout(state.timer)
       if (state) state.generation += 1
-      state = { session, memory, dirty: true, generation: 0, busy: hostTurnActive(session), failures: 0, checkpointLimit: surfaceCheckpointLimit(session) }
+      state = {
+        session, memory, dirty: true, generation: 0, busy: hostTurnActive(session), failures: 0,
+        checkpointLimit: surfaceCheckpointLimit(session),
+      }
       this.surfaceMaintenance.set(key, state)
     }
+    return state
+  }
+
+  private clearSurfaceFailure(session: Session, memory: StrataGate): void {
+    const state = this.surfaceMaintenance.get(String(session.id))
+    if (state?.session !== session || state.memory !== memory) return
+    delete state.blockedAt
+    state.failures = 0
+  }
+
+  private surfaceRetryBlocked(session: Session, memory: StrataGate): boolean {
+    const state = this.surfaceMaintenance.get(String(session.id))
+    if (state?.session !== session || state.memory !== memory || state.blockedAt === undefined) return false
+    if (state.blockedAt !== surfaceMaintenanceInput(state)) {
+      this.clearSurfaceFailure(session, memory)
+      return false
+    }
+    return true
+  }
+
+  private recordSurfaceFailure(session: Session, memory: StrataGate, error: unknown): void {
+    const state = this.ensureSurfaceMaintenanceState(session, memory)
     state.dirty = true
-    state.generation += 1
-    this.scheduleSurfaceMaintenance(state)
+    state.failures += 1
+    if (surfaceFailureIsPermanent(error) || state.failures >= SURFACE_MAINTENANCE_MAX_ATTEMPTS) {
+      state.blockedAt = surfaceMaintenanceInput(state)
+      if (state.timer) clearTimeout(state.timer)
+      state.timer = undefined
+    }
   }
 
   private scheduleSurfaceMaintenance(state: SurfaceMaintenance, delay = 25): void {
     if (this.closed || this.surfaceMaintenance.get(String(state.session.id)) !== state
-      || !state.dirty || state.busy || state.timer || state.run || this.surfaceAssemblyReaders.get(state.session)) return
+      || !state.dirty || state.blockedAt !== undefined || state.busy || state.timer || state.run || this.surfaceAssemblyReaders.get(state.session)) return
     state.timer = setTimeout(() => {
       state.timer = undefined
       void this.runSurfaceMaintenance(state.session)
@@ -2136,7 +2199,7 @@ export class StrataGateRuntime {
     if (state.run) return state.run
     if (state.timer) clearTimeout(state.timer)
     state.timer = undefined
-    if (!state.dirty || state.busy || this.surfaceAssemblyReaders.get(session) || hostTurnActive(session) || hostCompactionActive(session)) return
+    if (!state.dirty || state.blockedAt !== undefined || state.busy || this.surfaceAssemblyReaders.get(session) || hostTurnActive(session) || hostCompactionActive(session)) return
     const generation = state.generation
     const run = (async () => {
       // Finish only this conversation's queued ingestion, then calculate from live state.
@@ -2174,6 +2237,14 @@ export class StrataGateRuntime {
       if (error instanceof StorageConflictError) {
         // Retry against the durable head, never replay an old mutation plan.
         await state.memory.reloadFromStorage().catch((reloadError: unknown) => this.onIngestError(reloadError))
+      }
+      // A rejected operation cannot become valid by replaying it forever. Keep
+      // the work pending, but wake it only when its actual inputs have changed.
+      if (state.generation !== generation) {
+        // An older in-flight save must not suspend newly dirtied work.
+        state.failures = 0
+      } else if (surfaceFailureIsPermanent(error) || state.failures >= SURFACE_MAINTENANCE_MAX_ATTEMPTS) {
+        state.blockedAt = surfaceMaintenanceInput(state)
       }
       this.onIngestError(error)
     }).finally(() => {
@@ -3342,10 +3413,11 @@ export class StrataGateRuntime {
           if (plan.status === 'blocked') throw Object.assign(new Error(plan.message), { code: 'BLOCK_SELECTION_REJECTED' })
         }
         const result = await memory.expandBlock(id, target, 'user')
+        if (session && this.namespaceFor(session) === key) this.clearSurfaceFailure(session, memory)
         this.pendingSurfaceSync.delete(`${key}\u0000${id}`)
         this.queueSurfaceSync(key, id, 'user-expansion')
         if (session && this.namespaceFor(session) === key) {
-          await this.syncPendingRetrySurface(session, memory)
+          await this.syncPendingRetrySurface(session, memory, false, true)
         }
         return {
           ...result, surfaceLevel: memory.listBlocks().find(({ id: blockId }) => blockId === id)?.surfaceCurrentLevel,
@@ -4008,8 +4080,8 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
         end: event.seq,
         nodes: currentSurface.filter((seq) => {
           const current = session.eventAt(seq)
-          // System/developer messages are live instructions, never raw
-          // conversation owned by a memory Block.
+          // The host assembles system/developer messages inside turns too.
+          // They are live instructions, never raw conversation owned by a Block.
           if (!replaceableBlockEvent(current, block.id)) return false
           if ((current?.type === 'assistant/message' || current?.type === 'tool/result')
             && !surfaceEventBelongsToTurn(session, current, open!.turn)) return false
@@ -4049,8 +4121,8 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
   const endIndex = currentSurface.indexOf(end)
   if (startIndex < 0 || endIndex < startIndex) return null
   const range = currentSurface.slice(startIndex, endIndex + 1)
-  // A native replacement shadows the whole contiguous range between its ends.
-  // Reject the operation when that range contains another turn's content.
+  // Excluding protected nodes from the candidate list is insufficient: a
+  // native replacement shadows the WHOLE contiguous range between its ends.
   return safeBlockSurfaceRange(session, block, range) ? range : null
 }
 
@@ -4103,6 +4175,7 @@ function surfaceEventBelongsToTurn(
   return turns.size === 1 && turns.has(turn)
 }
 
+/** Shared write boundary for sealing, decay, user selection and capacity relief. */
 function safeBlockSurfaceRange(session: Session, block: MemoryBlock, seqs: readonly SessionSeq[]): boolean {
   if (seqs.length === 0) return false
   const start = session.surface.nodes.indexOf(seqs[0]!)
@@ -4134,6 +4207,21 @@ function appendBlockSurface(session: Session, block: MemoryBlock, text: string, 
   }), {
     surfaceOp: dshReplaceSurfaceOp(seqs[0]!, seqs.at(-1)!), sourceEventSeqs: seqs,
   })
+}
+
+function surfaceMaintenanceInput(state: SurfaceMaintenance): string {
+  return `${state.memory.storageRevision}:${surfaceCapacityKey(state.session)}:${state.session.surface?.nodes.join(',') ?? ''}`
+}
+
+function surfaceFailureIsPermanent(error: unknown): boolean {
+  const seen = new Set<unknown>()
+  for (let current = error; current && typeof current === 'object' && !seen.has(current);) {
+    seen.add(current)
+    const failure = current as { retryable?: unknown; message?: unknown; cause?: unknown }
+    if (failure.retryable === false || typeof failure.message === 'string' && /^surface replace:/.test(failure.message)) return true
+    current = failure.cause
+  }
+  return false
 }
 
 function checkpointLevel(text: string): BlockLevel | undefined {
