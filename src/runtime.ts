@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
-import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { openNativePath } from '@deepseek-ai/dsh-native-command'
 import { validateArgs } from '@deepseek-ai/dsh-tools'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
@@ -63,7 +63,7 @@ import type {
 } from '@diqier/stratagate'
 import type { ResolvedConfig } from './config.js'
 import { EmbeddingBridge } from './embedding.js'
-import { TurnFolder, type FoldedTurn } from './fold.js'
+import { renderBlocks, TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore, readGraphSettings, type GraphSettings } from './metadata.js'
@@ -2426,6 +2426,11 @@ export class StrataGateRuntime {
       throw new Error('StrataGate agent memory is disabled by configuration (agentMemoryEnabled=false).')
     }
     const memory = await this.space(session)
+    // memory_remember can run before the host emits turn/end, so the current
+    // user message is not in StrataGate's open tail yet. Reserve it now; the
+    // folded turn later reuses the same id when it appends the assistant side.
+    const current = currentTurnUserInput(session)
+    if (current) await memory.reserveUserMessage(current)
     const hasDecider = typeof (this.models as unknown as Record<string, unknown>).externalMemoryDecider === 'function'
     const deciderBudgetMs = Math.min(this.config.structuredTaskTimeoutMs ?? 120_000, 30_000)
     const result = await this.models.run(session, () => memory.recordAgentEvent({
@@ -3948,31 +3953,42 @@ export class StrataGateRuntime {
   }
 }
 
+function currentTurnUserInput(session: Session): { id: string; content: string; threadId: string; createdAt?: string } | null {
+  const events = session.snapshotEvents()
+  let start = -1
+  let turn: number | undefined
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type === 'turn/start') {
+      start = index
+      turn = event.data.turn
+      break
+    }
+    if (event?.type === 'turn/end' || event?.type === 'session/end-seed') return null
+  }
+  if (start < 0 || turn === undefined) return null
+  const messages = events.slice(start + 1)
+    .filter((event): event is Extract<SessionEvent, { type: 'user/message' }> =>
+      event.type === 'user/message' && event.data.source.kind === 'user')
+  const content = messages.map((event) => renderBlocks(event.data.content)).filter(Boolean).join('\n\n').trim()
+  if (!content) return null
+  const firstTime = messages[0]?.time
+  return {
+    id: `dsh:${String(session.id)}:turn:${turn}:user`,
+    content,
+    threadId: String(session.id),
+    ...(typeof firstTime === 'number' && Number.isFinite(firstTime) ? { createdAt: new Date(firstTime).toISOString() } : {}),
+  }
+}
+
 function currentUserMessage(session: Session): string {
   const messages = typeof session.deriveMessages === 'function' ? session.deriveMessages() : []
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message?.role !== 'user' || message.source.kind !== 'user') continue
-    return renderContent(message.content)
+    return renderBlocks(message.content)
   }
   return ''
-}
-
-function renderContent(content: readonly ContentBlock[]): string {
-  const output: string[] = []
-  for (const block of content) {
-    if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-      output.push(block.text.trim())
-    } else if (block.type === 'image') {
-      output.push('[image]')
-    } else {
-      const legacy = block as { type: string; content?: readonly ContentBlock[] }
-      if (legacy.type === 'tool-result' && Array.isArray(legacy.content)) {
-        output.push(renderContent(legacy.content))
-      }
-    }
-  }
-  return output.filter(Boolean).join('\n')
 }
 
 function recentTurns(messages: readonly RawMessage[], count: number): readonly RawMessage[] {
@@ -4459,6 +4475,7 @@ function compactEvent(event: EventCard, score: number): Record<string, unknown> 
     temporal: compactTemporal(event),
     ...(event.sourceBlockId !== undefined ? { sourceBlockId: event.sourceBlockId } : {}),
     status: event.status,
+    ...(event.supersededBy ? { supersededBy: event.supersededBy } : {}),
     scope: event.scope,
     criticality: event.criticality,
     ...(agentRecorded ? { source: 'agent-recorded' } : {}),
@@ -4628,9 +4645,12 @@ function renderActivatedMemory(
       id: event.id,
       title: event.title,
       summary: event.summary,
+      status: event.status,
+      supersededBy: event.supersededBy,
+      scope: event.scope,
       happenedStart: event.temporal.happenedStart,
       happenedEnd: event.temporal.happenedEnd,
-      temporal: { status: event.temporal.status },
+      temporal: event.temporal,
     })
     const cost = estimateTokens(`\nEvents:\n- ${rendered}`)
     if (tokens + cost > AUTO_MEMORY_TOKEN_BUDGET) break
