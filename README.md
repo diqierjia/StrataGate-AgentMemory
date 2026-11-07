@@ -8,7 +8,7 @@ Project source, releases, and issues are available on [GitHub](https://github.co
 
 ### Recent conversations stay detailed. Older memories grow more concise.
 
-StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent conversations stay detailed, older conversations become concise, and original records remain available when needed. Lasting information becomes Events, the knowledge graph represents current state, and the topic directory helps the agent discover what has been remembered and find its sources.
+StrataGate is a cross-session memory plugin for DeepSeek Harness. Daily notes help resume recent work, layered conversation memory preserves historical detail that can be expanded, and long-term Events and the topic directory retain important information and help locate its sources. The knowledge graph, semantic vector retrieval, and reranking can be enabled as needed.
 
 <p align="center">
   <a href="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml"><img src="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -55,33 +55,35 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Recent convers
 
 ## Why StrataGate?
 
-1. **Session memory: details fade as the conversation progresses and expand when needed.**
+1. **Daily notes carry work forward; historical conversations can be expanded.**
 
-   (1) **Recent history stays detailed; older history becomes concise.** Each conversation block has six views, L0–L5, with different levels of detail. As more conversation accumulates, older memories gradually shift from full dialogue to key facts, short summaries, and title indexes, reducing the context occupied by history. → [Layered memory](#layered-memory)
+   (1) **Daily notes help resume work.** The agent records progress, intermediate results, useful lessons from failures, blockers, and next steps by date. New sessions include notes from the three most recent dates with notes by default, reducing the need to repeat background information. → [Daily notes](#daily-notes)
 
-   (2) **Views shrink while original records remain.** Complete L5 source messages and tool records are preserved. When details need checking, the agent can expand a memory to recover the original wording and context. → [Layered memory](#layered-memory)
+   (2) **Conversation memory keeps recent detail and makes older history concise.** Each conversation block has six views, L0–L5, with different levels of detail. As more conversation accumulates, older dialogue gradually becomes key facts, short summaries, and title indexes, reducing the context occupied by history. → [Layered conversation memory](#layered-memory)
 
-   ![Session memory animation: a Block becomes concise down to L0, stays in context, and expands when needed](docs/assets/short-term-memory-explainer-en.gif)
+   (3) **Views shrink while original records remain.** Complete L5 source messages and tool records are preserved. When details need checking, the agent can expand a memory to recover the original wording and context. → [Layered conversation memory](#layered-memory)
 
-2. **Long-term memory: Events preserve history, the graph organizes current state, and the topic directory helps find relevant records.**
+   ![Conversation memory animation: a Block becomes concise down to L0, stays in context, and expands when needed](docs/assets/short-term-memory-explainer-en.gif)
 
-   (1) **Events record what happened.** Important decisions, preferences, requirements, and changes are extracted from conversations as Events. Each retains its source and distinguishes when something was mentioned from when it happened, so future sessions can retrieve and trace it. → [Event cards](#event-cards)
+2. **Long-term memory retains important information and helps trace sources and changes.**
 
-   (2) **The knowledge graph represents current state.** Historical Events provide the basis for current information and relationships about people, projects, organizations, tools, and places. New Events can supplement or supersede an earlier state while historical Events and their sources remain preserved. → [Current-state graph](#current-state-graph)
+   (1) **Events record what happened.** Important decisions, preferences, requirements, and changes become Events with scope, time, and source references. AI evaluates potential duplicates; uncertain cases can be reviewed by the user, and the processing history remains traceable. → [Event memory](#event-cards)
 
-   (3) **The topic directory shows what has been remembered.** Related Events are organized into chapters and sections around lasting subjects. The agent can browse the directory and open a topic overview to understand its background, decisions, changes, and open questions, then follow its sources to specific Events. → [Memory directory and topic overviews (Chinese)](docs/MEMORY_TOPICS.zh-CN.md)
+   (2) **The topic directory shows what has been remembered.** Related Events form chapters, sections, and source-linked overviews. The agent can browse topics before retrieving specific Events. Users can also start Dreaming, a dedicated agent that reviews and organizes the existing directory. → [Topic directory](#memory-topics)
 
-   (4) **Long-term weights decay too.** As conversations progress, memories that have not been adopted gradually lose weight, affecting their priority during retrieval and automatic recall. Their sources remain available for verification even after their weights decay. → [Weights and adoption-based reinforcement](#use-only-reinforcement)
+   (3) **The optional knowledge graph organizes current state.** When enabled, it derives current information and relationships about people, projects, tools, and other entities from Events, retaining their sources. The graph is off by default; Event cards, topics, and ordinary retrieval work independently. → [Current-state graph](#current-state-graph)
 
-   (5) **Bring memories from other AIs.** Imported content can become traceable Events and update the knowledge graph while the original imported text remains preserved. → [External memory import](#external-memory-import)
+   (4) **Retrieval can be enhanced as needed.** Default retrieval uses keyword-based and related mechanisms. Configuring an embedding model adds semantically similar Events; a separately configured reranking model can refine the order of automatic recall results.
+
+   (5) **Bring memories from other AIs.** Imported content can become traceable long-term Events while the original imported text remains preserved. → [External memory import](#external-memory-import)
 
 3. **Evidence gate: check whether retrieved evidence is sufficient before answering.**
 
-   Topic overviews help locate information; answers need verification against source Events or original records. A relevant search result may still be insufficient to answer the question. The agent assesses the evidence and, when needed, searches again or expands the sources. If it still cannot confirm the answer, it states the uncertainty. → [Evidence gate](#evidence-gate)
+   Daily notes help resume work, while topic overviews help locate information. Historical facts still need checking against source Events or original records. A relevant search result may be insufficient to answer the question. The agent assesses the evidence and searches again or expands sources when needed. If it still cannot confirm the answer, it states the uncertainty. → [Evidence gate](#evidence-gate)
 
 4. **Retrieval hits do not automatically reinforce memory.**
 
-   Search hits, automatic context injection, and topic browsing do not trigger reinforcement. In the retrieval-use workflow, Events recorded as actually used in the final answer increase the adoption count and reset the decay anchor. More adoptions mean slower future decay. Explicit memory recording can also reinforce an existing record when the information is confirmed as a duplicate. → [Weights and adoption-based reinforcement](#use-only-reinforcement)
+   Search hits, automatic context injection, and topic browsing do not trigger reinforcement. In the retrieval-use workflow, only Events recorded as actually used in the final answer increase the adoption count and reset the decay anchor. More adoptions mean slower future decay. Explicit memory recording can also reinforce an existing record when the information is confirmed as an exact duplicate of a currently valid fact. → [Weights and adoption-based reinforcement](#use-only-reinforcement)
 
 Get started: → [Quick start](#quick-start-deepseek-harness)
 
@@ -89,78 +91,97 @@ Get started: → [Quick start](#quick-start-deepseek-harness)
 
 ## Quick start: DeepSeek Harness
 
-If DeepSeek Harness is already installed, add StrataGate to the profile you use:
+Already using DeepSeek Harness? Copy this prompt to your agent:
+
+```text
+Follow https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/DSH.md to install StrataGate in my current DeepSeek Harness profile. Check version compatibility and verify that the plugin loads successfully. Let me know if a restart is required or you cannot identify the profile.
+```
+
+Or install manually (replace `web` with your profile name):
 
 ```bash
 dsh plugin --profile web add stratagate-dsh
 ```
 
-DSH compatibility is `0.1.2-rc.1 || >=0.1.5-rc.1 <0.3.0-0`. This includes the complete `0.2.x` line and its prereleases. DSH `0.3.x` is not supported until its host interfaces have been verified.
+Restart the profile to begin automatically capturing conversations and organizing memories. View them under **DSH Settings → StrataGate-AgentMemory**.
 
-Restart that profile, then keep using DSH normally. StrataGate will capture completed main-agent turns, build searchable memory in the background, and expose its Memory UI under **DSH Settings → StrataGate-AgentMemory**.
-
-By default, the database is stored at:
-
-```text
-DSH_HOME/stratagate/memory.db
-```
-
-Removing the plugin does not delete the database. For screenshots, configuration, memory tools, and the exact automatic-capture rules, see the [DeepSeek Harness plugin guide](docs/DSH.md).
-
-The command uses the `web` profile; replace `web` if you use another profile. Developers can go directly to [Development and documentation](#code-entry-points).
+See the [plugin guide](docs/DSH.md) for configuration, supported versions, and troubleshooting.
 
 <a id="how-stratagate-works"></a>
 
 ## How it works
 
-![Figure 1: StrataGate workflow—Blocks, Events, graph and topic views, source retrieval, and evidence assessment](docs/assets/stratagate-memory-workflow-en-v030.png)
+![Figure 1: StrataGate workflow—memory formation, default context, on-demand retrieval, evidence assessment, and recorded use](docs/assets/stratagate-memory-workflow-en-v2.png)
 
-1. **Save conversations.** Several consecutive turns form a memory Block, stored as six views ranging from an index to the original records. Older Blocks display more concise views as the conversation progresses and can expand when details are needed.
-2. **Organize lasting information.** Facts, decisions, preferences, and requirements with future value become Events with time, scope, and source references. The graph organizes current state, while the topic directory and overviews organize related Events into chapters and sections.
-3. **Recall when answering.** The plugin supplies the active conversation, any configured persistent Profile, a small set of relevant memories, and a concise topic directory. When more information is needed, the agent can search Events, the graph, or original records directly, or browse topics and open an overview before retrieving source Events.
-4. **Assess evidence and record actual use.** The agent checks whether explicitly retrieved evidence is sufficient. It searches or expands further when needed, answers using sufficient evidence, and records the Events actually adopted to update their long-term weights.
+StrataGate preserves conversation sources while organizing recent work and lasting information. When answering, the agent uses the available context first and retrieves more detail when needed.
 
-Automatic recall includes at most **4 Events and 4 graph nodes** within approximately **900 tokens**. The topic directory has a separate budget of approximately **400 tokens**, with category and pagination entries for larger directories. The persistent Profile, layered Blocks, and unsealed turns are supplied separately and are outside those two budgets.
+1. **Save conversations and preserve the originals.** Completed turns form memory Blocks, each stored as six views, L0–L5, with different levels of detail. Older Blocks display more concise views by default and can be expanded when needed; complete original records remain preserved.
+2. **Maintain daily notes to resume recent work.** The agent records progress, intermediate results, useful lessons from failures, blockers, and next steps as needed, with one Markdown file per day in each memory space. New sessions include notes from the three most recent dates with notes by default, helping continue earlier work.
+3. **Organize lasting information and provide ways to find it.** Facts, decisions, preferences, and requirements with future value become Events with time, scope, and source references. The topic directory organizes related Events into chapters, sections, and overviews. When the knowledge graph is enabled, it also derives current state and relationships from Events.
+4. **Use available context and retrieve detail as needed.** The plugin supplies the current conversation, any configured persistent Profile, recent notes, a small set of relevant memories, and a concise topic directory. If that information is sufficient, the agent answers directly. Otherwise, it searches Events or original records, or browses topics and follows their sources. With the graph enabled, it can also search entities and relationships.
+5. **Check evidence and record actual use.** The agent assesses whether explicitly retrieved evidence is sufficient, searches further if needed, and answers using sufficient evidence. It records the Events actually used to update memory weights. Searching, browsing the directory, or reading daily notes does not by itself trigger reinforcement.
 
-The directory and overviews are built from existing Events in background batches. Reading an existing directory or overview does not itself call a model, create an evidence batch, or reinforce memory. → [Memory directory and topic overviews (Chinese)](docs/MEMORY_TOPICS.zh-CN.md)
+Automatic recall includes at most **4 Events** and, when the graph is enabled, up to **4 graph nodes**, sharing a budget of approximately **900 tokens**. The topic directory has a separate budget of approximately **400 tokens**. Daily notes, the persistent Profile, layered conversation memory, and unsealed turns are supplied separately.
 
 ## Core design
 
-| Mechanism | What changes | What remains |
+Each type of memory serves a different purpose:
+
+| Component | What it stores | Main purpose |
 | --- | --- | --- |
-| Session memory simplification | Which L0–L5 view an older Block displays by default | Original L5 conversations and tool records |
-| Long-term weight decay | An Event's priority in later recall | Event history and its sources |
+| **Daily notes** | Recent progress, results, blockers, and next steps | Resume work in a new session |
+| **Conversation memory: Block** | Six views of the same conversation, from index to original records | Reduce default history while keeping detail recoverable |
+| **Event memory: Event** | Useful lasting information with time, scope, and sources | Find facts, decisions, and historical changes |
+| **Topic directory: Topic** | Chapters, sections, and source-linked overviews of related Events | Find specific memories from a vague recollection |
+| **Knowledge graph: Graph (optional)** | Current state and entity relationships derived from Events | Query current information and connections |
+| **Persistent Profile** | User information relevant to every conversation | Supply configured preferences such as language and form of address |
 
-Both follow conversation progress: session memory decay uses ready-Block distance, while long-term decay uses turn distance. Elapsed days alone do not trigger either form of decay.
+The agent maintains daily notes, the graph and topics are derived from Events, and the Profile is stored separately. Conversation simplification and Event weight decay follow conversation progress rather than elapsed calendar days.
 
-### Short-term memory: recent daily notes
+<a id="daily-notes"></a>
 
-The Agent maintains its own working notes: progress, stage results, useful failures, blockers, and next steps. Each memory namespace has one Markdown file per day at `<database directory>/daily/<safe namespace encoding>/YYYY-MM-DD.md` (currently `ns-` followed by the lowercase SHA-256 hash of the namespace). Notes from the three most recent dates with entries are injected into new sessions. The Short-term memory page provides read-only access to recent and older notes. Set `dailyNotesEnabled: false` to stop writing and injection while retaining existing files.
+### 1. Short-term memory: resume work with daily notes
+
+The agent writes daily notes as needed to record progress, intermediate results, useful lessons from failures, blockers, and next steps. Each memory space stores one Markdown file per day, helping new sessions understand where work stopped and what comes next.
+
+For example, a project note might contain:
+
+```text
+Project X: dependency migration
+
+Completed: switched the project to pnpm.
+Pending: verify whether CI passes after migration.
+Next: run CI and check build and test results.
+```
+
+**New sessions reference recent notes by default.** Notes from the three most recent dates with notes are included by default; this number can be set to 1–30. Older notes remain searchable by date or keyword. Each session fixes a note snapshot when first loaded. Later writes do not repeatedly change that context, and the latest content can be read again when needed.
+
+**Notes help resume work; historical facts remain verifiable.** The agent maintains the notes, which are not complete conversation records. To verify a decision, date, or reason, retrieve Events and original messages. Reading notes does not reinforce memory.
+
+View notes under **DSH Settings → StrataGate-AgentMemory → Short-term memory**. Disabling daily notes stops writes and automatic inclusion while preserving existing files.
 
 <a id="layered-memory"></a>
 
-### 1. Session memory: gradually condense older conversations and expand them when needed
+### 2. Conversation memory: condense older dialogue and recover detail when needed
 
-Recent discussions usually need their full detail. Older conversations can remain in context as concise views. StrataGate stores several levels of detail for the same conversation block and gradually reduces what older Blocks display by default as more conversation accumulates.
+Daily notes summarize recent work, while conversation memory preserves the original discussion. StrataGate stores several levels of detail for the same conversation and gradually reduces the history included by default as more conversation accumulates.
 
-![Figure 2: Session memory—L0–L5 views, display decay, and on-demand expansion](docs/assets/stratagate-short-term-memory-en.png)
+![Figure 2: Conversation memory—L0–L5 views, display simplification, preview, and applying a selected level](docs/assets/stratagate-conversation-memory-en.png)
 
 **One conversation block, six levels of detail.**
 
-The DeepSeek Harness plugin seals a Block every **6 complete turns** by default. A turn consists of a user question and the assistant's complete response. The Block size is configurable; the core-library default is 12 turns. Content below the boundary remains in the current conversation.
-
-Each fully processed Block contains these views:
+The DeepSeek Harness plugin seals a memory Block every **6 complete turns** by default. A turn consists of a user question and the assistant's complete response. The Block size is configurable; content below the boundary remains in the current conversation.
 
 | Level | Contents | Primary use |
 | --- | --- | --- |
-| L0 | Title and tags | Identify a piece of history with minimal context |
-| L1 | Short summary | Understand the discussion's topic |
-| L2 | Key facts | Review decisions, constraints, plans, and outcomes |
-| L3 | Deterministically condensed dialogue | Remove standalone fillers from a fixed allowlist; keep only the first duplicate long or code-like paragraph; retain tool names and result summaries |
-| L4 | Near-verbatim dialogue without internal messages | Remove system messages; only trim outer whitespace and add role labels to user and assistant text; retain names and summaries for recognized tool records |
-| L5 | Source messages and tool records | Verify provenance and specific details |
+| **L0** | Title and tags | Identify a piece of history |
+| **L1** | Short summary | Understand the discussion's topic |
+| **L2** | Key facts | Review decisions, constraints, plans, and outcomes |
+| **L3** | Dialogue condensed by fixed rules | Remove standalone fillers and repeated long text; compact tool records |
+| **L4** | Readable, near-verbatim dialogue | Preserve user and assistant wording; compact recognized tool records |
+| **L5** | Source messages and tool records | Verify original wording, complete context, and tool results |
 
-The model summarizes L0–L2. Fixed rules generate L3/L4: L3 removes standalone fillers and repeated long content, while L4 stays near-verbatim; both compact recognized tool records. Session memory decay advances with subsequent ready Blocks, not elapsed days.
+The model summarizes L0–L2; fixed rules generate L3/L4. L3 removes further redundancy, while L4 stays close to the original wording. **None of these views overwrites the L5 source records.**
 
 <details>
 <summary>Exact pruning rules, decay formula, and level thresholds</summary>
@@ -172,8 +193,6 @@ The model produces L0–L2 summaries. L3 and L4 do not use model paraphrasing; c
 - **Length guard:** If generated L4 would be longer than L5, L5 is used instead. If L3 would be longer than L4, L4 is used instead, preserving `L3 ≤ L4 ≤ L5`.
 
 Source records are saved first, followed by summarization and Event processing. Only a fully processed, ready Block can replace its corresponding native history and participate in decay.
-
-**As more conversation accumulates, older Blocks default to less detail.**
 
 Display changes follow exponential decay:
 
@@ -198,98 +217,123 @@ The figure illustrates the trend. Actual changes depend on both the decay coeffi
 
 </details>
 
-**Expand again when details are needed.**
+**As more conversation accumulates, older Blocks default to less detail.**
 
-Suppose an older conversation currently shows only:
+Conversation memory becomes concise according to the number of subsequent ready Blocks, not elapsed calendar days. The decay setting controls how long detailed views remain and can be adjusted in settings.
 
-> Discussed the project's technical approach and near-term plans.
+**The agent can expand sources, and users can choose a level manually.**
 
-If the user asks why pnpm was chosen, the agent can expand key facts, condensed dialogue, or the complete source records to find the original reason.
+For example, an older conversation currently shows only “Discussed the project's technical approach.” If the user asks why pnpm was originally chosen, the agent can read more detailed dialogue or the original records to find the reason.
 
-Expansion can proceed one level at a time or jump directly to a requested level. The selected level and current Block position become the new decay anchor. As subsequent conversation accumulates, the view gradually becomes concise again.
+The layered-content preview is for viewing only. Choosing an action such as “Let the assistant reference L4” attempts to apply that content to the conversation. The interface distinguishes an applied choice, a pending choice, and one that cannot be applied.
 
-Older conversations can therefore remain lightweight during ordinary use while retaining recoverable detail. **L0–L4 are derived views of the source and never overwrite L5.**
+A user's manually chosen level takes priority over automatic compression and the agent's evidence reads. If context capacity is insufficient, the system first tries to condense other automatically managed history while preserving other manual choices; if that is still insufficient, it explains why. A manual choice resets the decay anchor, and the view can gradually become concise again as subsequent conversation accumulates.
 
 <a id="event-cards"></a>
 
-### 2. Long-term memory: Events preserve history, the graph organizes current state, and topics help find relevant records
+### 3. Long-term memory: retain important information and trace its sources and changes
 
-Session memory retains a discussion's context. Long-term memory organizes information with future value. The example below shows a project switching from npm to pnpm and the three views of that change:
+Long-term memory organizes information with future value into Events and provides a topic directory to help find it. The optional knowledge graph organizes current state and relationships. The persistent Profile is stored separately and supplies configured user information in each conversation.
 
-![Figure 3: Long-term memory—Events preserve the choice history, the graph shows pnpm in use with CI verification pending, and topics organize context with source links](docs/assets/stratagate-long-term-memory-views-en.png)
+![Figure 3: Long-term memory—Event history, Topic sources and Dreaming, and the optional Graph view of current state](docs/assets/stratagate-long-term-memory-views-en-v2.png)
 
-**Events record what happened, the graph organizes current state, and topics provide context and navigation.** Both the graph and topics are derived from existing Events. Specific claims still need verification against source Events or original records. The figure uses sample data.
+The figure uses sample data. Its graph view illustrates the functionality when enabled.
 
-**Events record what happened, with time and source references.**
+#### 3.1 Event memory: retain information with future value
 
-A Block can produce multiple Events or contain no information that needs extraction. Each Event retains its content, scope, source Block and messages, and any temporal information that can be established.
+Important facts, decisions, preferences, requirements, and changes can be saved as Events. Each Event retains its content, scope, source messages, and any temporal information that can be established. A Block can produce multiple Events or contain nothing that needs extraction.
 
 | Time | Meaning |
 | --- | --- |
 | Mention time | When the conversation referred to the event |
 | Occurrence time | When the event happened or is planned to happen |
 
-If a user says “Finish the prototype next week” on May 6, May 6 is the mention date, while “next week” describes the planned completion time. The record retains its planned status and cannot serve as evidence that the prototype is complete. Uncertain dates retain their original wording and uncertainty.
+If a user says “Finish the prototype next week” on May 6, May 6 is the mention date, while “next week” describes the planned completion time. This record cannot serve as evidence that the prototype is complete. Uncertain dates retain their original wording and uncertainty.
 
-**The updated extractor pays closer attention to useful user information.**
+**Retain useful information rather than recording every execution step.** Explicit requirements, corrections, changed decisions, confirmed causes, platform limitations, failure conditions, and meaningful outcomes may be worth retaining. Routine file reads, tool calls, and repeated tests do not each become Events merely because they occurred.
 
-Explicit requirements, corrections, evaluations, and changed decisions can become Event candidates when they have independent future value. Routine file reads, tool calls, and repeated tests are not recorded one by one merely because they occurred. Confirmed causes, platform limitations, failure conditions, and meaningful outcomes can still be retained.
+Records also need an appropriate scope. For example, “Align the arrows in this image” belongs to the current task and must not automatically become a permanent aesthetic preference. The agent can also use the active-memory tool to save information worth recalling later, without waiting for a Block to seal.
 
-Extraction must specify scope: a request for one answer stays session-scoped, project requirements belong to the project, and stable user information or explicit lasting guidance can use user scope. For example, “Align the arrows in this image” must not automatically become a permanent aesthetic preference. Missing or invalid scope triggers bounded retries; if no valid result is obtained, that extraction result is not written.
+See the [Event extraction guide (Chinese)](docs/event-extractor.md) for detailed rules.
 
-These rules apply to normal extraction after upgrading. They do not replay old conversations or rewrite historical Events. See the [Event extraction guide (Chinese)](docs/event-extractor.md) for the detailed rules.
+#### 3.2 Memory updates: distinguish additions, changes, conflicts, and duplicates
 
-**New Events supplement, supersede, or flag conflicts while history remains traceable.**
+New information can lead to different updates:
 
-When a project first chooses npm and later switches to pnpm, the earlier decision remains in history and the new Event updates the current choice. “Post-migration CI verification is pending” adds an open question without changing the package manager. Contradictory statements whose validity cannot be resolved retain a conflict for later verification.
+| New information | How to interpret it |
+| --- | --- |
+| “The project switched from npm to pnpm” | Update the current choice while retaining the earlier decision and its sources |
+| “Post-migration CI verification is pending” | Add an open question, not a claim that tests have passed |
+| Two statements conflict and their validity is unresolved | Retain the conflict for further verification |
+| Several records may describe the same event | Check their complete contents and sources before deciding whether to merge |
 
-New Events do not overwrite earlier content or sources. Validity and relationships can change with new evidence, making it possible to explain what used to be true and what changed.
+**Similarity does not establish duplication, and later progress does not make earlier records useless.** After code discovers potential duplicates, AI evaluates both records and their sources. Clearly distinct facts can remain separate; uncertain or unfinished cases are presented for user review.
+
+Users can inspect both sources, edit a merged draft, keep either record, or keep both. Processing history and an undo entry point help trace changes before and after organization.
 
 <a id="current-state-graph"></a>
 
-**The knowledge graph organizes current information and relationships from Events.**
+#### 3.3 Knowledge graph: explore current state and relationships when needed
 
-Nodes represent people, projects, organizations, tools, and places. Relationships represent connections such as “uses,” “participates in,” and “depends on.” Attributes and relationships retain their source Events. In the example:
+The knowledge graph derives people, projects, organizations, tools, places, and relationships such as “uses,” “participates in,” and “depends on” from Events. Node attributes and relationships retain their sources, helping answer what is currently true and how entities connect.
 
-- a question about what the project uses can start with the current graph;
-- a question about when it changed can inspect the change Event;
-- a question about why it changed can expand the Event and check the original discussion.
+In the example, “the project uses pnpm” represents the current choice, while “CI verification pending” represents an unconfirmed result. The state changes only when new source evidence confirms it.
 
-Graph state must have source support. In the figure, “uses pnpm” comes from Event ② and “CI verification pending” comes from Event ③. Pending verification does not mean the checks have passed; new evidence must confirm the outcome before the state changes. Failed graph updates can be retried separately while saved Events and original records remain searchable.
+**The graph is off by default; other memory features remain available.** Enabling it adds model calls to organize entities and relationships. Use **More → Advanced settings → Memory configuration → Enable knowledge graph**. If historical Events need backfilling, the interface shows the amount of work for confirmation before starting.
+
+Disabling the graph stops its processing, queries, and automatic recall while preserving existing graph data and sources. Event cards, topics, ordinary retrieval, and the persistent Profile work independently.
 
 <a id="memory-topics"></a>
 
-**The topic directory helps the agent discover available memories and find their sources.**
+#### 3.4 Topic directory: find specific memories from a vague recollection
 
-With clear keywords, the agent can search directly. With only a vague recollection, it can browse the directory first. A Topic is a lasting chapter, such as “Project X” in the figure. Sections hold related categories, such as “Dependencies and build.” Individual versions, bugs, and progress updates sit within sections so each change does not create another chapter.
+With clear keywords, search directly. With only a vague recollection of an earlier discussion, browse the topic directory first.
 
-The directory provides topic names and entry points. On-demand overviews organize background, progress, decisions, changes, and open questions, with Event sources. Content with the same section title is grouped together, and existing chapter and section numbers are kept stable where possible as information is added.
+A Topic represents a lasting subject such as “Project X,” with sections for related matters such as “Dependencies and build.” On-demand overviews organize background, progress, decisions, changes, and open questions, with links to source Events.
 
-For “Where did we leave the project's technical plan?”, the agent can find the topic, read its overview, then retrieve source Events to verify agreed choices, subsequent changes, and outstanding questions.
+For “Where did we leave the project's technical plan?”, the agent can find the topic, read its overview, then retrieve specific Events to verify agreed choices and outstanding decisions.
 
-**Overviews guide navigation; source records supply evidence for answers.** Directory and overview reads create no evidence batch and do not reinforce memory. To rely on a fact, the agent retrieves Events or expands sources and assesses the evidence. Ordinary Event, graph, and raw-record retrieval remains available when topics have not yet been organized.
+**Dreaming helps organize an existing directory.** Users can start a dedicated agent from the directory page to review existing Events and overviews and adjust chapters, sections, Event membership, and overview content. Its progress can be viewed, paused, resumed, or terminated; saved changes remain preserved.
 
-See [Memory directory and topic integration (Chinese)](docs/MEMORY_TOPICS.zh-CN.md) for tools and background maintenance.
+Dreaming organizes the directory and overviews without rewriting original Event facts or reinforcing memory through organization or reading. **The directory helps locate information; specific facts still need checking against their sources.**
 
 <a id="persistent-profile"></a>
 
-**Persistent Profile, Event memory, and current requests serve different purposes.**
+#### 3.5 Persistent Profile: user information needed in every conversation
+
+The persistent Profile stores user information that should remain available, separately from Events retrieved by relevance and requests that apply only to the current answer:
 
 | User statement | Where it belongs | When it is used |
 | --- | --- | --- |
-| “Use Chinese by default from now on” | Persistent Profile | Automatically supplied across future sessions after being set |
+| “Use Chinese by default from now on” | Persistent Profile | Automatically supplied across sessions after being set |
 | “This project has switched to pnpm” | Event memory | Recalled or retrieved for relevant questions |
-| “Keep this answer brief” | Current conversation | Applies to this answer without requiring long-term storage |
+| “Keep this answer brief” | Current conversation | Applies to this answer |
 
-The word “remember” alone does not determine where information belongs. Explicit Profile update requests can be applied directly. Inferred Profile changes require the agent to state the proposed field and value and obtain user consent. Information worth recalling in relevant situations can also be recorded with the active-memory tool without waiting for a Block to seal.
+The word “remember” alone does not determine where information belongs. Explicit user requests to change the Profile can be applied directly. Inferred Profile changes require the agent to state the proposed field and value and obtain user consent.
 
-Location fields distinguish the default location, usual city of residence, and current city. For someone who lives in Harbin but is visiting Beijing, a weather question uses an explicitly specified task location first; otherwise it uses the current city, then the default location. Travel does not automatically overwrite residence, and the current city persists until updated or cleared. See the [plugin guide](docs/DSH.md).
+See the [plugin guide](docs/DSH.md) for Profile fields, location selection, and settings.
 
 <a id="evidence-gate"></a>
 
-### 3. Evidence gate: check whether retrieved results can answer the actual question
+### 4. Retrieval and the evidence gate: find relevant information, then check whether it answers the question
 
-After locating relevant memories, the agent checks whether they support the answer: what is established, what is missing, and whether to answer or search further. Retrieval rank and memory weight are not measures of factual accuracy.
+When the available context is sufficient, the agent can answer directly. When historical information is needed, it searches Events or original conversations, or browses the topic directory first. With the knowledge graph enabled, it can also search entities and relationships.
+
+**Retrieval can be enhanced as needed.**
+
+| Method | Purpose |
+| --- | --- |
+| Default retrieval | Find relevant records using keywords and related signals |
+| Vector retrieval (optional) | Add semantically similar Events even when their wording differs |
+| Reranking (optional) | Reorder automatic-recall candidates so more relevant memories enter context first |
+
+Vector retrieval and reranking are configured separately and remain off when unconfigured. Reranking applies only to automatic recall and falls back to the original order on timeout or error. **A high rank, semantic similarity, or high memory weight does not establish factual accuracy or sufficient evidence for the current question.**
+
+**An empty result does not prove that something was never recorded.**
+
+Empty results may reflect the selected memory scope, keywords, or filters. The agent should adjust its search to the question rather than conclude “you never said that” from a single empty result. Retrieval errors should also be reported as such.
+
+**The evidence gate checks whether the information answers the question.**
 
 For “Why did we originally switch to pnpm?”:
 
@@ -297,13 +341,11 @@ For “Why did we originally switch to pnpm?”:
 | --- | --- | --- |
 | Locate the topic | An overview of “Project technology choices” mentions a package-manager change | Follow the sources to specific Events |
 | Retrieve the Event | “The project switched from npm to pnpm” | The change is established but its reason is missing; expand the source |
-| Check the original text | Example: “Installation is faster, and it better fits our multi-package structure” | Verify the project and time, then explain the reason using this evidence |
+| Check the original text | Example: “Installation is faster, and it better fits our multi-package structure” | Verify the project and time, then explain the reason from the source |
 
-The quote is an illustrative example. If the sources do not explain the reason, the agent should state that it cannot confirm it, rather than infer the historical decision from pnpm's general advantages.
+The quote is an illustrative example. If the sources do not explain the reason, the agent should state that it cannot confirm it rather than infer the historical decision from pnpm's general advantages.
 
-The model assesses sufficiency; code checks source references and retrieval constraints. Topic overviews supply navigation clues, while actual adoption must use assessed retrieval evidence. If the existing context is sufficient, additional searches are unnecessary.
-
-Explicit retrieval batches must complete assessment and usage recording before the final answer; unused batches are closed with an empty usage record. If this is omitted, the plugin requests completion first, then a complete user-facing answer, so internal status does not become the final reply. The model can still misjudge evidence; uncertainty should remain explicit when verification is unavailable.
+The model assesses sufficiency; code checks source references and the retrieval protocol. Explicit retrieval results must complete assessment and usage recording, including closing out results that were not used. Insufficient evidence calls for further retrieval; uncertainty should remain explicit when verification is unavailable.
 
 <details>
 <summary>Evidence assessment fields and protocol checks</summary>
@@ -322,33 +364,29 @@ References must belong to the selected retrieval batch. Accepting `sufficient` r
 
 <a id="use-only-reinforcement"></a>
 
-### 4. Retrieval hits do not automatically reinforce memory: repeated adoption means slower future decay
+### 5. Memory reinforcement: retrieval does not reinforce; recorded adoption updates weights
 
-Long-term memories also decay as conversations progress. Here, the changing quantity is an Event's weight, which participates in later recall and ranking. Unlike a session memory Block, an Event does not move through L0–L5 display levels as its weight decays.
+An Event's weight participates in later recall and ranking. Without adoption, it gradually decreases as conversation turns accumulate, while the Event and its sources remain preserved. This differs from a conversation Block changing its L0–L5 display level.
 
 ![Figure 4: Long-term memory weights—natural decay, retrieval without reinforcement, and adoption-based reinforcement](docs/assets/stratagate-long-term-weight-en.png)
 
-An Event not used in answers gradually loses weight as conversation turns accumulate. This can lower its recall priority while its historical record remains available.
+**Retrieval or display alone does not trigger reinforcement.**
 
-**Retrieval does not trigger reinforcement.**
+Search hits, automatic context inclusion, directory browsing, overview expansion, and daily-note reads do not increase adoption counts or reset decay anchors merely because content appears.
 
-A search hit only establishes possible relevance. The system may record when a memory was retrieved, but retrieval does not increase its adoption count or reset its decay anchor.
+**Events actually used in the answer receive that adoption's reinforcement.**
 
-Automatic context injection, directory browsing, and overview expansion do not reinforce memories merely by displaying them. This prevents a memory from continually gaining weight just because it happened to rank highly and then appeared repeatedly.
+After choosing evidence for the final answer, the agent records its use. Code checks the retrieval batch and assessment result, then increases the corresponding Events' adoption counts and updates their decay anchors while preventing the same operation from being applied twice. Unused results receive no reinforcement from that operation.
 
-**Recorded adoption after retrieval updates weights.**
+More adoptions mean slower future decay, allowing memories that repeatedly help answer questions to retain higher recall priority.
 
-After selecting evidence for the final answer, the agent submits a usage receipt. Validated Event selections increase their adoption counts and move their decay anchors to the current turn. An ordinary active Event without an additional weight cap returns to weight 1.
+**Confirmed duplicates during active-memory recording can also reinforce existing facts.**
 
-As the adoption count increases, the decay coefficient decreases. The Event retains more weight over the same number of subsequent turns, so memories that repeatedly help answers decay more slowly.
+When the active-memory tool saves information, a currently valid fact whose normalized full text matches exactly can directly reinforce an existing record. Other similar content requires further judgment to add, merge, supersede, flag a conflict, or ignore; textual similarity alone does not directly trigger reinforcement.
 
-Adoption is based on the agent's submitted evidence selection. Code checks that the evidence belongs to the corresponding batch and has passed a sufficient assessment. Receipts prevent the same operation from being applied twice. Unused results receive no reinforcement from that selection.
+Duplicate-card organization also differs from answer adoption: a merge can preserve both records' existing adoption information, but does not count the organization operation as a new answer adoption.
 
-**Recording duplicate information can also reinforce an existing memory.**
-
-When `memory_remember` records information, a confirmed exact or near duplicate of an existing agent-recorded memory can reinforce that Event instead of creating another card. This is duplicate handling during a write, distinct from a search hit.
-
-**Different criticality levels have different minimum weights.**
+**Different memory categories retain different minimum weights.**
 
 | Memory category | Default minimum weight |
 | --- | ---: |
@@ -357,9 +395,9 @@ When `memory_remember` records information, a confirmed exact or near duplicate 
 | Identity information | 0.9 |
 | Safety information | 1.0 |
 
-Pinned memories have an effective weight of 1. Superseded Events normally receive a low weight cap so older states do not retain excessive priority.
+Pinned memories have an effective weight of 1. Superseded Events normally receive a low weight cap, reducing the priority of older states.
 
-These weights express a memory-management policy, not factual accuracy. Even high-weight information must be assessed against the current question, current state, and original source.
+These weights manage recall priority, not factual accuracy. Information that needs verification should still be checked against current state and its sources.
 
 <details>
 <summary>Long-term weight formula and counters</summary>
@@ -382,6 +420,37 @@ Long-term decay also uses conversation turns rather than elapsed wall-clock time
 
 </details>
 
+<a id="model-configuration"></a>
+
+## Model configuration and upgrades
+
+**Chat and memory processing can use different models.**
+
+| Model purpose | What it handles | How to select it |
+| --- | --- | --- |
+| Chat model | Conversations and answers | Select in DSH |
+| Memory-processing model | Conversation compression, Event extraction, topic organization, and Dreaming | Follow the chat model or specify a separate model |
+| Embedding model (optional) | Find semantically related Events | Configure separately |
+| Reranking model (optional) | Reorder automatic-recall candidates | Configure separately; usable independently of vector retrieval |
+
+Under **More → Advanced settings → Host configuration → Memory-processing model**, choose to follow the chat model or specify a separate model. Saving applies the choice to subsequent memory-processing requests without changing the main chat model. Requests already running continue to completion.
+
+The memory-processing model uses providers and models already configured in DSH. A model with tool-calling support and sufficient context capacity is recommended. If the specified model is unavailable, the task retains its failure state rather than automatically switching to the main chat model.
+
+**Enable vector retrieval and reranking separately.**
+
+In advanced settings, enter each service's API URL, key, and model, then save. A service is enabled only when its configuration is complete; clear its URL and save to disable it.
+
+The embedding model supplements semantic matching, while the reranking model refines automatic-recall order. Neither replaces Event sources or the evidence gate's assessment.
+
+When enabled, the search text and Event titles and summaries (candidate Event content for reranking) are sent to the selected service provider and may incur API charges.
+
+**Restart the corresponding DSH profile after upgrading.**
+
+The current version covers DSH **0.2.x**, including prereleases, and retains previously supported older hosts. DSH **0.3.x** is not yet supported. See the [plugin guide](docs/DSH.md) for the complete version range, older-host repairs, and recovery procedures.
+
+Conversation sources and long-term memories are stored in local SQLite, while daily notes are separate Markdown files. Uninstalling the plugin does not automatically delete this data.
+
 <a id="external-memory-import"></a>
 
 ## Import memory from another AI
@@ -392,24 +461,13 @@ The DSH UI previews the import. Duplicates can be ignored; changes can add, merg
 
 See the [external-memory import guide](docs/EXTERNAL_MEMORY_IMPORT.zh-CN.md) for formats, prompts, and integration examples.
 
-## A real retrieval path
-
-One LoCoMo question asks when Caroline gave a speech at a school:
-
-1. Event search finds the “school speech” card, but it lacks the date.
-2. The agent judges the evidence partial, identifies the missing date, and searches source messages.
-3. It finds a message dated 2023-06-09 containing “last week.”
-4. The message timestamp gives context for “last week,” providing enough temporal evidence to answer.
-
-The Event helps locate the discussion, and the original message and timestamp support verification. The evidence gate requires the agent to identify the gap and keep checking.
-
 <a id="experimental-results"></a>
 
 ## Evaluation results and limits
 
 The repository's published R8 comparison uses the LoCoMo conversation sample `conv-26`, containing **419 messages, 35 sessions, and 152 questions** across categories 1–4.
 
-**The scores below describe the published R8 experiment, not a dedicated evaluation of the 0.3.0 topic directory or the 0.3.2 Event extractor.** They do not establish those updates' accuracy, cost changes, or independent benefits.
+**The following results come from the published R8 evaluation. See the [evaluation document](docs/EVALUATION.md) for the tested version, models, and retrieval configuration.**
 
 Each system generated answers, and each answer received **10 independent Judge evaluations**. These are repeated evaluations, not ten complete system runs.
 
@@ -424,7 +482,7 @@ Each system generated answers, and each answer received **10 independent Judge e
 
 Both systems used the same questions, order, answer model, Judge model, evaluation prompt, parser, and evaluation count, and each rebuilt its memory. Memory extraction, retrieval implementation, embedding use, and answer context differed, so this compares two complete system configurations.
 
-These results cover only `conv-26`, not the full LoCoMo dataset. They do not isolate the benefits of session memory decay, the knowledge graph, or the evidence gate. Individual contributions still require ablation experiments.
+These results cover only `conv-26`, not the full LoCoMo dataset. They do not isolate the benefits of conversation-memory display decay, the knowledge graph, or the evidence gate. Individual contributions still require ablation experiments.
 
 See the [evaluation document](docs/EVALUATION.md) for the full protocol, per-question results, and Judge variation, and the [machine-readable results](benchmarks/locomo-conv26-r8-final.json) for summary data.
 
@@ -439,24 +497,6 @@ In the R8 evaluation above, **31 questions were judged incorrect by a majority o
 Within this evaluation, the results point to a need to improve when retrieval starts and whether retrieved evidence actually answers the question. The evidence gate constrains references and assessment procedures, but cannot guarantee the model's semantic judgment or final answer.
 
 See the [full evaluation](docs/EVALUATION.md) for R1–R8 design history, per-question analysis, and further validation.
-
-## Scope and costs
-
-**Memory spaces determine which conversations share memories.** DSH defaults to project isolation based on the working directory. Session isolation and a shared global space are also available. Topics expose only visible Events in the current space; the persistent Profile is supplied across sessions and memory spaces. See the [plugin guide](docs/DSH.md) for configuration.
-
-**Context budgets are not the total model cost.** Automatic recall and the topic directory have separate budgets. The persistent Profile, layered Blocks, unsealed conversation, and subsequent active retrieval are supplied separately. The 900-token recall budget and 400-token directory budget do not sum to a fixed size for the entire request.
-
-| Stage | Does it call a model? | Where costs arise |
-| --- | --- | --- |
-| Background summaries, Event extraction, graph, topic and Profile organization | Yes | Conversation, Event or Profile inputs, generated outputs, and bounded retries |
-| Reading an existing directory, overview, or stored search results | The read itself does not | Results still consume tokens when included in a later model request |
-| Agent evidence assessment and answer generation | Yes | Current context, retrieved evidence, and generated answers |
-
-Layered views reduce the history included by default when answering. For tool-heavy conversations, background derivation compacts code and oversized tool traces in model inputs while complete records remain in L5. Assess total cost from actual background, retrieval, and answer usage; smaller context alone does not establish savings.
-
-**Historical topics appear progressively after upgrading.** Existing Events are organized in background batches, so the directory may initially be incomplete. New or changed Events receive priority. Failed or pending organization retains Event entry points and ordinary retrieval remains available. Historical work uses a shared database-wide allowance, bounded retries, and restart recovery; it does not promise a fixed cost. See [topic maintenance (Chinese)](docs/MEMORY_TOPICS.zh-CN.md) for limits and recovery.
-
-Directories and overviews can be rebuilt from valid sources. When a source changes, is forgotten, or is archived, outdated derived content is hidden before background rebuilding. Updated extraction rules apply to subsequent normal extraction rather than rewriting all historical Events. Functional tests check these workflows and constraints; extraction, categorization, and evidence judgment still depend on the model.
 
 <a id="code-entry-points"></a>
 
@@ -483,6 +523,9 @@ npm run build
 | [DeepSeek Harness guide](docs/DSH.md) | Installation, configuration, UI, memory tools, and recovery |
 | [Memory directory and topic overviews (Chinese)](docs/MEMORY_TOPICS.zh-CN.md) | Chapters and sections, source tracing, background organization, budgets, and recovery |
 | [Event extraction rules (Chinese)](docs/event-extractor.md) | Extraction decisions, scope, duplicates and historical relationships, and compatibility |
+| [Dreaming directory organization (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md) | Organization scope, run controls, source protection, and recovery |
+| [Optional knowledge graph (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md) | Defaults, enabling, pausing, disabling, and historical backfill |
+| [Manual level selection (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/user-operation-priority.md) | Content preview, application, insufficient capacity, and recovery |
 | [Architecture](docs/ARCHITECTURE.md) | Layering, Events and graph, retrieval, evidence gate, weights, storage, and core APIs |
 | [External-memory import](docs/EXTERNAL_MEMORY_IMPORT.zh-CN.md) | Export format, import flow, and integration example |
 | [Full evaluation](docs/EVALUATION.md) | Protocol, version history, failure analysis, and result scope |

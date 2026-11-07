@@ -28,6 +28,8 @@ on:
 permissions:
   contents: write
   id-token: write
+  actions: read
+  pull-requests: read
 
 jobs:
   publish:
@@ -59,6 +61,10 @@ jobs:
 
           version="$(node -p 'require("./package.json").version')"
           tag="stratagate-dsh-v${version}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release source must use a formal three-part version; candidate versions belong only in staging copies: $version"
+            exit 1
+          fi
 
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             test "$GITHUB_REF_NAME" = "$tag" || {
@@ -88,12 +94,14 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - name: Find successful CI for release commit
+        id: prior_ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/find-release-ci.mjs
       - name: Build and verify package contents
         run: |
           npm run build:dsh
-          node scripts/verify-package.mjs
       - name: Pack release assets from the checked-out source
         shell: bash
         env:
@@ -110,10 +118,16 @@ jobs:
             unset DSH_VERSION
           fi
           export DSH_VERSION
+          if [ -n "${DSH_VERSION:-}" ]; then
+            export DSH_ISOLATE_ROOT="${RUNNER_TEMP}/stratagate-dsh-isolate"
+            node scripts/dsh-cli-isolate.mjs
+            export DSH_ROOT="$DSH_ISOLATE_ROOT"
+          fi
           versioned="stratagate-dsh-${VERSION}.tgz"
           source_asset="stratagate-dsh-${VERSION}-source.tar.gz"
-          npm pack --silent
+          npm pack --silent --ignore-scripts
           test -f "$versioned"
+          node scripts/verify-package.mjs "$versioned"
           if [ "$SKIP_DSH_SMOKE" = 'true' ]; then
             echo "::warning::DSH runtime smoke was explicitly waived after manual acceptance"
           else
