@@ -57,7 +57,7 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Daily notes he
 
 1. **Daily notes carry work forward; historical conversations can be expanded.**
 
-   (1) **Daily notes help resume work.** The agent records progress, intermediate results, useful lessons from failures, blockers, and next steps by date. New sessions include notes from the three most recent dates with notes by default, reducing the need to repeat background information.
+   (1) **Daily notes help resume work.** The agent records progress, intermediate results, useful lessons from failures, blockers, and next steps by date. New sessions include notes from the three most recent dates with notes by default, reducing the need to repeat background information. → [Daily notes](#daily-notes)
 
    (2) **Conversation memory keeps recent detail and makes older history concise.** Each conversation block has six views, L0–L5, with different levels of detail. As more conversation accumulates, older dialogue gradually becomes key facts, short summaries, and title indexes, reducing the context occupied by history. → [Layered conversation memory](#layered-memory)
 
@@ -193,8 +193,6 @@ The model produces L0–L2 summaries. L3 and L4 do not use model paraphrasing; c
 - **Length guard:** If generated L4 would be longer than L5, L5 is used instead. If L3 would be longer than L4, L4 is used instead, preserving `L3 ≤ L4 ≤ L5`.
 
 Source records are saved first, followed by summarization and Event processing. Only a fully processed, ready Block can replace its corresponding native history and participate in decay.
-
-**As more conversation accumulates, older Blocks default to less detail.**
 
 Display changes follow exponential decay:
 
@@ -444,6 +442,8 @@ The memory-processing model uses providers and models already configured in DSH.
 In advanced settings, enter each service's API URL, key, and model, then save. A service is enabled only when its configuration is complete; clear its URL and save to disable it.
 
 The embedding model supplements semantic matching, while the reranking model refines automatic-recall order. Neither replaces Event sources or the evidence gate's assessment.
+
+When enabled, the search text and Event titles and summaries (candidate Event content for reranking) are sent to the selected service provider and may incur API charges.
 
 **Restart the corresponding DSH profile after upgrading.**
 
