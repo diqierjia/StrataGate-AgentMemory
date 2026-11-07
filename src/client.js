@@ -1284,6 +1284,18 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
 .narrow .book:not(.show-leaf)>.leaf+.leaf{display:none}
 .narrow .book.show-leaf .toc-t,.narrow .book.show-leaf .ch-h,.narrow .book.show-leaf .sec,.narrow .book.show-leaf .toc-f{display:none}
 .book .sg-topic-overview-text{display:block;margin:0 0 16px;color:var(--sg-muted);font-size:13px;line-height:1.75}
+.book .sg-topic-chapter{padding:0;margin:0;border:0}
+.book .sg-topic-sections{padding:0}
+.book .sg-topic-chapter-toggle,.book .sg-topic-section-toggle{display:contents}
+.book .sg-directory-chevron,.book .sg-topic-section-toggle:after,.book .sg-topic-chapter-toggle:after{display:none;content:none}
+.book .ch{margin:0 0 14px}
+.book .ch-h{display:flex;align-items:baseline;gap:8px;margin:0;padding:3px 0;font:700 14.5px var(--sg-serif)}
+.book .sec{display:flex;align-items:baseline;gap:8px;margin:0 0 0 3.2em;padding:3px 0;font-size:13px;font-weight:400;color:var(--sg-muted)}
+.book .sec.cur{color:var(--sg-text);font-weight:600}
+.pillar .sg-p-row{display:contents}
+.sg-head .sg-ws select{border:0;background:transparent;font:inherit;color:inherit;max-width:180px}
+.side details{margin-top:12px}
+.side details summary{cursor:pointer;color:var(--sg-muted);font-size:12px}
 .narrow .book.show-leaf .book-back{display:inline-flex}
 .book{position:relative}
 .book>.leaf{position:static}
@@ -3525,8 +3537,8 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
       const tabButton = ([id, label]) => h('button', { key: id, type: 'button', className: mode === id ? 'active' : '', 'aria-current': mode === id ? 'page' : undefined, 'aria-label': id === 'graph-add' ? '重新打开知识图谱' : label, onClick: () => { setMode(id === 'graph-add' ? 'graph' : id); setGraphMenuOpen(id === 'graph-add' || (id === 'graph' && graphSettings.enabled !== true && graphSettings.noticeSeen !== true)); if (id === 'topics') { setFullScreen(false); setFiltersOpen(false) } } }, label)
       const graphMenu = h('div', { ref: graphMenuRef, className: 'sg-graph-menu' }, h('button', { type: 'button', className: 'sg-graph-menu-trigger', 'aria-label': '知识图谱设置', 'aria-expanded': graphMenuOpen, onClick: () => setGraphMenuOpen((value) => !value) }, h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' }, h('path', { d: 'M12 5v14M5 12h14', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' }))), graphMenuOpen ? h('div', { className: 'sg-graph-menu-popover' }, h('strong', { className: 'sg-graph-menu-title' }, '知识图谱'), h(GraphControlPanel, { state: graphSettings, refresh, page: true, onGraphHidden: () => { setGraphMenuOpen(false); setMode('topics') } })) : null)
       const tabChildren = [...longTabs.map(tabButton), graphMenu]
-      return h('section', { className: 'sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
-        h('nav', { className: 'sg-long-tabs', 'aria-label': '长期记忆视角' }, tabChildren),
+      return h('section', { className: 'sg-body sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
+        h('div', { className: 'pg-h' }, h('h2', null, '长期记忆'), h('div', { className: 'end' }, h('nav', { className: 'sg-long-tabs seg', 'aria-label': '长期记忆视角' }, tabChildren))),
         h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged, onOpenDreamingSession })),
         mode === 'topics' ? null : h(React.Fragment, null,
         mode === 'graph' && migrationNotice ? h('p', { className: 'sg-muted' }, migrationNotice) : null,
@@ -3841,14 +3853,14 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
       }
       const failure = error => h('div', { className: 'sg-daily-state error', role: 'alert' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'alert' })), h('h3', null, '暂时无法读取笔记'), h('p', null, '文件可能被占用或权限不足，已有笔记不会丢失。'), h('button', { type: 'button', className: 'sg-daily-retry', onClick: () => indexError ? setRevision(v => v + 1) : setNoteRevision(v => v + 1) }, h(DailyIcon, { name: 'refresh' }), '重新读取'), h('details', null, h('summary', null, '错误详情'), error))
       const date = selected ? dailyParts(selected) : null
-      return h('div', { className: 'sg-daily' },
-        h('div', { className: 'sg-daily-head' }, h('div', null, h('h2', null, '短期记忆'), h('p', null, '每天一份工作笔记，最近 ' + injectionDays + ' 个有笔记日期会带入新会话。')),
-          h('div', { className: 'sg-daily-stepper', 'aria-label': '带入新会话的天数' },
+      return h('div', { className: 'sg-body' },
+        h('div', { className: 'pg-h' }, h('div', null, h('h2', null, '短期记忆'), h('span', { className: 'tag' }, '每天一份工作笔记，最近 ' + injectionDays + ' 个有笔记日期会带入新会话。')),
+          h('span', { className: 'stp', 'aria-label': '带入新会话的天数' },
             h('button', { type: 'button', disabled: !enabled || !setDailyInjectionDays || injectionDays <= 1, onClick: () => adjustInjectionDays(-1), 'aria-label': '减少带入天数' }, '−'),
             h('span', null, injectionDays + ' 天'),
-            h('button', { type: 'button', disabled: !enabled || !setDailyInjectionDays || injectionDays >= 30, onClick: () => adjustInjectionDays(1), 'aria-label': '增加带入天数' }, '+')),
+            h('button', { type: 'button', disabled: !enabled || !setDailyInjectionDays || injectionDays >= 30, onClick: () => adjustInjectionDays(1), 'aria-label': '增加带入天数' }, '+'))),
           h('div', { className: 'sg-daily-actions', ref: actions }, h('button', { type: 'button', ref: calendarButton, className: 'sg-daily-icon-btn', 'aria-label': '查看更早日期', title: '查看更早日期', 'data-tip': '查看更早日期', 'aria-haspopup': 'dialog', 'aria-expanded': calendarOpen, disabled: !dates.length || indexLoading || Boolean(indexError), onClick: () => { setMonth(selected.slice(0, 7) || months[months.length - 1]); setCalendarOpen(value => !value) } }, h(DailyIcon, { name: 'calendar' })),
-            h('button', { type: 'button', className: 'sg-daily-icon-btn', 'aria-label': '打开笔记文件夹', title: '打开笔记文件夹', 'data-tip': '打开笔记文件夹', disabled: !namespace || directoryOpening, onClick: openDirectory }, h(DailyIcon, { name: 'folder' })), calendar())),
+            h('button', { type: 'button', className: 'sg-daily-icon-btn', 'aria-label': '打开笔记文件夹', title: '打开笔记文件夹', 'data-tip': '打开笔记文件夹', disabled: !namespace || directoryOpening, onClick: openDirectory }, h(DailyIcon, { name: 'folder' })), calendar()),
         directoryFeedback ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, directoryFeedback) : null,
         indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
           !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
@@ -3884,6 +3896,7 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
       const [expanding, setExpanding] = React.useState({ blockId: '', level: -1 })
       const [previewError, setPreviewError] = React.useState(null)
       const [selectionFeedback, setSelectionFeedback] = React.useState({})
+      const [rawId, setRawId] = React.useState('')
       const scope = namespace + '\u0000' + activeThreadId
       const activeScope = React.useRef(scope)
       activeScope.current = scope
@@ -3979,23 +3992,14 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
 
       const openTurns = Math.max(0, Number(currentOpen.turns || 0))
       const openCapacity = Math.max(1, Number(currentOpen.capacity || 6))
-      return h(React.Fragment, null,
-        h('section', { className: 'sg-decay-overview', 'aria-labelledby': 'sg-decay-title', title: 'L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。' },
-          h('div', { className: 'sg-decay-head' },
-            h('div', null,
-              h('h2', { className: 'sg-decay-title', id: 'sg-decay-title' }, '会话记忆'),
-              h('p', { className: 'sg-decay-copy' }, (pagedBlocks.page.total || visible.length) + ' 个记忆块 · 开放块 ' + Math.min(openTurns, openCapacity) + '/' + openCapacity)),
-            h('label', { className: 'sg-conversation' }, h('span', null, '当前对话：'), h('select', { value: activeThreadId || '', disabled: !conversations.length, onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))),
-          h('p', { className: 'sg-sr-only' }, '块衰减总览'),
-          h('div', { ref: distributionRef, className: 'sg-distribution', 'aria-label': 'Block 当前层级分布', onScroll: (event) => { const node = event.currentTarget; setRail({ value: Math.round(node.scrollLeft), max: Math.max(0, node.scrollWidth - node.clientWidth) }) }, onWheel: (event) => { if (rail.max <= 0) return; event.preventDefault(); event.currentTarget.scrollLeft += event.deltaY + event.deltaX } },
-            visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: 'Block #' + block.sequence }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)),
-            h('span', { className: 'sg-level-chip sg-open-chip' }, '开放块 · 未封存')),
-          h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: String(Math.max(1, rail.max)), step: '1', value: String(Math.min(rail.value, Math.max(1, rail.max))), disabled: rail.max <= 0, onChange: (event) => { const value = Number(event.target.value); if (distributionRef.current) distributionRef.current.scrollLeft = value; setRail((current) => ({ ...current, value })) }, 'aria-label': 'Block 分布滑轨' }),
-          h('div', { className: 'sg-time-direction', 'aria-hidden': 'true' }, h('span', null, '更旧'), h('span', { className: 'sg-time-line' }), h('span', null, '更新 →')),
-          h('div', { className: 'sg-overview-meta' }, h('span', null, '已封存块：本页 ' + visible.length + ' / 共 ' + pagedBlocks.page.total), h('span', null, '开放块：' + turnRangeText(currentOpen.turnRange) + '（未封存）'))),
+      return h('section', { className: 'sg-body' },
+        h('div', { className: 'pg-h' },
+          h('h2', null, '会话记忆'),
+          h('span', { className: 'tag' }, (pagedBlocks.page.total || visible.length) + ' 块 · 开放块 ' + Math.min(openTurns, openCapacity) + '/' + openCapacity),
+          h('div', { className: 'end' }, h('label', { className: 'sg-ws' }, h('span', null, '当前对话'), h('select', { value: activeThreadId || '', disabled: !conversations.length, onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label)))))),
+        h('div', { className: 'ss-scale' }, '更早 ', h('span', { className: 'r' }, [0, 1, 2, 3, 4, 5].map((step) => h('i', { key: step, style: { height: (5 + step * 3) + 'px', opacity: 0.3 + step * 0.14 } }))), ' 最近', h('span', { style: { marginLeft: '8px' } }, '越早的对话压得越薄')),
         h('div', { className: 'ss', ref: sessionRef },
-        h('div', { className: 'sg-block-list', 'aria-label': 'Block 列表' },
-          h('div', { className: 'sg-block-header', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
+        h('div', null,
           visible.map((block) => {
             const level = visibleBlockLevel(block)
             const known = level !== null
@@ -4028,8 +4032,10 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
             h('span', { className: 'pg-k' }, '记忆块 ' + block.sequence + (block.turnRange ? ' · ' + turnRangeText(block.turnRange) : '')),
             level === null ? null : h('div', { className: 'lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((step) => h('i', { key: step, className: step <= level ? 'on' : '' }))),
             level === null ? null : h('div', { className: 'lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
-            summary ? h('p', null, summary) : null,
-            h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (levelChoice) => expandTo(block, levelChoice) }))
+            summary ? h('p', null, summary) : h('p', null, '这段的分层摘要还没有读到。'),
+            h('button', { type: 'button', className: 'btn', onClick: () => setRawId((current) => current === block.id ? '' : block.id) }, rawId === block.id ? '收起原文' : '看原文'),
+            rawId === block.id ? h('div', { className: 'sg-summary-raw' }, (Array.isArray(details[block.id]?.messages) ? details[block.id].messages : []).map((message) => h('div', { key: message.id, className: 'sg-raw-message' }, h('div', { className: 'sg-muted' }, String(message.role || '')), h('div', null, String(message.content || '')))) ) : null,
+            h('details', null, h('summary', null, '调整助手可见层级'), h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (levelChoice) => expandTo(block, levelChoice) })))
         })) : null),
         h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }))
     }
@@ -4539,25 +4545,26 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
         { id: 'long', name: '长期记忆', count: data?.pagination?.events?.total ?? selected?.events, unit: '个事件', tone: 'moss', height: 62, library: true },
       ]
       const health = failed ? '有失败任务' : processing ? '整理中' : '运行正常'
-      return h('div', { className: 'sg-ov', 'aria-label': 'StrataGate 总览' },
+      return h('div', { className: 'ov', 'aria-label': 'StrataGate 总览' },
         h('div', { className: 'sg-ov-stat' },
           lastSeven === null ? null : h('div', { className: 'sg-ov-big' }, h('b', null, lastSeven.toLocaleString('en-US')), bubble),
           lastSeven === null ? null : h('p', null, '最近 7 天，记忆帮到了 ' + lastSeven.toLocaleString('en-US') + ' 次回答'),
           h('div', { className: 'sg-ov-health' }, h('i', { className: failed ? 'bad' : '' }), health)),
         h('div', null,
-          h('div', { className: 'sg-pillar' },
-            h('div', { className: 'sg-p-top' }, bubble, h('i')),
+          h('div', { className: 'pillar' },
+            h('div', { className: 'p-top' }, bubble, h('i')),
             layers.map((layer) => h(React.Fragment, { key: layer.name },
-              layer.library ? h('div', { className: 'sg-p-gap' }) : null,
+              layer.library ? h('div', { className: 'p-gap' }) : null,
               h('button', { type: 'button', className: 'sg-p-row', onClick: () => open(layer.id), 'aria-label': '打开' + layer.name },
-                h('span', { className: 'sg-p-bar ' + layer.tone + (layer.library ? ' lib' : ''), style: { height: layer.height + 'px' } }),
-                h('span', { className: 'sg-p-name' }, layer.name),
-                h('span', { className: 'sg-p-val' }, layerCount(layer.count) === '' ? null : h('b', null, layerCount(layer.count)), layerCount(layer.count) === '' ? '' : layer.unit))))),
-          h('div', { className: 'sg-p-key' }, h('span', null, h('i'), '一直带着'), h('span', null, h('i', { className: 'dash' }), '需要时去找'))),
-        heat ? h('div', { className: 'sg-hm', 'aria-label': '最近 4 周采用记录' },
-          h('div', { className: 'sg-hm-h' }, h('span', null, '每天被回答用到几次'), h('span', null, '颜色越深越多')),
-          h('div', { className: 'sg-hm-grid' }, heat.map((item) => h('i', { key: item.key, 'data-level': String(Math.min(4, item.count)), title: item.key + ' · ' + item.count + ' 次' }))),
-          h('div', { className: 'sg-hm-l' }, h('span', null, '4 周前'), h('span', null, '今天'))) : null)
+                h('span', { className: 'p-bar ' + (layer.library ? 'lib' : ''), style: { height: layer.height + 'px', background: layer.library ? undefined : 'var(--sg-' + layer.tone + ')' } }),
+                h('div', { className: 'p-name' }, h('b', null, layer.name)),
+                h('div', { className: 'p-use' }),
+                h('div', { className: 'p-val' }, layerCount(layer.count) === '' ? null : h('b', null, layerCount(layer.count)), layerCount(layer.count) === '' ? '' : layer.unit))))),
+          h('div', { className: 'p-key' }, h('span', null, h('i', { className: 'sw' }), '一直带着'), h('span', null, h('i', { className: 'sw', style: { background: 'none', border: '1.2px dashed var(--sg-muted)' } }), '需要时去找'))),
+        heat ? h('div', { className: 'hm-wrap', 'aria-label': '最近 4 周采用记录' },
+          h('div', { className: 'hm-h' }, h('span', null, '每天被回答用到几次'), h('span', null, '颜色越深越多')),
+          h('div', { className: 'hm' }, heat.map((item) => h('i', { key: item.key, title: item.key + ' · ' + item.count + ' 次', style: item.count ? { background: 'color-mix(in srgb, var(--sg-ink) ' + Math.min(90, 18 + item.count * 20) + '%, var(--sg-sheet))', boxShadow: 'none' } : undefined }))),
+          h('div', { className: 'hm-l' }, h('span', null, '4 周前'), h('span', null, '今天'))) : null)
     }
 
     function MoreHome({ setView, selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, updateSettings, savingSettings }) {
@@ -5782,13 +5789,13 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
       }
       const total = profile ? profileFieldNames.reduce((sum, field) => sum + Array.from(profile[field] || '').length, 0) : 0
       return h(React.Fragment, null,
-        h('div', { className: 'sg-profile-head' }, h('div', { className: 'sg-intro' }, h('h2', null, '常驻用户画像'), h('p', null, '跨会话、跨项目持续生效，每轮自动进入上下文')), h('span', { className: 'sg-profile-sync ' + (syncStatus === '读取失败' ? 'failed' : syncStatus === '更新中…' ? 'pending' : ''), role: 'status' }, syncStatus)),
+        h('div', { className: 'pg-h' }, h('h2', null, '常驻画像'), h('span', { className: 'tag' }, '每轮都带给 AI · 点任意一行修改'), h('span', { className: 'sg-profile-sync ' + (syncStatus === '读取失败' ? 'failed' : syncStatus === '更新中…' ? 'pending' : ''), role: 'status' }, syncStatus)),
         error ? h('p', { className: 'sg-profile-error', role: 'alert' }, error) : null,
         profile ? h(React.Fragment, null,
-          h('div', { className: 'sg-profile-capacity', 'aria-label': '画像容量' },
-            h('div', { className: 'sg-profile-capacity-bar' }, h('i', { style: { width: Math.min(100, Math.round(total / 6000 * 100)) + '%' } })),
-            h('span', null, total + ' / 6000 字')),
-          profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
+          h('div', { className: 'cap-row', 'aria-label': '画像容量' },
+            h('div', { className: 'cap-bar' }, h('i', { style: { width: Math.min(100, Math.round(total / 6000 * 100)) + '%' } })),
+            h('span', { className: 'n' }, h('b', null, String(total)), ' / 6,000 字')),
+          h('div', { className: 'pf' }, profileGroups.map(([title, fields]) => h('section', { key: title, className: 'sg-profile-group', 'aria-label': title },
             h('div', { className: 'grp' }, h('h4', null, title), h('ul', null,
             fields.filter(([field]) => field !== 'homeCity' || profile.homeCity || profileFieldDrafts.has(field)).map(([field, label, maximum]) => {
               const value = profile[field] || ''
@@ -5815,7 +5822,7 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
                   editor || h('span', { className: 'sg-profile-content' }, h('button', { type: 'button', className: 'sg-profile-value ' + (value ? '' : 'empty'), title: value || undefined, 'aria-label': label + '，点击编辑', disabled: saving, onClick: () => beginEdit(field) }, profileFieldDrafts.has(field) ? '继续编辑草稿' : value || PROFILE_EMPTY_HINTS[field] || '未设置'), savedFeedback),
                   h('button', { type: 'button', className: 'sg-profile-action', onClick: () => beginEdit(field), disabled: saving, 'aria-hidden': isEditing || undefined }, !isEditing && profileFieldDrafts.has(field) ? '继续编辑' : value ? '编辑' : '添加')),
                 savedReadError ? h('p', { className: 'sg-profile-save-feedback', role: 'status' }, h('span', null, '修改已保存，暂时无法读取最新内容。'), h('button', { type: 'button', className: 'sg-profile-action', disabled: reading, onClick: () => refreshRef.current?.() }, '重新读取')) : null)
-            })))))) : h('p', null, '正在读取常驻画像…'))
+            }))))))) : h('p', null, '正在读取常驻画像…'))
     }
 
     const GRAPH_EXPLANATION = '由于知识图谱功能与事件记录和主题目录有部分重复，还需要额外消耗token维护实体关系，将会默认关闭知识图谱功能，已经生成的图谱数据会保留。'
@@ -6560,23 +6567,27 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
       }, [])
       return h('main', { ref: memoryRef, className: 'sg-memory sg' + (narrowLayout ? ' narrow' : '') + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-section': section, 'data-testid': 'stratagate-memory-ui' },
         h('style', null, css + previewCss + DUPLICATE_STYLES + DAILY_NOTES_CSS),
-        h('header', { className: 'sg-header' },
-          h('div', { className: 'sg-header-row sg-header-row-primary' },
-            h(GITHUB_FEEDBACK_ENABLED ? 'a' : 'div', { className: 'sg-brand', href: GITHUB_FEEDBACK_ENABLED ? STAR_REPOSITORY_URL : undefined, target: GITHUB_FEEDBACK_ENABLED ? '_blank' : undefined, rel: GITHUB_FEEDBACK_ENABLED ? 'noopener noreferrer' : undefined },
-              h(StrataGateMark, null),
-              h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null), onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
-            h('span', { className: 'sg-usage-count', 'aria-label': 'StrataGate 已在当前工作区中帮助使用记忆 ' + Number(selected?.memoryUseCount || 0) + ' 次。' }, h('strong', { className: 'sg-usage-number' }, Number(selected?.memoryUseCount || 0)), h('span', { title: '当前工作区有记忆采用记录的回答次数' }, '次记忆被用到'))),
-          h('div', { className: 'sg-header-row sg-header-row-secondary' },
-            h('div', { className: 'sg-project' }, h('span', { className: 'sg-project-label' }, '当前工作区：'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
-            h(HeaderCommunityLinks))),
-        h('nav', { className: 'sg-tabs', 'aria-label': '总览与记忆视图' }, [['overview', '总览'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['profile', '常驻画像'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, label))),
+        h('header', { className: 'sg-head' },
+          h(StrataGateMark, { className: 'sg-mark' }),
+          h('div', { className: 'sg-brand' }, h('b', null, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'mono' }, 'v' + overview.pluginVersion) : null),
+          h('div', { className: 'sg-head-end' },
+            h('label', { className: 'sg-ws' }, h('i'), h('select', { value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
+            onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
+        h('nav', { className: 'sg-tabs', 'aria-label': '总览与记忆视图' }, [['overview', '总览'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['profile', '常驻画像'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab', 'aria-selected': section === id, 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, id === 'short' ? h('i', { className: 'sw', style: { background: 'var(--sg-water)' } }) : id === 'daily' ? h('i', { className: 'sw', style: { background: 'var(--sg-sand)' } }) : id === 'long' ? h('i', { className: 'sw lib' }) : id === 'profile' ? h('i', { className: 'sw', style: { background: 'var(--sg-ink)' } }) : null, label))),
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
         h('section', { key: section, className: 'sg-view' + (narrowLayout ? ' narrow' : ''), 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
           h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { graphSettings: overview.graphSettings, extractionGap: selected?.longTermExtractionGap === true, key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, refresh, active: view.name === 'root' })),
           view.name === 'root' ? null : content) : content),
-        h('footer', { className: 'sg-footer' }, '发现问题？ ', h('button', { type: 'button', onClick: () => { setSection('more'); setView({ name: 'support' }); setSource(null) } }, '提交反馈')))
+        h('footer', { className: 'sg-foot' },
+          h('span', null, 'StrataGate-AgentMemory · MIT'),
+          h('span', null,
+            h('a', { href: 'https://github.com/diqierjia/StrataGate-AgentMemory', target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 仓库'),
+            ' · ',
+            h('a', { href: 'https://github.com/diqierjia/StrataGate-AgentMemory/issues', target: '_blank', rel: 'noopener noreferrer' }, '提 Issue'),
+            ' · ',
+            h('a', { href: 'https://github.com/diqierjia/StrataGate-AgentMemory/releases', target: '_blank', rel: 'noopener noreferrer' }, '更新记录'))))
     }
 
     function MemoryPanel(props) {
