@@ -491,12 +491,7 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-tab:hover{background:transparent;color:var(--sg-text)}
       .sg-memory .sg-tab.active{background:transparent;color:var(--sg-text);box-shadow:none;font-weight:600}
       .sg-memory .sg-tab.active:after{display:block;left:8px;right:8px;bottom:-1px;height:2px;background:var(--sg-text)}
-      .sg-memory .sg-tab:before{display:inline-block;width:10px;height:10px;flex:0 0 10px;border-radius:2px;content:""}
-      .sg-memory .sg-tab:nth-child(1):before,.sg-memory .sg-tab:nth-child(6):before{display:none}
-      .sg-memory .sg-tab:nth-child(2):before{background:var(--sg-water)}
-      .sg-memory .sg-tab:nth-child(3):before{background:var(--sg-sand)}
-      .sg-memory .sg-tab:nth-child(4):before{background:color-mix(in srgb,var(--sg-moss) 18%,transparent);box-shadow:inset 0 0 0 1.2px var(--sg-moss)}
-      .sg-memory .sg-tab:nth-child(5):before{background:var(--sg-ink)}
+      .sg-memory .sg-tab:before{content:none;display:none}
       .sg-memory .sg-intro h2,.sg-memory .sg-detail-title,.sg-memory .sg-decay-title{font-size:22px;line-height:1.25;font-weight:650}
       .sg-memory .sg-intro p{margin-top:7px;color:var(--sg-muted);font-size:12px}
       .sg-memory .sg-primary-link{background:var(--sg-text);border-color:var(--sg-text);color:var(--sg-page)}
@@ -4505,7 +4500,7 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
                       : h('button', { type: 'button', className: 'sg-import-button', disabled: restoring || busy || !text.trim(), onClick: analyze }, busy ? '正在创建任务…' : '分析并预览'))))
     }
 
-    function OverviewPage({ selected, data, namespace, onNavigate }) {
+    function OverviewPage({ selected, data, namespace, onNavigate, narrow = false }) {
       const [profileChars, setProfileChars] = React.useState(null)
       const [dailyCount, setDailyCount] = React.useState(null)
       React.useEffect(() => {
@@ -4545,26 +4540,28 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
         { id: 'long', name: '长期记忆', count: data?.pagination?.events?.total ?? selected?.events, unit: '个事件', tone: 'moss', height: 62, library: true },
       ]
       const health = failed ? '有失败任务' : processing ? '整理中' : '运行正常'
-      return h('div', { className: 'ov', 'aria-label': 'StrataGate 总览' },
-        h('div', { className: 'sg-ov-stat' },
-          lastSeven === null ? null : h('div', { className: 'sg-ov-big' }, h('b', null, lastSeven.toLocaleString('en-US')), bubble),
-          lastSeven === null ? null : h('p', null, '最近 7 天，记忆帮到了 ' + lastSeven.toLocaleString('en-US') + ' 次回答'),
-          h('div', { className: 'sg-ov-health' }, h('i', { className: failed ? 'bad' : '' }), health)),
-        h('div', null,
-          h('div', { className: 'pillar' },
-            h('div', { className: 'p-top' }, bubble, h('i')),
-            layers.map((layer) => h(React.Fragment, { key: layer.name },
-              layer.library ? h('div', { className: 'p-gap' }) : null,
-              h('button', { type: 'button', className: 'sg-p-row', onClick: () => open(layer.id), 'aria-label': '打开' + layer.name },
-                h('span', { className: 'p-bar ' + (layer.library ? 'lib' : ''), style: { height: layer.height + 'px', background: layer.library ? undefined : 'var(--sg-' + layer.tone + ')' } }),
-                h('div', { className: 'p-name' }, h('b', null, layer.name)),
-                h('div', { className: 'p-use' }),
-                h('div', { className: 'p-val' }, layerCount(layer.count) === '' ? null : h('b', null, layerCount(layer.count)), layerCount(layer.count) === '' ? '' : layer.unit))))),
-          h('div', { className: 'p-key' }, h('span', null, h('i', { className: 'sw' }), '一直带着'), h('span', null, h('i', { className: 'sw', style: { background: 'none', border: '1.2px dashed var(--sg-muted)' } }), '需要时去找'))),
-        heat ? h('div', { className: 'hm-wrap', 'aria-label': '最近 4 周采用记录' },
+      const shownHeat = heat ? (narrow ? heat.slice(14) : heat) : null
+      return h('section', { className: 'sg-body', 'aria-label': 'StrataGate 总览' },
+        h('div', { className: 'ov' },
+          h('div', { className: 'ov-stat' },
+            lastSeven === null ? null : h('div', { className: 'ov-big' }, h('b', null, lastSeven.toLocaleString('en-US')), bubble),
+            lastSeven === null ? null : h('p', null, '最近 7 天，记忆帮到了 ' + lastSeven.toLocaleString('en-US') + ' 次回答'),
+            h('div', { className: 'ov-health' }, h('i', { className: failed ? 'bad' : '' }), health)),
+          h('div', null,
+            h('div', { className: 'pillar' },
+              h('div', { className: 'p-top' }, bubble, h('i')),
+              layers.map((layer) => h(React.Fragment, { key: layer.name },
+                layer.library ? h('div', { className: 'p-gap' }) : null,
+                h('button', { type: 'button', className: 'sg-p-row', onClick: () => open(layer.id), 'aria-label': '打开' + layer.name },
+                  h('span', { className: 'p-bar ' + (layer.library ? 'lib' : ''), style: { height: layer.height + 'px', background: layer.library ? undefined : 'var(--sg-' + layer.tone + ')' } }),
+                  h('div', { className: 'p-name' }, h('b', null, layer.name)),
+                  h('div', { className: 'p-use' }),
+                  h('div', { className: 'p-val' }, layerCount(layer.count) === '' ? null : h('b', null, layerCount(layer.count)), layerCount(layer.count) === '' ? '' : layer.unit))))),
+            h('div', { className: 'p-key' }, h('span', null, h('i', { className: 'sw' }), '一直带着'), h('span', null, h('i', { className: 'sw', style: { background: 'none', border: '1.2px dashed var(--sg-muted)' } }), '需要时去找')))),
+        shownHeat ? h('div', { className: 'hm-wrap', 'aria-label': narrow ? '最近 2 周采用记录' : '最近 4 周采用记录' },
           h('div', { className: 'hm-h' }, h('span', null, '每天被回答用到几次'), h('span', null, '颜色越深越多')),
-          h('div', { className: 'hm' }, heat.map((item) => h('i', { key: item.key, title: item.key + ' · ' + item.count + ' 次', style: item.count ? { background: 'color-mix(in srgb, var(--sg-ink) ' + Math.min(90, 18 + item.count * 20) + '%, var(--sg-sheet))', boxShadow: 'none' } : undefined }))),
-          h('div', { className: 'hm-l' }, h('span', null, '4 周前'), h('span', null, '今天'))) : null)
+          h('div', { className: 'hm' }, shownHeat.map((item) => h('i', { key: item.key, title: item.key + ' · ' + item.count + ' 次', style: item.count ? { background: 'color-mix(in srgb, var(--sg-ink) ' + Math.min(90, 18 + item.count * 20) + '%, var(--sg-sheet))', boxShadow: 'none' } : undefined }))),
+          h('div', { className: 'hm-l' }, h('span', null, narrow ? '2 周前' : '4 周前'), h('span', null, '今天'))) : null)
     }
 
     function MoreHome({ setView, selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, updateSettings, savingSettings }) {
@@ -6530,12 +6527,24 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
       }
       const onRetrievalSettingsSaved = vectorSettings => setOverview(current => ({ ...current, vectorSettings }))
       const moreBack = () => setView({ name: 'root' })
+      const memoryRef = React.useRef(null)
+      const [narrowLayout, setNarrowLayout] = React.useState(false)
+      React.useEffect(() => {
+        const node = memoryRef.current
+        if (!node || typeof ResizeObserver !== 'function') return undefined
+        const observer = new ResizeObserver((entries) => {
+          const width = entries[0]?.contentRect?.width || 0
+          setNarrowLayout(width > 0 && width <= 680)
+        })
+        observer.observe(node)
+        return () => observer.disconnect()
+      }, [])
 
       let content = null
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
       else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
-      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, data, namespace, onNavigate: goSection })
+      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, data, namespace, onNavigate: goSection, narrow: narrowLayout })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
@@ -6553,18 +6562,6 @@ html[data-theme=dark] .scrim{background:color-mix(in srgb,#000 58%,transparent)}
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh }) : section === 'long' ? null : h(MoreHome, { setView, selected, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, usePluginSettings, setMemoryModel, setEffort, resetEffort, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, updateSettings, savingSettings }))
 
-      const memoryRef = React.useRef(null)
-      const [narrowLayout, setNarrowLayout] = React.useState(false)
-      React.useEffect(() => {
-        const node = memoryRef.current
-        if (!node || typeof ResizeObserver !== 'function') return undefined
-        const observer = new ResizeObserver((entries) => {
-          const width = entries[0]?.contentRect?.width || 0
-          setNarrowLayout(width > 0 && width <= 680)
-        })
-        observer.observe(node)
-        return () => observer.disconnect()
-      }, [])
       return h('main', { ref: memoryRef, className: 'sg-memory sg' + (narrowLayout ? ' narrow' : '') + (view.name === 'duplicates' ? ' sg-memory-review' : ''), 'data-section': section, 'data-testid': 'stratagate-memory-ui' },
         h('style', null, css + previewCss + DUPLICATE_STYLES + DAILY_NOTES_CSS),
         h('header', { className: 'sg-head' },
