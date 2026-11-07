@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { classifyPaths, diffTouchesOnlyVersionMetadata, main, requiresWindows } from '../scripts/classify-ci-risk.mjs'
@@ -74,11 +78,59 @@ test('path matching is normalized and does not trust commit text', () => {
   assert.equal(requiresWindows(['docs/windows-install.md']), false)
 })
 
-test('the recorded 0.3.42 version bump is not treated as high risk', () => {
-  const result = main({ GITHUB_EVENT_NAME: 'pull_request', BASE_SHA: '5adda49^', HEAD_SHA: '5adda49' })
+function classifyOwnedRepo(writeNext) {
+  const repo = mkdtempSync(join(tmpdir(), 'classify-risk-'))
+  const git = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' })
+  try {
+    git(['init', '-b', 'main'])
+    git(['config', 'user.email', 'risk-test@example.com'])
+    git(['config', 'user.name', 'risk-test'])
+    git(['config', 'commit.gpgsign', 'false'])
+    writeManifests(repo, '0.3.42')
+    git(['add', 'package.json', 'package-lock.json'])
+    git(['commit', '-m', 'base'])
+    const base = git(['rev-parse', 'HEAD']).trim()
+    writeNext(repo)
+    git(['add', '-A'])
+    git(['commit', '-m', 'change'])
+    const head = git(['rev-parse', 'HEAD']).trim()
+    return main({ GITHUB_EVENT_NAME: 'pull_request', BASE_SHA: base, HEAD_SHA: head }, { cwd: repo })
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+}
+
+function writeManifests(repo, version, extra = '') {
+  writeFileSync(join(repo, 'package.json'), `{
+  "name": "stratagate-dsh",
+  "version": "${version}"${extra}
+}
+`)
+  writeFileSync(join(repo, 'package-lock.json'), `{
+  "name": "stratagate-dsh",
+  "version": "${version}",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "stratagate-dsh",
+      "version": "${version}"
+    }
+  }
+}
+`)
+}
+
+test('a version-only bump in a repository the test owns stays on Ubuntu', () => {
+  const result = classifyOwnedRepo(repo => writeManifests(repo, '0.3.43'))
   assert.equal(result.classificationError, false)
   assert.equal(result.runWindows, false)
   assert.deepEqual(result.paths.sort(), ['package-lock.json', 'package.json'])
+})
+
+test('a manifest dependency edit in a repository the test owns requires Windows', () => {
+  const result = classifyOwnedRepo(repo => writeManifests(repo, '0.3.43', ',\n  "dependencies": { "semver": "^7.9.0" }'))
+  assert.equal(result.classificationError, false)
+  assert.equal(result.runWindows, true)
 })
 
 test('direct pushes and classifier failures stay on the Windows matrix', () => {

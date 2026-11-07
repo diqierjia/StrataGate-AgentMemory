@@ -49,29 +49,33 @@ export function classifyPaths(paths, diffsByPath = undefined) {
   }
 }
 
-function changedPaths(base, head) {
-  return execFileSync('git', ['diff', '--name-only', `${base}...${head}`], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
+function git(args, cwd) {
+  return execFileSync('git', args, { encoding: 'utf8', ...(cwd ? { cwd } : {}) })
 }
 
-function manifestDiffs(base, head, paths) {
+function changedPaths(base, head, cwd) {
+  return git(['diff', '--name-only', `${base}...${head}`], cwd).split(/\r?\n/).filter(Boolean)
+}
+
+function manifestDiffs(base, head, paths, cwd) {
   const diffs = {}
   for (const path of paths) {
     const normalized = path.replaceAll('\\', '/')
     if (!VERSION_METADATA_FILES.has(normalized)) continue
-    diffs[normalized] = execFileSync('git', ['diff', '--unified=3', `${base}...${head}`, '--', path], { encoding: 'utf8' })
+    diffs[normalized] = git(['diff', '--unified=3', `${base}...${head}`, '--', path], cwd)
   }
   return diffs
 }
 
-export function main(env = process.env) {
+export function main(env = process.env, { cwd } = {}) {
   const event = env.GITHUB_EVENT_NAME || 'pull_request'
   let result
   try {
-    const paths = event === 'pull_request' ? changedPaths(env.BASE_SHA, env.HEAD_SHA) : []
+    const paths = event === 'pull_request' ? changedPaths(env.BASE_SHA, env.HEAD_SHA, cwd) : []
     // A direct push to main has no PR diff to classify. Fail closed and run
     // Windows unless CI can reuse a completed PR run for the exact tree.
     result = event === 'pull_request'
-      ? classifyPaths(paths, manifestDiffs(env.BASE_SHA, env.HEAD_SHA, paths))
+      ? classifyPaths(paths, manifestDiffs(env.BASE_SHA, env.HEAD_SHA, paths, cwd))
       : { runWindows: true, osMatrix: ['ubuntu-latest', 'windows-latest'], paths, classificationError: false }
   } catch (error) {
     result = { runWindows: true, osMatrix: ['ubuntu-latest', 'windows-latest'], paths: [], classificationError: true, error }
