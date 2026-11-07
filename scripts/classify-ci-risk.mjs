@@ -2,22 +2,45 @@ import { appendFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
+// Paths exercised by check:dsh, test:dsh, build:dsh, or verify:dsh.
+// Version-only manifest edits are handled separately so a formal version bump
+// does not by itself demand Windows.
 const HIGH_RISK_PATTERNS = [
   /^\.github\/workflows\//,
-  /^(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/,
-  /^scripts\//,
-  /^packages\//,
-  /^src\/(?:runtime|storage|llm|dsh-compatibility|server|host|process|sqlite)[^/]*\./,
-  /^tests\/(?:dsh-|.*(?:compatibility|install|migration|runtime|storage|background-worker|process|sqlite)[^/]*)\./,
+  /^src\//,
+  /^tests\/fixtures\//,
+  /^tests\/.*\.ts$/,
+  /^packages\/core\/src\//,
+  /^packages\/core\/package\.json$/,
+  /^packages\/core\/tsconfig(?:\.build)?\.json$/,
+  /^scripts\/(?:run-dsh-compatibility|build-client|check-feedback-policy|verify-package|verify-dsh-install)\.mjs$/,
+  /^(?:tsconfig(?:\.base)?\.json|vitest\.config\.ts|tsup\.config\.ts|cordis\.patch\.yml)$/,
+  /^(?:pnpm-lock\.yaml|yarn\.lock)$/,
 ]
 
-export function requiresWindows(paths) {
-  return paths.some(path => HIGH_RISK_PATTERNS.some(pattern => pattern.test(path.replaceAll('\\', '/'))))
+const VERSION_METADATA_FILES = new Set(['package.json', 'package-lock.json'])
+
+export function diffTouchesOnlyVersionMetadata(patch) {
+  if (typeof patch !== 'string' || patch.trim() === '') return false
+  const changes = patch.split(/\r?\n/).filter(line => /^[+-]/.test(line) && !line.startsWith('+++') && !line.startsWith('---'))
+  if (changes.length === 0 || changes.length > 4) return false
+  return changes.every(line => /^[+-]\s*"version"\s*:/.test(line))
 }
 
-export function classifyPaths(paths) {
+export function requiresWindows(paths, diffsByPath = undefined) {
+  return paths.some(path => {
+    const normalized = path.replaceAll('\\', '/')
+    if (VERSION_METADATA_FILES.has(normalized)) {
+      if (!diffsByPath || !Object.hasOwn(diffsByPath, normalized)) return true
+      return !diffTouchesOnlyVersionMetadata(diffsByPath[normalized])
+    }
+    return HIGH_RISK_PATTERNS.some(pattern => pattern.test(normalized))
+  })
+}
+
+export function classifyPaths(paths, diffsByPath = undefined) {
   const normalized = paths.map(path => path.replaceAll('\\', '/')).filter(Boolean)
-  const runWindows = requiresWindows(normalized)
+  const runWindows = requiresWindows(normalized, diffsByPath)
   return {
     runWindows,
     osMatrix: runWindows ? ['ubuntu-latest', 'windows-latest'] : ['ubuntu-latest'],
@@ -30,18 +53,27 @@ function changedPaths(base, head) {
   return execFileSync('git', ['diff', '--name-only', `${base}...${head}`], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean)
 }
 
+function manifestDiffs(base, head, paths) {
+  const diffs = {}
+  for (const path of paths) {
+    const normalized = path.replaceAll('\\', '/')
+    if (!VERSION_METADATA_FILES.has(normalized)) continue
+    diffs[normalized] = execFileSync('git', ['diff', '--unified=3', `${base}...${head}`, '--', path], { encoding: 'utf8' })
+  }
+  return diffs
+}
+
 export function main(env = process.env) {
   const event = env.GITHUB_EVENT_NAME || 'pull_request'
   let result
   try {
     const paths = event === 'pull_request' ? changedPaths(env.BASE_SHA, env.HEAD_SHA) : []
-    // A direct push to main has no PR risk classification. Fail closed and run
+    // A direct push to main has no PR diff to classify. Fail closed and run
     // Windows unless CI can reuse a completed PR run for the exact tree.
     result = event === 'pull_request'
-      ? classifyPaths(paths)
+      ? classifyPaths(paths, manifestDiffs(env.BASE_SHA, env.HEAD_SHA, paths))
       : { runWindows: true, osMatrix: ['ubuntu-latest', 'windows-latest'], paths, classificationError: false }
   } catch (error) {
-    // A classifier failure must never silently remove Windows coverage.
     result = { runWindows: true, osMatrix: ['ubuntu-latest', 'windows-latest'], paths: [], classificationError: true, error }
     console.warn(`CI risk classification failed; defaulting to high risk: ${error.message}`)
   }

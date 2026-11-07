@@ -21,10 +21,26 @@ PR CI 明确测试 PR 头提交。合并到 main 后，仅当已合并的同仓�
 
 ## Windows 兼容验证按风险分层
 
-PR 的 CI 会先根据实际变更路径分类：
+PR CI 先看这次改了哪些文件，再决定要不要跑 Windows。依据是这些文件会不会进入 DSH 兼容套件（`check:dsh`、`test:dsh`、`build:dsh`、`verify:dsh`），不看提交说明。
 
-- 普通 Core、界面、文档或测试小改动：运行 Core 双 Node 版本和 Ubuntu 代表宿主矩阵。
-- 涉及宿主运行时、存储/SQLite、LLM 路由、进程集成、安装与兼容脚本、依赖/锁文件或 GitHub Actions：自动升级为高风险，追加 Windows 代表宿主矩阵。
-- 分类失败、直接推送到 `main` 或正式发布：按高风险处理。发布证据始终要求 Windows 代表矩阵；历史宿主完整矩阵仍由定时/手动工作流负责。
+需要 Windows：
 
-分类只读取 PR 的实际文件差异，不读取提交标题。合并到 `main` 后，CI 复用检查会按同一规则验证 PR 证据；如果证据范围不足，自动重新运行完整 CI。候选包只做包内容、安装和启动检查，不重复源码测试。
+- `src/` 下的插件源码，以及 `packages/core/src/`、核心包的 `package.json` 和 tsconfig
+- 根目录 `tests/**/*.ts` 和 `tests/fixtures/`
+- 套件直接调用的脚本：`run-dsh-compatibility.mjs`、`build-client.mjs`、`check-feedback-policy.mjs`、`verify-package.mjs`、`verify-dsh-install.mjs`
+- `tsconfig.json`、`tsconfig.base.json`、`vitest.config.ts`、`tsup.config.ts`、`cordis.patch.yml`
+- `package.json` 或 `package-lock.json` 里除版本号以外的改动；看不出差异内容时按高风险处理
+- `.github/workflows/` 下的工作流
+
+可以只跑 Ubuntu：
+
+- 文档、WorkBuddy、核心包自己的单元测试
+- 不参与兼容套件的脚本，例如候选暂存和发布证据查询
+- `tests/**/*.mjs`
+- 只改 `package.json` 和 `package-lock.json` 的版本号
+
+分类失败，或这次是直接推到 `main`：跑 Windows。合并后的 main 如果已经有同一文件树的 PR 证据，并且证据覆盖了上面要求的系统，就复用，不再重跑。
+
+正式发布用同一套规则。高风险提交的证据必须包含 Windows。只改版本号或文档时，可以复用只有 Ubuntu 的同树证据。手动发布不查 PR 接口，直接看该提交在 main 上的 CI：要么包含 Windows 的矩阵任务都成功，要么 `reuse-pr-ci` 已经成功。后者表示 main 当时已经按上面的规则接受了 PR 证据，0.3.42 的正式发布就是靠这条记录通过的。
+
+历史宿主全矩阵仍由定时或手动工作流运行，不进每个 PR。代表宿主任务的上限是 90 分钟。已经成功过的 Windows 任务大约 47 分钟，上限留在这之上；安装步骤另有 20 分钟上限。一个任务失败或超时不会取消其他系统上的任务。

@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { hasRequiredJobs } from './find-release-ci.mjs'
+import { hasRequiredJobs } from './ci-evidence-jobs.mjs'
 import { requiresWindows } from './classify-ci-risk.mjs'
 
 export async function findPrCi(env = process.env, request = fetch, { requireWindows: requiredWindowsOverride } = {}) {
@@ -13,6 +13,16 @@ export async function findPrCi(env = process.env, request = fetch, { requireWind
     if (!response.ok) throw new Error(`GitHub API HTTP ${response.status}`)
     return response.json()
   }
+  async function list(path) {
+    const items = []
+    for (let page = 1; page <= 30; page += 1) {
+      const data = await get(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`)
+      if (!Array.isArray(data)) throw new Error('invalid list response')
+      items.push(...data)
+      if (data.length < 100) return items
+    }
+    throw new Error('GitHub list exceeded 30 pages')
+  }
   const commit = await get(`/commits/${sha}`)
   const tree = commit?.commit?.tree?.sha
   if (!tree) throw new Error('missing release tree')
@@ -22,13 +32,22 @@ export async function findPrCi(env = process.env, request = fetch, { requireWind
     if (!pr.merged_at || pr.merge_commit_sha !== sha || pr.base?.ref !== 'main' || pr.head?.repo?.full_name !== repo || !pr.head?.sha) continue
     const head = await get(`/commits/${pr.head.sha}`)
     if (head?.commit?.tree?.sha !== tree) continue
-    const requireWindows = requiredWindowsOverride ?? requiresWindows((await get(`/pulls/${pr.number}/files?per_page=100`)).map(file => file.filename))
+    let requireWindows = requiredWindowsOverride
+    if (requireWindows === undefined) {
+      const files = await list(`/pulls/${pr.number}/files`)
+      const diffs = {}
+      for (const file of files) {
+        if (!file?.filename) throw new Error('invalid pull request files response')
+        diffs[String(file.filename).replaceAll('\\', '/')] = file.patch
+      }
+      requireWindows = requiresWindows(files.map(file => file.filename), diffs)
+    }
     const data = await get(`/actions/workflows/ci.yml/runs?event=pull_request&head_sha=${encodeURIComponent(pr.head.sha)}&per_page=100`)
     if (!Array.isArray(data.workflow_runs)) throw new Error('invalid workflow runs response')
     for (const run of data.workflow_runs) {
       if (run.event !== 'pull_request' || run.head_sha !== pr.head.sha || run.head_repository?.full_name !== repo || run.path !== '.github/workflows/ci.yml' || run.status !== 'completed' || run.conclusion !== 'success') continue
       const result = await get(`/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100`)
-      if (Array.isArray(result.jobs) && hasRequiredJobs(result.jobs, { requireWindows }) && result.jobs.some(job => job.name === 'reuse-pr-ci' && job.status === 'completed' && job.conclusion === 'success') && result.jobs.some(job => job.name === 'classify' && job.status === 'completed' && job.conclusion === 'success')) return run
+      if (Array.isArray(result.jobs) && hasRequiredJobs(result.jobs, { requireWindows }) && result.jobs.some(job => job.name === 'reuse-pr-ci' && job.status === 'completed' && job.conclusion === 'success')) return run
     }
   }
   return undefined
