@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openNativePath } from '@deepseek-ai/dsh-native-command'
 import { validateArgs } from '@deepseek-ai/dsh-tools'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
@@ -4010,6 +4010,8 @@ function renderMessages(messages: readonly RawMessage[]): string {
 }
 
 function dshTurnAtBlockEnd(session: Session, block: MemoryBlock): number | null {
+  const sourceTurns = sourceTurnNumbersForBlock(block)
+  if (sourceTurns.length > 0) return sourceTurns.at(-1) ?? null
   const blockEnd = Date.parse(block.createdAt)
   const events = session.snapshotEvents()
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -4039,6 +4041,7 @@ function recoverableSealedSurfaceSources(
   }
   const ends = new Map<number, number>()
   const visibleEnds = new Set<number>()
+  const visibleTurns = new Set<number>()
   const compactedBlocks = new Set<string>()
   let open: { turn: number; visible: boolean } | undefined
   for (const event of session.snapshotEvents()) {
@@ -4054,6 +4057,7 @@ function recoverableSealedSurfaceSources(
       if (open?.turn === event.data.turn) {
         ends.set(event.time, event.data.turn)
         if (open.visible) visibleEnds.add(event.time)
+        if (open.visible) visibleTurns.add(event.data.turn)
       }
       open = undefined
     } else if (open && visible.has(event.seq)) open.visible = true
@@ -4061,10 +4065,14 @@ function recoverableSealedSurfaceSources(
   for (const block of blocks) {
     // Checkpoint ownership is exact even when several turns share a timestamp.
     if (compactedBlocks.has(block.id)) { result.retired.add(block.id); continue }
+    const sourceTurns = sourceTurnNumbersForBlock(block)
     const endTime = Date.parse(block.createdAt)
-    const endTurn = ends.get(endTime)
+    const endTurn = sourceTurns.at(-1) ?? ends.get(endTime)
     if (endTurn === undefined) continue
-    if (!visibleEnds.has(endTime)) { result.retired.add(block.id); continue }
+    if (sourceTurns.length > 0 ? !visibleTurns.has(endTurn) : !visibleEnds.has(endTime)) {
+      result.retired.add(block.id)
+      continue
+    }
     // The full check also rejects partial compaction and mismatched turns.
     const seqs = sealedSurfaceSeqs(session, endTurn, block)
     if (seqs?.length) result.sources.set(block.id, { endTurn, seqs })
@@ -4078,6 +4086,8 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
   const completed: Array<{ turn: number; endTime: number; start: SessionSeq; end: SessionSeq; nodes: SessionSeq[] }> = []
   let open: { turn: number; start: SessionSeq } | undefined
   const events = session.snapshotEvents()
+  const sourceTurnNumbers = sourceTurnNumbersForBlock(block)
+  const sourceTurnSet = new Set(sourceTurnNumbers)
 
   for (const event of events) {
     if (event.type === 'turn/start') {
@@ -4088,7 +4098,7 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
     const turnEvents = events.slice(open.start + 1, event.seq)
     const hasHumanMessage = turnEvents.some((candidate) =>
       candidate.type === 'user/message' && candidate.data.source.kind === 'user')
-    if (hasHumanMessage && event.data.turn <= endTurn) {
+    if (hasHumanMessage && (sourceTurnSet.size > 0 ? sourceTurnSet.has(event.data.turn) : event.data.turn <= endTurn)) {
       completed.push({
         turn: event.data.turn,
         endTime: event.time,
@@ -4112,13 +4122,14 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
     open = undefined
   }
 
-  const sourceTimes = block.l5Raw.filter((message) => message.role === 'user')
-    .map((message) => Date.parse(message.createdAt))
   const turnCount = block.endTurn - block.startTurn + 1
-  const selected = completed.slice(-turnCount)
-  if (selected.length !== turnCount || selected.at(-1)?.turn !== endTurn
-    || sourceTimes.length !== turnCount
-    || selected.some((turn, index) => turn.endTime !== sourceTimes[index])) return null
+  const selected = sourceTurnNumbers.length === turnCount
+    ? sourceTurnNumbers.flatMap((turn) => completed.find((candidate) => candidate.turn === turn) ?? [])
+    : completed.slice(-turnCount)
+  if (selected.length !== turnCount
+    || selected.at(-1)?.turn !== (sourceTurnNumbers.at(-1) ?? endTurn)
+    || (sourceTurnNumbers.length !== turnCount
+      && selected.some((turn, index) => turn.endTime !== Date.parse(block.l5Raw.filter((message) => message.role === 'user')[index]!.createdAt)))) return null
   const firstTurn = selected[0]!
   const lastTurn = selected.at(-1)!
   // A host checkpoint may consume only part of the block. Never turn a
@@ -4159,12 +4170,26 @@ function turnAtSurfaceSeq(session: Session, seq: SessionSeq): number | undefined
 }
 
 function sourceTurnsForBlock(session: Session, block: MemoryBlock): Set<number> {
+  const stableTurns = sourceTurnNumbersForBlock(block)
+  if (stableTurns.length > 0) return new Set(stableTurns)
   const sourceTimes = new Set(block.l5Raw.filter((message) => message.role === 'user')
     .map((message) => Date.parse(message.createdAt)))
   return new Set(session.snapshotEvents()
     .filter((event): event is Extract<SessionEvent, { type: 'turn/end' }> => event.type === 'turn/end'
       && sourceTimes.has(event.time))
     .map((event) => event.data.turn))
+}
+
+function sourceTurnNumbersForBlock(block: MemoryBlock): number[] {
+  const turns: number[] = []
+  for (const message of block.l5Raw) {
+    if (message.role !== 'user') continue
+    const match = message.id.match(/:turn:(\d+):user$/u)
+    if (!match) continue
+    const turn = Number(match[1])
+    if (Number.isSafeInteger(turn) && !turns.includes(turn)) turns.push(turn)
+  }
+  return turns
 }
 
 function surfaceEventTurns(
@@ -4219,10 +4244,27 @@ function appendBlockSurface(session: Session, block: MemoryBlock, text: string, 
     throw Object.assign(new Error('StrataGate surface replacement no longer owns its complete source range'), { retryable: false })
   }
   session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text }], source: dshMessageSource(),
+    content: [{ type: 'text', text }, ...sourceAttachmentBlocks(session, seqs)], source: dshMessageSource(),
   }), {
     surfaceOp: dshReplaceSurfaceOp(seqs[0]!, seqs.at(-1)!), sourceEventSeqs: seqs,
   })
+}
+
+function sourceAttachmentBlocks(session: Session, seqs: readonly SessionSeq[]): ContentBlock[] {
+  const attachments: ContentBlock[] = []
+  const seen = new Set<string>()
+  for (const seq of seqs) {
+    const event = session.eventAt(seq)
+    if (event?.type !== 'user/message') continue
+    for (const block of event.data.content) {
+      if (block.type !== 'image' && block.type !== 'file') continue
+      const key = `${block.type}:${String(block.attachment.attachmentId)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      attachments.push(structuredClone(block))
+    }
+  }
+  return attachments
 }
 
 function surfaceMaintenanceInput(state: SurfaceMaintenance): string {

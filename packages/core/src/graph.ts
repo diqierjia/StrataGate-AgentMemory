@@ -118,8 +118,12 @@ export function effectiveGraphNodeView(
     if ((record.status === 'active' || record.status === 'disputed') && activeSources.length > 0) {
       return { current: { ...record, sourceEventIds: activeSources } };
     }
-    if (visibleSources.length > 0 && record.status === 'superseded') {
-      return { historical: { ...record, sourceEventIds: visibleSources } };
+    if (visibleSources.length > 0 && (record.status === 'superseded' || activeSources.length === 0)) {
+      // A graph record can still be marked active while its only evidence
+      // Event has just been superseded. Keep that edge/fact in the historical
+      // view so the next projection can see its stable id and explicitly
+      // supersede it instead of making it disappear.
+      return { historical: { ...record, status: 'superseded', sourceEventIds: visibleSources } };
     }
     return {};
   };

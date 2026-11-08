@@ -76,6 +76,9 @@ describe('Event-backed knowledge graph', () => {
     }, {
       id: 'edge_b', fromNodeId: 'node_person', toNodeId: 'node_b', relation: 'works_at', status: 'superseded',
       confidence: 0.9, sourceEventIds: [historicalB.id], createdAt: now, updatedAt: now,
+    }, {
+      id: 'edge_b_stale_status', fromNodeId: 'node_person', toNodeId: 'node_b', relation: 'works_at', status: 'active',
+      confidence: 0.9, sourceEventIds: [historicalB.id], createdAt: now, updatedAt: now,
     });
 
     const person = (results: Awaited<ReturnType<typeof memory.searchGraphNodes>>) =>
@@ -91,6 +94,9 @@ describe('Event-backed knowledge graph', () => {
     expect(historical).toMatchObject({ matchType: 'historical' });
     expect(historical.historicalFacts).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'fact_cn_b' })]));
     expect(historical.historicalEdges).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'edge_b' })]));
+    expect(historical.historicalEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'edge_b_stale_status', status: 'superseded' }),
+    ]));
     expect(historical.node.currentState).toContain('company: A');
     expect(historical.provenanceEventIds?.[0]).toBe(historicalB.id);
     expect(historical.provenanceEventIds).toContain(currentA.id);

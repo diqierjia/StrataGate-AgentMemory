@@ -1116,8 +1116,7 @@ export class StrataGate {
     const existingUserMessage = requestedUserMessageId
       ? this.openTail.find((message) => message.id === requestedUserMessageId && message.role === 'user')
       : undefined;
-    if (existingUserMessage && (existingUserMessage.content !== input.user
-      || existingUserMessage.threadId !== threadId)) {
+    if (existingUserMessage && existingUserMessage.threadId !== threadId) {
       throw new Error(`Reserved user message ${requestedUserMessageId} does not match the appended turn`);
     }
     const userMessage: RawMessage = existingUserMessage ?? {
@@ -1149,8 +1148,16 @@ export class StrataGate {
       if (index < 0) tail.push(assistant);
       else tail.splice(index + 1, 0, assistant);
     };
+    const reservedContentChanged = existingUserMessage !== undefined && existingUserMessage.content !== input.user;
     const appendInMemory = (): boolean => {
       if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
+      if (existingUserMessage) {
+        // The host can append more user content after a memory tool has run.
+        // Keep the reserved identity, but publish the complete turn text when
+        // its assistant reply arrives.
+        existingUserMessage.content = input.user;
+        if (input.userToolCalls !== undefined) existingUserMessage.toolCalls = structuredClone(input.userToolCalls);
+      }
       this.currentTurn += 1;
       placeTurnMessages(this.openTail, false);
       if (receiptId) this.ingestionReceipts.set(receiptId, { id: receiptId, createdAt });
@@ -1158,7 +1165,7 @@ export class StrataGate {
     };
     const appended = this.storage?.commitRecords ? await this.withMutationQueue(async () => {
       const reservedIsLast = !existingUserMessage || this.openTail.at(-1)?.id === existingUserMessage.id;
-      if (this.hasPendingRecordChanges() || !reservedIsLast) return this.applyMutation(appendInMemory);
+      if (this.hasPendingRecordChanges() || !reservedIsLast || reservedContentChanged) return this.applyMutation(appendInMemory);
       if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
       const receipt = receiptId ? { id: receiptId, createdAt } : undefined;
       const committed = await this.storage!.commitRecords!(this.namespace!, this.revision, {
@@ -3560,17 +3567,21 @@ export class StrataGate {
   private pendingBlockMessages(threadId: string | undefined): RawMessage[] {
     const messages = this.threadOpenTail(threadId);
     let users = 0;
-    let end = 0;
+    const selected: RawMessage[] = [];
     for (const [index, message] of messages.entries()) {
       if (message.role !== 'user') continue;
-      if (!userTurnHasAssistant(messages, index)) break;
+      // A reserved message may remain incomplete at the front of the tail
+      // after a restart. Leave that turn in place and collect later complete
+      // turns so it cannot block an otherwise sealable block.
+      if (!userTurnHasAssistant(messages, index)) continue;
       users += 1;
-      if (users !== this.blockTurnSize) continue;
       const nextUserOffset = messages.slice(index + 1).findIndex((candidate) => candidate.role === 'user');
-      end = nextUserOffset === -1 ? messages.length : index + 1 + nextUserOffset;
+      const end = nextUserOffset === -1 ? messages.length : index + 1 + nextUserOffset;
+      selected.push(...messages.slice(index, end));
+      if (users !== this.blockTurnSize) continue;
       break;
     }
-    return messages.slice(0, end);
+    return selected;
   }
 
   private async sealOpenTail(threadId: string | undefined): Promise<MemoryBlock> {
