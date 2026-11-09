@@ -715,4 +715,28 @@ describe('Event-backed knowledge graph', () => {
     expect(edges.find(edge => edge.toNodeId === 'postgres')).toMatchObject({ status: 'superseded' });
     expect(edges.find(edge => edge.toNodeId === 'redis')).toMatchObject({ status: 'active' });
   });
+
+  it('keeps an old edge in projector context while its source Event is being replaced', async () => {
+    const memory = StrataGate.inMemory({ graphEnabled: true, blockTurnSize: 1,
+      graphProjector: async () => ({ reason: 'test', nodes: [], edges: [] }) });
+    const block = (await memory.appendTurn({ user: 'Atlas storage source', assistant: 'saved' })).sealedBlock!;
+    const old = await memory.addEvent({ id: 'evt_graph_old', title: 'Atlas storage', summary: 'Atlas uses PostgreSQL.',
+      sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id] });
+    const first = await memory.claimNextGraphProjection();
+    expect(first).not.toBeNull();
+    if (!first) return;
+    await memory.completeGraphProjection(first.jobId, {
+      reason: 'initial relation',
+      nodes: [
+        { ref: 'atlas', name: 'Atlas', type: 'project', metadataProvenance: { name: [old.id] }, sourceEventIds: [old.id] },
+        { ref: 'postgres', name: 'PostgreSQL', type: 'tool', metadataProvenance: { name: [old.id] }, sourceEventIds: [old.id] },
+      ],
+      edges: [{ fromRef: 'atlas', toRef: 'postgres', relation: 'uses', sourceEventIds: [old.id] }],
+    }, first.claimToken);
+    const oldEdge = memory.listGraphEdges()[0]!;
+    await memory.addEvent({ id: 'evt_graph_new', title: 'Atlas storage correction', summary: 'Atlas uses Redis.',
+      sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id], temporal: { supersedesEventIds: [old.id] } });
+    const second = await memory.claimNextGraphProjection();
+    expect(second?.existingEdges).toEqual(expect.arrayContaining([expect.objectContaining({ id: oldEdge.id })]));
+  });
 });

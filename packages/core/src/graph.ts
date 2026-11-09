@@ -118,7 +118,11 @@ export function effectiveGraphNodeView(
     if ((record.status === 'active' || record.status === 'disputed') && activeSources.length > 0) {
       return { current: { ...record, sourceEventIds: activeSources } };
     }
-    if (visibleSources.length > 0 && record.status === 'superseded') {
+    // During an Event replacement handoff, the old active edge has only
+    // superseded sources until the next projection explicitly closes it.
+    // Keep it in historical context so the projector can receive its id.
+    if (visibleSources.length > 0 && (record.status === 'superseded'
+      || (record.status === 'active' && activeSources.length === 0))) {
       return { historical: { ...record, sourceEventIds: visibleSources } };
     }
     return {};

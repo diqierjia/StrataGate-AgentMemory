@@ -580,6 +580,44 @@ describe('agent event persistence', () => {
     }
   })
 
+  it('accepts same-turn input appended after a memory reservation while keeping one source id', async () => {
+    const memory = StrataGate.inMemory({ blockTurnSize: 1, summarizer: nonExtractingSummarizer, idFactory: ids() })
+    await memory.reserveUserMessage({ id: 'dsh:session:turn:1:user', content: 'first fragment', threadId: 'session' })
+    await memory.appendTurn({
+      user: 'first fragment\n\nsecond fragment', assistant: 'saved', threadId: 'session',
+      userMessageId: 'dsh:session:turn:1:user',
+    })
+    expect(memory.listBlocks().flatMap(({ l5Raw }) => l5Raw)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'dsh:session:turn:1:user', content: 'first fragment\n\nsecond fragment' }),
+      expect.objectContaining({ role: 'assistant', content: 'saved' }),
+    ]))
+  })
+
+  it('seals later complete turns after restart without consuming an interrupted reservation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-reservation-recovery-'))
+    const database = join(directory, 'memory.db')
+    const options = { database, namespace: 'recovery', blockTurnSize: 6, summarizer: nonExtractingSummarizer }
+    let memory: StrataGate | undefined
+    try {
+      memory = await StrataGate.open(options)
+      await memory.reserveUserMessage({ id: 'dsh:session:turn:1:user', content: 'interrupted', threadId: 'session' })
+      await memory.close()
+      memory = await StrataGate.open(options)
+      for (let turn = 2; turn <= 7; turn += 1) {
+        await memory.appendTurn({ user: `complete ${turn}`, assistant: 'saved', threadId: 'session',
+          userMessageId: `dsh:session:turn:${turn}:user` })
+      }
+      expect(memory.listBlocks()).toHaveLength(1)
+      expect(memory.listBlocks()[0]!.l5Raw.map(({ content }) => content)).toEqual(expect.arrayContaining([
+        'complete 2', 'complete 3', 'complete 4', 'complete 5', 'complete 6', 'complete 7',
+      ]))
+      expect(memory.listOpenTail('session').map(({ content }) => content)).toEqual(['interrupted'])
+    } finally {
+      await memory?.close().catch(() => {})
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('preserves historical successor links after automatic adjudication and SQLite reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-history-'))
     const options = {

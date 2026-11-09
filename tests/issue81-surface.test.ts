@@ -9,6 +9,7 @@ import { StrataGate, estimateTokens, renderBlock, type BlockContextEntry, type M
 import { describe, expect, it, vi } from 'vitest'
 import type { DshModelBridge } from '../src/llm.js'
 import { buildDshMessageSource } from '../src/dsh-compatibility.js'
+import { renderBlocks } from '../src/fold.js'
 import { StrataGateRuntime } from '../src/runtime.js'
 
 const models = {
@@ -125,6 +126,49 @@ async function queuedSurfaceFixture(flush = vi.fn(async (_session: Session) => {
 }
 
 describe('deferred Block surface synchronization', () => {
+  it('restores native attachment blocks when an L5 surface replaces the source range', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-attachment-surface-'))
+    const database = join(directory, 'memory.db')
+    const session = Session.create('attachment-surface' as never)
+    const content = [
+      { type: 'text', text: 'Review these files.' },
+      { type: 'image', attachment: { attachmentId: 'sha256:image' as never, mediaType: 'image/png', bytes: 3, width: 2, height: 2, name: 'diagram.png' } },
+      { type: 'file', attachment: { attachmentId: 'sha256:file' as never, name: 'notes.md', bytes: 4 } },
+    ] as const
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({ content: [...content], source: { kind: 'user' } }), { surfaceOp: 'append' })
+    session.append('assistant/message', {
+      turn: 1, step: 1,
+      message: createAssistantMessage({ content: [{ type: 'text', text: 'I will inspect them.' }], source: { provider: 'test', model: 'test' } }),
+      stream: [],
+    }, { surfaceOp: 'append' })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const plugin = runtime(database)
+    try {
+      const memory = await StrataGate.open({ database, namespace: plugin.namespaceFor(session), blockTurnSize: 1, summarizer: models.summarizer })
+      const end = session.snapshotEvents().find((event) => event.type === 'turn/end')!
+      const block = (await memory.appendTurn({ user: renderBlocks(content), assistant: 'I will inspect them.', threadId: String(session.id), createdAt: new Date(end.time).toISOString() })).sealedBlock!
+      expect(await replace(plugin, memory, session, block, { ...memory.getBlockContext(String(session.id))[0]!, level: 5, content: renderBlock(block, 5) })).toBe(true)
+      const replacement = session.snapshotEvents().at(-1) as any
+      expect(replacement.data.content.map((item: { type: string }) => item.type)).toEqual(['text', 'image', 'file'])
+      await memory.close()
+    } finally {
+      await plugin.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the stable DSH turn id when reservation time differs from turn completion', async () => {
+    const f = await queuedSurfaceFixture()
+    try {
+      f.block.l5Raw[0]!.id = `dsh:${String(f.session.id)}:turn:1:user`
+      f.block.createdAt = '2026-01-01T00:00:00.000+08:00'
+      const rawSession = Session.create(f.session.id, f.session.snapshotEvents().slice(0, -1), f.session.header)
+      const context = f.memory.getBlockContext(String(f.session.id))[0]!
+      expect(await replace(f.plugin, f.memory, rawSession, f.block, { ...context, level: 5, content: renderBlock(f.block, 5) })).toBe(true)
+    } finally { await f.dispose() }
+  })
+
   it.each([0, 1, 2] as const)('replaces an existing L%s checkpoint with a larger L5 for a queued user expansion, without duplication', async (initialLevel) => {
     const f = await queuedSurfaceFixture(undefined, initialLevel)
     try {

@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout as delay } from 'node:timers/promises'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { openNativePath } from '@deepseek-ai/dsh-native-command'
 import { validateArgs } from '@deepseek-ai/dsh-tools'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
@@ -4010,6 +4010,9 @@ function renderMessages(messages: readonly RawMessage[]): string {
 }
 
 function dshTurnAtBlockEnd(session: Session, block: MemoryBlock): number | null {
+  const stableTurn = block.l5Raw.filter((message) => message.role === 'user')
+    .map((message) => stableDshTurnFromMessageId(message.id)).at(-1)
+  if (stableTurn !== undefined) return stableTurn
   const blockEnd = Date.parse(block.createdAt)
   const events = session.snapshotEvents()
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -4017,6 +4020,14 @@ function dshTurnAtBlockEnd(session: Session, block: MemoryBlock): number | null 
     if (event?.type === 'turn/end' && event.time === blockEnd) return event.data.turn
   }
   return null
+}
+
+/** DSH folded turns use this id before the host assigns a completion time. */
+function stableDshTurnFromMessageId(id: string): number | undefined {
+  const match = id.match(/^dsh:.*:turn:(\d+):user$/u)
+  if (!match) return undefined
+  const turn = Number(match[1])
+  return Number.isSafeInteger(turn) ? turn : undefined
 }
 
 interface SealedSurfaceRecovery {
@@ -4039,6 +4050,7 @@ function recoverableSealedSurfaceSources(
   }
   const ends = new Map<number, number>()
   const visibleEnds = new Set<number>()
+  const visibleTurns = new Set<number>()
   const compactedBlocks = new Set<string>()
   let open: { turn: number; visible: boolean } | undefined
   for (const event of session.snapshotEvents()) {
@@ -4054,6 +4066,7 @@ function recoverableSealedSurfaceSources(
       if (open?.turn === event.data.turn) {
         ends.set(event.time, event.data.turn)
         if (open.visible) visibleEnds.add(event.time)
+        if (open.visible) visibleTurns.add(event.data.turn)
       }
       open = undefined
     } else if (open && visible.has(event.seq)) open.visible = true
@@ -4062,9 +4075,12 @@ function recoverableSealedSurfaceSources(
     // Checkpoint ownership is exact even when several turns share a timestamp.
     if (compactedBlocks.has(block.id)) { result.retired.add(block.id); continue }
     const endTime = Date.parse(block.createdAt)
-    const endTurn = ends.get(endTime)
+    const stableEndTurn = block.l5Raw.filter((message) => message.role === 'user')
+      .map((message) => stableDshTurnFromMessageId(message.id)).at(-1)
+    const endTurn = stableEndTurn ?? ends.get(endTime)
     if (endTurn === undefined) continue
-    if (!visibleEnds.has(endTime)) { result.retired.add(block.id); continue }
+    const visible = stableEndTurn !== undefined ? visibleTurns.has(stableEndTurn) : visibleEnds.has(endTime)
+    if (!visible) { result.retired.add(block.id); continue }
     // The full check also rejects partial compaction and mismatched turns.
     const seqs = sealedSurfaceSeqs(session, endTurn, block)
     if (seqs?.length) result.sources.set(block.id, { endTurn, seqs })
@@ -4112,13 +4128,16 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
     open = undefined
   }
 
-  const sourceTimes = block.l5Raw.filter((message) => message.role === 'user')
-    .map((message) => Date.parse(message.createdAt))
+  const sourceUsers = block.l5Raw.filter((message) => message.role === 'user')
+  const sourceTimes = sourceUsers.map((message) => Date.parse(message.createdAt))
+  const sourceTurns = sourceUsers.map((message) => stableDshTurnFromMessageId(message.id))
   const turnCount = block.endTurn - block.startTurn + 1
   const selected = completed.slice(-turnCount)
   if (selected.length !== turnCount || selected.at(-1)?.turn !== endTurn
-    || sourceTimes.length !== turnCount
-    || selected.some((turn, index) => turn.endTime !== sourceTimes[index])) return null
+    || sourceUsers.length !== turnCount
+    || (sourceTurns.every((turn): turn is number => turn !== undefined)
+      ? selected.some((turn, index) => turn.turn !== sourceTurns[index])
+      : selected.some((turn, index) => turn.endTime !== sourceTimes[index]))) return null
   const firstTurn = selected[0]!
   const lastTurn = selected.at(-1)!
   // A host checkpoint may consume only part of the block. Never turn a
@@ -4159,8 +4178,10 @@ function turnAtSurfaceSeq(session: Session, seq: SessionSeq): number | undefined
 }
 
 function sourceTurnsForBlock(session: Session, block: MemoryBlock): Set<number> {
-  const sourceTimes = new Set(block.l5Raw.filter((message) => message.role === 'user')
-    .map((message) => Date.parse(message.createdAt)))
+  const sourceUsers = block.l5Raw.filter((message) => message.role === 'user')
+  const stableTurns = sourceUsers.map((message) => stableDshTurnFromMessageId(message.id))
+  if (stableTurns.every((turn): turn is number => turn !== undefined)) return new Set(stableTurns)
+  const sourceTimes = new Set(sourceUsers.map((message) => Date.parse(message.createdAt)))
   return new Set(session.snapshotEvents()
     .filter((event): event is Extract<SessionEvent, { type: 'turn/end' }> => event.type === 'turn/end'
       && sourceTimes.has(event.time))
@@ -4219,10 +4240,29 @@ function appendBlockSurface(session: Session, block: MemoryBlock, text: string, 
     throw Object.assign(new Error('StrataGate surface replacement no longer owns its complete source range'), { retryable: false })
   }
   session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text }], source: dshMessageSource(),
+    // Keep durable attachment blocks in the replacement event. The host's
+    // normal request projection then restores image bytes and file read paths.
+    content: [{ type: 'text', text }, ...surfaceAttachmentBlocks(session, seqs)], source: dshMessageSource(),
   }), {
     surfaceOp: dshReplaceSurfaceOp(seqs[0]!, seqs.at(-1)!), sourceEventSeqs: seqs,
   })
+}
+
+function surfaceAttachmentBlocks(session: Session, seqs: readonly SessionSeq[]): ContentBlock[] {
+  const seen = new Set<string>()
+  const blocks: ContentBlock[] = []
+  for (const seq of seqs) {
+    const event = session.eventAt(seq)
+    if (event?.type !== 'user/message') continue
+    for (const block of event.data.content) {
+      if (block.type !== 'image' && block.type !== 'file') continue
+      const key = `${block.type}:${JSON.stringify(block.attachment)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      blocks.push(structuredClone(block))
+    }
+  }
+  return blocks
 }
 
 function surfaceMaintenanceInput(state: SurfaceMaintenance): string {

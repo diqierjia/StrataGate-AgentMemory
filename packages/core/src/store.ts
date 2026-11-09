@@ -240,6 +240,18 @@ function userTurnHasAssistant(messages: readonly RawMessage[], userIndex: number
   return false;
 }
 
+/** Complete turns can be sealed around an interrupted reservation. */
+function completedOpenTailTurns(messages: readonly RawMessage[]): RawMessage[][] {
+  const turns: RawMessage[][] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    if (messages[index]!.role !== 'user' || !userTurnHasAssistant(messages, index)) continue;
+    const nextUser = messages.slice(index + 1).findIndex((message) => message.role === 'user');
+    const end = nextUser === -1 ? messages.length : index + 1 + nextUser;
+    turns.push(messages.slice(index, end));
+  }
+  return turns;
+}
+
 function errorMessage(error: unknown): string {
   if (error && typeof error === 'object' && 'fullMessage' in error) {
     const fullMessage = (error as { fullMessage?: unknown }).fullMessage;
@@ -1116,11 +1128,17 @@ export class StrataGate {
     const existingUserMessage = requestedUserMessageId
       ? this.openTail.find((message) => message.id === requestedUserMessageId && message.role === 'user')
       : undefined;
-    if (existingUserMessage && (existingUserMessage.content !== input.user
-      || existingUserMessage.threadId !== threadId)) {
+    if (existingUserMessage && existingUserMessage.threadId !== threadId) {
       throw new Error(`Reserved user message ${requestedUserMessageId} does not match the appended turn`);
     }
-    const userMessage: RawMessage = existingUserMessage ?? {
+    const userMessage: RawMessage = existingUserMessage ? {
+      ...existingUserMessage,
+      // A DSH turn can receive extra input while a memory tool is running.
+      // Keep the reserved id and original timestamp, but persist the full
+      // text observed when the turn ends.
+      content: input.user,
+      ...(input.userToolCalls ? { toolCalls: structuredClone(input.userToolCalls) } : {}),
+    } : {
       id: requestedUserMessageId ?? this.idFactory('msg'),
       role: 'user',
       content: input.user,
@@ -1152,13 +1170,19 @@ export class StrataGate {
     const appendInMemory = (): boolean => {
       if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
       this.currentTurn += 1;
+      if (existingUserMessage) {
+        const index = this.openTail.findIndex((message) => message.id === existingUserMessage.id);
+        if (index < 0) throw new Error(`Reserved user message ${existingUserMessage.id} is no longer open`);
+        this.openTail[index] = userMessage;
+      }
       placeTurnMessages(this.openTail, false);
       if (receiptId) this.ingestionReceipts.set(receiptId, { id: receiptId, createdAt });
       return true;
     };
-    const appended = this.storage?.commitRecords ? await this.withMutationQueue(async () => {
-      const reservedIsLast = !existingUserMessage || this.openTail.at(-1)?.id === existingUserMessage.id;
-      if (this.hasPendingRecordChanges() || !reservedIsLast) return this.applyMutation(appendInMemory);
+    const appended = existingUserMessage
+      ? await this.commitMutation(appendInMemory)
+      : this.storage?.commitRecords ? await this.withMutationQueue(async () => {
+      if (this.hasPendingRecordChanges()) return this.applyMutation(appendInMemory);
       if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
       const receipt = receiptId ? { id: receiptId, createdAt } : undefined;
       const committed = await this.storage!.commitRecords!(this.namespace!, this.revision, {
@@ -1221,9 +1245,10 @@ export class StrataGate {
     return this.commitMutation(() => {
       const existing = this.openTail.find((message) => message.id === id);
       if (existing) {
-        if (existing.role !== 'user' || existing.content !== content || existing.threadId !== threadId) {
+        if (existing.role !== 'user' || existing.threadId !== threadId) {
           throw new Error(`Reserved user message ${id} already exists with different content`);
         }
+        if (existing.content !== content) existing.content = content;
         return existing;
       }
       const message: RawMessage = { id, role: 'user', content, createdAt, ...(threadId ? { threadId } : {}) };
@@ -3559,18 +3584,7 @@ export class StrataGate {
 
   private pendingBlockMessages(threadId: string | undefined): RawMessage[] {
     const messages = this.threadOpenTail(threadId);
-    let users = 0;
-    let end = 0;
-    for (const [index, message] of messages.entries()) {
-      if (message.role !== 'user') continue;
-      if (!userTurnHasAssistant(messages, index)) break;
-      users += 1;
-      if (users !== this.blockTurnSize) continue;
-      const nextUserOffset = messages.slice(index + 1).findIndex((candidate) => candidate.role === 'user');
-      end = nextUserOffset === -1 ? messages.length : index + 1 + nextUserOffset;
-      break;
-    }
-    return messages.slice(0, end);
+    return completedOpenTailTurns(messages).slice(0, this.blockTurnSize).flat();
   }
 
   private async sealOpenTail(threadId: string | undefined): Promise<MemoryBlock> {
