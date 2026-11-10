@@ -27,7 +27,6 @@ const createRuntime = database => new StrataGateRuntime({ database, namespaceMod
 const source = readFileSync(resolve(process.env.STRATAGATE_GRAPH_BROWSER_SOURCE || 'src/client.js'), 'utf8')
   .replace("exports.name = 'stratagate-dsh'", "exports.__browserTest = { MemoryPage, MemoryPanel }; exports.name = 'stratagate-dsh'")
   .replace('exports.name="stratagate-dsh"', 'exports.__browserTest={MemoryPage,MemoryPanel},exports.name="stratagate-dsh"')
-  .replace('__STRATAGATE_MASCOT_DATA_URL__', 'data:image/png;base64,' + readFileSync(join(root, 'docs/assets/stratagate-avatar.png')).toString('base64'))
 const app = await build({ stdin: { resolveDir: root, contents: `
 import React from ${JSON.stringify(join(dependencies, 'react/index.js'))};
 import { createRoot } from ${JSON.stringify(join(dependencies, 'react-dom/client.js'))};

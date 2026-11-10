@@ -81,8 +81,8 @@ try {
   page.on('dialog', dialog => { dialogs++; void dialog.dismiss() })
   await page.goto(`http://127.0.0.1:${server.address().port}`)
   const row = field => page.locator('.sg-profile-row').filter({ has: page.locator(`#sg-profile-${field}`) })
-  const language = page.locator('.sg-profile-row').filter({ hasText: '默认回答语言' })
-  const reasoning = page.locator('.sg-profile-row').filter({ hasText: '思考过程语言' })
+  const language = page.locator('.sg-profile-row').filter({ hasText: '回答用什么语言' })
+  const reasoning = page.locator('.sg-profile-row').filter({ hasText: '思考过程用什么语言' })
   const readCount = () => requests.filter(request => request.method === 'GET').length
   const writeCount = () => requests.filter(request => request.method === 'PATCH').length
   const poll = async () => {

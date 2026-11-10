@@ -318,7 +318,7 @@ DSH 0.1.7 and 0.2.0 store plugin configuration in the current profile and presen
 
 DSH 0.1.6's official DeepSeek profile may enable Session Log request metadata by default, so the Host can include original Session Events in the `dsh_session_log` request field. This metadata is outside the model messages, system prompt, and tool schema and does not indicate that StrataGate compression was bypassed. StrataGate does not alter this DSH-wide setting; users who want it disabled should set `session-log-deepseek.enabled=false` through DSH configuration.
 
-The package declares local filesystem read/write and Harness tool registration. It does not request direct network, subprocess, shell, Python, or credential access. Model calls still flow through DSH's existing LLM service.
+The package declares local filesystem read/write and Harness tool registration. It does not request direct network, subprocess, shell, Python, or credential access. Model calls still flow through DSH's existing LLM service. The one browser-side request outside the plugin runtime is the optional GitHub Star count in the memory header; the page calls `https://api.github.com/repos/diqierjia/StrataGate-AgentMemory` directly, once per browser session, and any failure simply hides the number.
 
 If a memory-model call fails, the raw turn and the pending job remain durable. A later open resumes the job without appending the turn again. Retrieval waits for queued ingestion so a just-completed turn is not raced by a search.
 

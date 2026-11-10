@@ -306,7 +306,7 @@ DSH 0.1.7 和 0.2.0 将插件配置保存在当前 profile 中，并通过配置
 
 DSH 0.1.6 的官方 DeepSeek profile 默认可能启用 Session Log 请求元数据，因此宿主可能把原始 Session Event 放入 `dsh_session_log` 请求字段。该元数据不属于模型 messages、system prompt 或 tool schema，不能据此判断 StrataGate 压缩失效。StrataGate 不会修改这一 DSH 全局设置；需要关闭的用户应通过 DSH 配置设置 `session-log-deepseek.enabled=false`。
 
-该包申请本地文件系统读写权限和 Harness 工具注册权限，不申请直接网络访问、子进程、Shell、Python 或凭证访问权限。模型调用仍通过 DSH 现有的 LLM 服务进行。
+该包申请本地文件系统读写权限和 Harness 工具注册权限，不申请直接网络访问、子进程、Shell、Python 或凭证访问权限。模型调用仍通过 DSH 现有的 LLM 服务进行。页面中唯一超出插件运行时的请求是记忆页头可选的 GitHub Star 数：浏览器每个会话直接请求一次 `https://api.github.com/repos/diqierjia/StrataGate-AgentMemory`，失败时只隐藏数字。
 
 如果记忆模型调用失败，原始对话轮次和待处理任务会持久保留。下次打开时会恢复该任务，而不会重复追加对话轮次。检索会等待队列中的写入任务完成，从而避免刚结束的对话与搜索发生竞态。
 

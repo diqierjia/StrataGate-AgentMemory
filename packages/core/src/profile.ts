@@ -30,6 +30,9 @@ export interface ProfileChange {
 }
 
 export const PROFILE_TOTAL_MAX_LENGTH = 6000;
+// User-adjustable bounds for the installation-wide Profile capacity.
+export const PROFILE_TOTAL_MAX_LENGTH_MIN = 2000;
+export const PROFILE_TOTAL_MAX_LENGTH_MAX = 12000;
 export const PROFILE_MAINTENANCE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const PROFILE_MAINTENANCE_TOTAL_THRESHOLD = 4800;
 
@@ -45,7 +48,7 @@ export function isProfileField(value: string): value is ProfileField {
   return Object.prototype.hasOwnProperty.call(PROFILE_FIELDS, value);
 }
 
-export function validateProfile(profile: PersistentProfile): void {
+export function validateProfile(profile: PersistentProfile, totalMaxLength = PROFILE_TOTAL_MAX_LENGTH): void {
   let total = 0;
   for (const field of Object.keys(PROFILE_FIELDS) as ProfileField[]) {
     if (typeof profile[field] !== 'string') throw new TypeError(`${field} must be a string`);
@@ -53,16 +56,19 @@ export function validateProfile(profile: PersistentProfile): void {
     if (length > PROFILE_FIELDS[field].maxLength) throw new RangeError(`${field} exceeds ${PROFILE_FIELDS[field].maxLength} characters`);
     total += length;
   }
-  if (total > PROFILE_TOTAL_MAX_LENGTH) throw new RangeError(`Persistent Profile exceeds ${PROFILE_TOTAL_MAX_LENGTH} characters`);
+  if (total > totalMaxLength) throw new RangeError(`Persistent Profile exceeds ${totalMaxLength} characters`);
 }
 
-export function profileMaintenanceDue(profile: PersistentProfile, timeBasisAt: string | null, now = Date.now()): boolean {
+export function profileMaintenanceDue(profile: PersistentProfile, timeBasisAt: string | null, now = Date.now(), totalMaxLength = PROFILE_TOTAL_MAX_LENGTH): boolean {
   const lengths = (Object.keys(PROFILE_FIELDS) as ProfileField[]).map((field) => ({ field, length: profileLength(profile[field]) }));
   const total = lengths.reduce((sum, item) => sum + item.length, 0);
   const maintainableLengths = lengths.filter(({ field }) => PROFILE_MAINTAINABLE_FIELDS.includes(field));
   if (!maintainableLengths.some(({ length }) => length > 0)) return false;
+  // Keep the historical 80% trigger when the default limit is in use; a
+  // custom limit moves the trigger with it instead of firing early forever.
+  const totalThreshold = Math.min(PROFILE_MAINTENANCE_TOTAL_THRESHOLD, Math.floor(totalMaxLength * 0.8));
   return (timeBasisAt !== null && now - Date.parse(timeBasisAt) >= PROFILE_MAINTENANCE_INTERVAL_MS)
-    || total >= PROFILE_MAINTENANCE_TOTAL_THRESHOLD
+    || total >= totalThreshold
     || maintainableLengths.some(({ field, length }) => length >= PROFILE_FIELDS[field].maxLength * 0.8);
 }
 
