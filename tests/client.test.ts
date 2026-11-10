@@ -2641,15 +2641,16 @@ describe('StrataGate Web client contract', () => {
 
 
 describe('memory overview layers', () => {
+  const ago = (milliseconds: number) => new Date(Date.now() - milliseconds).toISOString()
   const selected = { memoryOverview: {
     windowDays: 7, heatmapDays: 28, answeredLast7Days: 6, lastRecall: { title: '前端不要 AI 味', at: '2026-11-08T04:00:00.000Z' },
     heatmap: [{ day: '2026-11-08', answers: 2 }],
     layers: {
-      profile: { characters: 1234, updatedAt: '2026-11-08T04:00:00.000Z' },
+      profile: { characters: 1234, updatedAt: ago(11 * 60 * 60 * 1000) },
       directory: { chapters: 4, updatedAt: '2026-11-07T04:00:00.000Z' },
       session: { blocks: 14, updatedAt: '2026-11-06T04:00:00.000Z' },
       shortTerm: { enabled: true, items: 9, updatedAt: '2026-11-05T04:00:00.000Z' },
-      longTerm: { events: 58, answers: 3, updatedAt: '2026-11-04T04:00:00.000Z' },
+      longTerm: { events: 58, answers: 3, updatedAt: ago(4 * 24 * 60 * 60 * 1000) },
     },
   } }
   const layerNodes = (tree: unknown) => {
