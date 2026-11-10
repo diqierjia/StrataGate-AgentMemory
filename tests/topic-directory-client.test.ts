@@ -157,7 +157,7 @@ function find(tree: Rendered, predicate: (node: Rendered) => boolean): Rendered[
 describe('Dreaming directory controls', () => {
   it('folds a completed or terminated round into one summary row and hides the card', () => {
     const client = clientRenderer()
-    const directory = fixture()
+    const directory = fixture() as any
     directory.dreaming = { id: 'dream-1', sessionId: 'stratagate-dreaming:one', status: 'completed', updatedAt: '2026-10-04T00:00:00.000Z', changedBatches: 4, completed: 4, total: 4 } as any
     const completed = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
     expect(find(completed, (node) => node.props['data-testid'] === 'stratagate-dreaming')).toHaveLength(0)
