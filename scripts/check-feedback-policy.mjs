@@ -8,7 +8,9 @@ export function checkFeedbackPolicy(root = fileURLToPath(new URL('../', import.m
   const source = readFileSync(join(root, 'src/client.js'), 'utf8')
   const client = source.match(/const AGENT_FEEDBACK_ENABLED = (true|false)\b/)?.[1]
   const github = source.match(/const GITHUB_FEEDBACK_ENABLED = (true|false)\b/)?.[1]
-  if (!agent || !client || agent !== client || github !== 'false') {
+  // GitHub issues are live again; the Agent and client feedback gates must
+  // both be on and must match.
+  if (!agent || !client || agent !== client || agent !== 'true' || github !== 'true') {
     throw new Error('Feedback gates must match: AGENT_FEEDBACK_ENABLED=' + agent + ', client AGENT_FEEDBACK_ENABLED=' + client + ', GITHUB_FEEDBACK_ENABLED=' + github)
   }
 }

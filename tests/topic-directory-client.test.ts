@@ -9,6 +9,9 @@ type Rendered = { type: string; props: any; children: Rendered[]; text: string; 
 // Runs the actual host components and their state setters. Browser regression
 // covers layout/focus/motion; this harness exercises numbering and interactions
 // without adding another React or DOM implementation to the plugin.
+const memoryStorage = new Map<string, string>()
+const localStorage = { getItem: (key: string) => memoryStorage.get(key) ?? null, setItem: (key: string, value: string) => { memoryStorage.set(key, value) }, removeItem: (key: string) => { memoryStorage.delete(key) } }
+
 function clientRenderer(runEffects = false, fetchOverride?: any) {
   const hooks = new Map<string, any[]>()
   const callbacks = new Map<string, { dependencies: any[]; callback: any }>()
@@ -86,9 +89,9 @@ function clientRenderer(runEffects = false, fetchOverride?: any) {
   }))
   let definition: any
   runInNewContext(source, {
-    URL, URLSearchParams, AbortController, fetch: fetchMock,
+    URL, URLSearchParams, AbortController, localStorage, fetch: fetchMock,
     document: { body: { style: {} }, hidden: true, querySelector: () => null, addEventListener: () => {}, removeEventListener: () => {} },
-    window: { __ModuleLoader__: { load: (value: any) => { definition = value } }, setTimeout: () => 0, clearTimeout: () => {}, addEventListener: () => {}, removeEventListener: () => {} },
+    window: { __ModuleLoader__: { load: (value: any) => { definition = value } }, setTimeout: () => 0, clearTimeout: () => {}, addEventListener: () => {}, removeEventListener: () => {}, localStorage },
   })
   const components = definition.factory(() => React).__topicTest
   // Raw relations belong to the mock server; actual UI components receive the
@@ -152,6 +155,30 @@ function find(tree: Rendered, predicate: (node: Rendered) => boolean): Rendered[
 }
 
 describe('Dreaming directory controls', () => {
+  it('folds a completed or terminated round into one summary row and hides the card', () => {
+    const client = clientRenderer()
+    const directory = fixture() as any
+    directory.dreaming = { id: 'dream-1', sessionId: 'stratagate-dreaming:one', status: 'completed', updatedAt: '2026-10-04T00:00:00.000Z', changedBatches: 4, completed: 4, total: 4 } as any
+    const completed = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
+    expect(find(completed, (node) => node.props['data-testid'] === 'stratagate-dreaming')).toHaveLength(0)
+    expect(find(completed, (node) => node.props.className === 'sg-toc-dream-run').map((node) => node.text)).toEqual(['上次整理 10/04 · 4 节 → 3 节'])
+    expect(find(completed, (node) => node.props.className === 'sg-toc-dream-merge').length).toBe(1)
+    directory.dreaming = { ...directory.dreaming, status: 'terminated' } as any
+    const terminated = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
+    expect(terminated.text).toContain('已终止')
+    expect(terminated.text).toContain('已整理的章节已保留')
+    expect(find(terminated, (node) => node.props['data-testid'] === 'stratagate-dreaming')).toHaveLength(0)
+    const counts = find(terminated, (node) => node.props.className === 'sg-toc-cnt')
+    expect(counts.map((node) => node.text)).toEqual(['20', '8', '12', '1', '1'])
+    expect(counts[0]!.props.title).toBe('20 条事件')
+    buttons(terminated, '×')[0]!.props.onClick()
+    const hidden = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
+    expect(hidden.text).not.toContain('已整理的章节已保留')
+    const again = clientRenderer()
+    const remembered = again.render(again.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
+    expect(remembered.text).not.toContain('已整理的章节已保留')
+  })
+
   it('opens the real host session returned by the server, with the exact run identity', async () => {
     const client = clientRenderer(false, async () => ({ ok: true, status: 200, json: async () => ({ sessionId: 'stratagate-dreaming:real' }) }))
     const onOpenDreamingSession = vi.fn()
@@ -207,7 +234,7 @@ describe('Dreaming directory controls', () => {
   })
 })
 function buttons(tree: Rendered, text?: string) {
-  return find(tree, (node) => node.visible && node.type === 'button' && (!text || node.text === text))
+  return find(tree, (node) => node.visible && node.type === 'button' && (!text || node.text.replace(/\d+(?=›$)/, '') === text))
 }
 function eventFixture() {
   return Array.from({ length: 26 }, (_, index) => ({ id: 'event-' + (index + 1), title: '历史事件 ' + (index + 1), status: 'active', createdAt: '2026-10-04T00:00:00.000Z' }))
@@ -461,7 +488,9 @@ describe('Topic Directory client interactions', () => {
     const dashboardReply = (data: any, etag: string) => ({ ok: true, status: 200, headers: { get: () => etag }, json: async () => ({ namespace, overview, processing: false, data }) })
     const pending: Array<{ signal: AbortSignal; resolve: (value: any) => void; options: any }> = []
     let request = 0
-    const client = clientRenderer(true, (_url: string, options: any) => {
+    const client = clientRenderer(true, (url: string, options: any) => {
+      // The header star button also fetches; keep the sequence on dashboards.
+      if (!String(url).startsWith('/api/stratagate/dashboard')) return Promise.resolve({ ok: false, status: 403, json: async () => ({}) })
       request += 1
       if (request === 1) return Promise.resolve(dashboardReply(oldData, 'etag-A'))
       if (request === 4) return Promise.resolve({ ok: true, status: 304, headers: { get: () => 'etag-B' } })
@@ -488,7 +517,8 @@ describe('Topic Directory client interactions', () => {
     expect(buttons(tree, '第一章新版本记忆 B›')).toHaveLength(1)
     expect(buttons(tree, '第一章旧版本记忆 A›')).toHaveLength(0)
     await client.dashboardLoader(namespace, { background: true })
-    expect(client.fetch.mock.calls[3]![1].headers['If-None-Match']).toBe('etag-B')
+    const lastDashboard = client.fetch.mock.calls.filter((call: any[]) => String(call[0]).startsWith('/api/stratagate/dashboard')).at(-1)!
+    expect(lastDashboard[1].headers['If-None-Match']).toBe('etag-B')
   })
 
   it('groups repeated unnamed kinds into one section and preserves server chapter order', () => {
@@ -758,6 +788,59 @@ describe('Topic Directory client interactions', () => {
     expect(buttons(tree, '第一章新工作区主题›')).toHaveLength(1)
   })
 
+  it('opens each overview memory layer from the real page and keeps bare counts', () => {
+    const client = clientRenderer()
+    const namespace = 'dsh:project:test'
+    const overview = { namespaces: [{ namespace, memoryOverview: {
+      windowDays: 7, heatmapDays: 28, answeredLast7Days: 6, lastRecall: null,
+      heatmap: [{ day: '2026-11-08', answers: 0 }],
+      layers: {
+        profile: { characters: 1234, updatedAt: '2026-11-08T04:00:00.000Z' },
+        directory: { chapters: 4, updatedAt: '2026-11-07T04:00:00.000Z' },
+        session: { blocks: 14, updatedAt: '2026-11-06T04:00:00.000Z' },
+        shortTerm: { enabled: true, items: 9, updatedAt: '2026-11-05T04:00:00.000Z' },
+        longTerm: { events: 58, answers: 0, updatedAt: '2026-11-04T04:00:00.000Z' },
+      },
+    } }] }
+    const data = { events: [], graph: { nodes: [], edges: [] }, blocks: [], openBlock: null, conversations: [], activeThreadId: null, audit: [], topicDirectory: fixture(), pagination: {} }
+    const props = { useWorkspaces: (select: any) => select({ items: [] }), useSessions: (select: any) => select({ byId: {} }) }
+    // MemoryPage's ordinary slots: overview, namespace, section, data, error.
+    client.seedHooks({ 0: overview, 1: namespace, 5: 'overview', 8: data, 11: false, 20: { current: namespace } })
+    let tree = client.render(client.MemoryPage, props)
+    const layer = (key: string) => find(tree, (node) => node.visible && node.props['data-testid'] === 'overview-layer-' + key)[0]!
+    expect(find(tree, (node) => node.visible && /^overview-layer-/.test(String(node.props['data-testid'] || '')))).toHaveLength(5)
+    expect(layer('long').type).toBe('button')
+    expect(layer('long').text).not.toContain('个事件')
+    expect(layer('profile').text).not.toContain('字')
+
+    layer('long').props.onClick()
+    tree = client.render(client.MemoryPage, props)
+    expect(buttons(tree, '长期记忆')[0]!.props['aria-current']).toBe('page')
+    expect(buttons(tree, '目录').length).toBeGreaterThan(0)
+
+    // 回到总览，再点另一层确认复用的是现有切换逻辑。
+    buttons(tree, '总览')[0]!.props.onClick()
+    tree = client.render(client.MemoryPage, props)
+    layer('short').props.onClick()
+    tree = client.render(client.MemoryPage, props)
+    expect(buttons(tree, '短期记忆')[0]!.props['aria-current']).toBe('page')
+    expect(find(tree, (node) => node.visible && node.props['data-testid'] === 'stratagate-overview')).toHaveLength(0)
+  })
+
+  it('shows a labeled graph switch in the plus menu and opens the graph tab from it', () => {
+    const client = clientRenderer()
+    const props = { events: [], eventPage: { total: 0, offset: 0, limit: 40 }, graph: { nodes: [], edges: [] }, project: '当前工作区', query: '', setQuery: vi.fn(), openEvent: vi.fn(), namespace: 'dsh:project:test', topicDirectory: fixture(), graphSettings: { enabled: false } }
+    let tree = client.render(client.LongTermPage, props)
+    expect(find(tree, (node) => node.props.role === 'switch')).toHaveLength(0)
+    buttons(tree).filter((node) => node.props['aria-label'] === '知识图谱设置')[0]!.props.onClick()
+    tree = client.render(client.LongTermPage, props)
+    const toggle = find(tree, (node) => node.props.role === 'switch')[0]!
+    expect(toggle.props['aria-checked']).toBe(false)
+    expect(tree.text).toContain('显示知识图谱')
+    expect(tree.text).toContain('默认关闭，打开后可查看已有图谱')
+    expect(buttons(tree, '打开知识图谱 →')).toHaveLength(0)
+  })
+
   it('consumes a graph navigation request once and accepts another request for the same node', () => {
     const client = clientRenderer(true)
     const props = { events: [], eventPage: { total: 0, offset: 0, limit: 40 }, graph: { nodes: [{ id: 'node-1', name: '记忆架构', type: 'concept', status: 'active', sourceEventIds: [] }], edges: [], clusters: [] }, project: '当前工作区', query: '', setQuery: vi.fn(), openEvent: vi.fn(), namespace: 'dsh:project:test', topicDirectory: fixture(), focusNodeId: 'node-1', onFocusHandled: vi.fn() }
@@ -766,11 +849,11 @@ describe('Topic Directory client interactions', () => {
     let tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '知识图谱')[0]!.props['aria-current']).toBe('page')
     expect(props.onFocusHandled).toHaveBeenCalledTimes(1)
-    buttons(tree, '主题目录')[0]!.props.onClick()
+    buttons(tree, '目录')[0]!.props.onClick()
     tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     props.graph.nodes = [...props.graph.nodes]
     tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
-    expect(buttons(tree, '主题目录')[0]!.props['aria-current']).toBe('page')
+    expect(buttons(tree, '目录')[0]!.props['aria-current']).toBe('page')
     expect(props.onFocusHandled).toHaveBeenCalledTimes(1)
     props.focusNodeId = 'node-1'
     client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
@@ -785,20 +868,20 @@ describe('Topic Directory client interactions', () => {
     let tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     const nav = find(tree, (node) => node.props['aria-label'] === '长期记忆视角')[0]!
     expect(buttons(nav).filter((node) => node.props.className !== 'sg-graph-menu-trigger').map(({ text }) => text))
-      .toEqual(['主题目录', '知识图谱', '事件时间线'])
+      .toEqual(['目录', '知识图谱', '时间线'])
     expect(buttons(nav).filter((node) => node.props['aria-label'] === '知识图谱设置')).toHaveLength(1)
-    expect(buttons(nav, '主题目录')[0]!.props['aria-current']).toBe('page')
+    expect(buttons(nav, '目录')[0]!.props['aria-current']).toBe('page')
     expect(find(tree, (node) => node.visible && node.props.className === 'sg-long-toolbar')).toHaveLength(0)
     buttons(tree, '1.1发展脉络›')[0]!.props.onClick()
     buttons(tree, '知识图谱')[0]!.props.onClick()
     tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '知识图谱')[0]!.props['aria-current']).toBe('page')
     expect(find(tree, (node) => node.visible && node.props.className === 'sg-long-toolbar')).toHaveLength(1)
-    buttons(tree, '事件时间线')[0]!.props.onClick()
+    buttons(tree, '时间线')[0]!.props.onClick()
     tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
-    expect(buttons(tree, '事件时间线')[0]!.props['aria-current']).toBe('page')
+    expect(buttons(tree, '时间线')[0]!.props['aria-current']).toBe('page')
     expect(buttons(tree, '下一页')).toHaveLength(1)
-    buttons(tree, '主题目录')[0]!.props.onClick()
+    buttons(tree, '目录')[0]!.props.onClick()
     tree = client.render(client.LongTermPage, { ...props, graphSettings: { enabled: true } })
     expect(buttons(tree, '1.1发展脉络›')[0]!.props['aria-expanded']).toBe(true)
   })
@@ -851,8 +934,8 @@ describe('Topic Directory client interactions', () => {
     const client = clientRenderer(true)
     const props = { directory: fixture(), namespace: 'dsh:project:test', openEvent: vi.fn() }
     let tree = client.render(client.TopicDirectory, props)
-    expect(buttons(tree).map(({ text }) => text)).toContain('第一章记忆架构›')
-    expect(buttons(tree).map(({ text }) => text)).toContain('第二章求职与实习›')
+    expect(buttons(tree).map((node) => node.text.replace(/\d+(?=›$)/, ''))).toContain('第一章记忆架构›')
+    expect(buttons(tree).map((node) => node.text.replace(/\d+(?=›$)/, ''))).toContain('第二章求职与实习›')
     expect(find(tree, (node) => node.props.className === 'sg-topic-chapter')).toHaveLength(2)
     expect(buttons(tree, '1.1发展脉络›')).toHaveLength(1)
     expect(buttons(tree, '1.2关键设计决策›')).toHaveLength(1)
@@ -975,8 +1058,8 @@ describe('Topic Directory client interactions', () => {
       failures: [{ jobId: 'failed-a', eventCount: 1, attempts: 3 }],
     } as any;
     const tree = client.render(client.TopicDirectory, { directory, openEvent: vi.fn() });
-    expect(tree.text).toContain(status === 'running' ? '历史记忆整理中 · 已处理 0 / 1 条事件' : '部分记忆尚未归入主题或小节。');
-    expect(tree.text).not.toMatch(/失败批次|重新整理这|尝试.*次|整理完成/);
+    expect(tree.text).toContain(status === 'running' ? '历史记忆整理中 · 已处理 0 / 1 条事件' : '待整理');
+    expect(tree.text).not.toMatch(/失败批次|重新整理这|尝试.*次|整理完成|部分记忆尚未归入主题或小节/);
     expect(buttons(tree, '重新整理这 1 条')).toHaveLength(0);
   });
 
@@ -986,26 +1069,58 @@ describe('Topic Directory client interactions', () => {
     directory.bootstrap = { status, total: 86, completed: status === 'completed' ? 86 : 74, failedEvents: failed ? 12 : 0,
       failures: failed ? [{ jobId: 'failed-recovery', eventCount: 12, attempts: 3, lastError: 'validation-failed: overview.text is empty' }] : [] } as any;
     const tree = client.render(client.TopicDirectory, { directory, openEvent: vi.fn() });
+    // A failed/completed background pass no longer leaves a standing notice;
+    // unclassified memory is represented by the actionable pending section.
+    expect(tree.text).not.toContain('部分记忆尚未归入主题或小节。');
     if (failed) {
-      expect(tree.text).toContain('部分记忆尚未归入主题或小节。');
       expect(tree.text).not.toContain('validation-failed');
       expect(buttons(tree, '重新整理这 12 条')).toHaveLength(0);
+      expect(tree.text).toContain('待整理');
     } else if (status === 'completed') {
-      expect(tree.text).toContain('部分记忆尚未归入主题或小节。');
+      expect(tree.text).toContain('待整理');
     } else expect(tree.text).toContain('历史记忆整理中 · 已处理 74 / 86 条事件');
   });
 
-  it('checks actual topic and section coverage even when no task is running', () => {
+  it('shows the pending section only when unclassified memory exists and never on a bare bootstrap failure', () => {
     const client = clientRenderer(true)
     const directory = fixture()
     const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn() }
-    expect(client.render(client.TopicDirectory, props).text).toContain('部分记忆尚未归入主题或小节。')
+    let tree = client.render(client.TopicDirectory, props)
+    expect(tree.text).toContain('待整理')
+    expect(tree.text).not.toContain('部分记忆尚未归入主题或小节。')
     directory.pending.total = 0
     directory.topics = []
-    expect(client.render(client.TopicDirectory, props).text).not.toContain('部分记忆尚未归入主题或小节。')
+    tree = client.render(client.TopicDirectory, props)
+    expect(tree.text).not.toContain('待整理')
+    expect(tree.text).not.toContain('部分记忆尚未归入主题或小节。')
+    directory.topics = fixture().topics
     directory.bootstrap = { ...directory.bootstrap, sectionBackfill: { pendingRelations: 1, failedRelations: 1 } } as any
-    expect(client.render(client.TopicDirectory, props).text).toContain('部分记忆尚未归入主题或小节。')
+    tree = client.render(client.TopicDirectory, props)
+    // Section backfill is not user-facing unclassified memory; no standing
+    // notice and no pending section when there are no pending events.
+    expect(tree.text).not.toContain('待整理')
+    expect(tree.text).not.toContain('部分记忆尚未归入主题或小节。')
     expect(client.fetch).not.toHaveBeenCalled()
+  })
+
+  it('offers rearrangement only beside unclassified memory and folds progress into that section', async () => {
+    const run = { id: 'dream-pending', status: 'running', activity: '正在整理', completed: 1, total: 3 }
+    const client = clientRenderer(false, async (url: string) => ({ ok: true, status: 200, json: async () => String(url).includes('action=start') ? { run } : { run: null } }))
+    const directory = fixture()
+    directory.pending.total = 2
+    const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onDirectoryChanged: vi.fn() }
+    let tree = client.render(client.TopicDirectory, props)
+    expect(tree.text).toContain('待整理')
+    expect(tree.text).toContain('2 条')
+    const arrange = buttons(tree, '整理这些')[0]!
+    await arrange.props.onClick()
+    await client.flush()
+    tree = client.render(client.TopicDirectory, props)
+    expect(tree.text).toContain('正在做梦…')
+    expect(find(tree, (node) => node.type === 'progress')).toHaveLength(1)
+    expect(client.fetch.mock.calls[0]![0]).toContain('action=start')
+    // The old top-of-directory entry is gone.
+    expect(find(tree, (node) => node.props.className === 'sg-topic-directory-intro')).toHaveLength(0)
   })
 
   it('keeps zero/one/nine event overviews complete without inventing rows or show-all actions', async () => {

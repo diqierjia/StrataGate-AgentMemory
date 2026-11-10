@@ -832,6 +832,14 @@ describe('StrataGate admin routes', () => {
         events: 1,
         usageReceipts: 1,
         memoryUseCount: 1,
+        memoryOverview: expect.objectContaining({
+          answeredLast7Days: 0,
+          lastRecall: expect.objectContaining({ title: 'Use pnpm' }),
+          layers: expect.objectContaining({
+            session: expect.objectContaining({ blocks: 1 }),
+            longTerm: expect.objectContaining({ events: 1, answers: 1 }),
+          }),
+        }),
         failedJobs: 1,
         processingJobs: 0,
         failedJobDetails: [{
@@ -1552,6 +1560,31 @@ describe('StrataGate admin routes', () => {
     expect(result).toMatchObject({ status: 405, body: { error: expect.stringContaining('read-only') } })
   })
 
+  it('updates the Profile character limit through the settings PATCH route', async () => {
+    let stored = 6000
+    const limitRuntime = {
+      getProfileTotalMaxLength: () => stored,
+      getPersistentProfile: () => ({ preferredLanguage: '中文' }),
+      adminSetProfileTotalMaxLength: (value: number) => {
+        if (!Number.isSafeInteger(value) || value < 2000 || value > 12000) throw new RangeError('profile character limit must be an integer between 2000 and 12000')
+        stored = value
+        return value
+      },
+    } as unknown as StrataGateRuntime
+    expect(await request('/api/stratagate/settings', 'PATCH', limitRuntime, { profileMaxLength: 8000 }))
+      .toMatchObject({ status: 200, body: { profileMaxLength: 8000 } })
+    expect(stored).toBe(8000)
+    expect(await request('/api/stratagate/settings', 'PATCH', limitRuntime, { profileMaxLength: 900 }))
+      .toMatchObject({ status: 400, body: { error: expect.stringContaining('between 2000 and 12000') } })
+    expect(await request('/api/stratagate/settings', 'PATCH', limitRuntime, { profileMaxLength: '8000' }))
+      .toMatchObject({ status: 400, body: { error: expect.stringContaining('integer') } })
+    const snapshot = await request('/api/stratagate/profile', 'GET', {
+      getProfileSnapshot: () => ({ profile: { preferredLanguage: '中文' }, revisions: { preferredLanguage: 2 } }),
+      getProfileTotalMaxLength: () => 8000,
+    } as unknown as StrataGateRuntime)
+    expect(snapshot).toMatchObject({ status: 200, body: { preferredLanguage: '中文', _limits: { totalMaxLength: 8000 } } })
+  })
+
   it('reads and updates one shared Profile field from Settings', async () => {
     const profile = { preferredLanguage: '' }
     let revision = 0
@@ -1618,6 +1651,25 @@ describe('read-only daily-note admin routes', () => {
       expect(await request('/api/stratagate/daily/note?namespace=n&date=2026-10-28', 'GET', runtime)).toMatchObject({ status: 200, body: { date: '2026-10-28', markdown: '# 2026-10-28\n\n## A\n当前：验证 `src/client.js`\n' } })
       expect((await request('/api/stratagate/daily?namespace=other', 'GET', runtime)).body.dates).toEqual([])
     }, enabled)
+  })
+  it('applies live daily-note edits without remounting and invalidates cached snapshots', async () => {
+    await fixture(async runtime => {
+      for (const date of ['2026-10-28', '2026-10-27', '2026-10-26', '2026-10-25']) {
+        await runtime.dailyNotes.write('n', { date, title: 'A', content: 'progress' })
+      }
+      expect((await runtime.dailyNotes.snapshot('n')).match(/^# 2026-/gm)).toHaveLength(3)
+      runtime.applyLiveDailyNotes(true, 'Asia/Tokyo', 2)
+      const result = await request('/api/stratagate/daily?namespace=n', 'GET', runtime)
+      expect(result.body).toMatchObject({ enabled: true, timeZone: 'Asia/Tokyo', injectionDays: 2 })
+      expect(result.body.injectedDates).toHaveLength(2)
+      // The cached session snapshot must reflect the new lookback immediately.
+      expect((await runtime.dailyNotes.snapshot('n')).match(/^# 2026-/gm)).toHaveLength(2)
+      runtime.applyLiveDailyNotes(false, undefined, undefined)
+      expect((await request('/api/stratagate/daily?namespace=n', 'GET', runtime)).body.enabled).toBe(false)
+      expect(runtime.dailyNotes.timeZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone)
+      expect(() => runtime.applyLiveDailyNotes(true, undefined, 31)).toThrow('dailyNotesInjectionDays')
+      expect(runtime.dailyNotes.injectionDays).toBe(2)
+    })
   })
   it('distinguishes invalid date, missing file and failed reads; rejects writes and missing namespace', async () => {
     await fixture(async runtime => {

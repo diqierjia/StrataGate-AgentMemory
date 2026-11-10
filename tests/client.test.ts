@@ -5,11 +5,13 @@ import { describe, expect, it, vi } from 'vitest'
 
 function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string, unknown> = {}, legacyGitHub?: boolean) {
   let source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-  if (legacyGitHub !== undefined) source = source.replace('const GITHUB_FEEDBACK_ENABLED = false', 'const GITHUB_FEEDBACK_ENABLED = ' + legacyGitHub)
+  // The shipping client enables GitHub feedback; tests can still force the
+  // dormant email-only branch when they need to check archived behaviour.
+  if (legacyGitHub !== undefined) source = source.replace(/const GITHUB_FEEDBACK_ENABLED = (?:true|false)/, 'const GITHUB_FEEDBACK_ENABLED = ' + legacyGitHub)
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
-    "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, ProfilePage, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
+    "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderStarLink, loadStarCount, formatStarCount, GitHubMarkIcon, StrataGateMark, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, OverviewPage, ProfilePage, ProfileLimitSettings, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
+  ).replace('exports.__test = {', 'exports.__test = { MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -61,6 +63,57 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
+  it('renders the six More groups on one page with immediate switches and an engine dirty bar', async () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("group('运行状态'")
+    expect(source).toContain("group('数据'")
+    expect(source).toContain("group('反馈'")
+    expect(source).toContain("group('显示'")
+    expect(source).toContain("group('短期记忆'")
+    expect(source).toContain("group('引擎参数'")
+    const { MoreHome } = loadSupportHelpers([], { document: { hidden: true } })
+    const props = {
+      setView: vi.fn(), selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, blocks: 12, events: 5, graphNodes: 2, failedJobs: 0, processingJobs: 0 },
+      namespace: 'dsh:project:test', dataDirectory: '/tmp/stratagate', updateSettings: vi.fn(async () => null), savingSettings: false,
+      usePluginSettings: (select: any) => select({ writable: true, value: { dailyNotesEnabled: true, dailyNotesInjectionDays: 3, showSidebarEntry: true } }),
+      setSidebarEntry: vi.fn(async () => true), setStrataGateStatus: vi.fn(async () => true), setShortTermStatus: vi.fn(async () => true),
+      setRetrievalStatus: vi.fn(async () => true), setDailyEnabled: vi.fn(async () => true), setDailyInjectionDays: vi.fn(async () => true),
+    }
+    const tree = MoreHome(props)
+    const rendered = JSON.stringify(tree)
+    expect(rendered).toContain('运行状态')
+    expect(rendered).toContain('引擎参数')
+    expect(rendered).toContain('带入天数')
+    expect(rendered).toContain('sg-stp')
+    expect(rendered).toContain('提 Issue')
+    expect(rendered).not.toContain('项未保存')
+    const switchProps = deepElementProps(tree).filter((value) => value.role === 'switch')
+    expect(switchProps).toHaveLength(4)
+    await switchProps[0].onClick()
+    expect(props.setSidebarEntry).toHaveBeenCalledWith(false)
+  })
+
+  it('keeps a finished Dreaming card hidden and shows the automatic completion toast', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("['running', 'pausing', 'paused'].includes(run.status)")
+    expect(source).toContain("setToast('目录已整理好')")
+    expect(source).not.toContain("'收起'")
+    const stateValues = (value: unknown) => {
+      const values = [value, false, '', false, null, null, null, '', {}, 0]
+      let index = 0
+      return { react: {
+      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
+      useState: (initial: unknown) => [values[index++] ?? initial, () => {}], useEffect: () => {}, useRef: (current: unknown) => ({ current }),
+      useCallback: (callback: unknown) => callback,
+    } }
+    }
+    const completed = loadSupportHelpers([], stateValues({ status: 'completed', total: 2, completed: 2, changedBatches: 2, updatedAt: '2026-10-04T00:00:00Z' })).DreamingPanel({ namespace: 'n', active: true, available: true })
+    expect(JSON.stringify(completed)).not.toContain('stratagate-dreaming')
+    const paused = loadSupportHelpers([], stateValues({ status: 'paused', total: 4, completed: 2, changedBatches: 1, updatedAt: '2026-10-04T00:00:00Z' })).DreamingPanel({ namespace: 'n', active: true, available: true })
+    expect(JSON.stringify(paused)).toContain('stratagate-dreaming')
+    expect(buttonProps(paused, '继续')).toBeDefined()
+  })
+
   it('separates preview from applying a layer and allows replacing a pending selection with the current layer', () => {
     const { BlockLayerPanel, LayerPreview, visibleBlockLevel } = loadSupportHelpers()
     const onExpand = vi.fn()
@@ -1188,102 +1241,99 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("return '证据不足，继续检索'")
   })
 
-  it('keeps the project brand, mascot, usage count, and Gitee project link', () => {
+  it('keeps the project brand with an inline icon, drops the header usage count, and points at GitHub', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const buildSource = readFileSync(new URL('../scripts/build-client.mjs', import.meta.url), 'utf8')
     expect(source).toContain("'StrataGate'")
     expect(source).not.toContain('有来源、可追溯的跨会话记忆')
-    expect(source).toContain('__STRATAGATE_MASCOT_DATA_URL__')
-    expect(source).toContain('StrataGate 已在当前工作区中帮助使用记忆 ')
+    expect(source).not.toContain('__STRATAGATE_MASCOT_DATA_URL__')
+    expect(source).not.toContain("h('img', { className: 'sg-logo'")
+    expect(source).toContain('function StrataGateMark()')
+    expect(source).toContain("className: 'sg-logo'")
+    expect(source).toContain('h(StrataGateMark)')
+    expect(buildSource).not.toContain('stratagate-avatar.png')
+    // The header no longer claims how many answers used memory.
+    expect(source).not.toContain('StrataGate 已在当前工作区中帮助使用记忆 ')
+    expect(source).not.toContain('次记忆被用到')
     expect(source).toContain("'v' + overview.pluginVersion")
-    expect(source).toContain('给 StrataGate 点个 🌟')
-    expect(source).toContain('参与开发 · Issue / PR →')
-    expect(source).toContain("https://gitee.com/diqier4123/StrataGate-AgentMemory")
+    // The header keeps a single GitHub Star entry; Issue lives in the footer.
+    expect(source).toContain("h('b', null, 'Star')")
+    expect(source).not.toContain('给 StrataGate 点个 🌟')
+    expect(source).not.toContain('sg-header-contribute')
+    expect(source).toContain("https://github.com/diqierjia/StrataGate-AgentMemory")
+    expect(source).not.toContain('gitee.com/diqier4123')
+    expect(source).not.toContain('联系作者')
     expect(source).toContain("rel: 'noopener noreferrer'")
     expect(source).toContain("const STRATAGATE_CLIENT_VERSION = '__STRATAGATE_CLIENT_VERSION__'")
     expect(buildSource).toContain("readFileSync(new URL('package.json', root), 'utf8')")
     expect(buildSource).toContain(".replaceAll('__STRATAGATE_CLIENT_VERSION__', packageVersion)")
   })
 
-  it('replaces the header community links with email contact and preserves the dormant Star link', () => {
-    const { HeaderCommunityLinks, GITHUB_FEEDBACK_ENABLED } = loadSupportHelpers()
-    expect(GITHUB_FEEDBACK_ENABLED).toBe(false)
-    const tree = HeaderCommunityLinks()
-    const hrefs = elementProps(tree).map((props) => props.href).filter(Boolean)
-    expect(hrefs).toHaveLength(0)
-    expect(elementProps(tree).find((props) => props['aria-controls'] === 'sg-contact-author-panel')['aria-expanded']).toBe(false)
-    expect(JSON.stringify(tree)).toContain('联系作者')
-    expect(JSON.stringify(tree)).not.toContain('GitHub')
-    expect(JSON.stringify(tree)).not.toContain('Issue / PR')
-    expect(JSON.stringify(tree)).not.toContain('点个')
-    const archived = loadSupportHelpers([], {}, true).HeaderCommunityLinks()
-    expect(elementProps(archived).filter((props) => props.href)).toHaveLength(2)
-    expect(JSON.stringify(archived)).toContain('给 StrataGate 点个')
+  it('shows one GitHub Star entry in the header with a build-time static count', async () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    // The runtime no longer queries GitHub; the count is baked in at build time.
+    expect(source).not.toContain('api.github.com/repos/')
+    expect(source).not.toContain('STAR_COUNT_API')
+    const calls: string[] = []
+    const fetchStub = (url: string) => { calls.push(url); return Promise.resolve({ ok: true, json: async () => ({ stargazers_count: 116 }) }) }
+    const { HeaderStarLink, GitHubMarkIcon, loadStarCount, formatStarCount, GITHUB_FEEDBACK_ENABLED } = loadSupportHelpers([], { fetch: fetchStub })
+    expect(GITHUB_FEEDBACK_ENABLED).toBe(true)
+    expect(formatStarCount(116)).toBe('116')
+    const shown = await loadStarCount()
+    expect(shown).toMatch(/^[\d,]+$/)
+    // A second call is pure and never hits the network.
+    expect(await loadStarCount()).toBe(shown)
+    expect(calls).toHaveLength(0)
+    const tree = HeaderStarLink()
+    const links = elementProps(tree).filter((props) => props.href)
+    expect(links).toHaveLength(1)
+    expect(links[0].href).toBe('https://github.com/diqierjia/StrataGate-AgentMemory')
+    expect(links[0].target).toBe('_blank')
+    expect(links[0].href).not.toContain('/issues')
+    const rendered = JSON.stringify(tree)
+    expect(rendered).toContain('"Star"')
+    expect(rendered).toContain(shown)
+    // Shallow rendering leaves function components uncalled, so assert the
+    // icon separately: it must be a real accessible-mark SVG, not an emoji.
+    const icon = GitHubMarkIcon()
+    expect(icon[1]).toMatchObject({ className: 'sg-ghstar-icon', viewBox: '0 0 16 16', 'aria-hidden': 'true' })
+    expect(icon[2][1].d).toContain('M8 0C3.58 0')
+    expect(rendered).not.toContain('🌟')
+    expect(rendered).not.toContain('给 StrataGate 点个')
+    expect(rendered).not.toContain('gitee')
+    expect(rendered).not.toContain('联系作者')
   })
 
-  it.each(['available', 'missing', 'rejected'])('shows contact details and handles %s clipboard without requiring a mail application', async (clipboardState) => {
-    const values: any[] = []
-    let stateIndex = 0
-    const copied: string[] = [], composed: string[] = []
-    const React = {
-      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
-      useState: (initial: unknown) => {
-        const index = stateIndex++
-        if (!(index in values)) values[index] = initial
-        return [values[index], (value: any) => { values[index] = typeof value === 'function' ? value(values[index]) : value }]
-      },
-      useEffect: () => {}, useRef: (initial: unknown) => ({ current: initial }),
-    }
-    const clipboard = clipboardState === 'missing' ? undefined : { writeText: async (value: string) => {
-      if (clipboardState === 'rejected') throw new Error('permission denied')
-      copied.push(value)
-    } }
-    const { HeaderCommunityLinks } = loadSupportHelpers([], { react: React, navigator: { clipboard }, window: { location: { set href(value: string) { composed.push(value) } } } })
-    const render = () => { stateIndex = 0; return HeaderCommunityLinks() }
-    const button = (tree: any, label: string): any => {
-      if (!Array.isArray(tree)) return undefined
-      if (tree[0] === 'button' && tree.slice(2).includes(label)) return tree[1]
-      return tree.slice(2).map((child) => button(child, label)).find(Boolean)
-    }
-    let tree = render()
-    expect(JSON.stringify(tree)).not.toContain('jiahongcheng61@gmail.com')
-    button(tree, '联系作者 →').onClick()
-    tree = render()
-    expect(JSON.stringify(tree)).toContain('jiahongcheng61@gmail.com')
-    expect(elementProps(tree).find((props) => props['aria-label'] === '联系作者')).toBeDefined()
-    expect(composed).toEqual([])
-    await button(tree, '复制邮箱').onClick()
-    tree = render()
-    expect(copied).toEqual(clipboardState === 'available' ? ['jiahongcheng61@gmail.com'] : [])
-    expect(JSON.stringify(tree)).toContain(clipboardState === 'available' ? '邮箱已复制' : '手动复制')
-    button(tree, '打开邮件应用').onClick()
-    tree = render()
-    expect(new URL(composed[0]!).pathname).toBe('jiahongcheng61@gmail.com')
-    expect(JSON.stringify(tree)).toContain('若没有打开，请复制邮箱')
-    expect(JSON.stringify(tree)).not.toContain('邮件已发送')
-    elementProps(tree).find((props) => props['aria-label'] === '关闭联系方式').onClick()
-    expect(JSON.stringify(render())).not.toContain('jiahongcheng61@gmail.com')
-    button(render(), '联系作者 →').onClick()
-    expect(JSON.stringify(render())).not.toContain('已尝试打开邮件应用')
+  it('keeps the build-time Star count static instead of inventing a placeholder', () => {
+    const { loadStarCount, formatStarCount, HeaderStarLink } = loadSupportHelpers()
+    expect(formatStarCount(undefined)).toBe('')
+    expect(formatStarCount(null as never)).toBe('')
+    expect(formatStarCount('many' as never)).toBe('')
+    expect(formatStarCount(-1)).toBe('')
+    expect(formatStarCount(0)).toBe('0')
+    const shown = HeaderStarLink()
+    const label = elementProps(shown).find((props) => props.className === 'sg-ghstar')!
+    expect(label.href).toBe('https://github.com/diqierjia/StrataGate-AgentMemory')
+    expect(JSON.stringify(shown)).toMatch(/sg-ghstar-count/)
   })
 
-  it('keeps contact details and manual fallback visible when desktop mail navigation throws', () => {
-    const values: any[] = [true, '']
-    let stateIndex = 0
-    const React = {
-      createContext: (value: unknown) => ({ value }), createElement: (...args: unknown[]) => args, Fragment: 'fragment',
-      useState: () => { const index = stateIndex++; return [values[index], (value: any) => { values[index] = value }] },
-      useEffect: () => {}, useRef: () => ({ current: null }),
-    }
-    const { HeaderCommunityLinks } = loadSupportHelpers([], { react: React, window: { location: { set href(_value: string) { throw new Error('unsupported protocol') } } } })
-    const tree = HeaderCommunityLinks()
-    // Find the mail button by its callback rather than depending on layout indexes.
-    const buttons = (value: any): any[] => Array.isArray(value) ? (value[0] === 'button' && value.includes('打开邮件应用') ? [value] : value.slice(2).flatMap(buttons)) : []
-    expect(() => buttons(tree)[0][1].onClick()).not.toThrow()
-    stateIndex = 0
-    const updated = JSON.stringify(HeaderCommunityLinks())
-    expect(updated).toContain('未能打开邮件应用，请复制邮箱')
-    expect(updated).toContain('jiahongcheng61@gmail.com')
+  it('writes the footer as MIT plus repository, Issue and release links', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain("'StrataGate-AgentMemory · MIT'")
+    expect(source).toContain("'GitHub 仓库'")
+    expect(source).toContain("'提 Issue'")
+    expect(source).toContain("'更新记录'")
+    expect(source).not.toContain('发现问题？ ')
+    // The star button must stay on one line in the 420px narrow layout.
+    expect(source).toContain('.sg-ghstar{display:inline-flex;align-items:center;flex:none;height:28px')
+    expect(source).toContain('.sg-ghstar:hover{border-color:color-mix(in srgb,var(--sg-text) 34%,var(--sg-border));color:var(--sg-text)}')
+    expect(source).not.toContain('box-shadow:0 4px 12px color-mix(in srgb,var(--sg-accent) 12%,transparent)')
+    expect(source).toContain('.sg-memory .sg-header-row-primary{flex-wrap:nowrap}')
+    // The narrow header vertically centers the brand row so the Star button
+    // stays on the same line as the brand instead of drifting down.
+    expect(source).toContain('.sg-header-row-primary{align-items:center}')
+    expect(source).toContain('.sg-ghstar{height:26px}.sg-ghstar-label{padding:0 7px}.sg-ghstar-count{padding:0 7px}')
+    expect(source).toContain('border-left:1px solid var(--sg-border);color:var(--sg-text);font-family:var(--sg-mono)')
   })
 
   it('encodes an email subject while keeping the report out of the mailto URL', async () => {
@@ -1346,14 +1396,41 @@ describe('StrataGate Web client contract', () => {
 
   it('copies the visible feedback email address without opening a mail application', async () => {
     const copied: string[] = []
+    // The email-only flow is the archived branch now that GitHub feedback ships.
     const { SupportPage } = loadSupportHelpers([false, false, false, '', '', '', '问题', false, false, false, 2, { text: '报告', title: '' }], {
       navigator: { clipboard: { writeText: async (value: string) => { copied.push(value) } } },
-    })
+    }, false)
     const tree = SupportPage({ namespace: '', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
     const button = buttonProps(tree, '复制邮箱')
     expect(button).toBeDefined()
     await button!.onClick()
     expect(copied).toEqual(['jiahongcheng61@gmail.com'])
+  })
+
+  it('adds Windows font fallbacks without shipping font files', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain('--sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC","Microsoft YaHei UI","Microsoft YaHei","Segoe UI",serif;')
+    expect(source).toContain('--sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,"Cascadia Mono",Consolas,monospace;')
+    // Mac-first order is preserved, and no bundled font asset was added.
+    expect(source.indexOf('"Songti SC"')).toBeLessThan(source.indexOf('"Microsoft YaHei UI"'))
+    expect(source).not.toMatch(/@font-face/)
+  })
+
+  it('uses a content container query for the settings pages and keeps long paths/buttons single-line', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain('.sg-settings-shell{container-type:inline-size;min-width:0}')
+    expect(source).toContain("h('div', { className: 'sg-settings-shell' }")
+    expect(source).toContain('@container sg-settings (max-width:900px)')
+    expect(source).toContain('.sg-memory .sg-more{grid-template-columns:minmax(0,1fr)}')
+    expect(source).toContain("view.name === 'settings' || view.name === 'display'")
+    expect(source).toContain('sg-more-row-path')
+    expect(source).toContain('title: dataDirectory || undefined')
+    expect(source).toContain('white-space:nowrap;overflow:hidden;text-overflow:ellipsis')
+    expect(source).toContain('.sg-storage-button{')
+    expect(source).toContain('font-weight:650;white-space:nowrap}')
+    expect(source).toContain('container:sg-stm / inline-size')
+    expect(source).toContain('@container sg-stm (max-width:560px)')
+    expect(source).toContain('grid-template-columns:repeat(3,minmax(0,1fr))')
   })
 
   it('uses the user-defined DSH Workspace title and keeps the compact header collision-free', () => {
@@ -1380,10 +1457,10 @@ describe('StrataGate Web client contract', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain("'/' + run.total + ' 批次'")
     expect(source).toContain('Dreaming 整理进度（批次）')
-    expect(source).toContain("const [section, setSection] = React.useState('short')")
-    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
-    expect(source).toContain('块衰减总览')
-    expect(source).toContain('开放块 · 未封存')
+    expect(source).toContain("const [section, setSection] = React.useState('overview')")
+    expect(source).toContain("[['overview', '总览'], ['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
+    expect(source).toContain('sg-ss-list')
+    expect(source).toContain('正在记录')
     expect(source).toContain('距最新封存块')
     expect(source).toContain('分层内容预览')
     expect(source).toContain('让助手参考 L')
@@ -1392,8 +1469,8 @@ describe('StrataGate Web client contract', () => {
     expect(source).not.toContain('用户展开')
     expect(source).not.toContain('Agent 展开')
     expect(source).toContain('当前对话：')
-    expect(source).toContain('Block 分布滑轨')
-    expect(source).toContain('L0 层最浅最简略，L5 层最深最详细，离当前对话越远，Block 会逐渐简略。')
+    expect(source).toContain('越早的对话压得越薄')
+    expect(source).toContain('只留标题')
     expect(source).toContain('document.body.appendChild(popover)')
     expect(source).toContain('BlockSelectionFeedback')
     expect(source).toContain('完整内容')
@@ -1412,7 +1489,10 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("if (!graphMenuRef.current?.contains(event.target)) setGraphMenuOpen(false)")
     expect(source).toContain('border:1px solid color-mix(in srgb,var(--sg-muted) 58%,var(--sg-border))')
     expect(source).toContain('background:color-mix(in srgb,var(--sg-muted) 18%,var(--sg-surface))')
-    expect(source).toContain("{ '今天': [], '本周': [], '更早': [] }")
+    // The timeline no longer shows today/week totals; each row shows a category.
+    expect(source).not.toContain("['今天', '本周', '更早']")
+    expect(source).toContain("temporal.eventType ? EVENT_TYPE_TEXT[temporal.eventType]")
+    expect(source).toContain('sg-tl-dream')
     expect(source).toContain('发生时间未知')
     expect(source).toContain('记忆状态')
     expect(source).toContain('当前权重')
@@ -1440,18 +1520,17 @@ describe('StrataGate Web client contract', () => {
     expect(source).not.toContain('封存时为 L5')
   })
 
-  it('keeps exactly the four requested primary entries in More and nests diagnostics under Advanced', () => {
+  it('puts the six requested groups on one More page and keeps the older detail views reachable', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const moreSource = source.slice(source.indexOf('function MoreHome'), source.indexOf('function DisplayPage'))
-    expect(moreSource).toContain("['display', '◐', '界面与显示', '控制会话记忆、检索状态等前端提示']")
-    expect(moreSource).toContain("['import', '⇄', '导入其他 AI 的记忆', '将其他 AI 的历史记忆导入 StrataGate']")
-    expect(moreSource).toContain("['settings', '⚙', '高级设置', '记忆配置、数据与运行诊断']")
-    expect(moreSource).toContain("['support', '?', '反馈与支持', '报告问题、提出建议与查看帮助']")
-    expect(moreSource.match(/^\s*\['(?:display|import|settings|support)'/gm)).toHaveLength(4)
-    expect(moreSource).not.toContain("['structure'")
-    expect(moreSource).not.toContain("['system'")
-    expect(moreSource).not.toContain("['audit'")
-    expect(moreSource).not.toContain("['raw'")
+    for (const title of ['运行状态', '数据', '反馈', '显示', '短期记忆', '引擎参数']) expect(moreSource).toContain("group('" + title + "'")
+    expect(moreSource).toContain("goRow('import', '导入其他 AI 的记忆'")
+    expect(moreSource).toContain("goRow('support', '生成反馈报告'")
+    expect(moreSource).toContain("SettingStepper({ value: pluginSettings?.value?.dailyNotesInjectionDays")
+    expect(moreSource).toContain('changedKeys.length + \' 项未保存\'')
+    expect(moreSource).toContain("h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: discardEngine }, '放弃')")
+    expect(moreSource).toContain("onClick: () => void saveEngine()")
+    expect(source).toContain('GITHUB_FEEDBACK_ENABLED = true')
     const displaySource = source.slice(source.indexOf('function DisplayPage'), source.indexOf('function redactedJson'))
     expect(displaySource).toContain('控制侧栏入口和聊天界面中的显示信息。设置对所有工作区生效。')
     expect(displaySource).toContain('关闭后隐藏聊天界面中的 StrataGate 状态信息，不影响记忆、检索和后台处理。')
@@ -1517,6 +1596,7 @@ describe('StrataGate Web client contract', () => {
   })
 
   it('shows eleven compact Profile rows on the primary page and no Profile editor in Advanced settings', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     const profile = {
       userPreferredName: '', assistantPreferredName: '', preferredLanguage: '中文', reasoningLanguage: '', defaultLocation: '', homeCity: '', currentCity: '', responsePreferences: '',
       standingInstructions: '', userBackground: '', longTermGoals: '', persistentNotes: '',
@@ -1528,14 +1608,17 @@ describe('StrataGate Web client contract', () => {
     expect(deepElementProps(profileTree).filter((props) => String(props.id || '').startsWith('sg-profile-') && props.value !== undefined)).toHaveLength(0)
     expect(deepElementProps(profileTree).filter((props) => props.className === 'sg-profile-action')).toHaveLength(11)
     expect(deepElementProps(profileTree).filter((props) => props.className === 'sg-profile-value empty')).toHaveLength(10)
-    expect(JSON.stringify(profileTree)).toContain('默认回答语言')
-    expect(JSON.stringify(profileTree)).toContain('思考过程语言')
-    expect(JSON.stringify(profileTree)).toContain('常用地址')
-    expect(JSON.stringify(profileTree)).toContain('常驻地址（未说明时默认地址）')
-    expect(JSON.stringify(profileTree)).toContain('当前所在城市（临时）')
+    expect(JSON.stringify(profileTree)).toContain('回答用什么语言')
+    expect(JSON.stringify(profileTree)).toContain('思考过程用什么语言')
+    expect(JSON.stringify(profileTree)).toContain('地点')
+    expect(JSON.stringify(profileTree)).toContain('常驻地址')
+    expect(JSON.stringify(profileTree)).toContain('现在在哪')
     expect(JSON.stringify(profileTree)).not.toContain('常驻城市（原有字段）')
     expect(JSON.stringify(profileTree)).not.toContain('两者独立，不会因旅行或临时所在地自动更改')
     expect(JSON.stringify(profileTree)).not.toContain('默认使用语言')
+    expect(JSON.stringify(profileTree)).not.toContain('调整上限')
+    expect(source).toContain('.sg-cap-num{color:var(--sg-muted);font-family:inherit;font-size:12px;font-variant-numeric:tabular-nums')
+    expect(source).toContain('.sg-cap-num b{font:inherit;font-weight:650')
     const settings = loadSupportHelpers().SettingsPage
     const tree = settings({
       selected: { schemaVersion: 12, blockTurnSize: 6, blockDecayLambda: 0.3, currentTurn: 0 },
@@ -1545,6 +1628,75 @@ describe('StrataGate Web client contract', () => {
     })
     expect(deepElementProps(tree).filter((props) => String(props.id || '').startsWith('sg-profile-'))).toHaveLength(0)
     expect(elementProps(tree).some((props) => props['aria-labelledby'] === 'sg-profile-title')).toBe(false)
+    expect(source).toContain('h(ProfileLimitSettings)')
+  })
+
+  it('saves the Profile limit from Settings and keeps failures inline', async () => {
+    let stored = 6000
+    let fail = false
+    const state: unknown[] = []
+    const refs: Array<{ current: unknown }> = []
+    const effects: Array<() => () => void> = []
+    let stateIndex = 0
+    let refIndex = 0
+    let mounted = false
+    const react = {
+      createContext: (value: unknown) => ({ Provider: 'provider', value }),
+      createElement: (...args: unknown[]) => args,
+      Fragment: 'fragment',
+      useState: (initial: unknown) => {
+        const at = stateIndex++
+        if (!(at in state)) state[at] = initial
+        return [state[at], (update: unknown) => {
+          state[at] = typeof update === 'function' ? (update as (value: unknown) => unknown)(state[at]) : update
+        }]
+      },
+      useRef: (initial: unknown) => refs[refIndex++] ||= { current: initial },
+      useEffect: (effect: () => () => void) => { if (!mounted) effects.push(effect) },
+    }
+    const { ProfileLimitSettings } = loadSupportHelpers([], {
+      react, AbortController,
+      fetch: async (_url: string, options: { method?: string; body?: string } = {}) => {
+        if (options.method === 'PATCH') {
+          if (fail) return { ok: false, status: 500, json: async () => ({ error: 'disk full' }) }
+          const body = JSON.parse(options.body || '{}') as { profileMaxLength: number }
+          stored = body.profileMaxLength
+          return { ok: true, json: async () => ({ profileMaxLength: stored }) }
+        }
+        return { ok: true, json: async () => ({
+          userPreferredName: '', assistantPreferredName: '', preferredLanguage: 'abcdefghij',
+          reasoningLanguage: '', defaultLocation: '', homeCity: '', currentCity: '',
+          responsePreferences: '', standingInstructions: '', userBackground: '',
+          longTermGoals: '', persistentNotes: '', _revisions: {}, _limits: { totalMaxLength: stored },
+        }) }
+      },
+    })
+    const render = () => { stateIndex = 0; refIndex = 0; return ProfileLimitSettings() }
+    const flush = () => new Promise((resolve) => setImmediate(resolve))
+    render()
+    const cleanup = effects[0]!()
+    mounted = true
+    await flush()
+    let tree = render()
+    expect(JSON.stringify(tree)).toContain('10 / 6,000 字')
+    buttonProps(tree, '调整上限')!.onClick()
+    tree = render()
+    const input = deepElementProps(tree).find((props) => props['aria-label'] === '常驻画像字数上限')!
+    expect(input.value).toBe('6000')
+    input.onChange({ target: { value: '8000' } })
+    deepElementProps(render()).find((props) => props.className === 'sg-save-button')!.onClick()
+    await flush()
+    expect(stored).toBe(8000)
+    expect(JSON.stringify(render())).toContain('10 / 8,000 字')
+    fail = true
+    buttonProps(render(), '调整上限')!.onClick()
+    deepElementProps(render()).find((props) => props['aria-label'] === '常驻画像字数上限')!.onChange({ target: { value: '9000' } })
+    deepElementProps(render()).find((props) => props.className === 'sg-save-button')!.onClick()
+    await flush()
+    tree = render()
+    expect(JSON.stringify(tree)).toContain('上限未保存')
+    expect(stored).toBe(8000)
+    cleanup()
   })
 
   it('keeps an existing home city visible without relabeling it as the temporary current city', () => {
@@ -1552,7 +1704,7 @@ describe('StrataGate Web client contract', () => {
     const tree = loadSupportHelpers([profile]).ProfilePage()
     expect(deepElementProps(tree).filter((props) => props.className === 'sg-profile-row')).toHaveLength(12)
     expect(JSON.stringify(tree)).toContain('常驻城市（原有字段）')
-    expect(JSON.stringify(tree)).toContain('当前所在城市（临时）')
+    expect(JSON.stringify(tree)).toContain('现在在哪')
     expect(JSON.stringify(tree)).toContain('深圳')
     expect(JSON.stringify(tree)).toContain('杭州')
     expect(deepElementProps(tree).filter((props) => props.className === 'sg-profile-action')).toHaveLength(12)
@@ -1624,7 +1776,7 @@ describe('StrataGate Web client contract', () => {
     revisions.preferredLanguage = (revisions.preferredLanguage || 0) + 1
     await tick()
     expect(JSON.stringify(render())).toContain('English')
-    const edit = deepElementProps(render()).filter((props) => props.className === 'sg-profile-action')[4]!
+    const edit = deepElementProps(render()).filter((props) => props.className === 'sg-profile-action')[6]!
     edit.onClick()
     let tree = render()
     const textarea = deepElementProps(tree).find((props) => props.id === 'sg-profile-responsePreferences')!
@@ -1633,7 +1785,7 @@ describe('StrataGate Web client contract', () => {
     deepElementProps(render()).find((props) => props.className === 'sg-quiet-button')!.onClick()
     expect(writes).toHaveLength(0)
     expect(deepElementProps(render()).filter((props) => props.id === 'sg-profile-responsePreferences')).toHaveLength(0)
-    deepElementProps(render()).filter((props) => props.className === 'sg-profile-action')[4]!.onClick()
+    deepElementProps(render()).filter((props) => props.className === 'sg-profile-action')[6]!.onClick()
     deepElementProps(render()).find((props) => props.id === 'sg-profile-responsePreferences')!.onChange({ target: { value: 'draft C' } })
     server = { ...server, responsePreferences: 'B', preferredLanguage: 'Français' }
     revisions.responsePreferences = (revisions.responsePreferences || 0) + 1
@@ -1675,7 +1827,7 @@ describe('StrataGate Web client contract', () => {
     await flush()
     expect(writes.at(-1)).toEqual({ field: 'reasoningLanguage', value: '日语', expectedValue: 'English', expectedRevision: 2 })
     expect(server.preferredLanguage).toBe('Français')
-    for (const [index, field, value] of [[6, 'defaultLocation', '广州天河'], [7, 'currentCity', '深圳']] as const) {
+    for (const [index, field, value] of [[4, 'defaultLocation', '广州天河'], [5, 'currentCity', '深圳']] as const) {
       deepElementProps(render()).filter((props) => props.className === 'sg-profile-action')[index]!.onClick()
       const input = deepElementProps(render()).find((props) => props.id === 'sg-profile-' + field)!
       expect(input.value).toBe('')
@@ -1912,7 +2064,7 @@ describe('StrataGate Web client contract', () => {
   })
 
   it('keeps all feedback data local and puts only the paste hint in email links', () => {
-    const { SupportPage, FEEDBACK_EMAIL, EMAIL_BODY_HINT } = loadSupportHelpers([false, false, false, '', '', '', '问题', false, false, false, 2, { text: '报告', title: '' }])
+    const { SupportPage, FEEDBACK_EMAIL, EMAIL_BODY_HINT } = loadSupportHelpers([false, false, false, '', '', '', '问题', false, false, false, 2, { text: '报告', title: '' }], {}, false)
     const privateChat = 'private chat content'
     const logContent = 'diagnostic log content'
     const graphContent = 'private graph state'
@@ -1944,7 +2096,7 @@ describe('StrataGate Web client contract', () => {
   })
 
   it('keeps an empty feedback page incomplete and formats structured AI drafts without guessing', () => {
-    const { SupportPage, feedbackDraftMarkdown, FEEDBACK_AI_PROMPT } = loadSupportHelpers()
+    const { SupportPage, feedbackDraftMarkdown, FEEDBACK_AI_PROMPT } = loadSupportHelpers([], {}, false)
     const tree = SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: '', onBack: () => {} })
     const props = elementProps(tree)
     expect(props.find((value) => value['aria-label'] === '本地反馈报告预览')).toBeUndefined()
@@ -2172,12 +2324,12 @@ describe('StrataGate Web client contract', () => {
   })
 
   it('shows the complete reviewed report and reuses the exact preview for copy and download', async () => {
-    const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false, 2, { text: 'reviewed report', title: '' }])
+    const closedHelpers = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, false, 2, { text: 'reviewed report', title: '' }], {}, false)
     const closedTree = closedHelpers.SupportPage({ namespace: 'dsh:project:test', overview: {}, selected: {}, data: {}, recentError: 'local-only-error', onBack: () => {} })
     expect(elementProps(closedTree).find((props) => props['aria-label'] === '本地反馈报告预览')?.value).toBe('reviewed report')
 
     const report = '## 问题描述\n\nLocal failure\n\n## 诊断日志\nlocal-only-error'
-    const { copyReportAndComposeEmail, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true, 2, { text: report, title: '' }])
+    const { copyReportAndComposeEmail, downloadSupportReport, SupportPage } = loadSupportHelpers([true, false, false, '', '', '', '## 问题描述\n\nLocal failure', false, false, true, 2, { text: report, title: '' }], {}, false)
     let objectUrlCalls = 0
     let revokeCalls = 0
     let clickCalls = 0
@@ -2225,11 +2377,11 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('没有记录技术错误。')
     expect(source).toContain("['raw', '{}', '查看原始数据'")
     expect(source).toContain("['audit', '↗', '使用记录'")
-    expect(source).toContain("['settings', '⚙', '高级设置'")
+    expect(source).toContain("goRow('system', '系统状态'")
     expect(source).not.toContain("['responses', '模型响应']")
     expect(source).toContain("type: 'number'")
-    expect(source).toContain("step: '1'")
-    expect(source).toContain("step: '0.05'")
+    expect(source).toContain("step: 1, label: '每个 Block 的对话轮数'")
+    expect(source).toContain("step: 0.05, label: 'Block 衰减系数 λ'")
     expect(source).toContain('每个 Block 的对话轮数')
     expect(source).toContain('尚未封存的内容按新阈值继续处理。')
     expect(source).toContain('为保持按对话轮数计算的遗忘速度，建议 λ 调整为')
@@ -2237,15 +2389,16 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain('默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。')
     expect(source).toContain("method: 'PATCH'")
     expect(source).toContain('当前工作区')
-    expect(source).toContain("['support', '?', '反馈与支持'")
+    expect(source).toContain("goRow('support', '生成反馈报告'")
     expect(source).toContain('复制报告并打开 GitHub Issue')
     expect(source).toContain('下载诊断文件')
     expect(source).toContain('本地反馈报告预览')
     expect(source).toContain('附加诊断日志')
     expect(source).toContain('附加记忆数据（可能包含对话内容）')
     expect(source).toContain('默认诊断不包含原始聊天、L5、Event 或 Graph 内容。')
-    expect(source).toContain('发现问题？ ')
-    expect(source).toContain("'提交反馈'")
+    expect(source).toContain("'StrataGate-AgentMemory · MIT'")
+    expect(source).toContain("'GitHub 仓库'")
+    expect(source).toContain("'更新记录'")
   })
 
   it('has no global background task banner and retains dashboard read/error handling', () => {
@@ -2487,12 +2640,108 @@ describe('StrataGate Web client contract', () => {
 })
 
 
+describe('memory overview layers', () => {
+  const ago = (milliseconds: number) => new Date(Date.now() - milliseconds).toISOString()
+  const selected = { memoryOverview: {
+    windowDays: 7, heatmapDays: 28, answeredLast7Days: 6, lastRecall: { title: '前端不要 AI 味', at: '2026-11-08T04:00:00.000Z' },
+    heatmap: [{ day: '2026-11-08', answers: 2 }],
+    layers: {
+      profile: { characters: 1234, updatedAt: ago(11 * 60 * 60 * 1000) },
+      directory: { chapters: 4, updatedAt: '2026-11-07T04:00:00.000Z' },
+      session: { blocks: 14, updatedAt: '2026-11-06T04:00:00.000Z' },
+      shortTerm: { enabled: true, items: 9, updatedAt: '2026-11-05T04:00:00.000Z' },
+      longTerm: { events: 58, answers: 3, updatedAt: ago(4 * 24 * 60 * 60 * 1000) },
+    },
+  } }
+  const layerNodes = (tree: unknown) => {
+    const found: any[] = []
+    const visit = (value: unknown) => {
+      if (!Array.isArray(value)) return
+      const props = value[1]
+      if (props && typeof props === 'object' && String(props['data-testid'] || '').startsWith('overview-layer-')) found.push(value)
+      value.forEach(visit)
+    }
+    visit(tree)
+    return found
+  }
+
+  it('shows each layer count as a bare number and keeps the unit only in the label', () => {
+    const { OverviewPage } = loadSupportHelpers()
+    const onOpenSection = vi.fn()
+    const tree = OverviewPage({ selected, loading: false, onOpenSection })
+    const rows = layerNodes(tree)
+    expect(rows.map((row) => row[1]['data-testid'])).toEqual([
+      'overview-layer-profile', 'overview-layer-directory', 'overview-layer-session', 'overview-layer-short', 'overview-layer-long',
+    ])
+    const countOf = (row: any) => {
+      const found: string[] = []
+      const visit = (value: any) => {
+        if (Array.isArray(value)) { if (value[1]?.className === 'sg-mono') found.push(value[2]); value.forEach(visit) }
+      }
+      visit(row)
+      return found[0]
+    }
+    expect(rows.map(countOf)).toEqual(['1,234', '4', '14', '9', '58'])
+    // 可见文案里不再出现单位词（单位只保留在 aria-label / title 中）。
+    const visibleText = (value: any): string => {
+      if (typeof value === 'string') return value
+      if (!Array.isArray(value)) return ''
+      return value.slice(2).map(visibleText).join('')
+    }
+    for (const row of rows) {
+      const text = visibleText(row)
+      for (const unit of ['个事件', '字', '章', '块', '条']) expect(text).not.toContain(unit)
+    }
+    expect(visibleText(rows[0])).toBe('常驻画像1,234最近更新：11 小时前')
+    expect(visibleText(rows[4])).toBe('长期记忆58最近更新：4 天前')
+    // 语义改由 aria-label / title 保留。
+    expect(rows[0]![1]['aria-label']).toContain('打开常驻画像：1,234 字')
+    expect(rows[4]![1]['aria-label']).toContain('打开长期记忆：58 个事件')
+    expect(rows[4]![1].title).toContain('长期记忆 58 个事件')
+  })
+
+  it('is a keyboard-reachable button that opens the matching tab', () => {
+    const { OverviewPage } = loadSupportHelpers()
+    const onOpenSection = vi.fn()
+    const tree = OverviewPage({ selected, loading: false, onOpenSection })
+    const rows = layerNodes(tree)
+    for (const row of rows) {
+      expect(row[0]).toBe('button')
+      expect(row[1].type).toBe('button')
+      expect(row[1].className).toBe('sg-pillar-row')
+    }
+    for (const row of rows) row[1].onClick()
+    expect(onOpenSection.mock.calls.map((call) => call[0])).toEqual(['profile', 'long', 'short', 'daily', 'long'])
+  })
+
+  it('relies on native button keys instead of a duplicate key handler', () => {
+    const { OverviewPage } = loadSupportHelpers()
+    const onOpenSection = vi.fn()
+    const rows = layerNodes(OverviewPage({ selected, loading: false, onOpenSection }))
+    // Enter and Space already activate a native button; a custom keydown
+    // handler would navigate twice. Keep the semantics and no handler.
+    for (const row of rows) {
+      expect(row[0]).toBe('button')
+      expect(row[1].onKeyDown).toBeUndefined()
+      expect(row[1].disabled).toBeUndefined()
+    }
+  })
+
+  it('renders an em dash without inventing a unit for an unread layer', () => {
+    const { OverviewPage } = loadSupportHelpers()
+    const noShortTerm = { memoryOverview: { ...selected.memoryOverview, layers: { ...selected.memoryOverview.layers, shortTerm: null } } }
+    const rows = layerNodes(OverviewPage({ selected: noShortTerm, loading: false, onOpenSection: vi.fn() }))
+    expect(JSON.stringify(rows[3])).toContain('—')
+    expect(rows[3]![1]['aria-label']).toContain('打开短期记忆：暂无数据')
+  })
+})
+
 describe('daily notes client', () => {
   it('keeps the default session page and five untruncated navigation labels', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain("React.useState('short')")
-    expect(source).toContain("[['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
-    expect(source).toContain('repeat(5,1fr)')
+    expect(source).toContain("React.useState('overview')")
+    expect(source).toContain("[['overview', '总览'], ['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
+    expect(source).toContain('repeat(6,1fr)')
     expect(source).toContain('会话记忆详情')
     expect(source).toContain('会话记忆状态')
     expect(source).toContain('完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。')
@@ -2517,7 +2766,9 @@ describe('daily notes client', () => {
   })
   it('distinguishes empty, failed list, failed note and disabled states', () => {
     const empty = { dates: [], injectedDates: [], enabled: true, today: '2026-10-28' }
-    const tree = (index: unknown, error = '', selected = '', note = { loading: false, date: selected, markdown: '', error: '' }) => loadSupportHelpers([index, false, error, selected, note]).DailyNotesPage({ namespace: 'n' })
+    // The whole note opens only after a click. The trailing hooks are the
+    // optimistic days override and openDay.
+    const tree = (index: unknown, error = '', selected = '', note = { loading: false, date: selected, markdown: '', error: '' }, open = false) => loadSupportHelpers([index, false, error, selected, note, 0, 0, {}, false, '', null, open]).DailyNotesPage({ namespace: 'n' })
     expect(JSON.stringify(tree(empty))).toContain('还没有笔记')
     expect(JSON.stringify(tree(empty))).toContain('Agent 推进工作时会自动记录。')
     const failed = JSON.stringify(tree(null, 'permission denied'))
@@ -2525,7 +2776,7 @@ describe('daily notes client', () => {
     const index = { ...empty, enabled: false, dates: ['2026-10-28'], injectedDates: ['2026-10-28'] }
     const disabled = JSON.stringify(tree(index, '', '2026-10-28'))
     expect(disabled).toContain('已关闭，不再写入，也不会带入新会话。'); expect(disabled).toContain('已暂停注入')
-    const noteFailed = JSON.stringify(tree(index, '', '2026-10-28', { loading: false, date: '2026-10-28', markdown: '', error: 'file denied' }))
+    const noteFailed = JSON.stringify(tree(index, '', '2026-10-28', { loading: false, date: '2026-10-28', markdown: '', error: 'file denied' }, true))
     expect(noteFailed).toContain('暂时无法读取笔记'); expect(noteFailed).not.toContain('还没有笔记')
   })
   it('binds confirmed DSH settings values without optimistic updates', async () => {
@@ -2549,5 +2800,51 @@ describe('daily notes client', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain("pluginSettingsScope.set('dailyNotesEnabled', enabled)")
     expect(source).toContain("pluginSettingsScope.unset('dailyNotesTimeZone')")
+  })
+  it('updates DailyNotesPage injection days immediately and restores the saved value on failure', async () => {
+    const index = { dates: ['2026-10-28'], injectedDates: ['2026-10-28'], enabled: true, today: '2026-10-28', injectionDays: 3 }
+    let saved = 3
+    let fail = false
+    const setter = vi.fn(async (next: number) => {
+      if (fail) throw new Error('disk full')
+      saved = next
+      return true
+    })
+    const state: unknown[] = []
+    const refs: Array<{ current: unknown }> = []
+    let refIndex = 0
+    let stateIndex = 0
+    const react = {
+      createContext: (value: unknown) => ({ Provider: 'provider', value }),
+      createElement: (...args: unknown[]) => args,
+      Fragment: 'fragment',
+      useState: (initial: unknown) => {
+        const at = stateIndex++
+        if (!(at in state)) state[at] = initial
+        return [state[at], (update: unknown) => {
+          state[at] = typeof update === 'function' ? (update as (value: unknown) => unknown)(state[at]) : update
+        }]
+      },
+      useEffect: () => {},
+      useRef: (initial: unknown) => refs[refIndex++] ||= { current: initial },
+    }
+    const render = () => {
+      stateIndex = 0
+      refIndex = 0
+      return loadSupportHelpers([], { react }).DailyNotesPage({ namespace: 'n', setDailyInjectionDays: setter })
+    }
+    let tree = render()
+    expect(JSON.stringify(tree)).toContain('新会话带入最近 3 个有笔记日期')
+    buttonProps(tree, '+')!.onClick()
+    expect(JSON.stringify(render())).toContain('新会话带入最近 4 个有笔记日期')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(saved).toBe(4)
+    fail = true
+    buttonProps(render(), '+')!.onClick()
+    expect(JSON.stringify(render())).toContain('新会话带入最近 5 个有笔记日期')
+    await new Promise((resolve) => setImmediate(resolve))
+    tree = render()
+    expect(JSON.stringify(tree)).toContain('新会话带入最近 3 个有笔记日期')
+    expect(JSON.stringify(tree)).toContain('天数保存失败')
   })
 })

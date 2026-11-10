@@ -28,7 +28,15 @@ import {
   StorageConflictError,
   StrataGate,
   renderPersistentProfile,
+  PROFILE_FIELDS,
+  PROFILE_TOTAL_MAX_LENGTH,
+  PROFILE_TOTAL_MAX_LENGTH_MIN,
+  PROFILE_TOTAL_MAX_LENGTH_MAX,
+  emptyProfile,
+  isProfileField,
   type PersistentProfile,
+  type ProfileChangeSource,
+  type ProfileField,
   type ElementSearchResult,
   type EventCard,
   type EventSearchResult,
@@ -73,6 +81,12 @@ import { DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
 import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
 import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, type DreamingAction } from './dreaming.js'
 import type { DreamingRun, DreamingCommand, DreamingDirectoryOperation } from '@diqier/stratagate'
+
+function emptyProfileOverview(): { profile: PersistentProfile; revisions: Record<ProfileField, number> } {
+  const profile = emptyProfile()
+  const revisions = Object.fromEntries((Object.keys(PROFILE_FIELDS) as ProfileField[]).map((field) => [field, 0])) as Record<ProfileField, number>
+  return { profile, revisions }
+}
 
 export interface DreamingHost {
   run(namespace: string, run: DreamingRun, signal: AbortSignal): Promise<void>
@@ -192,6 +206,9 @@ const VECTOR_SETTING_KEYS = ['embeddingUrl', 'embeddingKey', 'embeddingModel', '
   'rerankUrl', 'rerankKey', 'rerankModel'] as const
 type VectorSettingKey = typeof VECTOR_SETTING_KEYS[number]
 const VECTOR_SECRET_MASK = '********'
+// Profile capacity lives beside the vector settings so a live edit survives
+// restart and applies on the next save without a plugin reload.
+const PROFILE_LIMIT_SETTING_KEY = 'profile.totalMaxLength'
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -365,7 +382,7 @@ export function eventContentHash(event: { title: string; summary: string }): str
 }
 
 export class StrataGateRuntime {
-  readonly dailyNotes: DailyNotes
+  dailyNotes: DailyNotes
   private readonly dailySnapshots = new Map<string, Promise<string>>()
   get dailyNotesEnabled(): boolean { return this.config.dailyNotesEnabled !== false }
   clearDailySnapshot(sessionId: string): void { this.dailySnapshots.delete(sessionId) }
@@ -384,10 +401,32 @@ export class StrataGateRuntime {
     return snapshot
   }
 
+  /**
+   * Apply a live daily-notes edit. The time zone and lookback window are
+   * captured by DailyNotes, so a changed value needs a fresh reader; cached
+   * session snapshots are discarded so the next session start sees the edit.
+   */
+  applyLiveDailyNotes(enabled: boolean | undefined, timeZone: string | undefined, injectionDays: number | undefined): void {
+    if (injectionDays !== undefined && (!Number.isSafeInteger(injectionDays) || injectionDays < 1 || injectionDays > 30)) {
+      throw new TypeError('dailyNotesInjectionDays must be an integer between 1 and 30')
+    }
+    const nextTimeZone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+    const nextDays = injectionDays ?? this.dailyNotes.injectionDays
+    const nextEnabled = enabled ?? this.dailyNotesEnabled
+    if (nextTimeZone === this.dailyNotes.timeZone && nextDays === this.dailyNotes.injectionDays && nextEnabled === this.dailyNotesEnabled) return
+    this.config.dailyNotesEnabled = nextEnabled
+    if (timeZone !== undefined) this.config.dailyNotesTimeZone = timeZone
+    else delete this.config.dailyNotesTimeZone
+    this.config.dailyNotesInjectionDays = nextDays
+    this.dailyNotes = new DailyNotes(this.config.database, nextTimeZone, this.config.dailyNotesContextMaxChars, nextDays)
+    this.dailySnapshots.clear()
+  }
+
   readonly diagnostics: DiagnosticsRecorder
   private readonly diagnosticSessionNamespaces = new Map<string, string>()
   private readonly diagnosticMemoryEstimates = new Map<string, number>()
   private profileStorage: SqliteStorage | undefined
+  private profileTotalMaxLength = PROFILE_TOTAL_MAX_LENGTH
   private readonly folder = new TurnFolder()
   private readonly spaces = new Map<string, Promise<StrataGate>>()
   private readonly batches = new Map<string, Map<string, RetrievalBatch>>()
@@ -448,7 +487,11 @@ export class StrataGateRuntime {
     return this.graphMetadata
   }
 
-  private graphSettings(): GraphSettings { return this.graphMetadata?.graphSettings() ?? readGraphSettings(this.config.database) }
+  private graphSettings(): GraphSettings {
+    if (this.graphMetadata) return this.graphMetadata.graphSettings()
+    // 浏览总览不能为了读开关去建元数据表。
+    return readGraphSettings(this.config.database)
+  }
 
   get graphEnabled(): boolean { return this.graphSettings().enabled }
 
@@ -602,7 +645,7 @@ export class StrataGateRuntime {
     const run = (async () => {
       const current = this.profileStore().getPersistentProfile()
       try {
-        const proposed = await this.models.runDetached('stratagate-profile-maintenance', () => this.models.maintainProfile(current))
+        const proposed = await this.models.runDetached('stratagate-profile-maintenance', () => this.models.maintainProfile(current, this.profileTotalMaxLength))
         return this.profileStore().applyProfileMaintenance(current, proposed, new Date(now).toISOString())
       } catch (error) {
         this.profileStore().recordProfileMaintenanceFailure(current, now)
@@ -768,15 +811,65 @@ export class StrataGateRuntime {
   }
 
   getProfileSnapshot() {
-    return this.profileStore().getProfileSnapshot()
+    // 总览只是浏览。旧库还没有画像表时留空，不能为了统计去建表。
+    return this.readProfileOverview()?.snapshot ?? this.profileStore().getProfileSnapshot()
   }
 
   renderProfileContext(): string | null {
     return renderPersistentProfile(this.getPersistentProfile())
   }
 
+  getProfileTotalMaxLength(): number {
+    return this.profileTotalMaxLength
+  }
+
+  /** Persist the install-wide Profile capacity and apply it to the live store. */
+  adminSetProfileTotalMaxLength(value: number): number {
+    if (!Number.isSafeInteger(value) || value < PROFILE_TOTAL_MAX_LENGTH_MIN || value > PROFILE_TOTAL_MAX_LENGTH_MAX) {
+      throw new RangeError(`profile character limit must be an integer between ${PROFILE_TOTAL_MAX_LENGTH_MIN} and ${PROFILE_TOTAL_MAX_LENGTH_MAX}`)
+    }
+    const used = Object.values(this.getPersistentProfile()).reduce((sum, entry) => sum + Array.from(entry).length, 0)
+    if (value < used) throw new RangeError(`profile character limit cannot be lower than the ${used} characters already used`)
+    if (value === this.profileTotalMaxLength) return value
+    this.writeRuntimeSetting(PROFILE_LIMIT_SETTING_KEY, String(value))
+    this.profileTotalMaxLength = value
+    // Rebuild so the next write validates against the new limit immediately.
+    if (this.profileStorage) {
+      const previous = this.profileStorage
+      this.profileStorage = new SqliteStorage({ filename: this.config.database, graphPolicy: namespace => this.graphPolicyFor(namespace), profileTotalMaxLength: value })
+      void previous.close()
+    }
+    return value
+  }
+
   getProfileChanges() {
+    const stored = this.readProfileOverview()
+    if (stored) return stored.changes
     return this.profileStore().getProfileChanges()
+  }
+
+  /** 只读已有画像；表不存在就返回 null，绝不打开可写存储。 */
+  private readProfileOverview(): { snapshot: ReturnType<SqliteStorage['getProfileSnapshot']>; changes: ReturnType<SqliteStorage['getProfileChanges']> } | null {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const database = new DatabaseSync(this.config.database, { readOnly: true })
+    try {
+      const names = new Set((database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('persistent_profile', 'persistent_profile_changes')").all() as Array<{ name: string }>).map((row) => row.name))
+      if (!names.has('persistent_profile') || !names.has('persistent_profile_changes')) return null
+      const snapshot = emptyProfileOverview()
+      const rows = database.prepare('SELECT p.field, p.value, COALESCE(r.revision, 0) AS revision FROM persistent_profile p LEFT JOIN (SELECT field, MAX(id) AS revision FROM persistent_profile_changes GROUP BY field) r ON r.field = p.field').all() as Array<{ field: string; value: string; revision: number }>
+      for (const row of rows) if (isProfileField(row.field)) {
+        snapshot.profile[row.field] = row.value
+        snapshot.revisions[row.field] = row.revision
+      }
+      const changes = (database.prepare('SELECT field, old_value, new_value, source, updated_at, source_message_id FROM persistent_profile_changes ORDER BY id').all() as Array<{
+        field: ProfileField; old_value: string; new_value: string; source: ProfileChangeSource; updated_at: string; source_message_id: string | null
+      }>).map((row) => ({ field: row.field, oldValue: row.old_value, newValue: row.new_value, source: row.source, updatedAt: row.updated_at, sourceMessageId: row.source_message_id }))
+      return { snapshot, changes }
+    } catch {
+      return null
+    } finally {
+      database.close()
+    }
   }
 
   updatePersistentProfile(field: string, value: string, source: 'settings' | 'user_explicit' | 'agent_tool', sourceMessageId?: string | null, expectedValue?: string, expectedRevision?: number) {
@@ -786,7 +879,7 @@ export class StrataGateRuntime {
   }
 
   private profileStore(): SqliteStorage {
-    return this.profileStorage ??= new SqliteStorage({ filename: this.config.database, graphPolicy: namespace => this.graphPolicyFor(namespace) })
+    return this.profileStorage ??= new SqliteStorage({ filename: this.config.database, graphPolicy: namespace => this.graphPolicyFor(namespace), profileTotalMaxLength: this.profileTotalMaxLength })
   }
 
   updatePersistentProfileFromTool(field: string, value: string) {
@@ -2600,6 +2693,10 @@ export class StrataGateRuntime {
       this.blockTurnSize = metadata.blockTurnSize() ?? this.config.blockTurnSize
       this.blockDecayLambda = metadata.blockDecayLambda() ?? this.config.blockDecayLambda
       this.agentMemoryRetrievalWeight = metadata.agentMemoryRetrievalWeight() ?? this.config.agentMemoryRetrievalWeight ?? 1
+      const savedProfileLimit = Number(this.readRuntimeSetting(PROFILE_LIMIT_SETTING_KEY))
+      if (Number.isSafeInteger(savedProfileLimit) && savedProfileLimit >= PROFILE_TOTAL_MAX_LENGTH_MIN && savedProfileLimit <= PROFILE_TOTAL_MAX_LENGTH_MAX) {
+        this.profileTotalMaxLength = savedProfileLimit
+      }
       // Semantic-recall settings saved through the settings API win over the
       // host config, exactly like the Block knobs above.
       const storedEmbeddingUrl = this.readVectorSetting('embeddingUrl')
@@ -3300,6 +3397,45 @@ export class StrataGateRuntime {
         const value = values[key]
         if (value !== undefined) statement.run(`vector.${key}`, value, now)
       }
+    } finally {
+      database.close()
+    }
+  }
+
+  /** Read one scalar runtime setting from the shared settings table. */
+  private readRuntimeSetting(key: string): string | null {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const database = new DatabaseSync(this.config.database, { readOnly: true })
+    try {
+      if (!database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stratagate_dsh_settings'").get()) return null
+      const row = database.prepare('SELECT value FROM stratagate_dsh_settings WHERE key = ?').get(key) as { value: string } | undefined
+      return row?.value ?? null
+    } catch {
+      return null
+    } finally {
+      database.close()
+    }
+  }
+
+  /** Persist one scalar runtime setting, creating the settings table on first use. */
+  private writeRuntimeSetting(key: string, value: string): void {
+    if (this.config.database === ':memory:') return
+    this.profileStore()
+    const database = new DatabaseSync(this.config.database)
+    try {
+      database.exec('PRAGMA busy_timeout = 5000')
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS stratagate_dsh_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT
+      `)
+      database.prepare(`
+        INSERT INTO stratagate_dsh_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(key, value, new Date().toISOString())
     } finally {
       database.close()
     }

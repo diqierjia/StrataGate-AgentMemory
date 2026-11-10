@@ -74,8 +74,8 @@ try {
     const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message))
     await page.goto(`http://127.0.0.1:${port}/?theme=${theme}`)
     await page.locator('.sg-tabs button').first().waitFor()
-    assert.deepEqual(await page.locator('.sg-tabs button').allTextContents(),['常驻画像','会话记忆','短期记忆','长期记忆','更多'])
-    assert.equal(await page.locator('.sg-tabs [aria-current="page"]').textContent(),'会话记忆')
+    assert.deepEqual(await page.locator('.sg-tabs button').allTextContents(),['总览','常驻画像','会话记忆','短期记忆','长期记忆','更多'])
+    assert.equal(await page.locator('.sg-tabs [aria-current="page"]').textContent(),'总览')
     await page.getByRole('combobox',{name:'当前工作区'}).selectOption(namespace)
     const enter=async()=>{await page.locator('.sg-tabs button').filter({hasText:/^短期记忆$/}).click();await page.locator('.sg-daily-head').waitFor()}
     const remount=async()=>{await page.locator('.sg-tabs button').filter({hasText:/^会话记忆$/}).click();await enter()}

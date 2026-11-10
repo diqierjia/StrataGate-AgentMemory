@@ -23,6 +23,7 @@ import { assertCompatibleDshRuntime, assertDshHostContract } from './dsh-compati
 import { installRetrievalFinalization } from './retrieval-finalization.js'
 import { migrateLegacyCitationSessions } from './legacy-session.js'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session'
@@ -139,6 +140,21 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
   }, () => feedbackWebOrigin(ctx))
   runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => models.dreamingModelOptions()))
   await runtime.syncConfiguredSettings()
+  // Daily-note controls are volatile config fields, so a live edit arrives as a
+  // loader volatile update instead of remounting the plugin. Rebuild the daily
+  // reader (time zone/lookback are captured at construction) without changing
+  // any other stored setting.
+  ctx.on('loader/volatile-update', () => {
+    try {
+      runtime.applyLiveDailyNotes(
+        liveConfigValue(config.dailyNotesEnabled),
+        liveConfigValue(config.dailyNotesTimeZone),
+        liveConfigValue(config.dailyNotesInjectionDays),
+      )
+    } catch (error) {
+      ctx.logger.warn(`stratagate-memory daily-note live update failed: ${renderError(error)}`)
+    }
+  })
 
   const effortEntry: EffortSettings = {
     ...(resolved.memoryModel ? { memoryModel: resolved.memoryModel } : {}),

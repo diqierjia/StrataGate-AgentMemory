@@ -127,9 +127,9 @@ export function volatileIfSupported<T>(schema: T): T {
 }
 
 export const Config = z.object({
-  dailyNotesEnabled: z.boolean().default(true),
-  dailyNotesTimeZone: z.string(),
-  dailyNotesInjectionDays: z.natural().min(1).max(30).default(3),
+  dailyNotesEnabled: volatileIfSupported(z.boolean().default(true)),
+  dailyNotesTimeZone: volatileIfSupported(z.string()),
+  dailyNotesInjectionDays: volatileIfSupported(z.natural().min(1).max(30).default(3)),
   dailyNotesContextMaxChars: z.natural().min(1024).default(12_000),
   database: z.string().required(),
   sessionRoot: z.string(),
@@ -194,6 +194,9 @@ export function isLiveConfigValue(value: unknown): value is { get(): unknown } {
 }
 
 export function resolveConfig(config: Config): ResolvedConfig {
+  const dailyNotesEnabled = liveConfigValue(config.dailyNotesEnabled)
+  const dailyNotesTimeZone = liveConfigValue(config.dailyNotesTimeZone)
+  const dailyNotesInjectionDays = liveConfigValue(config.dailyNotesInjectionDays)
   const database = config.database?.trim() ?? ''
   const sessionRoot = config.sessionRoot?.trim()
   const namespacePrefix = config.namespacePrefix?.trim() || 'dsh'
@@ -205,13 +208,13 @@ export function resolveConfig(config: Config): ResolvedConfig {
   if (Boolean(provider) !== Boolean(model)) {
     throw new TypeError('StrataGate provider and model must be configured together')
   }
-  if (config.dailyNotesTimeZone !== undefined) new Intl.DateTimeFormat('en-US', { timeZone: config.dailyNotesTimeZone }).format()
+  if (dailyNotesTimeZone !== undefined) new Intl.DateTimeFormat('en-US', { timeZone: dailyNotesTimeZone }).format()
   if (config.dailyNotesContextMaxChars !== undefined && (!Number.isSafeInteger(config.dailyNotesContextMaxChars) || config.dailyNotesContextMaxChars < 1024)) throw new TypeError('dailyNotesContextMaxChars must be an integer >= 1024')
-  if (config.dailyNotesInjectionDays !== undefined && (!Number.isSafeInteger(config.dailyNotesInjectionDays) || config.dailyNotesInjectionDays < 1 || config.dailyNotesInjectionDays > 30)) throw new TypeError('dailyNotesInjectionDays must be an integer between 1 and 30')
+  if (dailyNotesInjectionDays !== undefined && (!Number.isSafeInteger(dailyNotesInjectionDays) || dailyNotesInjectionDays < 1 || dailyNotesInjectionDays > 30)) throw new TypeError('dailyNotesInjectionDays must be an integer between 1 and 30')
   return {
-    dailyNotesInjectionDays: config.dailyNotesInjectionDays ?? 3,
-    dailyNotesEnabled: config.dailyNotesEnabled ?? true,
-    ...(config.dailyNotesTimeZone !== undefined ? { dailyNotesTimeZone: config.dailyNotesTimeZone } : {}),
+    dailyNotesInjectionDays: dailyNotesInjectionDays ?? 3,
+    dailyNotesEnabled: dailyNotesEnabled ?? true,
+    ...(dailyNotesTimeZone !== undefined ? { dailyNotesTimeZone } : {}),
     dailyNotesContextMaxChars: config.dailyNotesContextMaxChars ?? 12_000,
     database,
     ...(sessionRoot ? { sessionRoot } : {}),

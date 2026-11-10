@@ -50,6 +50,21 @@ export class DailyNotes {
     try { return (await readdir(this.directory(namespace))).filter(name => /^\d{4}-\d{2}-\d{2}\.md$/.test(name)).map(name => name.slice(0, 10)).sort().reverse() }
     catch (error) { if (missing(error)) return []; throw error }
   }
+  /** 总览用：事项条数与最近一次写入时间。只读本地 Markdown，不建证据批次。 */
+  async usage(namespace: string): Promise<{ items: number; updatedAt: string | null }> {
+    const dates = await this.dates(namespace)
+    let count = 0
+    let updatedAt: string | null = null
+    for (const date of dates) {
+      let content: string
+      try { content = await this.load(namespace, date) } catch (error) { if (missing(error)) continue; throw error }
+      count += items(content).length
+      const day = Date.parse(`${date}T00:00:00+08:00`)
+      // 文件按 YYYY-MM-DD 命名且已倒序读取，日期最大的一篇就是最近一次更新。
+      if (Number.isFinite(day) && (updatedAt === null || day > Date.parse(updatedAt))) updatedAt = new Date(day).toISOString()
+    }
+    return { items: count, updatedAt }
+  }
   private load(namespace: string, date: string): Promise<string> {
     return readFile(join(this.directory(namespace), `${validDate(date)}.md`), 'utf8')
   }
