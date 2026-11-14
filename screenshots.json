@@ -1,8 +1,6 @@
 [
-  "docs/assets/stratagate-knowledge-graph.png",
-  "docs/assets/stratagate-short-term-memory.png",
-  "docs/assets/stratagate-long-term-memory-weight.png",
-  "docs/assets/stratagate-overall-workflow.png",
-  "docs/assets/stratagate-short-term-memory-layers.png",
-  "docs/assets/stratagate-event-updates.png"
+  "docs/assets/stratagate-market-overview.png",
+  "docs/assets/stratagate-market-conversation.png",
+  "docs/assets/stratagate-market-topic-directory.png",
+  "docs/assets/stratagate-market-daily-notes.png"
 ]
