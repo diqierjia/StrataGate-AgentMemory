@@ -11,7 +11,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderStarLink, loadStarCount, formatStarCount, GitHubMarkIcon, StrataGateMark, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, OverviewPage, ProfilePage, ProfileLimitSettings, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
+  ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -63,6 +63,18 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
+  it.each(['embedding', 'rerank'])('shows confirmed saved state only after %s settings are available', (kind) => {
+    const { RetrievalModelSettings } = loadSupportHelpers()
+    const missing = RetrievalModelSettings({ kind, settings: null, writable: true })
+    expect(deepElementProps(missing).some(props => props['aria-label'] === '已保存')).toBe(false)
+    expect(JSON.stringify(missing)).toContain('检索配置尚未读取')
+    const loaded = RetrievalModelSettings({ kind, settings: { [kind + 'Ready']: false }, writable: true })
+    expect(deepElementProps(loaded).some(props => props['aria-label'] === '已保存')).toBe(true)
+    expect(JSON.stringify(loaded)).not.toContain('检索配置尚未读取')
+    expect(JSON.stringify(loaded)).toContain(kind === 'embedding'
+      ? '事件标题和摘要会发送给向量服务商' : '检索问题和候选事件内容会发送给精排服务商')
+  })
+
   it('renders the six More groups on one page with immediate switches and an engine dirty bar', async () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain("group('运行状态'")

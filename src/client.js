@@ -6159,6 +6159,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'sg-settings-panel sg-model-settings sg-retrieval-settings', 'data-kind': kind },
         h('div', { className: 'sg-model-heading-row' }, h('h4', { className: 'sg-model-heading' }, title), h(InfoPopover, { label: title + '说明' },
           h('p', null, '填写地址、密钥和模型后启用；清空地址并保存即可停用。启用会产生服务商 API 费用。'),
+          h('p', null, embedding ? '启用后，事件标题和摘要会发送给向量服务商。' : '启用后，检索问题和候选事件内容会发送给精排服务商。'),
           h('p', null, '填写 OpenAI 兼容接口基础地址，不含 ' + (embedding ? '/embeddings' : '/rerank') + '。'),
           h('p', null, '保存不验证连接。' + (embedding ? '已有事件的向量会在后续检索时补齐。' : '')))),
         h('div', { className: 'sg-retrieval-fields' },
@@ -6182,7 +6183,7 @@ window.__ModuleLoader__.load({
           h('p', { className: 'sg-setting-note' }, '占比 1 与关键词检索平权；0 停用。最低相似度范围 0–1。'),
           !numericValid ? h('p', { className: 'sg-status-feedback failed', role: 'alert' }, '占比需为 0–5 的数字，最低相似度需为 0–1 的数字。') : null) : null,
         h('div', { className: 'sg-model-save-row' }, h('div', { className: 'sg-model-saved' }, h('span', { className: 'sg-model-active-label' }, '当前生效'), h('strong', null, status)),
-          changed ? h('button', { type: 'button', className: 'sg-save-button', disabled: disabled || !urlValid || !numericValid, onClick: () => void save() }, saving ? '保存中…' : '保存') : h('span', { className: 'sg-status organized sg-save-state', role: 'status', title: '已保存', 'aria-label': '已保存' })),
+          changed ? h('button', { type: 'button', className: 'sg-save-button', disabled: disabled || !urlValid || !numericValid, onClick: () => void save() }, saving ? '保存中…' : '保存') : saved ? h('span', { className: 'sg-status organized sg-save-state', role: 'status', title: '已保存', 'aria-label': '已保存' }) : null),
         !saved || writable !== true ? h('p', { className: 'sg-status-feedback' }, !saved ? '检索配置尚未读取，请重新读取。' : '当前检索配置为只读。') : null,
         feedback.text ? h('p', { className: 'sg-status-feedback ' + feedback.kind, role: feedback.kind === 'failed' ? 'alert' : 'status' }, feedback.text) : null,
         !saved || feedback.kind === 'failed' ? h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving || reading, onClick: () => void readSaved() }, reading ? '正在读取…' : '重新读取配置') : null)
