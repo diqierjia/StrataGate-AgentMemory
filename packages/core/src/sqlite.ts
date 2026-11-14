@@ -51,7 +51,7 @@ import type {
 } from './types.js';
 import { nowUtc8 } from './time.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
-import { emptyProfile, isProfileField, PROFILE_FIELDS, PROFILE_MAINTAINABLE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, profileMaintenanceDue, validateProfile,
+import { emptyProfile, isProfileField, PROFILE_FIELDS, PROFILE_MAINTAINABLE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, PROFILE_TOTAL_MAX_LENGTH, profileMaintenanceDue, validateProfile,
   type PersistentProfile, type ProfileChange, type ProfileChangeSource, type ProfileField } from './profile.js';
 import { searchTokens } from './search.js';
 
@@ -60,6 +60,8 @@ export interface SqliteStorageOptions {
   readonly?: boolean;
   timeoutMs?: number;
   graphPolicy?: (namespace: string) => GraphRuntimePolicy;
+  /** Installation-wide Profile character limit; defaults to PROFILE_TOTAL_MAX_LENGTH. */
+  profileTotalMaxLength?: number;
 }
 
 export interface NamespaceRevision {
@@ -718,9 +720,13 @@ export class SqliteStorage implements StorageAdapter {
   private readonly database: DatabaseSync;
   private rawSearchFtsAvailable = false;
   private closed = false;
+  private readonly profileTotalMaxLength: number;
 
   constructor(options: SqliteStorageOptions) {
     this.graphPolicy = options.graphPolicy;
+    this.profileTotalMaxLength = Number.isSafeInteger(options.profileTotalMaxLength) && options.profileTotalMaxLength! > 0
+      ? options.profileTotalMaxLength!
+      : PROFILE_TOTAL_MAX_LENGTH;
     if (!options.filename.trim()) throw new TypeError('SQLite filename must not be empty');
     this.readonly = options.readonly ?? false;
     this.filename = options.filename === ':memory:' ? ':memory:' : resolve(options.filename);
@@ -1408,7 +1414,7 @@ export class SqliteStorage implements StorageAdapter {
       if (expectedValue !== undefined && oldValue !== expectedValue) return { field, value: oldValue, modified: false, conflict: true };
       if (oldValue === value) return { field, value, modified: false };
       profile[field] = value;
-      validateProfile(profile);
+      validateProfile(profile, this.profileTotalMaxLength);
       const now = new Date().toISOString();
       this.writeProfileField(field, oldValue, value, source, sourceMessageId ?? null, now);
       const isNonempty = Object.values(profile).some((entry) => entry.length > 0);
@@ -1426,7 +1432,7 @@ export class SqliteStorage implements StorageAdapter {
   /** Compare the complete input snapshot before writing a model result. */
   applyProfileMaintenance(expected: PersistentProfile, proposed: PersistentProfile, now = new Date().toISOString()): boolean {
     this.assertOpen();
-    validateProfile(proposed);
+    validateProfile(proposed, this.profileTotalMaxLength);
     if (Object.keys(proposed).length !== Object.keys(PROFILE_FIELDS).length
       || Object.keys(proposed).some((field) => !isProfileField(field))) throw new TypeError('Maintenance returned unknown or missing Profile fields');
     for (const field of PROFILE_PROTECTED_SHORT_FIELDS) {
@@ -1450,7 +1456,7 @@ export class SqliteStorage implements StorageAdapter {
     if (failed?.input_json === JSON.stringify(profile)
       && now < Date.parse(failed.next_retry_at)) return false;
     const state = this.getProfileMaintenanceState();
-    if (!profileMaintenanceDue(profile, state?.lastSucceededAt ?? this.getProfileMaintenanceStartedAt(), now)) return false;
+    if (!profileMaintenanceDue(profile, state?.lastSucceededAt ?? this.getProfileMaintenanceStartedAt(), now, this.profileTotalMaxLength)) return false;
     // input_json stores the last successful result. Only edits to maintainable
     // fields make that content eligible again, even after multiple intervals.
     if (!state) return true;

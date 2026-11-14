@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { satisfies } from 'semver'
+import { attachIsolatedCli, buildPinnedOverrides, listLocalInternalNames, manifestFromNpmView, validateIsolateTree } from './dsh-cli-isolate.mjs'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
@@ -222,32 +223,41 @@ try {
     const dshHome = join(root, 'dsh-home')
     seedSessions(dshHome)
     run(npm, ['init', '--yes'], root)
-    // The prerelease CLI uses caret ranges. Pin its complete internal tree to
-    // the version StrataGate actually supports, so a later rc cannot silently
-    // change the host under this compatibility check.
-    const hostManifest = JSON.parse(run(npm, ['view', `@deepseek-ai/dsh@${version}`, '--json'], root))
-    const internalVersion = version === '0.1.5-rc.1' ? '0.1.5-rc.2' : version
-    const localInternalNames = readdirSync(join(packageRoot, 'node_modules', '@deepseek-ai'))
-      .filter(name => name.startsWith('dsh-'))
-      .map(name => `@deepseek-ai/${name}`)
-    // These transitive 0.1.6 packages are absent from the current CLI's
-    // direct dependency list. Letting caret ranges choose alpha.2 withdraws
-    // the older Host's strict typert definitions, including session/list.
-    const legacyTransitiveNames = ['@deepseek-ai/dsh-agent-presets', '@deepseek-ai/dsh-settings-file']
-    const overrides = Object.fromEntries([...new Set([...Object.keys(hostManifest.dependencies ?? {}), ...localInternalNames, ...legacyTransitiveNames])]
-      .filter(name => name.startsWith('@deepseek-ai/dsh-'))
-      .map(name => [name, internalVersion]))
     const modernHost = satisfies(version, '>=0.1.7-rc.1', { includePrerelease: true })
-    overrides['@deepseek-ai/cordis'] = modernHost ? hostManifest.dependencies['@deepseek-ai/cordis'] : '4.0.2'
-    overrides['@deepseek-ai/schemastery'] = modernHost ? hostManifest.dependencies['@deepseek-ai/schemastery'] : '3.18.2'
-    // Loader 1.0.4+ uses newer Cordis internals. A caret install otherwise
-    // mixes it with the intentionally pinned 4.0.2 legacy host above.
-    if (!modernHost) overrides['@deepseek-ai/cordis-plugin-loader'] = '1.0.3'
-    const freshManifestPath = join(root, 'package.json')
-    const freshManifest = JSON.parse(readFileSync(freshManifestPath, 'utf8'))
-    freshManifest.overrides = overrides
-    writeFileSync(freshManifestPath, JSON.stringify(freshManifest, null, 2))
-    run(npm, ['install', '--no-save', '--package-lock=false', `@deepseek-ai/dsh@${version}`], root)
+    const isolate = process.env.DSH_ROOT ? validateIsolateTree(process.env.DSH_ROOT, version, packageRoot) : { ok: false, reason: 'DSH_ROOT unset' }
+    let reused = false
+    if (isolate.ok) {
+      const started = Date.now()
+      try {
+        const sentinel = attachIsolatedCli(process.env.DSH_ROOT, root, version, packageRoot)
+        reused = true
+        console.log(`[verify-dsh-install] reused isolated CLI ${version} packages=${sentinel.packageCount} seconds=${((Date.now() - started) / 1000).toFixed(1)}`)
+      } catch (error) {
+        console.log(`[verify-dsh-install] copied CLI ${version} rejected (${error instanceof Error ? error.message : error}); installing`)
+      }
+    } else if (process.env.DSH_ROOT) {
+      console.log(`[verify-dsh-install] isolated CLI not reusable (${isolate.reason}); installing`)
+    }
+    if (!reused) {
+      // The prerelease CLI uses caret ranges. Pin its complete internal tree to
+      // the version StrataGate actually supports, so a later rc cannot silently
+      // change the host under this compatibility check. Loader 1.0.4+ uses
+      // newer Cordis internals, so legacy hosts stay on loader 1.0.3.
+      const started = Date.now()
+      console.log(`[verify-dsh-install] installing CLI ${version}`)
+      const hostManifest = manifestFromNpmView(run(npm, ['view', `@deepseek-ai/dsh@${version}`, '--json'], root), version)
+      const overrides = buildPinnedOverrides({
+        version,
+        hostDependencies: hostManifest.dependencies ?? {},
+        localInternalNames: listLocalInternalNames(packageRoot),
+      })
+      const freshManifestPath = join(root, 'package.json')
+      const freshManifest = JSON.parse(readFileSync(freshManifestPath, 'utf8'))
+      freshManifest.overrides = overrides
+      writeFileSync(freshManifestPath, JSON.stringify(freshManifest, null, 2))
+      run(npm, ['install', '--no-save', '--package-lock=false', `@deepseek-ai/dsh@${version}`], root)
+      console.log(`[verify-dsh-install] installed CLI ${version} seconds=${((Date.now() - started) / 1000).toFixed(1)}`)
+    }
     const cli = join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     assert(existsSync(cli), `DSH CLI ${version} was not installed`)
 

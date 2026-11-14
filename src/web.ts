@@ -18,6 +18,9 @@ import {
   memoryTopicEventFingerprint,
   memoryTopicUnfinishedJobEventIds,
   memoryWeightAt,
+  PROFILE_FIELDS,
+  preserveAttachmentReferences,
+  profileLength,
   TOPIC_MAX_ATTEMPTS,
   safeTopicDiagnostics,
   type ElementCard,
@@ -31,6 +34,7 @@ import {
 } from '@diqier/stratagate'
 import type { FeedbackDraftInput, StrataGateRuntime } from './runtime.js'
 import { clusterKnowledgeGraph } from './graph-clustering.js'
+import { memoryOverview, type MemoryOverviewStats } from './memory-overview.js'
 import { memoryTopicSections, memoryTopicSectionNavigation, renderMemoryDirectory, sortMemoryTopics } from './topics.js'
 
 const LEGACY_THREAD_ID = '__legacy__'
@@ -228,18 +232,18 @@ function blockLayers(block: MemoryBlock): DisplayLayer[] {
   const deterministic = deterministicBlockLayers(block.l5Raw)
   if (block.processingStatus !== 'ready' || !block.l0Title || !block.l0Tags || !block.l1Summary || !block.l2Keypoints) {
     return withLayerMetrics([
-      { level: 3, content: deterministic.l3Condensed },
-      { level: 4, content: deterministic.l4Readable },
-      { level: 5, content: formatRawTranscript(block.l5Raw) },
+      { level: 3, content: preserveAttachmentReferences(deterministic.l3Condensed, block.l5Raw) },
+      { level: 4, content: preserveAttachmentReferences(deterministic.l4Readable, block.l5Raw) },
+      { level: 5, content: preserveAttachmentReferences(formatRawTranscript(block.l5Raw), block.l5Raw) },
     ])
   }
   return withLayerMetrics([
-    { level: 0, content: `${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}` },
-    { level: 1, content: block.l1Summary || block.l0Title },
-    { level: 2, content: block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary || block.l0Title },
-    { level: 3, content: deterministic.l3Condensed || block.l2Keypoints.join('\n') || block.l1Summary },
-    { level: 4, content: deterministic.l4Readable || deterministic.l3Condensed },
-    { level: 5, content: formatRawTranscript(block.l5Raw) },
+    { level: 0, content: preserveAttachmentReferences(`${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}`, block.l5Raw) },
+    { level: 1, content: preserveAttachmentReferences(block.l1Summary || block.l0Title, block.l5Raw) },
+    { level: 2, content: preserveAttachmentReferences(block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary || block.l0Title, block.l5Raw) },
+    { level: 3, content: preserveAttachmentReferences(deterministic.l3Condensed || block.l2Keypoints.join('\n') || block.l1Summary, block.l5Raw) },
+    { level: 4, content: preserveAttachmentReferences(deterministic.l4Readable || deterministic.l3Condensed, block.l5Raw) },
+    { level: 5, content: preserveAttachmentReferences(formatRawTranscript(block.l5Raw), block.l5Raw) },
   ])
 }
 
@@ -733,12 +737,57 @@ function liveGraphProjection(snapshot: AdminReadModel, processing = true) {
   }
 }
 
+function latestIso(values: Array<string | null | undefined>): string | null {
+  let latest = Number.NEGATIVE_INFINITY
+  for (const value of values) {
+    const parsed = value ? Date.parse(value) : Number.NaN
+    if (Number.isFinite(parsed) && parsed > latest) latest = parsed
+  }
+  return Number.isFinite(latest) ? new Date(latest).toISOString() : null
+}
+
+/** 画像和短期记忆不在记忆快照里；读不到就留空，不让总览整页失败。 */
+async function memoryOverviewRows(runtime: StrataGateRuntime, entries: readonly AdminReadEntry[]): Promise<Map<string, { profile: MemoryOverviewStats['layers']['profile']; shortTerm: MemoryOverviewStats['layers']['shortTerm'] }>> {
+  const result = new Map<string, { profile: MemoryOverviewStats['layers']['profile']; shortTerm: MemoryOverviewStats['layers']['shortTerm'] }>()
+  let profile: MemoryOverviewStats['layers']['profile'] = null
+  try {
+    const snapshot = runtime.getProfileSnapshot?.()
+    if (snapshot) {
+      const characters = (Object.keys(PROFILE_FIELDS) as Array<keyof typeof PROFILE_FIELDS>)
+        .reduce((sum, field) => sum + profileLength(snapshot.profile[field] ?? ''), 0)
+      const updatedAt = runtime.getProfileChanges?.()
+        .map((change) => Date.parse(change.updatedAt))
+        .filter((value) => Number.isFinite(value))
+        .reduce((latest, value) => Math.max(latest, value), Number.NEGATIVE_INFINITY)
+      profile = { characters, updatedAt: updatedAt !== undefined && Number.isFinite(updatedAt) ? new Date(updatedAt).toISOString() : null }
+    }
+  } catch {
+    profile = null
+  }
+  await Promise.all(entries.map(async ({ namespace }) => {
+    let shortTerm: MemoryOverviewStats['layers']['shortTerm'] = null
+    try {
+      const notes = runtime.dailyNotes
+      if (notes) {
+        const usage = await notes.usage(namespace)
+        shortTerm = { enabled: runtime.dailyNotesEnabled !== false, ...usage }
+      }
+    } catch {
+      shortTerm = null
+    }
+    result.set(namespace, { profile, shortTerm })
+  }))
+  return result
+}
+
 async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly AdminReadEntry[]): Promise<unknown> {
-  const entries = cachedEntries ?? await Promise.all((await runtime.adminNamespaces()).map(async (namespace) => ({
+  const loaded = cachedEntries ?? await Promise.all((await runtime.adminNamespaces()).map(async (namespace) => ({
     namespace,
     revision: 0,
     snapshot: await runtime.adminSnapshot(namespace),
   })))
+  const entries = loaded.flatMap((entry): AdminReadEntry[] => entry.snapshot ? [entry as AdminReadEntry] : [])
+  const memoryOverviewByNamespace = await memoryOverviewRows(runtime, entries)
   const rows = []
   for (const { namespace, snapshot } of entries) {
     if (!snapshot) continue
@@ -885,11 +934,18 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
     // failure; diagnostics must keep recovery disabled until a revision exists.
     let topicDirectoryRevision: string | null = null
     let topicDirectoryReadError = false
+    let directoryLayer: MemoryOverviewStats['layers']['directory'] | null = null
     try {
-      topicDirectoryRevision = topicDirectoryProjection(snapshot, runtime.adminAgentMemoryRetrievalWeight?.() ?? 1).data.revision
+      const projection = topicDirectoryProjection(snapshot, runtime.adminAgentMemoryRetrievalWeight?.() ?? 1)
+      topicDirectoryRevision = projection.data.revision
+      directoryLayer = {
+        chapters: projection.chapters.length,
+        updatedAt: latestIso(projection.chapters.map((chapter) => chapter.updatedAt)),
+      }
     } catch {
       topicDirectoryReadError = true
     }
+    const usage = memoryOverviewByNamespace.get(namespace)
     rows.push({
       namespace,
       duplicateRepair: runtime.adminDuplicateRepairStatus?.(namespace) ?? null,
@@ -922,6 +978,13 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       usageReceipts: snapshot.usageReceipts.length,
       memoryUseCount: snapshot.usageReceipts.filter((receipt) =>
         receipt.eventIds.length > 0 || receipt.elementIds.length > 0).length,
+      memoryOverview: usage
+        ? memoryOverview(snapshot, {
+          profile: usage.profile,
+          shortTerm: usage.shortTerm,
+          ...(directoryLayer ? { directory: directoryLayer } : {}),
+        }, { agentMemoryWeight: runtime.adminAgentMemoryRetrievalWeight?.() ?? 1 })
+        : null,
       failedJobs,
       processingJobs,
       failedJobDetails,
@@ -981,8 +1044,9 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequ
   const hasBody = req.body !== undefined || typeof req[Symbol.asyncIterator] === 'function'
   const body = hasBody ? await jsonBody(req, 'Embedding settings') : {}
   const suppliedVectorParams = vectorParams.filter((name) => Object.hasOwn(body, name))
-  if (rawTurnSize === undefined && rawLambda === undefined && rawAgentWeight === undefined && suppliedVectorParams.length === 0) {
-    throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, agentMemoryRetrievalWeight, or an embedding setting is required')
+  const suppliedProfileLimit = Object.hasOwn(body, 'profileMaxLength')
+  if (rawTurnSize === undefined && rawLambda === undefined && rawAgentWeight === undefined && suppliedVectorParams.length === 0 && !suppliedProfileLimit) {
+    throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, agentMemoryRetrievalWeight, profileMaxLength, or an embedding setting is required')
   }
   let turnSize: number | undefined
   let lambda: number | undefined
@@ -1008,10 +1072,20 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequ
     }
     agentWeight = value
   }
-  const result: { blockTurnSize?: number; blockDecayLambda?: number; agentMemoryRetrievalWeight?: number; vectorSettings?: Record<string, unknown> } = {}
+  const result: { blockTurnSize?: number; blockDecayLambda?: number; agentMemoryRetrievalWeight?: number; profileMaxLength?: number; vectorSettings?: Record<string, unknown> } = {}
   if (turnSize !== undefined) result.blockTurnSize = await runtime.adminSetBlockTurnSize(turnSize)
   if (lambda !== undefined) result.blockDecayLambda = await runtime.adminSetBlockDecayLambda(lambda)
   if (agentWeight !== undefined) result.agentMemoryRetrievalWeight = runtime.adminSetAgentMemoryRetrievalWeight(agentWeight)
+  if (suppliedProfileLimit) {
+    const value = body.profileMaxLength
+    if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new AdminHttpError(400, 'profileMaxLength must be an integer')
+    try {
+      result.profileMaxLength = runtime.adminSetProfileTotalMaxLength(value)
+    } catch (error) {
+      if (error instanceof TypeError || error instanceof RangeError) throw new AdminHttpError(400, error.message)
+      throw error
+    }
+  }
   if (suppliedVectorParams.length > 0) {
     const paramText = (name: string): string => {
       const value = body[name]
@@ -1047,7 +1121,7 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequ
 async function persistentProfile(runtime: StrataGateRuntime, req: WebRequest): Promise<unknown> {
   if (req.method === 'GET') {
     const snapshot = runtime.getProfileSnapshot()
-    return { ...snapshot.profile, _revisions: snapshot.revisions }
+    return { ...snapshot.profile, _revisions: snapshot.revisions, _limits: { totalMaxLength: runtime.getProfileTotalMaxLength?.() ?? undefined } }
   }
   if (req.method !== 'PATCH') throw new AdminHttpError(405, 'Persistent Profile requires GET or PATCH')
   let suppliedBody = req.body
@@ -1077,7 +1151,7 @@ async function persistentProfile(runtime: StrataGateRuntime, req: WebRequest): P
     const result = runtime.updatePersistentProfile(input.field, input.value, 'settings', null, input.expectedValue, input.expectedRevision as number)
     if (result.conflict) throw new AdminHttpError(409, '该项刚刚在其他位置更新')
     const snapshot = runtime.getProfileSnapshot()
-    return { ...result, snapshot: { ...snapshot.profile, _revisions: snapshot.revisions } }
+    return { ...result, snapshot: { ...snapshot.profile, _revisions: snapshot.revisions, _limits: { totalMaxLength: runtime.getProfileTotalMaxLength?.() ?? undefined } } }
   } catch (error) {
     if (error instanceof TypeError || error instanceof RangeError) throw new AdminHttpError(400, error.message)
     throw error

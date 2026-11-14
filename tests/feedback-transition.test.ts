@@ -46,7 +46,7 @@ function control(tree: any, label: string): any {
 
 // Exercise the actual component effects and state setters with real feedback
 // routes and disposable SQLite persistence; do not rewrite the production gate.
-function mountClient(runtime: StrataGateRuntime, fetchOverride?: (...args: any[]) => any, globals: Record<string, unknown> = {}) {
+function mountClient(runtime: StrataGateRuntime, fetchOverride?: (...args: any[]) => any, globals: Record<string, unknown> = {}, githubGate = false) {
   const states: any[] = []
   const refs: any[] = []
   const effects: Array<() => unknown> = []
@@ -73,9 +73,11 @@ function mountClient(runtime: StrataGateRuntime, fetchOverride?: (...args: any[]
     useEffect: (effect: () => unknown) => { if (!mounted) effects.push(effect) },
   }
   let definition: any
-  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8').replace(
+  let source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  if (!githubGate) source = source.replace(/const GITHUB_FEEDBACK_ENABLED = (?:true|false)/, 'const GITHUB_FEEDBACK_ENABLED = false')
+  source = source.replace(
     "    exports.name = 'stratagate-dsh'",
-    "    exports.__test = { SupportPage, HeaderCommunityLinks, feedbackEmailUrl, GITHUB_FEEDBACK_ENABLED }; exports.name = 'stratagate-dsh'",
+    "    exports.__test = { SupportPage, HeaderStarLink, feedbackEmailUrl, GITHUB_FEEDBACK_ENABLED }; exports.name = 'stratagate-dsh'",
   )
   runInNewContext(source, {
     Blob, URL, URLSearchParams,
@@ -104,8 +106,8 @@ function mountClient(runtime: StrataGateRuntime, fetchOverride?: (...args: any[]
 
 describe('email feedback review regressions', () => {
   it.each([
-    [true, true, false, true], [false, false, false, true],
-    [true, false, false, false], [true, true, true, false],
+    [true, true, true, true], [false, false, false, false],
+    [true, false, true, false], [true, true, false, false],
   ])('checks Agent=%s client=%s GitHub=%s', async (agent, client, github, allowed) => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-feedback-gates-'))
     try {
@@ -255,7 +257,7 @@ describe('email feedback review regressions', () => {
       runtime.notePluginError(session, new Error('timeout'))
       expect(runtime.takeFeedbackSuggestion(session)).toBe('')
       expect(runtime.diagnostics.snapshot(runtime.namespaceFor(session)).records[0]?.category).toBe('timeout')
-      expect(mountClient(runtime).helpers.GITHUB_FEEDBACK_ENABLED).toBe(false)
+      expect(mountClient(runtime, undefined, {}, true).helpers.GITHUB_FEEDBACK_ENABLED).toBe(true)
     } finally { await runtime.close() }
   })
 })

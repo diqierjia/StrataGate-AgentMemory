@@ -537,6 +537,103 @@ describe('StrataGate.recordAgentEvent', () => {
 describe('agent event persistence', () => {
   beforeEach(() => { sequence = 0 })
 
+  it('does not seal or duplicate a reserved user message before its assistant reply', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-reserve-user-'))
+    const options = {
+      database: join(directory, 'memory.db'), namespace: 'reserve', blockTurnSize: 1,
+      summarizer: nonExtractingSummarizer,
+    }
+    try {
+      const memory = await StrataGate.open(options)
+      await memory.reserveUserMessage({ id: 'user-a', content: 'alpha request', threadId: 'thread' })
+      await memory.reserveUserMessage({ id: 'user-b', content: 'beta request', threadId: 'thread' })
+      expect(memory.hasSealableTail()).toBe(false)
+      expect((await memory.resumePendingWork({ deferDerivation: true })).sealedBlocks).toEqual([])
+      await memory.appendTurn({
+        user: 'alpha request', assistant: 'ack alpha', threadId: 'thread', userMessageId: 'user-a',
+      }, { deferDerivation: true })
+      expect(memory.turn).toBe(1)
+      expect(memory.listBlocks().map((block) => block.l5Raw.map((message) => message.content)))
+        .toEqual([['alpha request', 'ack alpha']])
+      expect(memory.listOpenTail('thread').map((message) => [message.id, message.content]))
+        .toEqual([['user-b', 'beta request']])
+      await memory.close()
+
+      const reopened = await StrataGate.open(options)
+      try {
+        expect(reopened.turn).toBe(1)
+        expect(reopened.listOpenTail('thread').map((message) => [message.id, message.content]))
+          .toEqual([['user-b', 'beta request']])
+        expect(reopened.hasSealableTail()).toBe(false)
+        await reopened.appendTurn({
+          user: 'beta request', assistant: 'ack beta', threadId: 'thread', userMessageId: 'user-b',
+        }, { deferDerivation: true })
+        expect(reopened.turn).toBe(2)
+        expect(reopened.listBlocks().flatMap((block) => block.l5Raw.map((message) => message.content)))
+          .toEqual(['alpha request', 'ack alpha', 'beta request', 'ack beta'])
+        expect(reopened.listOpenTail('thread')).toEqual([])
+      } finally {
+        await reopened.close()
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('updates a reserved user message when the host appends same-turn continuation text', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-reserve-continuation-'))
+    const options = {
+      database: join(directory, 'memory.db'), namespace: 'reserve-continuation', blockTurnSize: 1,
+      summarizer: nonExtractingSummarizer,
+    }
+    try {
+      const memory = await StrataGate.open(options)
+      await memory.reserveUserMessage({ id: 'turn-user', content: '先说一句', threadId: 'thread' })
+      await expect(memory.appendTurn({
+        user: '先说一句\n\n同一轮补充的内容', assistant: '已记录', threadId: 'thread', userMessageId: 'turn-user',
+      }, { deferDerivation: true })).resolves.toMatchObject({ sealedBlock: expect.objectContaining({ processingStatus: 'pending' }) })
+      const stored = memory.listOpenTail('thread').find(({ id }) => id === 'turn-user')
+      expect(stored).toBeUndefined()
+      expect(memory.listBlocks().flatMap(({ l5Raw }) => l5Raw).filter(({ id }) => id === 'turn-user'))
+        .toEqual([expect.objectContaining({ id: 'turn-user', content: '先说一句\n\n同一轮补充的内容' })])
+      await memory.close()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('seals later complete turns after restart while retaining an incomplete reserved prefix', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-reserve-recovery-'))
+    const options = {
+      database: join(directory, 'memory.db'), namespace: 'reserve-recovery', blockTurnSize: 6,
+      summarizer: nonExtractingSummarizer,
+    }
+    try {
+      const memory = await StrataGate.open(options)
+      await memory.reserveUserMessage({ id: 'interrupted-user', content: '进程中断前的输入', threadId: 'thread' })
+      for (let index = 1; index <= 6; index += 1) {
+        await memory.appendTurn({ user: `完整轮次 ${index}`, assistant: '已保存', threadId: 'thread' }, { deferProcessing: true })
+      }
+      await memory.close()
+
+      const reopened = await StrataGate.open(options)
+      try {
+        const resumed = await reopened.resumePendingWork({ deferDerivation: true })
+        expect(resumed.sealedBlocks).toHaveLength(1)
+        expect(reopened.listBlocks()[0]?.l5Raw.filter(({ role }) => role === 'user').map(({ content }) => content))
+          .toEqual(Array.from({ length: 6 }, (_, index) => `完整轮次 ${index + 1}`))
+        expect(reopened.listOpenTail('thread')).toEqual([
+          expect.objectContaining({ id: 'interrupted-user', content: '进程中断前的输入' }),
+        ])
+        expect(reopened.hasSealableTail()).toBe(false)
+      } finally {
+        await reopened.close()
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('preserves historical successor links after automatic adjudication and SQLite reopen', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-history-'))
     const options = {

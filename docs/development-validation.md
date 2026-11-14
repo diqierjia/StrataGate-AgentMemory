@@ -12,7 +12,7 @@ PR CI 明确测试 PR 头提交。合并到 main 后，仅当已合并的同仓�
 
 ## 下一步的优先顺序
 
-1. 先优化 Windows 兼容检查的安装耗时。0.3.41 的 PR CI 中，当前宿主 Windows 任务耗时约 35 分钟：隔离宿主依赖安装约 9 分钟，包校验约 11 分钟，之后的真实宿主安装验证约 8 分钟。这是一次运行的实测，不代表每次耗时。应先为各次安装与验证记录耗时，再评估安全复用下载缓存、去掉重复构建；保留干净安装和真实宿主验证，比较修改前后的结果和耗时。
+1. 对照 Windows 三个代表任务的总时长，确认复用隔离 CLI 之后比 [run 42344461565](https://github.com/diqierjia/StrataGate-AgentMemory/actions/runs/42344461565) 的大约 15 / 23 / 36 分钟更短。第一次运行要安装并写入缓存；同一缓存键的下一次运行才是命中。不要为了缩短时间删掉代表版本或 Windows。
 2. 将发布所需版本尽量包含在最终功能 PR，并在定稿后跑最终 CI；修复迭代用相关测试和审查，避免为每次评审都等完整矩阵。合并产生的文件树如与已测树不同，补测合并结果。
 3. 对候选包复用同一源码的 CI：候选版本号在独立暂存目录设置，记录被测源码提交与版本元数据差异；打包后对该文件执行 `node scripts/verify-package.mjs <候选包路径>` 和针对当前宿主的 `node scripts/verify-dsh-install.mjs <候选包路径>`，不重复运行源码测试。两条命令应在候选源码的构建环境运行，并设置 `DSH_VERSION` 为当前宿主版本。
 4. 对正式发布、直接推送和合并结果变化，使用工作流中的证据核验；不得仅按提交消息或文件名判断已通过。
@@ -27,7 +27,7 @@ PR CI 先看这次改了哪些文件，再决定要不要跑 Windows。依据是
 
 - `src/` 下的插件源码，以及 `packages/core/src/`、核心包的 `package.json` 和 tsconfig
 - 根目录 `tests/**/*.ts` 和 `tests/fixtures/`
-- 套件直接调用的脚本：`run-dsh-compatibility.mjs`、`build-client.mjs`、`check-feedback-policy.mjs`、`verify-package.mjs`、`verify-dsh-install.mjs`
+- 套件直接调用的脚本：`run-dsh-compatibility.mjs`、`dsh-cli-isolate.mjs`、`build-client.mjs`、`check-feedback-policy.mjs`、`verify-package.mjs`、`verify-dsh-install.mjs`
 - `tsconfig.json`、`tsconfig.base.json`、`vitest.config.ts`、`tsup.config.ts`、`cordis.patch.yml`
 - `package.json` 或 `package-lock.json` 里除版本号以外的改动；看不出差异内容时按高风险处理
 - `.github/workflows/` 下的工作流
@@ -43,4 +43,10 @@ PR CI 先看这次改了哪些文件，再决定要不要跑 Windows。依据是
 
 正式发布用同一套规则。高风险提交的证据必须包含 Windows。只改版本号或文档时，可以复用只有 Ubuntu 的同树证据。手动发布不查 PR 接口，直接看该提交在 main 上的 CI：要么包含 Windows 的矩阵任务都成功，要么 `reuse-pr-ci` 已经成功。后者表示 main 当时已经按上面的规则接受了 PR 证据，0.3.42 的正式发布就是靠这条记录通过的。
 
-历史宿主全矩阵仍由定时或手动工作流运行，不进每个 PR。代表宿主任务的上限是 90 分钟。已经成功过的 Windows 任务大约 47 分钟，上限留在这之上；安装步骤另有 20 分钟上限。一个任务失败或超时不会取消其他系统上的任务。
+历史宿主全矩阵仍由定时或手动工作流运行，不进每个 PR。时间仍是每天 02:30（Asia/Shanghai）。代表宿主任务的上限是 90 分钟。已经成功过的 Windows 任务大约 47 分钟，上限留在这之上；仓库 `npm ci` 另有 20 分钟上限。一个任务失败或超时不会取消其他系统上的任务。
+
+同一次任务里，选定的宿主 CLI 只安装一次，并使用和真实宿主冒烟相同的版本钉扎。包校验把这棵树复制到单独目录，把已经装好的精确版本同时写进 dependencies 和对应 override，再安装待测 tarball。两处字符串保持一致，npm 才不会因说明不一致拒绝安装，也不会把宿主包当成多余依赖删掉。真实宿主冒烟也复制这棵树，然后继续做 plugin 安装、修复、Web 启动、会话页和迁移。复制出来的符号链接如果指向树的外面，就丢掉这次复制并重新安装。
+
+Actions 缓存按操作系统、DSH 版本、Node 版本和 `scripts/dsh-cli-isolate.mjs` 的内容保存这棵树。还原之后核对 CLI 版本、`lib/bin.js`、已装包指纹，以及钉扎的依赖名和版本字符串是否仍与当前仓库一致。键顺序不同不算变化；版本字符串变了就删除整目录并重新安装，不在半截目录上继续。已经写入的坏缓存不能原键覆盖；下次还会被拒绝并重装，直到隔离脚本变化。日志里的 `[dsh-isolate]`、`[verify-package]`、`[verify-dsh-install]` 会写明复用还是重装。
+
+比较 Windows 耗时时，看 `dsh-compatibility (windows-latest, 0.1.2-rc.1)`、`0.1.7-rc.2` 和 `0.2.2-rc.1` 的总时长。改动前的 [run 42344461565](https://github.com/diqierjia/StrataGate-AgentMemory/actions/runs/42344461565) 大约是 15、23、36 分钟；其中当前宿主的套件步骤里，隔离安装约 9 分钟（652 个包），包校验约 11.5 分钟，安装冒烟约 8.5 分钟。仓库 `npm ci` 当时已经命中缓存。第一次运行含安装和缓存上传，之后的同键运行才是命中。

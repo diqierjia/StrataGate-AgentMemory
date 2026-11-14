@@ -35,7 +35,7 @@ import type {
   TopicProjectionDiagnostics,
 } from '@diqier/stratagate'
 import { EVENT_DUPLICATE_REVIEW_RULES, TOPIC_OVERVIEW_MAX_CHARACTERS, validateTopicOverviewText, TopicProjectionError, buildMemoryDerivationMessages, estimateTokens, EVENT_EXTRACTOR_VERSION, EXTERNAL_MEMORY_DECIDER_PROMPT_ZH_CN, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, nowUtc8, normalizeEventMetadata, normalizeEventTemporal, parseExternalMemoryExport } from '@diqier/stratagate'
-import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, validateProfile, type PersistentProfile } from '@diqier/stratagate'
+import { PROFILE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, PROFILE_TOTAL_MAX_LENGTH, validateProfile, type PersistentProfile } from '@diqier/stratagate'
 import { resolveMemoryModel, type MemoryModelSelection, type ResolvedConfig, type StructuredReasoningEffortMode } from './config.js'
 import { dshMessageSource } from './dsh-compatibility.js'
 import { ModelJsonResponseError, parseJsonResponse } from './json-response.js'
@@ -265,6 +265,7 @@ const GRAPH_EDGE: ValueSchemaSpec = {
   properties: {
     fromRef: { type: 'string', required: true }, toRef: { type: 'string', required: true },
     relation: { type: 'string', required: true },
+    supersedesEdgeIds: STRING_ARRAY,
     status: { type: 'string', enum: ['active', 'superseded', 'disputed', 'archived'] },
     validFrom: { type: 'string' }, validTo: { type: 'string' }, confidence: { type: 'number' },
     sourceEventIds: { ...STRING_ARRAY, required: true },
@@ -491,7 +492,9 @@ function compactGraphProjectionContext(context: GraphProjectionContext): unknown
       status: node.status,
       sourceEventIds: node.sourceEventIds.slice(-16),
     })),
+    // id is the handle for explicit supersedesEdgeIds. Timestamps and confidence stay off the prompt.
     existingEdges: context.existingEdges.slice(-60).map((edge) => ({
+      id: edge.id,
       fromNodeId: edge.fromNodeId,
       toNodeId: edge.toNodeId,
       relation: edge.relation,
@@ -914,7 +917,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
   readonly graphProjector: GraphProjector = async (context: GraphProjectionContext): Promise<GraphProjectionResult> => {
     const eventIds = new Set(context.events.map((event) => event.id))
     const raw = object(await this.callStructured('graphProjector',
-      `Project the supplied Events into the current Knowledge Graph, then call ${STRUCTURED_TOOLS.graphProjector.name} exactly once. Events are the sole source of truth; never use legacy Element data. Return only nodes and edges touched by the supplied Events; never echo unchanged historical graph records. Return at most 24 nodes and 32 edges. Use stable entity nodes for people, projects, organizations, tools, and places. Use aliases to merge spelling/case/separator variants. Give every returned node 1-6 concise semantic role tags such as benchmark, evaluation, memory-plugin, parser, or development-tool; tags describe the node's specific role and never replace its person/project/organization/tool/place type. Reuse stable tag wording when possible. For every node name, alias, and tag, include metadataProvenance with the exact supplied Event ids that support that individual value; never use an unrelated active Event as a substitute. The shapes are different: metadataProvenance.name is an Event ID string array, e.g. ["evt_x"], supporting node.name; it is never an array of objects. Only metadataProvenance.aliases and metadataProvenance.tags are arrays of { value, sourceEventIds: ["evt_x"] } objects for each alias/tag. Example for node.name="StrataGate": metadataProvenance={"name":["evt_x"],"aliases":[{"value":"strata_gate","sourceEventIds":["evt_x"]}],"tags":[{"value":"memory-plugin","sourceEventIds":["evt_x"]}]}. Put attributes in node facts and every relationship in a directed edge using fromRef/toRef—never encode a relationship as a fact string. Prefer concise canonical Chinese relation labels such as 使用、属于、创建、参与、贡献、依赖、位于、相关. Every node, fact, edge, and metadata provenance id must cite only supplied Event ids. Do not return text.`,
+      `Project the supplied Events into the current Knowledge Graph, then call ${STRUCTURED_TOOLS.graphProjector.name} exactly once. Events are the sole source of truth; never use legacy Element data. Return only nodes and edges touched by the supplied Events; never echo unchanged historical graph records. Return at most 24 nodes and 32 edges. Use stable entity nodes for people, projects, organizations, tools, and places. Use aliases to merge spelling/case/separator variants. Give every returned node 1-6 concise semantic role tags such as benchmark, evaluation, memory-plugin, parser, or development-tool; tags describe the node's specific role and never replace its person/project/organization/tool/place type. Reuse stable tag wording when possible. For every node name, alias, and tag, include metadataProvenance with the exact supplied Event ids that support that individual value; never use an unrelated active Event as a substitute. The shapes are different: metadataProvenance.name is an Event ID string array, e.g. ["evt_x"], supporting node.name; it is never an array of objects. Only metadataProvenance.aliases and metadataProvenance.tags are arrays of { value, sourceEventIds: ["evt_x"] } objects for each alias/tag. Example for node.name="StrataGate": metadataProvenance={"name":["evt_x"],"aliases":[{"value":"strata_gate","sourceEventIds":["evt_x"]}],"tags":[{"value":"memory-plugin","sourceEventIds":["evt_x"]}]}. Put attributes in node facts and every relationship in a directed edge using fromRef/toRef—never encode a relationship as a fact string. Prefer concise canonical Chinese relation labels such as 使用、属于、创建、参与、贡献、依赖、位于、相关. Multiple targets for one relation may all be current at once. Only when supplied Events explicitly document a replacement or correction should an edge include supersedesEdgeIds copied from existingEdges.id; never supersede a same-relation edge merely because its target differs. Every node, fact, edge, and metadata provenance id must cite only supplied Event ids. Do not return text.`,
       compactGraphProjectionContext(context), undefined, undefined, context.assertActive,
     ))
     const nodes = (Array.isArray(raw.nodes) ? raw.nodes : []).flatMap((candidate) => {
@@ -966,6 +969,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
       if (!refs.has(fromRef) || !refs.has(toRef) || !relation || sourceEventIds.length === 0) return []
       return [{
         fromRef, toRef, relation,
+        ...(strings(item.supersedesEdgeIds).length > 0 ? { supersedesEdgeIds: strings(item.supersedesEdgeIds).slice(0, 32) } : {}),
         ...(typeof item.status === 'string' ? { status: item.status as 'active' } : {}),
         ...(text(item.validFrom) ? { validFrom: text(item.validFrom) } : {}),
         ...(text(item.validTo) ? { validTo: text(item.validTo) } : {}),
@@ -1037,16 +1041,16 @@ Use project scope for repository decisions, user scope for stable preferences/id
     return { candidates: parsed.candidates, reason: text(raw.reason, parsed.reason) }
   }
 
-  async maintainProfile(profile: PersistentProfile): Promise<PersistentProfile> {
+  async maintainProfile(profile: PersistentProfile, totalMaxLength = PROFILE_TOTAL_MAX_LENGTH): Promise<PersistentProfile> {
     const raw = object(await this.callStructured('profileMaintenance',
-      `You maintain only the supplied StrataGate Persistent Profile. Call ${STRUCTURED_TOOLS.profileMaintenance.name} exactly once with all ${Object.keys(PROFILE_FIELDS).length} string fields. You may deduplicate, merge repeated meaning, shorten redundant wording, and improve organization. Preserve every unique fact, uncertainty, constraint, and instruction. Never infer or add facts, broaden meaning, or read Event, Graph, or conversation history. If two statements might conflict or cannot safely merge, retain both. Keep ${PROFILE_PROTECTED_SHORT_FIELDS.join(", ")} unchanged except necessary whitespace cleanup. defaultLocation is the reference when a task specifies no location and no currentCity is set; homeCity is the stable city of residence. They are independent, neither means temporary/current location, and travel must not overwrite either. currentCity is the current location, possibly temporary travel or business travel; it persists across sessions until the user updates or clears it. Never expire currentCity automatically, clear it because a trip seems temporary, or copy it into either stable field. preferredLanguage and reasoningLanguage are independent: never infer, copy, or merge either language field into the other. reasoningLanguage is only for user-visible reasoning/thinking text when supported, not hidden chain-of-thought. Character limits (Unicode code points): ${JSON.stringify(Object.fromEntries(Object.entries(PROFILE_FIELDS).map(([field, spec]) => [field, spec.maxLength])))}. Total maximum: 6000. If safe compression is impossible, return the original value.`,
+      `You maintain only the supplied StrataGate Persistent Profile. Call ${STRUCTURED_TOOLS.profileMaintenance.name} exactly once with all ${Object.keys(PROFILE_FIELDS).length} string fields. You may deduplicate, merge repeated meaning, shorten redundant wording, and improve organization. Preserve every unique fact, uncertainty, constraint, and instruction. Never infer or add facts, broaden meaning, or read Event, Graph, or conversation history. If two statements might conflict or cannot safely merge, retain both. Keep ${PROFILE_PROTECTED_SHORT_FIELDS.join(", ")} unchanged except necessary whitespace cleanup. defaultLocation is the reference when a task specifies no location and no currentCity is set; homeCity is the stable city of residence. They are independent, neither means temporary/current location, and travel must not overwrite either. currentCity is the current location, possibly temporary travel or business travel; it persists across sessions until the user updates or clears it. Never expire currentCity automatically, clear it because a trip seems temporary, or copy it into either stable field. preferredLanguage and reasoningLanguage are independent: never infer, copy, or merge either language field into the other. reasoningLanguage is only for user-visible reasoning/thinking text when supported, not hidden chain-of-thought. Character limits (Unicode code points): ${JSON.stringify(Object.fromEntries(Object.entries(PROFILE_FIELDS).map(([field, spec]) => [field, spec.maxLength])))}. Total maximum: ${totalMaxLength}. If safe compression is impossible, return the original value.`,
       { profile, fieldDefinitions: PROFILE_FIELDS },
     ))
     if (Object.keys(raw).length !== Object.keys(PROFILE_FIELDS).length || Object.keys(raw).some((field) => !(field in PROFILE_FIELDS))) {
       throw new Error('Profile maintenance returned unexpected fields')
     }
     const proposed = raw as PersistentProfile
-    validateProfile(proposed)
+    validateProfile(proposed, totalMaxLength)
     for (const field of PROFILE_PROTECTED_SHORT_FIELDS) {
       if (proposed[field].trim() !== profile[field].trim()) throw new Error(`Profile maintenance changed protected short field ${field}`)
     }

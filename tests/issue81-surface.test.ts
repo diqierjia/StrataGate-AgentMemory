@@ -149,6 +149,87 @@ describe('deferred Block surface synchronization', () => {
     } finally { await f.dispose() }
   })
 
+  it('matches a reserved turn by its stable identity when user and turn-end timestamps differ', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-surface-reserved-turn-'))
+    const session = Session.create('reserved-turn-surface' as never)
+    const user = 'A reserved request that later receives its assistant reply. '
+    const assistant = 'The assistant reply finishes the reserved turn.'
+    appendTurn(session, user, assistant)
+    const plugin = runtime(join(directory, 'memory.db'))
+    const namespace = plugin.namespaceFor(session)
+    const memory = await StrataGate.open({
+      database: join(directory, 'memory.db'), namespace, blockTurnSize: 1,
+      summarizer: models.summarizer, extractor: models.extractor,
+    })
+    try {
+      const userId = `dsh:${String(session.id)}:turn:1:user`
+      const userEvent = session.snapshotEvents().find((event) => event.type === 'user/message')!
+      await memory.reserveUserMessage({
+        id: userId, content: user, threadId: String(session.id), createdAt: new Date(userEvent.time).toISOString(),
+      })
+      await memory.appendTurn({
+        user, assistant, threadId: String(session.id), userMessageId: userId, createdAt: turnEndAt(session),
+      })
+      const block = memory.listBlocks()[0]!
+      const context = memory.getBlockContext(String(session.id))[0]!
+      expect(await replace(plugin, memory, session, block, { ...context, level: 0, content: renderBlock(block, 0) })).toBe(true)
+      expect(JSON.stringify(session.deriveMessages())).toContain('[StrataGate historical conversation block]')
+    } finally {
+      await plugin.close()
+      await memory.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps native image and file blocks when replacing a block surface', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-surface-attachments-'))
+    const session = Session.create('attachment-surface' as never)
+    const user = 'Review the attached design and requirements.'
+    const assistant = 'I reviewed both attachments.'
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: user },
+        { type: 'image', attachment: {
+          attachmentId: 'sha256:image-surface' as never, mediaType: 'image/png', bytes: 128,
+          width: 640, height: 480, name: 'design.png',
+        } },
+        { type: 'file', attachment: { attachmentId: 'sha256:file-surface' as never, name: 'requirements.pdf', bytes: 456 } },
+      ], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    session.append('assistant/message', {
+      turn: 1, step: 1,
+      message: createAssistantMessage({ content: [{ type: 'text', text: assistant }], source: { provider: 'test', model: 'test' } }),
+      stream: [],
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const plugin = runtime(join(directory, 'memory.db'))
+    const namespace = plugin.namespaceFor(session)
+    const memory = await StrataGate.open({
+      database: join(directory, 'memory.db'), namespace, blockTurnSize: 1,
+      summarizer: models.summarizer, extractor: models.extractor,
+    })
+    try {
+      await memory.appendTurn({ user, assistant, threadId: String(session.id), createdAt: turnEndAt(session) })
+      const block = memory.listBlocks()[0]!
+      const context = memory.getBlockContext(String(session.id))[0]!
+      expect(await replace(plugin, memory, session, block, { ...context, level: 0, content: renderBlock(block, 0) })).toBe(true)
+      const replacement = session.snapshotEvents().at(-1)!
+      expect(replacement.type).toBe('user/message')
+      if (replacement.type === 'user/message') {
+        expect(replacement.data.content.map((part) => part.type)).toEqual(['text', 'image', 'file'])
+        expect(replacement.data.content[1]).toMatchObject({ type: 'image', attachment: { attachmentId: 'sha256:image-surface' } })
+        expect(replacement.data.content[2]).toMatchObject({ type: 'file', attachment: { attachmentId: 'sha256:file-surface' } })
+      }
+    } finally {
+      await plugin.close()
+      await memory.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it.each([3, 5])('reports the actual updated L%s when the target session is already loaded', async (level) => {
     const f = await queuedSurfaceFixture()
     try {

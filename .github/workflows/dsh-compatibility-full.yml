@@ -11,6 +11,10 @@ permissions:
 
 jobs:
   dsh-compatibility:
+    # Cache save needs actions: write.
+    permissions:
+      contents: read
+      actions: write
     # Same bound as the PR matrix: successful Windows cells reach about 47
     # minutes, and a hung install must not wait out the 6-hour default.
     timeout-minutes: 90
@@ -23,6 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        id: node
         with:
           node-version: 24.x
           cache: npm
@@ -32,7 +37,29 @@ jobs:
       - name: Install repository dependencies
         timeout-minutes: 20
         run: npm ci
+      # Same isolate cache as the PR matrix. Keep this key identical to ci.yml.
+      - name: Restore isolated DSH CLI
+        id: isolate-cache
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/stratagate-dsh-isolate
+          key: dsh-isolate-v1-${{ runner.os }}-${{ matrix.dsh }}-${{ steps.node.outputs.node-version }}-${{ hashFiles('scripts/dsh-cli-isolate.mjs') }}
+      - name: Ensure isolated DSH CLI
+        id: isolate-cli
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+          DSH_ISOLATE_ROOT: ${{ runner.temp }}/stratagate-dsh-isolate
+        run: node scripts/dsh-cli-isolate.mjs
+      - name: Save isolated DSH CLI
+        if: steps.isolate-cli.outputs.cache_save == 'true' && steps.isolate-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/stratagate-dsh-isolate
+          key: dsh-isolate-v1-${{ runner.os }}-${{ matrix.dsh }}-${{ steps.node.outputs.node-version }}-${{ hashFiles('scripts/dsh-cli-isolate.mjs') }}
       - name: Run full DSH compatibility suite in isolated CLI root
         run: node scripts/run-dsh-compatibility.mjs
         env:
           DSH_VERSION: ${{ matrix.dsh }}
+          DSH_ISOLATE_ROOT: ${{ runner.temp }}/stratagate-dsh-isolate

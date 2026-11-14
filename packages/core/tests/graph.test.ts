@@ -6,6 +6,7 @@ import {
   type GraphNode,
   type PersistentStrataGateOptions,
 } from '../src/index.js';
+import { applyGraphProjection } from '../src/graph.js';
 import { SqliteStorage } from '../src/sqlite.js';
 import { normalizeSnapshot } from '../src/storage.js';
 
@@ -75,6 +76,9 @@ describe('Event-backed knowledge graph', () => {
     }, {
       id: 'edge_b', fromNodeId: 'node_person', toNodeId: 'node_b', relation: 'works_at', status: 'superseded',
       confidence: 0.9, sourceEventIds: [historicalB.id], createdAt: now, updatedAt: now,
+    }, {
+      id: 'edge_b_stale_status', fromNodeId: 'node_person', toNodeId: 'node_b', relation: 'works_at', status: 'active',
+      confidence: 0.9, sourceEventIds: [historicalB.id], createdAt: now, updatedAt: now,
     });
 
     const person = (results: Awaited<ReturnType<typeof memory.searchGraphNodes>>) =>
@@ -90,6 +94,9 @@ describe('Event-backed knowledge graph', () => {
     expect(historical).toMatchObject({ matchType: 'historical' });
     expect(historical.historicalFacts).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'fact_cn_b' })]));
     expect(historical.historicalEdges).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'edge_b' })]));
+    expect(historical.historicalEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'edge_b_stale_status', status: 'superseded' }),
+    ]));
     expect(historical.node.currentState).toContain('company: A');
     expect(historical.provenanceEventIds?.[0]).toBe(historicalB.id);
     expect(historical.provenanceEventIds).toContain(currentA.id);
@@ -657,5 +664,61 @@ describe('Event-backed knowledge graph', () => {
     expect(jobs.find(job => job.id === jobId)).toMatchObject({ id: jobId, status: 'failed', attempts: 1,
       lastError: 'Graph projection manually retried.' });
     expect(jobs.find(job => job.id !== jobId)).toMatchObject({ status: 'completed', attempts: 1, lastError: null });
+  });
+  it('keeps complementary targets for one relation active until replacement is explicit', async () => {
+    const memory = StrataGate.inMemory({ blockTurnSize: 1 });
+    await memory.appendTurn({ user: 'Atlas uses PostgreSQL and Redis.', assistant: 'saved' });
+    const block = memory.listBlocks()[0]!;
+    const source = await memory.addEvent({
+      id: 'evt_atlas_storage', title: 'Atlas storage', summary: 'Atlas uses PostgreSQL and Redis.',
+      sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id],
+    });
+    const now = '2026-09-20T00:00:00.000Z';
+    const node = (id: string, name: string, type: GraphNode['type']): GraphNode => ({
+      id, name, type, aliases: [], currentState: '', facts: [], status: 'active', confidence: 0.9,
+      sourceEventIds: [source.id], createdAt: now, updatedAt: now,
+    });
+    const nodes = [node('atlas', 'Atlas', 'project'), node('postgres', 'PostgreSQL', 'tool'), node('redis', 'Redis', 'tool')];
+    const edges: GraphEdge[] = [];
+    const projection = {
+      reason: 'complementary storage systems',
+      nodes: [
+        { ref: 'atlas', name: 'Atlas', type: 'project' as const, metadataProvenance: { name: [source.id] }, sourceEventIds: [source.id] },
+        { ref: 'postgres', name: 'PostgreSQL', type: 'tool' as const, metadataProvenance: { name: [source.id] }, sourceEventIds: [source.id] },
+        { ref: 'redis', name: 'Redis', type: 'tool' as const, metadataProvenance: { name: [source.id] }, sourceEventIds: [source.id] },
+      ],
+      edges: [
+        { fromRef: 'atlas', toRef: 'postgres', relation: 'uses', sourceEventIds: [source.id] },
+        { fromRef: 'atlas', toRef: 'redis', relation: 'uses', sourceEventIds: [source.id] },
+      ],
+    };
+    applyGraphProjection({
+      nodes, edges, events: [source], allowedEventIds: new Set([source.id]), now,
+      idFactory: prefix => `${prefix}_${edges.length + 1}`, result: projection,
+    });
+    expect(edges).toHaveLength(2);
+    expect(edges.every(edge => edge.status === 'active')).toBe(true);
+    applyGraphProjection({
+      nodes, edges, events: [source], allowedEventIds: new Set([source.id]), now,
+      idFactory: prefix => `${prefix}_${edges.length + 1}`,
+      result: {
+        reason: 'unknown edge id',
+        nodes: [projection.nodes[0]!, projection.nodes[2]!],
+        edges: [{ fromRef: 'atlas', toRef: 'redis', relation: 'uses', supersedesEdgeIds: ['missing-edge'], sourceEventIds: [source.id] }],
+      },
+    });
+    expect(edges.every(edge => edge.status === 'active')).toBe(true);
+    applyGraphProjection({
+      nodes, edges, events: [source], allowedEventIds: new Set([source.id]), now,
+      idFactory: prefix => `${prefix}_${edges.length + 1}`,
+      result: {
+        reason: 'explicit replacement',
+        // fromRef/toRef resolve only to nodes declared in this projection.
+        nodes: [projection.nodes[0]!, projection.nodes[2]!],
+        edges: [{ fromRef: 'atlas', toRef: 'redis', relation: 'uses', supersedesEdgeIds: [edges[0]!.id], sourceEventIds: [source.id] }],
+      },
+    });
+    expect(edges.find(edge => edge.toNodeId === 'postgres')).toMatchObject({ status: 'superseded' });
+    expect(edges.find(edge => edge.toNodeId === 'redis')).toMatchObject({ status: 'active' });
   });
 });

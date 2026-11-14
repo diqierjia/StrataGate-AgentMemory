@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { emptyProfile, PROFILE_FIELDS, PROFILE_MAINTAINABLE_FIELDS, PROFILE_MAINTENANCE_TOTAL_THRESHOLD, PROFILE_PROTECTED_SHORT_FIELDS, PROFILE_TOTAL_MAX_LENGTH, profileLength, profileMaintenanceDue, renderPersistentProfile } from '../src/profile.js';
+import { emptyProfile, PROFILE_FIELDS, PROFILE_MAINTAINABLE_FIELDS, PROFILE_MAINTENANCE_TOTAL_THRESHOLD, PROFILE_PROTECTED_SHORT_FIELDS, PROFILE_TOTAL_MAX_LENGTH, profileLength, profileMaintenanceDue, renderPersistentProfile, validateProfile } from '../src/profile.js';
 import { SqliteStorage } from '../src/sqlite.js';
 
 describe('installation-wide Persistent Profile', () => {
@@ -91,6 +91,19 @@ describe('installation-wide Persistent Profile', () => {
         expect(store.getProfileChanges()).toEqual(before);
       }
     } finally { await store.close(); }
+  });
+
+  it('validates the total against a custom install-wide limit', () => {
+    // Each field is within its own cap, so only the total can reject it.
+    const profile = { ...emptyProfile(), userBackground: 'x'.repeat(1500), persistentNotes: 'x'.repeat(1200) };
+    expect(() => validateProfile(profile, 2000)).toThrow(/exceeds 2000 characters/);
+    expect(() => validateProfile(profile, 8000)).not.toThrow();
+    // The default 6000 limit still applies when no custom limit is supplied.
+    expect(() => validateProfile({ ...emptyProfile(), responsePreferences: 'x'.repeat(1000), userBackground: 'x'.repeat(1500), persistentNotes: 'x'.repeat(1200), longTermGoals: 'x'.repeat(1000) })).not.toThrow();
+    const store = new SqliteStorage({ filename: ':memory:', profileTotalMaxLength: 2000 });
+    store.updateProfileField('userBackground', 'x'.repeat(1500), 'settings');
+    expect(() => store.updateProfileField('persistentNotes', 'x'.repeat(600), 'settings')).toThrow(/exceeds 2000 characters/);
+    return store.close().then(() => {})
   });
 
   it('reads an old nine-field database with empty locations without migrating or losing rows', async () => {

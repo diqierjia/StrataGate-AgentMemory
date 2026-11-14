@@ -28,7 +28,15 @@ import {
   StorageConflictError,
   StrataGate,
   renderPersistentProfile,
+  PROFILE_FIELDS,
+  PROFILE_TOTAL_MAX_LENGTH,
+  PROFILE_TOTAL_MAX_LENGTH_MIN,
+  PROFILE_TOTAL_MAX_LENGTH_MAX,
+  emptyProfile,
+  isProfileField,
   type PersistentProfile,
+  type ProfileChangeSource,
+  type ProfileField,
   type ElementSearchResult,
   type EventCard,
   type EventSearchResult,
@@ -63,7 +71,7 @@ import type {
 } from '@diqier/stratagate'
 import type { ResolvedConfig } from './config.js'
 import { EmbeddingBridge } from './embedding.js'
-import { TurnFolder, type FoldedTurn } from './fold.js'
+import { renderBlocks, TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
 import { DshMetadataStore, readGraphSettings, type GraphSettings } from './metadata.js'
@@ -73,6 +81,12 @@ import { DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
 import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
 import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, type DreamingAction } from './dreaming.js'
 import type { DreamingRun, DreamingCommand, DreamingDirectoryOperation } from '@diqier/stratagate'
+
+function emptyProfileOverview(): { profile: PersistentProfile; revisions: Record<ProfileField, number> } {
+  const profile = emptyProfile()
+  const revisions = Object.fromEntries((Object.keys(PROFILE_FIELDS) as ProfileField[]).map((field) => [field, 0])) as Record<ProfileField, number>
+  return { profile, revisions }
+}
 
 export interface DreamingHost {
   run(namespace: string, run: DreamingRun, signal: AbortSignal): Promise<void>
@@ -192,6 +206,9 @@ const VECTOR_SETTING_KEYS = ['embeddingUrl', 'embeddingKey', 'embeddingModel', '
   'rerankUrl', 'rerankKey', 'rerankModel'] as const
 type VectorSettingKey = typeof VECTOR_SETTING_KEYS[number]
 const VECTOR_SECRET_MASK = '********'
+// Profile capacity lives beside the vector settings so a live edit survives
+// restart and applies on the next save without a plugin reload.
+const PROFILE_LIMIT_SETTING_KEY = 'profile.totalMaxLength'
 
 interface RankedElementFact extends ElementSearchResult {
   weight: number
@@ -365,7 +382,7 @@ export function eventContentHash(event: { title: string; summary: string }): str
 }
 
 export class StrataGateRuntime {
-  readonly dailyNotes: DailyNotes
+  dailyNotes: DailyNotes
   private readonly dailySnapshots = new Map<string, Promise<string>>()
   get dailyNotesEnabled(): boolean { return this.config.dailyNotesEnabled !== false }
   clearDailySnapshot(sessionId: string): void { this.dailySnapshots.delete(sessionId) }
@@ -384,10 +401,32 @@ export class StrataGateRuntime {
     return snapshot
   }
 
+  /**
+   * Apply a live daily-notes edit. The time zone and lookback window are
+   * captured by DailyNotes, so a changed value needs a fresh reader; cached
+   * session snapshots are discarded so the next session start sees the edit.
+   */
+  applyLiveDailyNotes(enabled: boolean | undefined, timeZone: string | undefined, injectionDays: number | undefined): void {
+    if (injectionDays !== undefined && (!Number.isSafeInteger(injectionDays) || injectionDays < 1 || injectionDays > 30)) {
+      throw new TypeError('dailyNotesInjectionDays must be an integer between 1 and 30')
+    }
+    const nextTimeZone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+    const nextDays = injectionDays ?? this.dailyNotes.injectionDays
+    const nextEnabled = enabled ?? this.dailyNotesEnabled
+    if (nextTimeZone === this.dailyNotes.timeZone && nextDays === this.dailyNotes.injectionDays && nextEnabled === this.dailyNotesEnabled) return
+    this.config.dailyNotesEnabled = nextEnabled
+    if (timeZone !== undefined) this.config.dailyNotesTimeZone = timeZone
+    else delete this.config.dailyNotesTimeZone
+    this.config.dailyNotesInjectionDays = nextDays
+    this.dailyNotes = new DailyNotes(this.config.database, nextTimeZone, this.config.dailyNotesContextMaxChars, nextDays)
+    this.dailySnapshots.clear()
+  }
+
   readonly diagnostics: DiagnosticsRecorder
   private readonly diagnosticSessionNamespaces = new Map<string, string>()
   private readonly diagnosticMemoryEstimates = new Map<string, number>()
   private profileStorage: SqliteStorage | undefined
+  private profileTotalMaxLength = PROFILE_TOTAL_MAX_LENGTH
   private readonly folder = new TurnFolder()
   private readonly spaces = new Map<string, Promise<StrataGate>>()
   private readonly batches = new Map<string, Map<string, RetrievalBatch>>()
@@ -448,7 +487,11 @@ export class StrataGateRuntime {
     return this.graphMetadata
   }
 
-  private graphSettings(): GraphSettings { return this.graphMetadata?.graphSettings() ?? readGraphSettings(this.config.database) }
+  private graphSettings(): GraphSettings {
+    if (this.graphMetadata) return this.graphMetadata.graphSettings()
+    // 浏览总览不能为了读开关去建元数据表。
+    return readGraphSettings(this.config.database)
+  }
 
   get graphEnabled(): boolean { return this.graphSettings().enabled }
 
@@ -602,7 +645,7 @@ export class StrataGateRuntime {
     const run = (async () => {
       const current = this.profileStore().getPersistentProfile()
       try {
-        const proposed = await this.models.runDetached('stratagate-profile-maintenance', () => this.models.maintainProfile(current))
+        const proposed = await this.models.runDetached('stratagate-profile-maintenance', () => this.models.maintainProfile(current, this.profileTotalMaxLength))
         return this.profileStore().applyProfileMaintenance(current, proposed, new Date(now).toISOString())
       } catch (error) {
         this.profileStore().recordProfileMaintenanceFailure(current, now)
@@ -768,15 +811,65 @@ export class StrataGateRuntime {
   }
 
   getProfileSnapshot() {
-    return this.profileStore().getProfileSnapshot()
+    // 总览只是浏览。旧库还没有画像表时留空，不能为了统计去建表。
+    return this.readProfileOverview()?.snapshot ?? this.profileStore().getProfileSnapshot()
   }
 
   renderProfileContext(): string | null {
     return renderPersistentProfile(this.getPersistentProfile())
   }
 
+  getProfileTotalMaxLength(): number {
+    return this.profileTotalMaxLength
+  }
+
+  /** Persist the install-wide Profile capacity and apply it to the live store. */
+  adminSetProfileTotalMaxLength(value: number): number {
+    if (!Number.isSafeInteger(value) || value < PROFILE_TOTAL_MAX_LENGTH_MIN || value > PROFILE_TOTAL_MAX_LENGTH_MAX) {
+      throw new RangeError(`profile character limit must be an integer between ${PROFILE_TOTAL_MAX_LENGTH_MIN} and ${PROFILE_TOTAL_MAX_LENGTH_MAX}`)
+    }
+    const used = Object.values(this.getPersistentProfile()).reduce((sum, entry) => sum + Array.from(entry).length, 0)
+    if (value < used) throw new RangeError(`profile character limit cannot be lower than the ${used} characters already used`)
+    if (value === this.profileTotalMaxLength) return value
+    this.writeRuntimeSetting(PROFILE_LIMIT_SETTING_KEY, String(value))
+    this.profileTotalMaxLength = value
+    // Rebuild so the next write validates against the new limit immediately.
+    if (this.profileStorage) {
+      const previous = this.profileStorage
+      this.profileStorage = new SqliteStorage({ filename: this.config.database, graphPolicy: namespace => this.graphPolicyFor(namespace), profileTotalMaxLength: value })
+      void previous.close()
+    }
+    return value
+  }
+
   getProfileChanges() {
+    const stored = this.readProfileOverview()
+    if (stored) return stored.changes
     return this.profileStore().getProfileChanges()
+  }
+
+  /** 只读已有画像；表不存在就返回 null，绝不打开可写存储。 */
+  private readProfileOverview(): { snapshot: ReturnType<SqliteStorage['getProfileSnapshot']>; changes: ReturnType<SqliteStorage['getProfileChanges']> } | null {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const database = new DatabaseSync(this.config.database, { readOnly: true })
+    try {
+      const names = new Set((database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('persistent_profile', 'persistent_profile_changes')").all() as Array<{ name: string }>).map((row) => row.name))
+      if (!names.has('persistent_profile') || !names.has('persistent_profile_changes')) return null
+      const snapshot = emptyProfileOverview()
+      const rows = database.prepare('SELECT p.field, p.value, COALESCE(r.revision, 0) AS revision FROM persistent_profile p LEFT JOIN (SELECT field, MAX(id) AS revision FROM persistent_profile_changes GROUP BY field) r ON r.field = p.field').all() as Array<{ field: string; value: string; revision: number }>
+      for (const row of rows) if (isProfileField(row.field)) {
+        snapshot.profile[row.field] = row.value
+        snapshot.revisions[row.field] = row.revision
+      }
+      const changes = (database.prepare('SELECT field, old_value, new_value, source, updated_at, source_message_id FROM persistent_profile_changes ORDER BY id').all() as Array<{
+        field: ProfileField; old_value: string; new_value: string; source: ProfileChangeSource; updated_at: string; source_message_id: string | null
+      }>).map((row) => ({ field: row.field, oldValue: row.old_value, newValue: row.new_value, source: row.source, updatedAt: row.updated_at, sourceMessageId: row.source_message_id }))
+      return { snapshot, changes }
+    } catch {
+      return null
+    } finally {
+      database.close()
+    }
   }
 
   updatePersistentProfile(field: string, value: string, source: 'settings' | 'user_explicit' | 'agent_tool', sourceMessageId?: string | null, expectedValue?: string, expectedRevision?: number) {
@@ -786,7 +879,7 @@ export class StrataGateRuntime {
   }
 
   private profileStore(): SqliteStorage {
-    return this.profileStorage ??= new SqliteStorage({ filename: this.config.database, graphPolicy: namespace => this.graphPolicyFor(namespace) })
+    return this.profileStorage ??= new SqliteStorage({ filename: this.config.database, graphPolicy: namespace => this.graphPolicyFor(namespace), profileTotalMaxLength: this.profileTotalMaxLength })
   }
 
   updatePersistentProfileFromTool(field: string, value: string) {
@@ -1056,6 +1149,22 @@ export class StrataGateRuntime {
         if (result.sealedBlock) this.scheduleBlockDerivation(session, memory)
       }
     } catch (error) {
+      if (error instanceof StorageConflictError && memory) {
+        // Another DSH instance may have committed this namespace while the
+        // detached writer still held an older snapshot. Refresh before the
+        // queued turns are retried; replaying the stale revision only repeats
+        // the same conflict and blocks all later memory writes.
+        try {
+          await memory.reloadFromStorage()
+          const remaining = turns.slice(completed)
+          if (remaining.length > 0) {
+            this.pendingTurns.set(key, [...remaining, ...(this.pendingTurns.get(key) ?? [])])
+          }
+          return
+        } catch (reloadError) {
+          error = reloadError
+        }
+      }
       const remaining = turns.slice(completed)
       if (remaining.length > 0) {
         this.pendingTurns.set(key, [...remaining, ...(this.pendingTurns.get(key) ?? [])])
@@ -1752,7 +1861,7 @@ export class StrataGateRuntime {
     if (!sourceEventSeqs) return false
     const selected = selectCompressedBlockSurface(session, sourceEventSeqs, block, context)
     if (!selected) return false
-    appendBlockSurface(session, block.id, selected, sourceEventSeqs)
+    appendBlockSurface(session, block, selected, sourceEventSeqs)
     this.surfaceFlushPending.add(session)
     levels.set(block.id, checkpointLevel(selected) ?? context.level)
     return true
@@ -1818,7 +1927,7 @@ export class StrataGateRuntime {
       )
       if (!text) continue
       if (node.text !== text) {
-        appendBlockSurface(session, block.id, text, [node.seq])
+        appendBlockSurface(session, block, text, [node.seq])
         this.surfaceFlushPending.add(session)
         changed = true
       }
@@ -1843,7 +1952,7 @@ export class StrataGateRuntime {
     const node = current.get(block.id)
     const endTurn = node ? null : dshTurnAtBlockEnd(session, block)
     const seqs = node ? [node.seq] : endTurn === null ? null : sealedSurfaceSeqs(session, endTurn, block)
-    if (!seqs?.length || !safeBlockSurfaceRange(session, block.id, seqs)) return {
+    if (!seqs?.length || !safeBlockSurfaceRange(session, block, seqs)) return {
       status: 'blocked', reason: 'source-unavailable',
       message: '这段历史已被整理，或夹有需要保留的系统、工具或插件内容，无法在这里切换层级。可以让助手查找这段历史。',
     }
@@ -1923,13 +2032,15 @@ export class StrataGateRuntime {
     }
     const { text, seqs, relief } = plan
     for (const replacement of relief) {
-      appendBlockSurface(session, replacement.id, replacement.text, [replacement.seq])
+      const replacementBlock = memory.listBlocks().find(candidate => candidate.id === replacement.id)
+      if (!replacementBlock) continue
+      appendBlockSurface(session, replacementBlock, replacement.text, [replacement.seq])
       levels.set(replacement.id, replacement.level)
       this.surfaceFlushPending.add(session)
     }
     const node = currentBlockSurfaceMessages(session).get(block.id)
     if (node?.text !== text) {
-      appendBlockSurface(session, block.id, text, seqs)
+      appendBlockSurface(session, block, text, seqs)
       this.surfaceFlushPending.add(session)
     }
     levels.set(block.id, context.level)
@@ -2408,6 +2519,11 @@ export class StrataGateRuntime {
       throw new Error('StrataGate agent memory is disabled by configuration (agentMemoryEnabled=false).')
     }
     const memory = await this.space(session)
+    // memory_remember can run before the host emits turn/end, so the current
+    // user message is not in StrataGate's open tail yet. Reserve it now; the
+    // folded turn later reuses the same id when it appends the assistant side.
+    const current = currentTurnUserInput(session)
+    if (current) await memory.reserveUserMessage(current)
     const hasDecider = typeof (this.models as unknown as Record<string, unknown>).externalMemoryDecider === 'function'
     const deciderBudgetMs = Math.min(this.config.structuredTaskTimeoutMs ?? 120_000, 30_000)
     const result = await this.models.run(session, () => memory.recordAgentEvent({
@@ -2577,6 +2693,10 @@ export class StrataGateRuntime {
       this.blockTurnSize = metadata.blockTurnSize() ?? this.config.blockTurnSize
       this.blockDecayLambda = metadata.blockDecayLambda() ?? this.config.blockDecayLambda
       this.agentMemoryRetrievalWeight = metadata.agentMemoryRetrievalWeight() ?? this.config.agentMemoryRetrievalWeight ?? 1
+      const savedProfileLimit = Number(this.readRuntimeSetting(PROFILE_LIMIT_SETTING_KEY))
+      if (Number.isSafeInteger(savedProfileLimit) && savedProfileLimit >= PROFILE_TOTAL_MAX_LENGTH_MIN && savedProfileLimit <= PROFILE_TOTAL_MAX_LENGTH_MAX) {
+        this.profileTotalMaxLength = savedProfileLimit
+      }
       // Semantic-recall settings saved through the settings API win over the
       // host config, exactly like the Block knobs above.
       const storedEmbeddingUrl = this.readVectorSetting('embeddingUrl')
@@ -3282,6 +3402,45 @@ export class StrataGateRuntime {
     }
   }
 
+  /** Read one scalar runtime setting from the shared settings table. */
+  private readRuntimeSetting(key: string): string | null {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return null
+    const database = new DatabaseSync(this.config.database, { readOnly: true })
+    try {
+      if (!database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stratagate_dsh_settings'").get()) return null
+      const row = database.prepare('SELECT value FROM stratagate_dsh_settings WHERE key = ?').get(key) as { value: string } | undefined
+      return row?.value ?? null
+    } catch {
+      return null
+    } finally {
+      database.close()
+    }
+  }
+
+  /** Persist one scalar runtime setting, creating the settings table on first use. */
+  private writeRuntimeSetting(key: string, value: string): void {
+    if (this.config.database === ':memory:') return
+    this.profileStore()
+    const database = new DatabaseSync(this.config.database)
+    try {
+      database.exec('PRAGMA busy_timeout = 5000')
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS stratagate_dsh_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT
+      `)
+      database.prepare(`
+        INSERT INTO stratagate_dsh_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(key, value, new Date().toISOString())
+    } finally {
+      database.close()
+    }
+  }
+
   adminWorkspaceName(namespace: string): string | null {
     const remembered = this.workspaceNames.get(namespace)
     if (remembered) return remembered
@@ -3930,31 +4089,42 @@ export class StrataGateRuntime {
   }
 }
 
+function currentTurnUserInput(session: Session): { id: string; content: string; threadId: string; createdAt?: string } | null {
+  const events = session.snapshotEvents()
+  let start = -1
+  let turn: number | undefined
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event?.type === 'turn/start') {
+      start = index
+      turn = event.data.turn
+      break
+    }
+    if (event?.type === 'turn/end' || event?.type === 'session/end-seed') return null
+  }
+  if (start < 0 || turn === undefined) return null
+  const messages = events.slice(start + 1)
+    .filter((event): event is Extract<SessionEvent, { type: 'user/message' }> =>
+      event.type === 'user/message' && event.data.source.kind === 'user')
+  const content = messages.map((event) => renderBlocks(event.data.content)).filter(Boolean).join('\n\n').trim()
+  if (!content) return null
+  const firstTime = messages[0]?.time
+  return {
+    id: `dsh:${String(session.id)}:turn:${turn}:user`,
+    content,
+    threadId: String(session.id),
+    ...(typeof firstTime === 'number' && Number.isFinite(firstTime) ? { createdAt: new Date(firstTime).toISOString() } : {}),
+  }
+}
+
 function currentUserMessage(session: Session): string {
   const messages = typeof session.deriveMessages === 'function' ? session.deriveMessages() : []
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message?.role !== 'user' || message.source.kind !== 'user') continue
-    return renderContent(message.content)
+    return renderBlocks(message.content)
   }
   return ''
-}
-
-function renderContent(content: readonly ContentBlock[]): string {
-  const output: string[] = []
-  for (const block of content) {
-    if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
-      output.push(block.text.trim())
-    } else if (block.type === 'image') {
-      output.push('[image]')
-    } else {
-      const legacy = block as { type: string; content?: readonly ContentBlock[] }
-      if (legacy.type === 'tool-result' && Array.isArray(legacy.content)) {
-        output.push(renderContent(legacy.content))
-      }
-    }
-  }
-  return output.filter(Boolean).join('\n')
 }
 
 function recentTurns(messages: readonly RawMessage[], count: number): readonly RawMessage[] {
@@ -3976,6 +4146,8 @@ function renderMessages(messages: readonly RawMessage[]): string {
 }
 
 function dshTurnAtBlockEnd(session: Session, block: MemoryBlock): number | null {
+  const sourceTurns = sourceTurnNumbersForBlock(block)
+  if (sourceTurns.length > 0) return sourceTurns.at(-1) ?? null
   const blockEnd = Date.parse(block.createdAt)
   const events = session.snapshotEvents()
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -4005,6 +4177,7 @@ function recoverableSealedSurfaceSources(
   }
   const ends = new Map<number, number>()
   const visibleEnds = new Set<number>()
+  const visibleTurns = new Set<number>()
   const compactedBlocks = new Set<string>()
   let open: { turn: number; visible: boolean } | undefined
   for (const event of session.snapshotEvents()) {
@@ -4020,6 +4193,7 @@ function recoverableSealedSurfaceSources(
       if (open?.turn === event.data.turn) {
         ends.set(event.time, event.data.turn)
         if (open.visible) visibleEnds.add(event.time)
+        if (open.visible) visibleTurns.add(event.data.turn)
       }
       open = undefined
     } else if (open && visible.has(event.seq)) open.visible = true
@@ -4027,10 +4201,14 @@ function recoverableSealedSurfaceSources(
   for (const block of blocks) {
     // Checkpoint ownership is exact even when several turns share a timestamp.
     if (compactedBlocks.has(block.id)) { result.retired.add(block.id); continue }
+    const sourceTurns = sourceTurnNumbersForBlock(block)
     const endTime = Date.parse(block.createdAt)
-    const endTurn = ends.get(endTime)
+    const endTurn = sourceTurns.at(-1) ?? ends.get(endTime)
     if (endTurn === undefined) continue
-    if (!visibleEnds.has(endTime)) { result.retired.add(block.id); continue }
+    if (sourceTurns.length > 0 ? !visibleTurns.has(endTurn) : !visibleEnds.has(endTime)) {
+      result.retired.add(block.id)
+      continue
+    }
     // The full check also rejects partial compaction and mismatched turns.
     const seqs = sealedSurfaceSeqs(session, endTurn, block)
     if (seqs?.length) result.sources.set(block.id, { endTurn, seqs })
@@ -4044,6 +4222,8 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
   const completed: Array<{ turn: number; endTime: number; start: SessionSeq; end: SessionSeq; nodes: SessionSeq[] }> = []
   let open: { turn: number; start: SessionSeq } | undefined
   const events = session.snapshotEvents()
+  const sourceTurnNumbers = sourceTurnNumbersForBlock(block)
+  const sourceTurnSet = new Set(sourceTurnNumbers)
 
   for (const event of events) {
     if (event.type === 'turn/start') {
@@ -4054,7 +4234,7 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
     const turnEvents = events.slice(open.start + 1, event.seq)
     const hasHumanMessage = turnEvents.some((candidate) =>
       candidate.type === 'user/message' && candidate.data.source.kind === 'user')
-    if (hasHumanMessage && event.data.turn <= endTurn) {
+    if (hasHumanMessage && (sourceTurnSet.size > 0 ? sourceTurnSet.has(event.data.turn) : event.data.turn <= endTurn)) {
       completed.push({
         turn: event.data.turn,
         endTime: event.time,
@@ -4065,8 +4245,11 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
           // The host assembles system/developer messages inside turns too.
           // They are live instructions, never raw conversation owned by a Block.
           if (!replaceableBlockEvent(current, block.id)) return false
+          if ((current?.type === 'assistant/message' || current?.type === 'tool/result')
+            && !surfaceEventBelongsToTurn(session, current, open!.turn)) return false
           if (seq > open!.start && seq < event.seq) return true
-          return current?.type === 'tool/result'
+          return (current?.type === 'tool/result' || current?.type === 'assistant/message')
+            && surfaceEventBelongsToTurn(session, current, open!.turn)
             && current.surfaceOp !== 'append'
             && current.sourceEventSeqs?.some((source) => source > open!.start && source < event.seq)
         }),
@@ -4075,13 +4258,14 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
     open = undefined
   }
 
-  const sourceTimes = block.l5Raw.filter((message) => message.role === 'user')
-    .map((message) => Date.parse(message.createdAt))
   const turnCount = block.endTurn - block.startTurn + 1
-  const selected = completed.slice(-turnCount)
-  if (selected.length !== turnCount || selected.at(-1)?.turn !== endTurn
-    || sourceTimes.length !== turnCount
-    || selected.some((turn, index) => turn.endTime !== sourceTimes[index])) return null
+  const selected = sourceTurnNumbers.length === turnCount
+    ? sourceTurnNumbers.flatMap((turn) => completed.find((candidate) => candidate.turn === turn) ?? [])
+    : completed.slice(-turnCount)
+  if (selected.length !== turnCount
+    || selected.at(-1)?.turn !== (sourceTurnNumbers.at(-1) ?? endTurn)
+    || (sourceTurnNumbers.length !== turnCount
+      && selected.some((turn, index) => turn.endTime !== Date.parse(block.l5Raw.filter((message) => message.role === 'user')[index]!.createdAt)))) return null
   const firstTurn = selected[0]!
   const lastTurn = selected.at(-1)!
   // A host checkpoint may consume only part of the block. Never turn a
@@ -4102,7 +4286,7 @@ function sealedSurfaceSeqs(session: Session, endTurn: number, block: MemoryBlock
   const range = currentSurface.slice(startIndex, endIndex + 1)
   // Excluding protected nodes from the candidate list is insufficient: a
   // native replacement shadows the WHOLE contiguous range between its ends.
-  return safeBlockSurfaceRange(session, block.id, range) ? range : null
+  return safeBlockSurfaceRange(session, block, range) ? range : null
 }
 
 function replaceableBlockEvent(event: SessionEvent | undefined, blockId: string): boolean {
@@ -4111,23 +4295,112 @@ function replaceableBlockEvent(event: SessionEvent | undefined, blockId: string)
     && (event.data.source.kind === 'user' || blockSurfaceMessage(event)?.id === blockId)
 }
 
-/** Shared write boundary for sealing, decay, user selection and capacity relief. */
-function safeBlockSurfaceRange(session: Session, blockId: string, seqs: readonly SessionSeq[]): boolean {
-  if (seqs.length === 0) return false
-  const start = session.surface.nodes.indexOf(seqs[0]!)
-  return start >= 0 && seqs.every((seq, index) => session.surface.nodes[start + index] === seq
-    && replaceableBlockEvent(session.eventAt(seq), blockId))
+function turnAtSurfaceSeq(session: Session, seq: SessionSeq): number | undefined {
+  let turn: number | undefined
+  for (const event of session.snapshotEvents()) {
+    if (event.seq >= seq) break
+    if (event.type === 'turn/start') turn = event.data.turn
+    else if (event.type === 'turn/end') turn = undefined
+  }
+  return turn
 }
 
-function appendBlockSurface(session: Session, blockId: string, text: string, seqs: SessionSeq[]): void {
-  if (!safeBlockSurfaceRange(session, blockId, seqs)) {
+function sourceTurnsForBlock(session: Session, block: MemoryBlock): Set<number> {
+  const stableTurns = sourceTurnNumbersForBlock(block)
+  if (stableTurns.length > 0) return new Set(stableTurns)
+  const sourceTimes = new Set(block.l5Raw.filter((message) => message.role === 'user')
+    .map((message) => Date.parse(message.createdAt)))
+  return new Set(session.snapshotEvents()
+    .filter((event): event is Extract<SessionEvent, { type: 'turn/end' }> => event.type === 'turn/end'
+      && sourceTimes.has(event.time))
+    .map((event) => event.data.turn))
+}
+
+function sourceTurnNumbersForBlock(block: MemoryBlock): number[] {
+  const turns: number[] = []
+  for (const message of block.l5Raw) {
+    if (message.role !== 'user') continue
+    const match = message.id.match(/:turn:(\d+):user$/u)
+    if (!match) continue
+    const turn = Number(match[1])
+    if (Number.isSafeInteger(turn) && !turns.includes(turn)) turns.push(turn)
+  }
+  return turns
+}
+
+function surfaceEventTurns(
+  session: Session,
+  event: Extract<SessionEvent, { type: 'assistant/message' | 'tool/result' }>,
+): Set<number> {
+  if (event.surfaceOp !== 'append' && event.sourceEventSeqs?.length) {
+    const sourceTurns = event.sourceEventSeqs.flatMap((source) => {
+      const original = session.eventAt(source)
+      return original?.type === 'assistant/message' || original?.type === 'tool/result'
+        ? [original.data.turn] : []
+    })
+    if (sourceTurns.length > 0) return new Set(sourceTurns)
+  }
+  return new Set([event.data.turn])
+}
+
+function surfaceEventBelongsToTurn(
+  session: Session,
+  event: Extract<SessionEvent, { type: 'assistant/message' | 'tool/result' }>,
+  turn: number,
+): boolean {
+  const turns = surfaceEventTurns(session, event)
+  return turns.size === 1 && turns.has(turn)
+}
+
+/** Shared write boundary for sealing, decay, user selection and capacity relief. */
+function safeBlockSurfaceRange(session: Session, block: MemoryBlock, seqs: readonly SessionSeq[]): boolean {
+  if (seqs.length === 0) return false
+  const start = session.surface.nodes.indexOf(seqs[0]!)
+  if (start < 0) return false
+  const sourceTurns = sourceTurnsForBlock(session, block)
+  return seqs.every((seq, index) => {
+    if (session.surface.nodes[start + index] !== seq) return false
+    const event = session.eventAt(seq)
+    if (!replaceableBlockEvent(event, block.id)) return false
+    const checkpoint = blockSurfaceMessage(event)
+    if (checkpoint) return checkpoint.id === block.id
+    if (event?.type === 'assistant/message' || event?.type === 'tool/result') {
+      const eventTurns = surfaceEventTurns(session, event)
+      return eventTurns.size > 0 && [...eventTurns].every(turn => sourceTurns.has(turn))
+    }
+    if (event?.type === 'user/message' && event.data.source.kind === 'user') {
+      return sourceTurns.has(turnAtSurfaceSeq(session, seq) ?? -1)
+    }
+    return false
+  })
+}
+
+function appendBlockSurface(session: Session, block: MemoryBlock, text: string, seqs: SessionSeq[]): void {
+  if (!safeBlockSurfaceRange(session, block, seqs)) {
     throw Object.assign(new Error('StrataGate surface replacement no longer owns its complete source range'), { retryable: false })
   }
   session.append('user/message', createUserMessage({
-    content: [{ type: 'text', text }], source: dshMessageSource(),
+    content: [{ type: 'text', text }, ...sourceAttachmentBlocks(session, seqs)], source: dshMessageSource(),
   }), {
     surfaceOp: dshReplaceSurfaceOp(seqs[0]!, seqs.at(-1)!), sourceEventSeqs: seqs,
   })
+}
+
+function sourceAttachmentBlocks(session: Session, seqs: readonly SessionSeq[]): ContentBlock[] {
+  const attachments: ContentBlock[] = []
+  const seen = new Set<string>()
+  for (const seq of seqs) {
+    const event = session.eventAt(seq)
+    if (event?.type !== 'user/message') continue
+    for (const block of event.data.content) {
+      if (block.type !== 'image' && block.type !== 'file') continue
+      const key = `${block.type}:${String(block.attachment.attachmentId)}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      attachments.push(structuredClone(block))
+    }
+  }
+  return attachments
 }
 
 function surfaceMaintenanceInput(state: SurfaceMaintenance): string {
@@ -4380,6 +4653,7 @@ function compactEvent(event: EventCard, score: number): Record<string, unknown> 
     temporal: compactTemporal(event),
     ...(event.sourceBlockId !== undefined ? { sourceBlockId: event.sourceBlockId } : {}),
     status: event.status,
+    ...(event.supersededBy ? { supersededBy: event.supersededBy } : {}),
     scope: event.scope,
     criticality: event.criticality,
     ...(agentRecorded ? { source: 'agent-recorded' } : {}),
@@ -4549,9 +4823,12 @@ function renderActivatedMemory(
       id: event.id,
       title: event.title,
       summary: event.summary,
+      status: event.status,
+      supersededBy: event.supersededBy,
+      scope: event.scope,
       happenedStart: event.temporal.happenedStart,
       happenedEnd: event.temporal.happenedEnd,
-      temporal: { status: event.temporal.status },
+      temporal: event.temporal,
     })
     const cost = estimateTokens(`\nEvents:\n- ${rendered}`)
     if (tokens + cost > AUTO_MEMORY_TOKEN_BUDGET) break

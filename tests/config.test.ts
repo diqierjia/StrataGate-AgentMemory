@@ -129,4 +129,20 @@ describe('DeepSeek Harness plugin config', () => {
     expect(resolveConfig({ database: 'memory.db', showSidebarEntry: choice }).showSidebarEntry).toBe(choice)
     expect(resolveConfig({ database: 'memory.db', showSidebarEntry: { get: () => choice } as unknown as boolean }).showSidebarEntry).toBe(choice)
   })
+
+  it('declares the daily-note controls volatile so the live settings form can write them', () => {
+    expect(Config.dict?.dailyNotesEnabled?.meta).toMatchObject({ default: true, volatile: true })
+    expect(Config.dict?.dailyNotesTimeZone?.meta).toMatchObject({ volatile: true })
+    expect(Config.dict?.dailyNotesInjectionDays?.meta).toMatchObject({ default: 3, min: 1, max: 30, volatile: true })
+    const choice = 9
+    expect(resolveConfig({
+      database: 'memory.db',
+      dailyNotesEnabled: { get: () => false } as unknown as boolean,
+      dailyNotesTimeZone: { get: () => 'Asia/Tokyo' } as unknown as string,
+      dailyNotesInjectionDays: { get: () => choice } as unknown as number,
+    })).toMatchObject({ dailyNotesEnabled: false, dailyNotesTimeZone: 'Asia/Tokyo', dailyNotesInjectionDays: choice })
+    // Rejected values still come from the live snapshot, not the wrapper object.
+    expect(() => resolveConfig({ database: 'memory.db', dailyNotesInjectionDays: { get: () => 31 } as unknown as number }))
+      .toThrow('dailyNotesInjectionDays')
+  })
 })

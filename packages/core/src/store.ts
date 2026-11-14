@@ -8,6 +8,7 @@ import {
   formatRawTranscript,
   getBlockDecayView,
   normalizeBlockLevel,
+  preserveAttachmentReferences,
 } from './blocks.js';
 import { applyElementChanges, elementViewAt } from './elements.js';
 import { EVENT_DUPLICATE_AUTO_CONFIDENCE, eventDuplicateCompatible, eventDuplicateMergeCompatible, eventDuplicateStructuralCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, eventDuplicateSimilarity, isExactEventDuplicate, validEventMergeDraft, type EventMergeDraft, type EventDuplicatePair, type EventDuplicateDecider } from './event-duplicates.js';
@@ -138,6 +139,8 @@ export interface TurnInput {
   assistant: string;
   createdAt?: string;
   threadId?: string;
+  /** Stable id reserved for the current user message before the turn ends. */
+  userMessageId?: string;
   userToolCalls?: ToolTrace[];
   assistantToolCalls?: ToolTrace[];
   receiptId?: string;
@@ -210,17 +213,31 @@ export function renderBlock(block: MemoryBlock, level: BlockLevel): string {
   if (block.processingStatus !== 'ready' || !block.l0Title || !block.l0Tags || !block.l1Summary || !block.l2Keypoints) {
     throw new Error(`Block ${block.id} is not ready for rendering`);
   }
-  if (level === 0) return `${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}`;
-  if (level === 1) return block.l1Summary;
-  if (level === 2) return block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary;
-  const deterministic = deterministicBlockLayers(block.l5Raw);
-  if (level === 3) return deterministic.l3Condensed;
-  if (level === 4) return deterministic.l4Readable;
-  return formatRawTranscript(block.l5Raw);
+  let body: string;
+  if (level === 0) body = `${block.l0Title}\nTags: ${block.l0Tags.join(', ') || 'none'}`;
+  else if (level === 1) body = block.l1Summary;
+  else if (level === 2) body = block.l2Keypoints.map((point) => `- ${point}`).join('\n') || block.l1Summary;
+  else {
+    const deterministic = deterministicBlockLayers(block.l5Raw);
+    body = level === 3 ? deterministic.l3Condensed
+      : level === 4 ? deterministic.l4Readable
+        : formatRawTranscript(block.l5Raw);
+  }
+  return preserveAttachmentReferences(body, block.l5Raw);
 }
 
 function sameIds(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
+/** A reserved user message is not a turn until its assistant reply is stored. */
+function userTurnHasAssistant(messages: readonly RawMessage[], userIndex: number): boolean {
+  for (let index = userIndex + 1; index < messages.length; index += 1) {
+    const role = messages[index]!.role;
+    if (role === 'user') return false;
+    if (role === 'assistant') return true;
+  }
+  return false;
 }
 
 function errorMessage(error: unknown): string {
@@ -1092,8 +1109,18 @@ export class StrataGate {
       throw new TypeError('Turn threadId must not be empty');
     }
     const createdAt = toUtc8Iso(input.createdAt ?? this.now());
-    const userMessage: RawMessage = {
-      id: this.idFactory('msg'),
+    const requestedUserMessageId = input.userMessageId?.trim();
+    if (input.userMessageId !== undefined && !requestedUserMessageId) {
+      throw new TypeError('Turn userMessageId must not be empty');
+    }
+    const existingUserMessage = requestedUserMessageId
+      ? this.openTail.find((message) => message.id === requestedUserMessageId && message.role === 'user')
+      : undefined;
+    if (existingUserMessage && existingUserMessage.threadId !== threadId) {
+      throw new Error(`Reserved user message ${requestedUserMessageId} does not match the appended turn`);
+    }
+    const userMessage: RawMessage = existingUserMessage ?? {
+      id: requestedUserMessageId ?? this.idFactory('msg'),
       role: 'user',
       content: input.user,
       createdAt,
@@ -1108,27 +1135,49 @@ export class StrataGate {
       ...(threadId ? { threadId } : {}),
       ...(input.assistantToolCalls ? { toolCalls: structuredClone(input.assistantToolCalls) } : {}),
     };
+    const messagesToAppend = existingUserMessage ? [assistantMessage] : [userMessage, assistantMessage];
+    const placeTurnMessages = (tail: RawMessage[], capture: boolean): void => {
+      const assistant = capture ? captureRawMessage(assistantMessage) : assistantMessage;
+      if (!existingUserMessage) {
+        tail.push(capture ? captureRawMessage(userMessage) : userMessage, assistant);
+        return;
+      }
+      // A later reservation may already sit behind this user message. The
+      // assistant belongs to this turn, immediately after its user message.
+      const index = tail.findIndex((message) => message.id === existingUserMessage.id);
+      if (index < 0) tail.push(assistant);
+      else tail.splice(index + 1, 0, assistant);
+    };
+    const reservedContentChanged = existingUserMessage !== undefined && existingUserMessage.content !== input.user;
     const appendInMemory = (): boolean => {
       if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
+      if (existingUserMessage) {
+        // The host can append more user content after a memory tool has run.
+        // Keep the reserved identity, but publish the complete turn text when
+        // its assistant reply arrives.
+        existingUserMessage.content = input.user;
+        if (input.userToolCalls !== undefined) existingUserMessage.toolCalls = structuredClone(input.userToolCalls);
+      }
       this.currentTurn += 1;
-      this.openTail.push(userMessage, assistantMessage);
+      placeTurnMessages(this.openTail, false);
       if (receiptId) this.ingestionReceipts.set(receiptId, { id: receiptId, createdAt });
       return true;
     };
     const appended = this.storage?.commitRecords ? await this.withMutationQueue(async () => {
-      if (this.hasPendingRecordChanges()) return this.applyMutation(appendInMemory);
+      const reservedIsLast = !existingUserMessage || this.openTail.at(-1)?.id === existingUserMessage.id;
+      if (this.hasPendingRecordChanges() || !reservedIsLast || reservedContentChanged) return this.applyMutation(appendInMemory);
       if (receiptId && this.ingestionReceipts.has(receiptId)) return false;
       const receipt = receiptId ? { id: receiptId, createdAt } : undefined;
       const committed = await this.storage!.commitRecords!(this.namespace!, this.revision, {
-        kind: 'append', messages: [userMessage, assistantMessage], updatedAt: createdAt, ...(receipt ? { receipt } : {}),
+        kind: 'append', messages: messagesToAppend, updatedAt: createdAt, ...(receipt ? { receipt } : {}),
       });
       if (committed.changed) {
         this.currentTurn += 1;
-        this.openTail.push(userMessage, assistantMessage);
+        placeTurnMessages(this.openTail, false);
         if (receipt) this.ingestionReceipts.set(receipt.id, receipt);
         const baseline = this.committedMetadata!;
         baseline.currentTurn = this.currentTurn;
-        baseline.openTail.push(captureRawMessage(userMessage), captureRawMessage(assistantMessage));
+        placeTurnMessages(baseline.openTail, true);
         if (receipt) baseline.ingestionReceipts.push(structuredClone(receipt));
       }
       this.revision = committed.revision;
@@ -1139,7 +1188,7 @@ export class StrataGate {
       return { sealedBlock: null, readyBlocks: [], extractedEvents: [], projectedElements: [] };
     }
 
-    if (this.threadOpenTail(threadId).filter((message) => message.role === 'user').length < this.blockTurnSize) {
+    if (this.completeOpenUserCount(threadId) < this.blockTurnSize) {
       const projectedElements = await this.projectEligibleElements() ?? [];
       await this.projectEligibleGraph();
       return { sealedBlock: null, readyBlocks: [], extractedEvents: [], projectedElements };
@@ -1155,6 +1204,39 @@ export class StrataGate {
     const projectedElements = await this.projectEligibleElements() ?? [];
     await this.projectEligibleGraph();
     return { sealedBlock, readyBlocks, extractedEvents, projectedElements };
+  }
+
+  /**
+   * Persist the current user message before a tool call needs to cite it.
+   * The message stays in the open tail but does not count as a sealable turn
+   * until appendTurn stores its assistant reply immediately after it.
+   * That call reuses this message by userMessageId and counts the turn once.
+   */
+  async reserveUserMessage(input: {
+    id: string;
+    content: string;
+    threadId?: string;
+    createdAt?: string;
+  }): Promise<RawMessage> {
+    const id = input.id.trim();
+    if (!id) throw new TypeError('Reserved user message id must not be empty');
+    const content = input.content;
+    if (!content.trim()) throw new TypeError('Reserved user message content must not be empty');
+    const threadId = input.threadId?.trim();
+    if (input.threadId !== undefined && !threadId) throw new TypeError('Reserved user message threadId must not be empty');
+    const createdAt = toUtc8Iso(input.createdAt ?? this.now());
+    return this.commitMutation(() => {
+      const existing = this.openTail.find((message) => message.id === id);
+      if (existing) {
+        if (existing.role !== 'user' || existing.content !== content || existing.threadId !== threadId) {
+          throw new Error(`Reserved user message ${id} already exists with different content`);
+        }
+        return existing;
+      }
+      const message: RawMessage = { id, role: 'user', content, createdAt, ...(threadId ? { threadId } : {}) };
+      this.openTail.push(message);
+      return message;
+    });
   }
 
   async resumePendingWork(options: ResumePendingOptions = {}): Promise<ResumePendingResult> {
@@ -2891,7 +2973,18 @@ export class StrataGate {
       ? this.listOpenTail(threadId).filter((message) => message.role === 'user' || message.role === 'assistant')
       : [];
     if (real.length > 0) {
-      return { messageIds: real.slice(-AGENT_EVENT_PROVENANCE_LIMIT).map(({ id }) => id), synthetic: false };
+      // A recording happens inside one turn. Cite that turn's user message
+      // and any assistant/tool evidence that follows it, rather than letting
+      // an older open-tail turn leak into the provenance window.
+      let latestUser = -1;
+      for (let index = real.length - 1; index >= 0; index -= 1) {
+        if (real[index]!.role === 'user') {
+          latestUser = index;
+          break;
+        }
+      }
+      const currentTurn = latestUser >= 0 ? real.slice(latestUser) : real;
+      return { messageIds: currentTurn.slice(-AGENT_EVENT_PROVENANCE_LIMIT).map(({ id }) => id), synthetic: false };
     }
     const sealed = threadId
       ? this.blocks.filter((block) => block.threadId === threadId && block.l5Raw.length > 0)
@@ -3431,6 +3524,16 @@ export class StrataGate {
     return this.openTail.filter((message) => message.threadId === threadId);
   }
 
+  /** User messages that already have their assistant reply in this thread. */
+  private completeOpenUserCount(threadId: string | undefined): number {
+    const messages = this.threadOpenTail(threadId);
+    let count = 0;
+    for (let index = 0; index < messages.length; index += 1) {
+      if (messages[index]!.role === 'user' && userTurnHasAssistant(messages, index)) count += 1;
+    }
+    return count;
+  }
+
   private threadBlocks(threadId: string | undefined): MemoryBlock[] {
     return this.blocks.filter((block) => block.threadId === threadId);
   }
@@ -3447,16 +3550,11 @@ export class StrataGate {
   }
 
   private nextSealableThread(): { threadId: string | undefined } | null {
-    const counts: Array<{ threadId: string | undefined; users: number }> = [];
+    const seen = new Set<string | undefined>();
     for (const message of this.openTail) {
-      if (message.role !== 'user') continue;
-      let entry = counts.find((candidate) => candidate.threadId === message.threadId);
-      if (!entry) {
-        entry = { threadId: message.threadId, users: 0 };
-        counts.push(entry);
-      }
-      entry.users += 1;
-      if (entry.users >= this.blockTurnSize) return { threadId: entry.threadId };
+      if (seen.has(message.threadId)) continue;
+      seen.add(message.threadId);
+      if (this.completeOpenUserCount(message.threadId) >= this.blockTurnSize) return { threadId: message.threadId };
     }
     return null;
   }
@@ -3469,16 +3567,21 @@ export class StrataGate {
   private pendingBlockMessages(threadId: string | undefined): RawMessage[] {
     const messages = this.threadOpenTail(threadId);
     let users = 0;
-    let end = messages.length;
+    const selected: RawMessage[] = [];
     for (const [index, message] of messages.entries()) {
       if (message.role !== 'user') continue;
+      // A reserved message may remain incomplete at the front of the tail
+      // after a restart. Leave that turn in place and collect later complete
+      // turns so it cannot block an otherwise sealable block.
+      if (!userTurnHasAssistant(messages, index)) continue;
       users += 1;
-      if (users !== this.blockTurnSize) continue;
       const nextUserOffset = messages.slice(index + 1).findIndex((candidate) => candidate.role === 'user');
-      end = nextUserOffset === -1 ? messages.length : index + 1 + nextUserOffset;
+      const end = nextUserOffset === -1 ? messages.length : index + 1 + nextUserOffset;
+      selected.push(...messages.slice(index, end));
+      if (users !== this.blockTurnSize) continue;
       break;
     }
-    return messages.slice(0, end);
+    return selected;
   }
 
   private async sealOpenTail(threadId: string | undefined): Promise<MemoryBlock> {

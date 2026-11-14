@@ -30,7 +30,6 @@ const runtime = new StrataGateRuntime({ database, namespaceMode: 'project', name
 runtime.updatePersistentProfile('preferredLanguage', '中文', 'settings')
 const source = readFileSync(join(root, 'src/client.js'), 'utf8')
   .replace("exports.name = 'stratagate-dsh'", "exports.__browserTest = { MemoryPage }; exports.name = 'stratagate-dsh'")
-  .replace('__STRATAGATE_MASCOT_DATA_URL__', 'data:image/png;base64,' + readFileSync(join(root, 'docs/assets/stratagate-avatar.png')).toString('base64'))
 const app = await build({ stdin: { resolveDir: root, contents: `
 import React from ${JSON.stringify(join(dependencies, 'react/index.js'))};
 import { createRoot } from ${JSON.stringify(join(dependencies, 'react-dom/client.js'))};
@@ -83,8 +82,8 @@ try {
   const tab = name => page.locator('.sg-tabs').getByRole('button', { name, exact: true }).click()
   const cycle = async () => { await tab('会话记忆'); await tab('常驻画像') }
   const workspace = namespace => page.getByRole('combobox', { name: '当前工作区' }).selectOption(namespace)
-  const language = page.locator('.sg-profile-row').filter({ hasText: '默认回答语言' })
-  const reasoning = page.locator('.sg-profile-row').filter({ hasText: '思考过程语言' })
+  const language = page.locator('.sg-profile-row').filter({ hasText: '回答用什么语言' })
+  const reasoning = page.locator('.sg-profile-row').filter({ hasText: '思考过程用什么语言' })
   const editor = row => row.getByRole('textbox')
   const cancel = row => row.getByRole('button', { name: '取消编辑', exact: true }).click()
   const edit = async value => { await language.locator('.sg-profile-value').click(); await editor(language).fill(value) }

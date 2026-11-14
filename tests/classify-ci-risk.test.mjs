@@ -40,6 +40,7 @@ test('paths the compatibility suite actually runs require Windows', () => {
     'tests/dsh-install-script.test.ts',
     'tests/fixtures/clean-session-v0/session.jsonl',
     'scripts/run-dsh-compatibility.mjs',
+    'scripts/dsh-cli-isolate.mjs',
     'scripts/build-client.mjs',
     'scripts/check-feedback-policy.mjs',
     'scripts/verify-package.mjs',

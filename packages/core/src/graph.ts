@@ -118,8 +118,12 @@ export function effectiveGraphNodeView(
     if ((record.status === 'active' || record.status === 'disputed') && activeSources.length > 0) {
       return { current: { ...record, sourceEventIds: activeSources } };
     }
-    if (visibleSources.length > 0 && record.status === 'superseded') {
-      return { historical: { ...record, sourceEventIds: visibleSources } };
+    if (visibleSources.length > 0 && (record.status === 'superseded' || activeSources.length === 0)) {
+      // A graph record can still be marked active while its only evidence
+      // Event has just been superseded. Keep that edge/fact in the historical
+      // view so the next projection can see its stable id and explicitly
+      // supersede it instead of making it disappear.
+      return { historical: { ...record, status: 'superseded', sourceEventIds: visibleSources } };
     }
     return {};
   };
@@ -435,8 +439,9 @@ export function applyGraphProjection(options: ApplyGraphProjectionOptions): { no
       warnings.push(`Dropped current edge "${relation}" because it has no active Event provenance.`);
       continue;
     }
-    for (const old of options.edges.filter((edge) => edge.status === 'active'
-      && edge.fromNodeId === from.id && edge.relation === relation && edge.toNodeId !== to.id)) {
+    const supersededIds = new Set(strings(proposal.supersedesEdgeIds, 64));
+    for (const old of options.edges.filter((edge) => supersededIds.has(edge.id)
+      && edge.status === 'active' && edge.fromNodeId === from.id && edge.relation === relation && edge.toNodeId !== to.id)) {
       old.status = 'superseded';
       if (!old.validTo) old.validTo = validFrom;
       old.updatedAt = options.now;
