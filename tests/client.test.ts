@@ -11,7 +11,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderStarLink, loadStarCount, formatStarCount, GitHubMarkIcon, StrataGateMark, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, OverviewPage, ProfilePage, ProfileLimitSettings, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
+  ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -63,6 +63,18 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
+  it.each(['embedding', 'rerank'])('shows confirmed saved state only after %s settings are available', (kind) => {
+    const { RetrievalModelSettings } = loadSupportHelpers()
+    const missing = RetrievalModelSettings({ kind, settings: null, writable: true })
+    expect(deepElementProps(missing).some(props => props['aria-label'] === '已保存')).toBe(false)
+    expect(JSON.stringify(missing)).toContain('检索配置尚未读取')
+    const loaded = RetrievalModelSettings({ kind, settings: { [kind + 'Ready']: false }, writable: true })
+    expect(deepElementProps(loaded).some(props => props['aria-label'] === '已保存')).toBe(true)
+    expect(JSON.stringify(loaded)).not.toContain('检索配置尚未读取')
+    expect(JSON.stringify(loaded)).toContain(kind === 'embedding'
+      ? '事件标题和摘要会发送给向量服务商' : '检索问题和候选事件内容会发送给精排服务商')
+  })
+
   it('renders the six More groups on one page with immediate switches and an engine dirty bar', async () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain("group('运行状态'")
@@ -1544,15 +1556,18 @@ describe('StrataGate Web client contract', () => {
     expect(settingsSource).toContain("['system', '✓', '系统状态'")
     expect(settingsSource).toContain("['audit', '↗', '使用记录'")
     expect(settingsSource).toContain("['raw', '{}', '查看原始数据'")
-    expect(settingsSource).toContain("'StrataGate 安装级设置'")
+    expect(settingsSource).toContain("'安装级设置'")
     expect(settingsSource).toContain("'数据与存储'")
-    expect(settingsSource).toContain("'当前工作区运行与诊断'")
-    expect(settingsSource).toContain('适用于当前 StrataGate 安装中的所有工作区，也作为新工作区的默认设置。')
+    expect(settingsSource).toContain("'运行与诊断'")
+    expect(settingsSource).toContain("className: 'sg-settings-columns'")
+    expect(settingsSource).not.toContain("className: 'sg-pg-tag'")
     expect(settingsSource).toContain("'宿主配置'")
-    expect(settingsSource).toContain("'当前工作区信息'")
-    expect(settingsSource).toContain("'保存全局设置'")
-    expect(settingsSource).toContain('数据目录属于当前安装；原始数据查看当前选中的工作区。')
-    expect(settingsSource).toContain('当前选中工作区的系统状态、使用记录与后台任务')
+    expect(settingsSource).toContain("'工作区信息'")
+    expect(settingsSource).toContain("savingSettings ? '保存中…' : '保存'")
+    expect(settingsSource).not.toContain("'已保存配置'")
+    expect(settingsSource).not.toContain("'有未保存修改'")
+    expect(source).toContain('.sg-save-state:after{content:"✓"')
+    expect(source).toContain("title: '已保存', 'aria-label': '已保存'")
     expect(settingsSource).toContain("['status', '↻', '后台任务'")
     expect(settingsSource).toContain("api('storage/open-directory', {}, { method: 'POST' })")
     expect(settingsSource).toContain('navigator.clipboard.writeText(dataDirectory)')
@@ -2386,10 +2401,10 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("step: 1, label: '每个 Block 的对话轮数'")
     expect(source).toContain("step: 0.05, label: 'Block 衰减系数 λ'")
     expect(source).toContain('每个 Block 的对话轮数')
-    expect(source).toContain('尚未封存的内容按新阈值继续处理。')
-    expect(source).toContain('为保持按对话轮数计算的遗忘速度，建议 λ 调整为')
+    expect(source).toContain('只影响后续未封存内容。')
+    expect(source).toContain('建议 λ 调整为')
     expect(source).toContain('采用建议值')
-    expect(source).toContain('默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。')
+    expect(source).toContain('越小遗忘越慢，token 消耗越多。')
     expect(source).toContain("method: 'PATCH'")
     expect(source).toContain('当前工作区')
     expect(source).toContain("goRow('support', '生成反馈报告'")
