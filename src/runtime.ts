@@ -1626,6 +1626,10 @@ export class StrataGateRuntime {
   }
 
   private async assembleAutoContext(session: Session): Promise<string> {
+    // Consume this claimed batch before any fallible setup. If setup fails,
+    // the next turn must not inherit the failed request's input.
+    const pendingUserInputs = this.pendingUserInputs.get(session)
+    this.pendingUserInputs.delete(session)
     await this.flush()
     const memory = await this.space(session)
     await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
@@ -1633,8 +1637,6 @@ export class StrataGateRuntime {
     // Only explicit lifts and hard capacity repairs belong on the request path.
     await this.syncRequestSurface(session, memory)
     const openTail = memory.listOpenTail(threadId)
-    const pendingUserInputs = this.pendingUserInputs.get(session)
-    this.pendingUserInputs.delete(session)
     const activationQuery = [pendingUserInputs?.join('\n\n') ?? currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
       .join('\n\n')
