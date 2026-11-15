@@ -2890,7 +2890,21 @@ export class StrataGate {
     const mergedCandidate = decision.mergedCandidate
       && typeof decision.mergedCandidate.title === 'string' && decision.mergedCandidate.title.trim()
       && typeof decision.mergedCandidate.summary === 'string' && decision.mergedCandidate.summary.trim()
-      ? decision.mergedCandidate
+      ? {
+          // The model returns the merged body, but it is not the authority for
+          // the recording session or its source relation. Keep the original
+          // candidate metadata so a legal title/summary-only response still
+          // cites the real conversation instead of creating synthetic source.
+          ...gate.candidate,
+          ...decision.mergedCandidate,
+          temporal: {
+            ...(gate.candidate.temporal ?? {}),
+            ...(decision.mergedCandidate.temporal ?? {}),
+            ...(gate.candidate.temporal?.threadId
+              ? { threadId: gate.candidate.temporal.threadId }
+              : {}),
+          },
+        }
       : undefined;
 
     if (requestedAction === 'IGNORE') {
