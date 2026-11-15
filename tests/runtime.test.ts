@@ -1184,6 +1184,55 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
+  it('uses an Inbox-claimed user question before the host appends it to the session', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-auto-context-claimed-'))
+    const database = join(directory, 'memory.db')
+    const activeSession = {
+      ...session,
+      id: 'claimed-input-session',
+      header: { ...session.header, id: 'claimed-input-session' },
+      deriveMessages: () => [],
+    } as unknown as Session
+    const runtime = new StrataGateRuntime({
+      database,
+      namespaceMode: 'project',
+      namespacePrefix: 'dsh',
+      globalNamespace: 'global',
+      blockTurnSize: 2,
+      blockDecayLambda: 0.3,
+      ingestSubagents: false,
+      maxOutputTokens: 2048,
+    }, fakeModels)
+    try {
+      const memory = await (runtime as unknown as { space: (value: Session) => Promise<StrataGate> }).space(activeSession)
+      await memory.appendTurn({ user: 'Historical setup.', assistant: 'Ready.', threadId: 'historical-claimed' })
+      await memory.appendTurn({ user: 'Historical close.', assistant: 'Saved.', threadId: 'historical-claimed' })
+      const block = memory.listBlocks()[0]!
+      const compiler = await memory.addEvent({
+        title: 'TypeScript compiler target',
+        summary: 'The TypeScript compiler target is ES2022.',
+        sourceMessageIds: [block.l5Raw[0]!.id],
+        sourceBlockId: block.id,
+      })
+      const hotel = await memory.addEvent({
+        title: 'Kyoto hotel booking',
+        summary: 'The Kyoto hotel booking is at Hotel Granvia.',
+        sourceMessageIds: [block.l5Raw[0]!.id],
+        sourceBlockId: block.id,
+      })
+
+      // At this point the live session has no user/message event, matching the
+      // agent-loop ordering during the first system-prompt assembly.
+      runtime.noteClaimedUserMessage(activeSession, [{ type: 'text', text: 'Which TypeScript compiler target did we choose?' }])
+      const compilerContext = await runtime.buildAutoContext(activeSession)
+      expect(compilerContext).toContain(compiler.id)
+      expect(compilerContext).not.toContain(hotel.id)
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('keeps short-term blocks session-local while activating project long-term memory', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-dsh-session-scope-'))
     const database = join(directory, 'memory.db')

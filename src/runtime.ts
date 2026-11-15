@@ -437,6 +437,10 @@ export class StrataGateRuntime {
   private readonly derivationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly derivationRuns = new Map<string, Promise<void>>()
   private readonly knownSessions = new Map<string, WeakRef<Session>>()
+  // The agent loop claims a turn's Inbox message before assembling the system
+  // prompt, and only appends that message to the session after assembly. Keep
+  // the claimed user text available for this request-path retrieval window.
+  private readonly pendingUserInputs = new WeakMap<Session, string>()
   private readonly pendingSurfaceSync = new Map<string, SurfaceSyncRequest>()
   private readonly surfaceMaintenance = new Map<string, SurfaceMaintenance>()
   private readonly surfaceMaintenanceRuns = new Set<Promise<void>>()
@@ -1606,6 +1610,19 @@ export class StrataGateRuntime {
     }
   }
 
+  /**
+   * Capture a user message at the Inbox-claimed boundary. The host appends the
+   * same message to the session immediately after system-prompt assembly, so
+   * this bridge makes first-request automatic recall see the input without
+   * changing the durable session ordering.
+   */
+  noteClaimedUserMessage(session: Session, content: readonly ContentBlock[]): void {
+    const text = renderBlocks(content).trim()
+    // Store an empty value too: an attachment-only/empty user message must not
+    // accidentally reuse the previous turn's pending query.
+    this.pendingUserInputs.set(session, text)
+  }
+
   private async assembleAutoContext(session: Session): Promise<string> {
     await this.flush()
     const memory = await this.space(session)
@@ -1614,7 +1631,7 @@ export class StrataGateRuntime {
     // Only explicit lifts and hard capacity repairs belong on the request path.
     await this.syncRequestSurface(session, memory)
     const openTail = memory.listOpenTail(threadId)
-    const activationQuery = [currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
+    const activationQuery = [this.pendingUserInputs.get(session) ?? currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
       .join('\n\n')
     // Semantic lane: when embedding is unconfigured this is undefined and the
