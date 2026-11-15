@@ -126,8 +126,29 @@ describe('DSH plugin composition', () => {
           sections: [{ title: '部署与安装', sourceEventIds: ['external-event'] }],
         }] })
       } finally { await writer.close() }
+      // Start the external-refresh assertion window after the initial cold
+      // prompt loads have been observed.
+      load.mockClear()
+      // The agent loop emits this claim before it appends the user message to
+      // the session. Automatic recall must still use the claimed question.
+      ctx.emit('agent/inbox/claimed', {
+        agent: { session } as Agent,
+        message: {
+          id: 'claimed-user', role: 'user',
+          content: [{ type: 'text', text: '星桥部署' }],
+          source: { kind: 'user' },
+        },
+        turn: 1,
+      } as never)
+      query = ''
+      const claimedPrompt = await ctx.systemPrompt.assemble({ agent: { session } as Agent })
+      expect(claimedPrompt.contexts.find(({ name }) => name === 'stratagate:auto-memory')?.text)
+        .toContain('external-event')
+
       query = '星桥部署'
-      load.mockClear(); open.mockClear()
+      // The claimed prompt above performed the one necessary external refresh;
+      // keep that load count for the existing cache assertions.
+      open.mockClear()
       for (let round = 0; round < 2; round++) {
         const prompt = await ctx.systemPrompt.assemble({ agent: { session } as Agent })
         const directoryText = prompt.contexts.find(({ name }) => name === 'stratagate:memory-directory')?.text
