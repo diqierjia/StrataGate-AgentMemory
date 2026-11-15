@@ -421,6 +421,36 @@ describe('StrataGate.recordAgentEvent', () => {
     expect(result.sourceMessageIds).toEqual(event.sourceMessageIds)
   })
 
+  it('keeps real provenance when a decider returns a title/summary-only merge', async () => {
+    const memory = openMemory()
+    await seedPassiveEvent(memory)
+    await memory.setBlockTurnSize(6)
+    await memory.appendTurn(
+      { user: 'The deployment pipeline uses GitHub Actions and switched to GitLab.', assistant: 'Recorded.', threadId: 'session-thread' },
+      { deferDerivation: true },
+    )
+    const realMessages = memory.listOpenTail('session-thread')
+
+    const result = await memory.recordAgentEvent({
+      content: 'The deployment pipeline uses GitHub Actions and switched to GitLab.',
+      threadId: 'session-thread',
+      decider: async ({ matches }) => ({
+        action: 'MERGE' as const,
+        existingEventIds: [matches[0]!.event.id],
+        confidence: 1,
+        // This is a valid model response: the model supplies only the merged body.
+        mergedCandidate: { title: 'Deployment pipeline', summary: 'The deployment pipeline switched to GitLab.' },
+      }),
+    })
+
+    expect(result).toMatchObject({ action: 'MERGED', recorded: true })
+    const event = memory.listAgentEvents()[0]!
+    expect(event.temporal.threadId).toBe('session-thread')
+    expect(event.sourceBlockId).toBeUndefined()
+    expect(event.sourceMessageIds).toEqual(realMessages.map(({ id }) => id))
+    expect(memory.listBlocks().some(({ threadId }) => threadId?.startsWith('agent-memory:'))).toBe(false)
+  })
+
   it('falls back to the latest sealed block messages when the open tail is empty', async () => {
     // blockTurnSize 1 seals the turn immediately, so the open tail is empty.
     const memory = openMemory()
