@@ -1224,9 +1224,10 @@ describe('DSH runtime ingestion', () => {
       // At this point the live session has no user/message event, matching the
       // agent-loop ordering during the first system-prompt assembly.
       runtime.noteClaimedUserMessage(activeSession, [{ type: 'text', text: 'Which TypeScript compiler target did we choose?' }])
+      runtime.noteClaimedUserMessage(activeSession, [{ type: 'text', text: 'Where did we book the Kyoto hotel?' }])
       const compilerContext = await runtime.buildAutoContext(activeSession)
       expect(compilerContext).toContain(compiler.id)
-      expect(compilerContext).not.toContain(hotel.id)
+      expect(compilerContext).toContain(hotel.id)
     } finally {
       await runtime.close()
       await rm(directory, { recursive: true, force: true })

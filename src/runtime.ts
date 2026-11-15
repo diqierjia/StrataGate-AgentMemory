@@ -440,7 +440,7 @@ export class StrataGateRuntime {
   // The agent loop claims a turn's Inbox message before assembling the system
   // prompt, and only appends that message to the session after assembly. Keep
   // the claimed user text available for this request-path retrieval window.
-  private readonly pendingUserInputs = new WeakMap<Session, string>()
+  private readonly pendingUserInputs = new WeakMap<Session, string[]>()
   private readonly pendingSurfaceSync = new Map<string, SurfaceSyncRequest>()
   private readonly surfaceMaintenance = new Map<string, SurfaceMaintenance>()
   private readonly surfaceMaintenanceRuns = new Set<Promise<void>>()
@@ -1620,7 +1620,9 @@ export class StrataGateRuntime {
     const text = renderBlocks(content).trim()
     // Store an empty value too: an attachment-only/empty user message must not
     // accidentally reuse the previous turn's pending query.
-    this.pendingUserInputs.set(session, text)
+    const pending = this.pendingUserInputs.get(session)
+    if (pending) pending.push(text)
+    else this.pendingUserInputs.set(session, [text])
   }
 
   private async assembleAutoContext(session: Session): Promise<string> {
@@ -1631,7 +1633,9 @@ export class StrataGateRuntime {
     // Only explicit lifts and hard capacity repairs belong on the request path.
     await this.syncRequestSurface(session, memory)
     const openTail = memory.listOpenTail(threadId)
-    const activationQuery = [this.pendingUserInputs.get(session) ?? currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
+    const pendingUserInputs = this.pendingUserInputs.get(session)
+    this.pendingUserInputs.delete(session)
+    const activationQuery = [pendingUserInputs?.join('\n\n') ?? currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
       .join('\n\n')
     // Semantic lane: when embedding is unconfigured this is undefined and the
