@@ -1296,17 +1296,20 @@ export class StrataGate {
   async backfillMissingEventQuotes(): Promise<{ updated: number; inspected: number }> {
     const candidates = this.listAllEvents().filter((event) => event.quotes.length === 0 && event.sourceMessageIds.length > 0);
     if (candidates.length === 0) return { updated: 0, inspected: 0 };
+    const prepared = candidates.flatMap((event) => {
+      const messages = event.sourceMessageIds.flatMap((id) => {
+        const found = this.rawMessageLookup.get(id)?.message ?? this.openTail.find((message) => message.id === id);
+        return found ? [found] : [];
+      });
+      const quote = findBestVerbatimQuote(`${event.title} ${event.summary}`, messages);
+      return quote ? [{ event, quote }] : [];
+    });
+    if (prepared.length === 0) return { updated: 0, inspected: candidates.length };
     return this.commitMutation(() => {
       let updated = 0;
       const now = toUtc8Iso(this.now());
-      for (const event of candidates) {
+      for (const { event, quote } of prepared) {
         if (event.quotes.length > 0) continue;
-        const messages = event.sourceMessageIds.flatMap((id) => {
-          const found = this.rawMessageLookup.get(id)?.message ?? this.openTail.find((message) => message.id === id);
-          return found ? [found] : [];
-        });
-        const quote = findBestVerbatimQuote(`${event.title} ${event.summary}`, messages);
-        if (!quote) continue;
         event.quotes = [quote];
         event.quotesOrigin = 'auto_extracted';
         event.updatedAt = now;

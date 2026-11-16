@@ -51,6 +51,7 @@ import type {
 } from './types.js';
 import { nowUtc8 } from './time.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
+import { findBestVerbatimQuote } from './event-quotes.js';
 import { emptyProfile, isProfileField, PROFILE_FIELDS, PROFILE_MAINTAINABLE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, PROFILE_TOTAL_MAX_LENGTH, profileMaintenanceDue, validateProfile,
   type PersistentProfile, type ProfileChange, type ProfileChangeSource, type ProfileField } from './profile.js';
 import { searchTokens } from './search.js';
@@ -1041,8 +1042,8 @@ export class SqliteStorage implements StorageAdapter {
     this.loadMergedSources(key, [...events, ...agentEvents]);
     // Read-only schema-12 databases may predate this additive optional table.
     const hasEventMetadata = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_metadata'").get();
+    const metadataHasQuotesOrigin = hasEventMetadata && this.hasColumn('event_metadata', 'quotes_origin');
     if (hasEventMetadata) {
-      const metadataHasQuotesOrigin = this.hasColumn('event_metadata', 'quotes_origin');
       const metadataRows = this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version${metadataHasQuotesOrigin ? ', quotes_origin' : ''} FROM event_metadata WHERE namespace = ?`)
         .all(key) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null; quotes_origin?: string | null }>;
       const byId = new Map([...events, ...agentEvents].map((event) => [event.id, event]));
@@ -1053,6 +1054,21 @@ export class SqliteStorage implements StorageAdapter {
           extractorVersion: row.extractor_version,
           ...(row.quotes_origin === null || row.quotes_origin === undefined ? {} : { quotesOrigin: row.quotes_origin }),
         }));
+      }
+    }
+    // A read-only legacy database may have no auxiliary metadata table (or
+    // predate its quotes_origin column). Recover the marker from the exact
+    // quote/source relationship so an old card remains lossless after upgrade.
+    if (!metadataHasQuotesOrigin) {
+      const messages = new Map<string, RawMessage>([
+        ...openTail.map((message) => [message.id, message] as const),
+        ...blocks.flatMap((block) => block.l5Raw.map((message) => [message.id, message] as const)),
+      ]);
+      for (const event of [...events, ...agentEvents]) {
+        if (event.quotesOrigin === 'auto_extracted' || event.quotes.length === 0) continue;
+        const inferred = findBestVerbatimQuote(`${event.title} ${event.summary}`,
+          event.sourceMessageIds.flatMap((id) => messages.get(id) ? [messages.get(id)!] : []));
+        if (inferred && event.quotes.some((quote) => quote === inferred)) event.quotesOrigin = 'auto_extracted';
       }
     }
 
