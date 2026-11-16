@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   DERIVATION_MAX_ATTEMPTS,
+  AUTO_EXTRACTED_QUOTES_NOTICE,
   deterministicBlockLayers,
   buildBlockTimeline,
   effectiveGraphNodeView,
@@ -456,6 +457,7 @@ function eventSummary(event: EventCard, snapshot?: AdminReadModel): unknown {
     criticality: event.criticality,
     ...(event.catalogHints === undefined ? {} : { catalogHints: event.catalogHints }),
     ...(event.extractorVersion === undefined ? {} : { extractorVersion: event.extractorVersion }),
+    ...(event.quotesOrigin === 'auto_extracted' ? { quotesOrigin: event.quotesOrigin, quotesNotice: AUTO_EXTRACTED_QUOTES_NOTICE } : {}),
     status: event.status,
     supersededBy: event.supersededBy,
     weight: event.weight,

@@ -239,6 +239,9 @@ export interface StorageAdapter {
   /** Read-only adapters never initialize or recover writer-owned state. */
   readonly readonly?: boolean;
   load(namespace: string): Promise<LoadedStrataGateState | null>;
+  /** One-time upgrade marker for deterministic historical Event quote repair. */
+  eventQuoteBackfillPending?(namespace: string): boolean;
+  markEventQuoteBackfillComplete?(namespace: string): void;
   /** Read running claim metadata at one durable revision, without memory history. */
   loadDerivationLeases?(namespace: string): Promise<LoadedDerivationLeases | null>;
   save(
@@ -519,6 +522,7 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
     const metadata = normalizeEventMetadata(event);
     delete event.catalogHints;
     delete event.extractorVersion;
+    delete event.quotesOrigin;
     Object.assign(event, metadata);
     // Older snapshots can carry these retired Event fields. Keep their other
     // metadata intact while removing them from the live Event model.

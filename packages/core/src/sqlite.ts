@@ -350,7 +350,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_container_idx ON messages(namespace, block_id, position);
 
--- Optional metadata shared by both Event pools. No historical backfill.
+-- Optional metadata shared by both Event pools.
 CREATE TABLE IF NOT EXISTS event_merge_sources (
   namespace TEXT NOT NULL,
   event_id TEXT NOT NULL,
@@ -363,7 +363,14 @@ CREATE TABLE IF NOT EXISTS event_metadata (
   event_id TEXT NOT NULL,
   catalog_hints_json TEXT,
   extractor_version INTEGER,
+  quotes_origin TEXT,
   PRIMARY KEY (namespace, event_id),
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS event_quote_backfill (
+  namespace TEXT PRIMARY KEY,
+  completed_at TEXT NOT NULL,
   FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
 ) STRICT;
 
@@ -755,6 +762,19 @@ export class SqliteStorage implements StorageAdapter {
     return this.readState(namespace);
   }
 
+  eventQuoteBackfillPending(namespace: string): boolean {
+    if (!this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_quote_backfill'").get()) return false;
+    return !this.database.prepare('SELECT 1 FROM event_quote_backfill WHERE namespace = ?').get(namespace);
+  }
+
+  markEventQuoteBackfillComplete(namespace: string): void {
+    if (this.readonly) return;
+    this.immediateTransaction(() => {
+      this.database.prepare('INSERT INTO event_quote_backfill (namespace, completed_at) VALUES (?, ?) ON CONFLICT(namespace) DO NOTHING')
+        .run(namespace, nowUtc8());
+    });
+  }
+
   readEventModel(namespace: string): AdminReadModel | null {
     this.assertOpen();
     const key = nonEmptyNamespace(namespace);
@@ -1022,14 +1042,16 @@ export class SqliteStorage implements StorageAdapter {
     // Read-only schema-12 databases may predate this additive optional table.
     const hasEventMetadata = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_metadata'").get();
     if (hasEventMetadata) {
-      const metadataRows = this.database.prepare('SELECT event_id, catalog_hints_json, extractor_version FROM event_metadata WHERE namespace = ?')
-        .all(key) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null }>;
+      const metadataHasQuotesOrigin = this.hasColumn('event_metadata', 'quotes_origin');
+      const metadataRows = this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version${metadataHasQuotesOrigin ? ', quotes_origin' : ''} FROM event_metadata WHERE namespace = ?`)
+        .all(key) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null; quotes_origin?: string | null }>;
       const byId = new Map([...events, ...agentEvents].map((event) => [event.id, event]));
       for (const row of metadataRows) {
         const event = byId.get(row.event_id);
         if (event) Object.assign(event, normalizeEventMetadata({
           ...(row.catalog_hints_json === null ? {} : { catalogHints: parseJson<unknown>(row.catalog_hints_json, 'event_metadata.catalog_hints_json') }),
           extractorVersion: row.extractor_version,
+          ...(row.quotes_origin === null || row.quotes_origin === undefined ? {} : { quotesOrigin: row.quotes_origin }),
         }));
       }
     }
@@ -1819,14 +1841,15 @@ export class SqliteStorage implements StorageAdapter {
     }
     clearEventAuxiliary('event_metadata');
     const insertEventMetadata = this.database.prepare(`
-      INSERT INTO event_metadata (namespace, event_id, catalog_hints_json, extractor_version) VALUES (?, ?, ?, ?)
+      INSERT INTO event_metadata (namespace, event_id, catalog_hints_json, extractor_version, quotes_origin) VALUES (?, ?, ?, ?, ?)
     `);
     for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
       if (!changedEvent(event.id)) continue;
       const metadata = normalizeEventMetadata(event);
-      if (metadata.catalogHints === undefined && metadata.extractorVersion === undefined) continue;
+      if (metadata.catalogHints === undefined && metadata.extractorVersion === undefined && metadata.quotesOrigin === undefined) continue;
       insertEventMetadata.run(namespace, event.id,
-        metadata.catalogHints === undefined ? null : JSON.stringify(metadata.catalogHints), metadata.extractorVersion ?? null);
+        metadata.catalogHints === undefined ? null : JSON.stringify(metadata.catalogHints), metadata.extractorVersion ?? null,
+        metadata.quotesOrigin ?? null);
     }
 
     const insertElement = this.database.prepare(`
@@ -2388,13 +2411,15 @@ export class SqliteStorage implements StorageAdapter {
       const batch = mapEventRows(rows, sources, table);
       this.loadMergedSources(namespace, batch);
       const byId = new Map(batch.map((event) => [event.id, event]));
-      for (const row of this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version FROM event_metadata
+      const metadataHasQuotesOrigin = this.hasColumn('event_metadata', 'quotes_origin');
+      for (const row of this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version${metadataHasQuotesOrigin ? ', quotes_origin' : ''} FROM event_metadata
         WHERE namespace = ? AND event_id IN (${placeholders})`)
-        .all(namespace, ...ids) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null }>) {
+        .all(namespace, ...ids) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null; quotes_origin?: string | null }>) {
         const event = byId.get(row.event_id);
         if (event) Object.assign(event, normalizeEventMetadata({
           ...(row.catalog_hints_json === null ? {} : { catalogHints: parseJson<unknown>(row.catalog_hints_json, 'event_metadata.catalog_hints_json') }),
           extractorVersion: row.extractor_version,
+          ...(row.quotes_origin === null || row.quotes_origin === undefined ? {} : { quotesOrigin: row.quotes_origin }),
         }));
       }
       events.push(...batch); cursor = rows.at(-1)!.id;
@@ -2461,6 +2486,9 @@ export class SqliteStorage implements StorageAdapter {
     } else if (version >= 1 && version < STRATAGATE_STORAGE_SCHEMA_VERSION) {
       this.immediateTransaction(() => {
         this.database.exec(SCHEMA);
+        if (!this.hasColumn('event_metadata', 'quotes_origin')) {
+          this.database.exec('ALTER TABLE event_metadata ADD COLUMN quotes_origin TEXT');
+        }
         if (version === 1) {
           const receiptColumns = this.database.prepare("PRAGMA table_info('usage_receipts')").all() as unknown as Array<{ name: string }>;
           if (!receiptColumns.some(({ name }) => name === 'element_ids_json')) {
@@ -2571,6 +2599,9 @@ export class SqliteStorage implements StorageAdapter {
     } else if (version === STRATAGATE_STORAGE_SCHEMA_VERSION) {
       this.immediateTransaction(() => {
         this.database.exec(SCHEMA);
+        if (!this.hasColumn('event_metadata', 'quotes_origin')) {
+          this.database.exec('ALTER TABLE event_metadata ADD COLUMN quotes_origin TEXT');
+        }
         if (!this.hasColumn('memory_spaces', 'graph_enabled')) {
           this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1))');
         }

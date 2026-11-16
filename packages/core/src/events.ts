@@ -4,10 +4,10 @@ import type { EventCardInput, EventTemporal, StandardEventType } from './types.j
 export const EVENT_EXTRACTOR_VERSION = 2;
 
 /** Optional metadata is bounded at admission and load, without inventing defaults. */
-export function normalizeEventMetadata(value: unknown): Pick<EventCardInput, 'catalogHints' | 'extractorVersion'> {
+export function normalizeEventMetadata(value: unknown): Pick<EventCardInput, 'catalogHints' | 'extractorVersion' | 'quotesOrigin'> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const item = value as Record<string, unknown>;
-  const metadata: Pick<EventCardInput, 'catalogHints' | 'extractorVersion'> = {};
+  const metadata: Pick<EventCardInput, 'catalogHints' | 'extractorVersion' | 'quotesOrigin'> = {};
   if (Array.isArray(item.catalogHints)) {
     metadata.catalogHints = [...new Set(item.catalogHints.filter((hint): hint is string => typeof hint === 'string')
       .map((hint) => hint.trim()).filter((hint) => hint.length > 0 && [...hint].length <= 64
@@ -18,6 +18,7 @@ export function normalizeEventMetadata(value: unknown): Pick<EventCardInput, 'ca
   if (Number.isSafeInteger(item.extractorVersion) && (item.extractorVersion as number) > 0) {
     metadata.extractorVersion = item.extractorVersion as number;
   }
+  if (item.quotesOrigin === 'auto_extracted') metadata.quotesOrigin = 'auto_extracted';
   return metadata;
 }
 
