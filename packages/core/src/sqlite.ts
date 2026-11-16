@@ -51,7 +51,6 @@ import type {
 } from './types.js';
 import { nowUtc8 } from './time.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
-import { findBestVerbatimQuote } from './event-quotes.js';
 import { emptyProfile, isProfileField, PROFILE_FIELDS, PROFILE_MAINTAINABLE_FIELDS, PROFILE_PROTECTED_SHORT_FIELDS, PROFILE_TOTAL_MAX_LENGTH, profileMaintenanceDue, validateProfile,
   type PersistentProfile, type ProfileChange, type ProfileChangeSource, type ProfileField } from './profile.js';
 import { searchTokens } from './search.js';
@@ -1066,9 +1065,10 @@ export class SqliteStorage implements StorageAdapter {
       ]);
       for (const event of [...events, ...agentEvents]) {
         if (event.quotesOrigin === 'auto_extracted' || event.quotes.length === 0) continue;
-        const inferred = findBestVerbatimQuote(`${event.title} ${event.summary}`,
-          event.sourceMessageIds.flatMap((id) => messages.get(id) ? [messages.get(id)!] : []));
-        if (inferred && event.quotes.some((quote) => quote === inferred)) event.quotesOrigin = 'auto_extracted';
+        const sourceTexts = event.sourceMessageIds.flatMap((id) => messages.get(id)?.content ?? []);
+        if (event.quotes.some((quote) => sourceTexts.some((content) => content.includes(quote)))) {
+          event.quotesOrigin = 'auto_extracted';
+        }
       }
     }
 
