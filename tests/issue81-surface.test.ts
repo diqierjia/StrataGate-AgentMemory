@@ -230,6 +230,70 @@ describe('deferred Block surface synchronization', () => {
     }
   })
 
+  it('restores native images returned by a tool when replacing a block surface', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-tool-image-surface-'))
+    const session = Session.create('tool-image-surface' as never)
+    const user = 'Read the architecture image and summarize it.'
+    const assistant = 'The image shows the service boundary.'
+    const callId = 'tool-image-call' as never
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: user }], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    session.append('assistant/message', {
+      turn: 1, step: 1,
+      message: createAssistantMessage({
+        content: [{ type: 'tool-call', id: callId, name: 'read_image', arguments: '{"path":"architecture.png"}' }],
+        source: { provider: 'test', model: 'test' },
+      }),
+      stream: [],
+    }, { surfaceOp: 'append' })
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'read_image', arguments: '{"path":"architecture.png"}' })
+    session.append('tool/result', {
+      turn: 1, step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'image', attachment: {
+          attachmentId: 'sha256:tool-image-surface' as never, mediaType: 'image/png', bytes: 256,
+          width: 1280, height: 720, name: 'architecture.png',
+        } }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    session.append('assistant/message', {
+      turn: 1, step: 1,
+      message: createAssistantMessage({ content: [{ type: 'text', text: assistant }], source: { provider: 'test', model: 'test' } }),
+      stream: [],
+    }, { surfaceOp: 'append' })
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const plugin = runtime(join(directory, 'memory.db'))
+    const namespace = plugin.namespaceFor(session)
+    const memory = await StrataGate.open({
+      database: join(directory, 'memory.db'), namespace, blockTurnSize: 1,
+      summarizer: models.summarizer, extractor: models.extractor,
+    })
+    try {
+      await memory.appendTurn({ user, assistant, threadId: String(session.id), createdAt: turnEndAt(session) })
+      const block = memory.listBlocks()[0]!
+      const context = memory.getBlockContext(String(session.id))[0]!
+      expect(await replace(plugin, memory, session, block, { ...context, level: 0, content: renderBlock(block, 0) })).toBe(true)
+      const replacement = session.snapshotEvents().at(-1)!
+      expect(replacement.type).toBe('user/message')
+      if (replacement.type === 'user/message') {
+        expect(replacement.data.content.map((part) => part.type)).toEqual(['text', 'image'])
+        expect(replacement.data.content[1]).toMatchObject({
+          type: 'image', attachment: { attachmentId: 'sha256:tool-image-surface', name: 'architecture.png' },
+        })
+      }
+    } finally {
+      await plugin.close()
+      await memory.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it.each([3, 5])('reports the actual updated L%s when the target session is already loaded', async (level) => {
     const f = await queuedSurfaceFixture()
     try {

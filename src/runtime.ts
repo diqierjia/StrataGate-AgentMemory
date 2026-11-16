@@ -4414,8 +4414,13 @@ function sourceAttachmentBlocks(session: Session, seqs: readonly SessionSeq[]): 
   const seen = new Set<string>()
   for (const seq of seqs) {
     const event = session.eventAt(seq)
-    if (event?.type !== 'user/message') continue
-    for (const block of event.data.content) {
+    const content = event?.type === 'user/message'
+      ? event.data.content
+      : event?.type === 'tool/result'
+        ? event.data.message.content
+        : undefined
+    if (!content) continue
+    for (const block of content) {
       if (block.type !== 'image' && block.type !== 'file') continue
       const key = `${block.type}:${String(block.attachment.attachmentId)}`
       if (seen.has(key)) continue
