@@ -1869,7 +1869,9 @@ export class SqliteStorage implements StorageAdapter {
     for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
       if (!changedEvent(event.id)) continue;
       const metadata = normalizeEventMetadata(event);
-      if (metadata.catalogHints === undefined && metadata.extractorVersion === undefined && metadata.quotesOrigin === undefined) continue;
+      // quotesOrigin is persisted on the Event row itself. Keep the auxiliary
+      // row reserved for the older optional navigation/extractor metadata.
+      if (metadata.catalogHints === undefined && metadata.extractorVersion === undefined) continue;
       insertEventMetadata.run(namespace, event.id,
         metadata.catalogHints === undefined ? null : JSON.stringify(metadata.catalogHints), metadata.extractorVersion ?? null,
         metadata.quotesOrigin ?? null);
