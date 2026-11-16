@@ -36,7 +36,9 @@ jobs:
           version: 10
       - name: Install repository dependencies
         timeout-minutes: 20
-        run: npm ci
+        # Keep lifecycle scripts attached to npm; otherwise npm 11 may print a
+        # completed install summary while a child remains alive until timeout.
+        run: npm ci --foreground-scripts --no-audit --no-fund
       # Same isolate cache as the PR matrix. Keep this key identical to ci.yml.
       - name: Restore isolated DSH CLI
         id: isolate-cache
