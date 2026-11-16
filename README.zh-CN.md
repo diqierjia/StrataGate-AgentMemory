@@ -8,7 +8,7 @@
 
 ### 近期对话保留细节，远期记忆逐渐简化。
 
-近期对话保留细节，久远对话逐渐简化，需要时可重新展开。StrataGate 帮助 DeepSeek Harness 跨会话记住重要信息，通过长期事件和主题目录整理记忆、查找来源；知识图谱默认关闭，可按需开启。也支持导入其他 AI 的已有记忆，让对话接着已有背景继续。
+StrataGate 是 DeepSeek Harness 的跨会话记忆插件。每日笔记帮助接续近期工作，分层会话保留可展开的历史细节，长期事件与主题目录保存重要信息并帮助查找来源。知识图谱、向量检索和结果精排可按需启用。
 
 <p align="center">
   <a href="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml"><img src="https://github.com/diqierjia/StrataGate-AgentMemory/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
