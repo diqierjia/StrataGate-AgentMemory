@@ -66,7 +66,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
+      # Keep npm lifecycle workers attached to this step. npm 11 can otherwise
+      # finish the install output while leaving a child process alive until the
+      # job timeout; audit/fund lookups add no signal to CI.
+      - run: npm ci --foreground-scripts --no-audit --no-fund
       - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs tests/classify-ci-risk.test.mjs tests/stage-candidate.test.mjs tests/dsh-cli-isolate.test.mjs
       - run: npm run check
       - run: npm test
@@ -108,7 +111,10 @@ jobs:
           version: 10
       - name: Install repository dependencies
         timeout-minutes: 20
-        run: npm ci
+        # Old DSH cells previously hung after npm printed its install summary.
+        # Run lifecycle scripts in the foreground so a stuck child is visible
+        # and cannot be orphaned behind a successful-looking npm summary.
+        run: npm ci --foreground-scripts --no-audit --no-fund
       # One pinned CLI tree per OS and DSH version. The script hash keeps a
       # changed installer off an older tree. Restore does not use a prefix:
       # a different version must not be treated as this host.
