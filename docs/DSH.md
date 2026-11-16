@@ -157,6 +157,13 @@ memory_record_use      memory_remember
 memory_profile_update
 ```
 
+When Event extraction leaves `quotes` empty, the runtime selects a relevant
+fragment from the raw messages referenced by `sourceMessageIds`. Saved text is
+always a verbatim substring; when no sufficiently relevant fragment exists,
+the field stays empty. `memory_expand_event` marks an automatically selected
+quote with `quotesOrigin: "auto_extracted"` and a short notice. Existing Events
+are backfilled once on upgrade, without replacing any existing `quotes`.
+
 `memory_get_blocks` returns a paginated directory: each row contains `id`,
 `title`, `turnRange`, the injected `level`, and `targetLevel` when the decay target differs.
 Read source content with `memory_expand_block`.

@@ -20,6 +20,11 @@ describe('optional Event extraction metadata', () => {
       .toEqual({ catalogHints: ['摄影'] });
   });
 
+  it('keeps the automatic quote origin as bounded metadata', () => {
+    expect(normalizeEventMetadata({ quotesOrigin: 'auto_extracted' })).toEqual({ quotesOrigin: 'auto_extracted' });
+    expect(normalizeEventMetadata({ quotesOrigin: 'model' })).toEqual({});
+  });
+
   it('normalizes manual admission and snapshots while leaving legacy fields absent', async () => {
     const memory = StrataGate.inMemory({ blockTurnSize: 1, summarizer: async () => ({
       l0Title: '来源', l0Tags: [], l1Summary: '来源', l2Keypoints: [], shouldExtract: false,

@@ -27,6 +27,7 @@ import {
   rrfRank,
   StorageConflictError,
   StrataGate,
+  AUTO_EXTRACTED_QUOTES_NOTICE,
   renderPersistentProfile,
   PROFILE_FIELDS,
   PROFILE_TOTAL_MAX_LENGTH,
@@ -1425,6 +1426,9 @@ export class StrataGateRuntime {
     await this.flush()
     const event = (await this.space(session)).listAllEvents().find((candidate) => candidate.id === id)
     if (!event) throw new Error(`Unknown event: ${id}`)
+    const expanded = event.quotesOrigin === 'auto_extracted'
+      ? { ...event, quotesNotice: AUTO_EXTRACTED_QUOTES_NOTICE }
+      : event
     return this.batch(session, [{
       ref: `event:${event.id}`,
       target: {
@@ -1432,7 +1436,7 @@ export class StrataGateRuntime {
         elementIds: [],
         citation: citation('event', event.id, event.title, `event:${event.id}`, 'eventId', { expanded: true }),
       },
-    }], event)
+    }], expanded)
   }
 
   async assess(session: Session, input: RetrievalAssessmentInput, batchId?: string): Promise<unknown> {

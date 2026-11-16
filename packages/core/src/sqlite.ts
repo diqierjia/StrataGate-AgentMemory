@@ -122,6 +122,7 @@ interface EventRow {
   narrative: string;
   tags_json: string;
   quotes_json: string;
+  quotes_origin?: string | null;
   source_block_id: string | null;
   formed_turn: number | null;
   temporal_json: string;
@@ -350,7 +351,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_container_idx ON messages(namespace, block_id, position);
 
--- Optional metadata shared by both Event pools. No historical backfill.
+-- Optional metadata shared by both Event pools.
 CREATE TABLE IF NOT EXISTS event_merge_sources (
   namespace TEXT NOT NULL,
   event_id TEXT NOT NULL,
@@ -363,7 +364,14 @@ CREATE TABLE IF NOT EXISTS event_metadata (
   event_id TEXT NOT NULL,
   catalog_hints_json TEXT,
   extractor_version INTEGER,
+  quotes_origin TEXT,
   PRIMARY KEY (namespace, event_id),
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS event_quote_backfill (
+  namespace TEXT PRIMARY KEY,
+  completed_at TEXT NOT NULL,
   FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
 ) STRICT;
 
@@ -376,6 +384,7 @@ CREATE TABLE IF NOT EXISTS events (
   narrative TEXT NOT NULL,
   tags_json TEXT NOT NULL,
   quotes_json TEXT NOT NULL,
+  quotes_origin TEXT,
   source_block_id TEXT NOT NULL,
   formed_turn INTEGER,
   temporal_json TEXT NOT NULL,
@@ -419,6 +428,7 @@ CREATE TABLE IF NOT EXISTS agent_events (
   narrative TEXT NOT NULL,
   tags_json TEXT NOT NULL,
   quotes_json TEXT NOT NULL,
+  quotes_origin TEXT,
   source_block_id TEXT,
   formed_turn INTEGER,
   temporal_json TEXT NOT NULL,
@@ -674,6 +684,7 @@ function mapEventRows(rows: EventRow[], sourcesByEvent: Map<string, string[]>, t
     summary: row.summary,
     tags: parseJson<string[]>(row.tags_json, `${table}.tags_json`),
     quotes: parseJson<string[]>(row.quotes_json, `${table}.quotes_json`),
+    ...(row.quotes_origin === 'auto_extracted' ? { quotesOrigin: 'auto_extracted' as const } : {}),
     sourceMessageIds: sourcesByEvent.get(row.id) ?? [],
     ...(row.source_block_id === null ? {} : { sourceBlockId: row.source_block_id }),
     ...(row.formed_turn === null ? {} : { formedTurn: row.formed_turn }),
@@ -753,6 +764,19 @@ export class SqliteStorage implements StorageAdapter {
 
   async load(namespace: string): Promise<LoadedStrataGateState | null> {
     return this.readState(namespace);
+  }
+
+  eventQuoteBackfillPending(namespace: string): boolean {
+    if (!this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_quote_backfill'").get()) return false;
+    return !this.database.prepare('SELECT 1 FROM event_quote_backfill WHERE namespace = ?').get(namespace);
+  }
+
+  markEventQuoteBackfillComplete(namespace: string): void {
+    if (this.readonly) return;
+    this.immediateTransaction(() => {
+      this.database.prepare('INSERT INTO event_quote_backfill (namespace, completed_at) VALUES (?, ?) ON CONFLICT(namespace) DO NOTHING')
+        .run(namespace, nowUtc8());
+    });
   }
 
   readEventModel(namespace: string): AdminReadModel | null {
@@ -1021,16 +1045,34 @@ export class SqliteStorage implements StorageAdapter {
     this.loadMergedSources(key, [...events, ...agentEvents]);
     // Read-only schema-12 databases may predate this additive optional table.
     const hasEventMetadata = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_metadata'").get();
+    const metadataHasQuotesOrigin = hasEventMetadata && this.hasColumn('event_metadata', 'quotes_origin');
     if (hasEventMetadata) {
-      const metadataRows = this.database.prepare('SELECT event_id, catalog_hints_json, extractor_version FROM event_metadata WHERE namespace = ?')
-        .all(key) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null }>;
+      const metadataRows = this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version${metadataHasQuotesOrigin ? ', quotes_origin' : ''} FROM event_metadata WHERE namespace = ?`)
+        .all(key) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null; quotes_origin?: string | null }>;
       const byId = new Map([...events, ...agentEvents].map((event) => [event.id, event]));
       for (const row of metadataRows) {
         const event = byId.get(row.event_id);
         if (event) Object.assign(event, normalizeEventMetadata({
           ...(row.catalog_hints_json === null ? {} : { catalogHints: parseJson<unknown>(row.catalog_hints_json, 'event_metadata.catalog_hints_json') }),
           extractorVersion: row.extractor_version,
+          ...(row.quotes_origin === null || row.quotes_origin === undefined ? {} : { quotesOrigin: row.quotes_origin }),
         }));
+      }
+    }
+    // A read-only legacy database may have no auxiliary metadata table (or
+    // predate its quotes_origin column). Recover the marker from the exact
+    // quote/source relationship so an old card remains lossless after upgrade.
+    if (!metadataHasQuotesOrigin) {
+      const messages = new Map<string, RawMessage>([
+        ...openTail.map((message) => [message.id, message] as const),
+        ...blocks.flatMap((block) => block.l5Raw.map((message) => [message.id, message] as const)),
+      ]);
+      for (const event of [...events, ...agentEvents]) {
+        if (event.quotesOrigin === 'auto_extracted' || event.quotes.length === 0) continue;
+        const sourceTexts = event.sourceMessageIds.flatMap((id) => messages.get(id)?.content ?? []);
+        if (event.quotes.some((quote) => sourceTexts.some((content) => content.includes(quote)))) {
+          event.quotesOrigin = 'auto_extracted';
+        }
       }
     }
 
@@ -1674,11 +1716,11 @@ export class SqliteStorage implements StorageAdapter {
     });
     const insertEvent = this.database.prepare(`
       INSERT INTO events (
-        namespace, id, position, title, summary, narrative, tags_json, quotes_json, source_block_id,
+        namespace, id, position, title, summary, narrative, tags_json, quotes_json, quotes_origin, source_block_id,
         formed_turn, temporal_json, scope, criticality, confidence, status, superseded_by,
         mention_count, last_adopted_turn, last_retrieved_at, pinned, floor_weight, forced_cap,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (namespace, id) DO UPDATE SET
         position = excluded.position,
         title = excluded.title,
@@ -1686,6 +1728,7 @@ export class SqliteStorage implements StorageAdapter {
         narrative = excluded.narrative,
         tags_json = excluded.tags_json,
         quotes_json = excluded.quotes_json,
+        quotes_origin = excluded.quotes_origin,
         source_block_id = excluded.source_block_id,
         formed_turn = excluded.formed_turn,
         temporal_json = excluded.temporal_json,
@@ -1726,6 +1769,7 @@ export class SqliteStorage implements StorageAdapter {
         event.summary,
         JSON.stringify(event.tags),
         JSON.stringify(event.quotes),
+        event.quotesOrigin ?? null,
         event.sourceBlockId as string,
         event.formedTurn ?? null,
         JSON.stringify(event.temporal),
@@ -1760,11 +1804,11 @@ export class SqliteStorage implements StorageAdapter {
     }
     const insertAgentEvent = this.database.prepare(`
       INSERT INTO agent_events (
-        namespace, id, position, title, summary, narrative, tags_json, quotes_json, source_block_id,
+        namespace, id, position, title, summary, narrative, tags_json, quotes_json, quotes_origin, source_block_id,
         formed_turn, temporal_json, scope, criticality, confidence, status, superseded_by,
         mention_count, last_adopted_turn, last_retrieved_at, pinned, floor_weight, forced_cap,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertAgentEventSource = this.database.prepare(`
       INSERT INTO agent_event_sources (namespace, event_id, message_id, position) VALUES (?, ?, ?, ?)
@@ -1781,6 +1825,7 @@ export class SqliteStorage implements StorageAdapter {
         event.summary,
         JSON.stringify(event.tags),
         JSON.stringify(event.quotes),
+        event.quotesOrigin ?? null,
         event.sourceBlockId ?? null,
         event.formedTurn ?? null,
         JSON.stringify(event.temporal),
@@ -1819,14 +1864,17 @@ export class SqliteStorage implements StorageAdapter {
     }
     clearEventAuxiliary('event_metadata');
     const insertEventMetadata = this.database.prepare(`
-      INSERT INTO event_metadata (namespace, event_id, catalog_hints_json, extractor_version) VALUES (?, ?, ?, ?)
+      INSERT INTO event_metadata (namespace, event_id, catalog_hints_json, extractor_version, quotes_origin) VALUES (?, ?, ?, ?, ?)
     `);
     for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
       if (!changedEvent(event.id)) continue;
       const metadata = normalizeEventMetadata(event);
+      // quotesOrigin is persisted on the Event row itself. Keep the auxiliary
+      // row reserved for the older optional navigation/extractor metadata.
       if (metadata.catalogHints === undefined && metadata.extractorVersion === undefined) continue;
       insertEventMetadata.run(namespace, event.id,
-        metadata.catalogHints === undefined ? null : JSON.stringify(metadata.catalogHints), metadata.extractorVersion ?? null);
+        metadata.catalogHints === undefined ? null : JSON.stringify(metadata.catalogHints), metadata.extractorVersion ?? null,
+        metadata.quotesOrigin ?? null);
     }
 
     const insertElement = this.database.prepare(`
@@ -2388,13 +2436,15 @@ export class SqliteStorage implements StorageAdapter {
       const batch = mapEventRows(rows, sources, table);
       this.loadMergedSources(namespace, batch);
       const byId = new Map(batch.map((event) => [event.id, event]));
-      for (const row of this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version FROM event_metadata
+      const metadataHasQuotesOrigin = this.hasColumn('event_metadata', 'quotes_origin');
+      for (const row of this.database.prepare(`SELECT event_id, catalog_hints_json, extractor_version${metadataHasQuotesOrigin ? ', quotes_origin' : ''} FROM event_metadata
         WHERE namespace = ? AND event_id IN (${placeholders})`)
-        .all(namespace, ...ids) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null }>) {
+        .all(namespace, ...ids) as Array<{ event_id: string; catalog_hints_json: string | null; extractor_version: number | null; quotes_origin?: string | null }>) {
         const event = byId.get(row.event_id);
         if (event) Object.assign(event, normalizeEventMetadata({
           ...(row.catalog_hints_json === null ? {} : { catalogHints: parseJson<unknown>(row.catalog_hints_json, 'event_metadata.catalog_hints_json') }),
           extractorVersion: row.extractor_version,
+          ...(row.quotes_origin === null || row.quotes_origin === undefined ? {} : { quotesOrigin: row.quotes_origin }),
         }));
       }
       events.push(...batch); cursor = rows.at(-1)!.id;
@@ -2461,6 +2511,9 @@ export class SqliteStorage implements StorageAdapter {
     } else if (version >= 1 && version < STRATAGATE_STORAGE_SCHEMA_VERSION) {
       this.immediateTransaction(() => {
         this.database.exec(SCHEMA);
+        if (!this.hasColumn('event_metadata', 'quotes_origin')) {
+          this.database.exec('ALTER TABLE event_metadata ADD COLUMN quotes_origin TEXT');
+        }
         if (version === 1) {
           const receiptColumns = this.database.prepare("PRAGMA table_info('usage_receipts')").all() as unknown as Array<{ name: string }>;
           if (!receiptColumns.some(({ name }) => name === 'element_ids_json')) {
@@ -2509,6 +2562,12 @@ export class SqliteStorage implements StorageAdapter {
         const eventColumns = this.database.prepare("PRAGMA table_info('events')").all() as unknown as Array<{ name: string }>;
         if (!eventColumns.some(({ name }) => name === 'formed_turn')) {
           this.database.exec('ALTER TABLE events ADD COLUMN formed_turn INTEGER');
+        }
+        if (!eventColumns.some(({ name }) => name === 'quotes_origin')) {
+          this.database.exec('ALTER TABLE events ADD COLUMN quotes_origin TEXT');
+        }
+        if (!this.hasColumn('agent_events', 'quotes_origin')) {
+          this.database.exec('ALTER TABLE agent_events ADD COLUMN quotes_origin TEXT');
         }
         this.database.exec(`
           UPDATE events
@@ -2571,6 +2630,9 @@ export class SqliteStorage implements StorageAdapter {
     } else if (version === STRATAGATE_STORAGE_SCHEMA_VERSION) {
       this.immediateTransaction(() => {
         this.database.exec(SCHEMA);
+        if (!this.hasColumn('event_metadata', 'quotes_origin')) {
+          this.database.exec('ALTER TABLE event_metadata ADD COLUMN quotes_origin TEXT');
+        }
         if (!this.hasColumn('memory_spaces', 'graph_enabled')) {
           this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1))');
         }
@@ -2580,6 +2642,8 @@ export class SqliteStorage implements StorageAdapter {
           this.database.exec('ALTER TABLE blocks ADD COLUMN surface_current_level INTEGER NOT NULL DEFAULT 5');
           this.database.exec('UPDATE blocks SET surface_current_level = pointer_current_level');
         }
+        if (!this.hasColumn('events', 'quotes_origin')) this.database.exec('ALTER TABLE events ADD COLUMN quotes_origin TEXT');
+        if (!this.hasColumn('agent_events', 'quotes_origin')) this.database.exec('ALTER TABLE agent_events ADD COLUMN quotes_origin TEXT');
         this.database.prepare("INSERT INTO stratagate_graph_policy_migrations (id, completed_at) VALUES (1, ?) ON CONFLICT (id) DO NOTHING").run(nowUtc8());
         this.database.exec(THREAD_INDEXES);
         this.rebuildLegacyElementSourceForeignKeys();
