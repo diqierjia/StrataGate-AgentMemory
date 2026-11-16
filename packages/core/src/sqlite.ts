@@ -122,6 +122,7 @@ interface EventRow {
   narrative: string;
   tags_json: string;
   quotes_json: string;
+  quotes_origin?: string | null;
   source_block_id: string | null;
   formed_turn: number | null;
   temporal_json: string;
@@ -383,6 +384,7 @@ CREATE TABLE IF NOT EXISTS events (
   narrative TEXT NOT NULL,
   tags_json TEXT NOT NULL,
   quotes_json TEXT NOT NULL,
+  quotes_origin TEXT,
   source_block_id TEXT NOT NULL,
   formed_turn INTEGER,
   temporal_json TEXT NOT NULL,
@@ -426,6 +428,7 @@ CREATE TABLE IF NOT EXISTS agent_events (
   narrative TEXT NOT NULL,
   tags_json TEXT NOT NULL,
   quotes_json TEXT NOT NULL,
+  quotes_origin TEXT,
   source_block_id TEXT,
   formed_turn INTEGER,
   temporal_json TEXT NOT NULL,
@@ -681,6 +684,7 @@ function mapEventRows(rows: EventRow[], sourcesByEvent: Map<string, string[]>, t
     summary: row.summary,
     tags: parseJson<string[]>(row.tags_json, `${table}.tags_json`),
     quotes: parseJson<string[]>(row.quotes_json, `${table}.quotes_json`),
+    ...(row.quotes_origin === 'auto_extracted' ? { quotesOrigin: 'auto_extracted' as const } : {}),
     sourceMessageIds: sourcesByEvent.get(row.id) ?? [],
     ...(row.source_block_id === null ? {} : { sourceBlockId: row.source_block_id }),
     ...(row.formed_turn === null ? {} : { formedTurn: row.formed_turn }),
@@ -1712,11 +1716,11 @@ export class SqliteStorage implements StorageAdapter {
     });
     const insertEvent = this.database.prepare(`
       INSERT INTO events (
-        namespace, id, position, title, summary, narrative, tags_json, quotes_json, source_block_id,
+        namespace, id, position, title, summary, narrative, tags_json, quotes_json, quotes_origin, source_block_id,
         formed_turn, temporal_json, scope, criticality, confidence, status, superseded_by,
         mention_count, last_adopted_turn, last_retrieved_at, pinned, floor_weight, forced_cap,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (namespace, id) DO UPDATE SET
         position = excluded.position,
         title = excluded.title,
@@ -1724,6 +1728,7 @@ export class SqliteStorage implements StorageAdapter {
         narrative = excluded.narrative,
         tags_json = excluded.tags_json,
         quotes_json = excluded.quotes_json,
+        quotes_origin = excluded.quotes_origin,
         source_block_id = excluded.source_block_id,
         formed_turn = excluded.formed_turn,
         temporal_json = excluded.temporal_json,
@@ -1764,6 +1769,7 @@ export class SqliteStorage implements StorageAdapter {
         event.summary,
         JSON.stringify(event.tags),
         JSON.stringify(event.quotes),
+        event.quotesOrigin ?? null,
         event.sourceBlockId as string,
         event.formedTurn ?? null,
         JSON.stringify(event.temporal),
@@ -1798,11 +1804,11 @@ export class SqliteStorage implements StorageAdapter {
     }
     const insertAgentEvent = this.database.prepare(`
       INSERT INTO agent_events (
-        namespace, id, position, title, summary, narrative, tags_json, quotes_json, source_block_id,
+        namespace, id, position, title, summary, narrative, tags_json, quotes_json, quotes_origin, source_block_id,
         formed_turn, temporal_json, scope, criticality, confidence, status, superseded_by,
         mention_count, last_adopted_turn, last_retrieved_at, pinned, floor_weight, forced_cap,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertAgentEventSource = this.database.prepare(`
       INSERT INTO agent_event_sources (namespace, event_id, message_id, position) VALUES (?, ?, ?, ?)
@@ -1819,6 +1825,7 @@ export class SqliteStorage implements StorageAdapter {
         event.summary,
         JSON.stringify(event.tags),
         JSON.stringify(event.quotes),
+        event.quotesOrigin ?? null,
         event.sourceBlockId ?? null,
         event.formedTurn ?? null,
         JSON.stringify(event.temporal),
@@ -2554,6 +2561,12 @@ export class SqliteStorage implements StorageAdapter {
         if (!eventColumns.some(({ name }) => name === 'formed_turn')) {
           this.database.exec('ALTER TABLE events ADD COLUMN formed_turn INTEGER');
         }
+        if (!eventColumns.some(({ name }) => name === 'quotes_origin')) {
+          this.database.exec('ALTER TABLE events ADD COLUMN quotes_origin TEXT');
+        }
+        if (!this.hasColumn('agent_events', 'quotes_origin')) {
+          this.database.exec('ALTER TABLE agent_events ADD COLUMN quotes_origin TEXT');
+        }
         this.database.exec(`
           UPDATE events
           SET formed_turn = (
@@ -2627,6 +2640,8 @@ export class SqliteStorage implements StorageAdapter {
           this.database.exec('ALTER TABLE blocks ADD COLUMN surface_current_level INTEGER NOT NULL DEFAULT 5');
           this.database.exec('UPDATE blocks SET surface_current_level = pointer_current_level');
         }
+        if (!this.hasColumn('events', 'quotes_origin')) this.database.exec('ALTER TABLE events ADD COLUMN quotes_origin TEXT');
+        if (!this.hasColumn('agent_events', 'quotes_origin')) this.database.exec('ALTER TABLE agent_events ADD COLUMN quotes_origin TEXT');
         this.database.prepare("INSERT INTO stratagate_graph_policy_migrations (id, completed_at) VALUES (1, ?) ON CONFLICT (id) DO NOTHING").run(nowUtc8());
         this.database.exec(THREAD_INDEXES);
         this.rebuildLegacyElementSourceForeignKeys();
