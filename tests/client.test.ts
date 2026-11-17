@@ -2683,10 +2683,11 @@ describe('memory overview layers', () => {
     return found
   }
 
-  it('shows each layer count as a bare number and keeps the unit only in the label', () => {
+  it('shows each layer count with its unit and keeps update times in the tooltip', () => {
     const { OverviewPage } = loadSupportHelpers()
     const onOpenSection = vi.fn()
     const tree = OverviewPage({ selected, loading: false, onOpenSection })
+    expect(JSON.stringify(tree)).toContain('最近 7 天，长期记忆帮到 6 次回答')
     const rows = layerNodes(tree)
     expect(rows.map((row) => row[1]['data-testid'])).toEqual([
       'overview-layer-profile', 'overview-layer-directory', 'overview-layer-session', 'overview-layer-short', 'overview-layer-long',
@@ -2700,22 +2701,17 @@ describe('memory overview layers', () => {
       return found[0]
     }
     expect(rows.map(countOf)).toEqual(['1,234', '4', '14', '9', '58'])
-    // 可见文案里不再出现单位词（单位只保留在 aria-label / title 中）。
     const visibleText = (value: any): string => {
       if (typeof value === 'string') return value
       if (!Array.isArray(value)) return ''
       return value.slice(2).map(visibleText).join('')
     }
-    for (const row of rows) {
-      const text = visibleText(row)
-      for (const unit of ['个事件', '字', '章', '块', '条']) expect(text).not.toContain(unit)
-    }
-    expect(visibleText(rows[0])).toBe('常驻画像1,234最近更新：11 小时前')
-    expect(visibleText(rows[4])).toBe('长期记忆58最近更新：4 天前')
-    // 语义改由 aria-label / title 保留。
+    expect(rows.map(visibleText)).toEqual(['常驻画像1,234字', '记忆目录4章', '会话记忆14块', '短期记忆9条', '长期记忆58个事件'])
     expect(rows[0]![1]['aria-label']).toContain('打开常驻画像：1,234 字')
     expect(rows[4]![1]['aria-label']).toContain('打开长期记忆：58 个事件')
     expect(rows[4]![1].title).toContain('长期记忆 58 个事件')
+    expect(rows[0]![1].title).toContain('最近更新：11 小时前')
+    expect(rows[4]![1].title).toContain('最近更新：4 天前')
   })
 
   it('is a keyboard-reachable button that opens the matching tab', () => {
@@ -2751,6 +2747,28 @@ describe('memory overview layers', () => {
     const rows = layerNodes(OverviewPage({ selected: noShortTerm, loading: false, onOpenSection: vi.fn() }))
     expect(JSON.stringify(rows[3])).toContain('—')
     expect(rows[3]![1]['aria-label']).toContain('打开短期记忆：暂无数据')
+  })
+
+  it.each([
+    { name: 'confirmed idle state', patch: {}, loading: false, error: '', state: 'ok', text: '运行正常' },
+    { name: 'failed jobs', patch: { failedJobs: 2 }, loading: false, error: '', state: 'failed', text: '2 个任务需要处理' },
+    { name: 'pending work', patch: { processingJobs: 3 }, loading: false, error: '', state: 'processing', text: '正在整理记忆' },
+    { name: 'refreshing old data', patch: {}, loading: true, error: '', state: 'loading', text: '正在读取状态' },
+    { name: 'failed read with old data', patch: {}, loading: false, error: 'Network error', state: 'warning', text: '暂时无法读取最新状态' },
+    { name: 'unreported job state', patch: { failedJobs: undefined }, loading: false, error: '', state: 'unknown', text: '状态暂不可用' },
+    { name: 'invalid job state', patch: { processingJobs: -1 }, loading: false, error: '', state: 'unknown', text: '状态暂不可用' },
+    { name: 'directory read failure', patch: { topicDirectoryReadError: true }, loading: false, error: '', state: 'warning', text: '部分记忆暂时无法读取' },
+    { name: 'partial profile read', patch: { memoryOverview: { ...selected.memoryOverview, layers: { ...selected.memoryOverview.layers, profile: null } } }, loading: false, error: '', state: 'warning', text: '部分记忆暂时无法读取' },
+  ])('shows truthful overview status for $name', ({ patch, loading, error, state, text }) => {
+    const { OverviewPage } = loadSupportHelpers()
+    const onOpenStatus = vi.fn()
+    const tree = OverviewPage({ selected: { ...selected, failedJobs: 0, processingJobs: 0, ...patch }, loading, error, onOpenStatus })
+    const props = elementProps(tree).find((value) => value['data-testid'] === 'overview-runtime-status')
+    expect(props['data-state']).toBe(state)
+    expect(JSON.stringify(tree)).toContain(text)
+    expect(JSON.stringify(tree)).not.toContain('最近一次：')
+    props.onClick()
+    expect(onOpenStatus).toHaveBeenCalledOnce()
   })
 })
 
