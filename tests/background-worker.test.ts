@@ -244,9 +244,13 @@ describe('Issue #128 indexed background discovery', () => {
     const database = await databasePath()
     const seed = await StrataGate.open({ database, namespace: 'seed', blockTurnSize: 1, summarizer: summary })
     await seed.appendTurn({ user: 'old raw source', assistant: 'saved' }); await seed.close()
+    // Manual polls are the subject of this test. A slow child-process startup
+    // must not let the real 250ms worker timer consume its task before we poll.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const runtime = runtimeFor(database)
     try {
       await poll(runtime)
+      const loads = vi.spyOn(SqliteStorage.prototype, 'load')
       await promisify(execFile)(process.execPath, ['-e', `
         const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(process.argv[1]);
         db.exec('BEGIN IMMEDIATE');
@@ -256,13 +260,15 @@ describe('Issue #128 indexed background discovery', () => {
         }
         db.exec("UPDATE blocks SET processing_status = 'pending' WHERE namespace = 'external'; UPDATE block_summary_jobs SET status = 'pending', attempts = 0 WHERE namespace = 'external'; COMMIT"); db.close();
       `, database])
-      const loads = vi.spyOn(SqliteStorage.prototype, 'load')
+      expect(loads).not.toHaveBeenCalled()
       await poll(runtime)
       expect(loads.mock.calls.map(([namespace]) => namespace)).toEqual(['external'])
       const check = new SqliteStorage({ filename: database, readonly: true })
       try { expect((await check.load('external'))!.snapshot.summaryJobs[0]!.status).toBe('succeeded') }
       finally { await check.close() }
-    } finally { await runtime.close() }
+    } finally {
+      try { await runtime.close() } finally { vi.useRealTimers() }
+    }
   })
 
   it('wakes for a same-process committed task, and keeps model-unready jobs unclaimed', async () => {
