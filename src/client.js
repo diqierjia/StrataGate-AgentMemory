@@ -734,59 +734,195 @@ window.__ModuleLoader__.load({
         .sg-memory .sg-tab.active:after{left:2px;right:2px}
       }
 
-      /* 总览：大数字 + 精简记忆柱 + 长期记忆热力格 */
-      .sg-ov{display:grid;gap:22px;min-width:0}
-      .sg-ov-top{display:grid;grid-template-columns:minmax(180px,240px) minmax(0,1fr);gap:36px;align-items:start}
-      .sg-ov-big{display:flex;align-items:flex-end;gap:8px}
-      .sg-ov-big b{font:400 76px/0.9 var(--sg-serif);letter-spacing:-.03em}
-      .sg-ov-big .sg-used svg{width:30px;height:24px;margin-bottom:12px}
-      .sg-ov-stat p{margin:12px 0 0;color:var(--sg-muted);font-size:13px;line-height:1.6}
-      .sg-ov-empty{color:var(--sg-muted)}
+      /* Share the approved top bar across views; keep page-body styling local. */
+      .sg-memory-panel{container:sg-memory-host / inline-size}
+      .sg-memory.sg-unified-top{
+        --sg-top-sans:"Noto Sans SC","Microsoft YaHei","PingFang SC",sans-serif;
+        --sg-top-serif:"Noto Serif SC","Times New Roman",serif;
+        --sg-overview-unit:clamp(.48px,.05733945cqi,1px);
+        --sg-overview-gutter:clamp(16px,2.6087cqi,48px);
+        max-width:1920px;padding:calc(30 * var(--sg-overview-unit)) var(--sg-overview-gutter) calc(32 * var(--sg-overview-unit));
+      }
+      .sg-memory.sg-overview-page{
+        --sg-sans:var(--sg-top-sans);--sg-serif:var(--sg-top-serif);
+        --sg-ink:color-mix(in srgb,#3d3c38 88%,var(--sg-text));
+        --sg-moss:#607f4e;--sg-water:#426f9b;--sg-sand:#a98431;
+        font-family:var(--sg-sans);
+      }
+      .sg-unified-top .sg-header-row-primary,.sg-unified-top .sg-tabs{
+        --sg-serif:var(--sg-top-serif);
+        --sg-ink:color-mix(in srgb,#3d3c38 88%,var(--sg-text));
+        --sg-moss:#607f4e;--sg-water:#426f9b;--sg-sand:#a98431;
+        font-family:var(--sg-top-sans);
+      }
+      .sg-page-body{display:contents}
+      .sg-memory.sg-unified-top:not(.sg-overview-page){padding-bottom:0}
+      .sg-unified-top:not(.sg-overview-page) .sg-page-body{
+        display:block;container:sg-memory / inline-size;box-sizing:border-box;
+        --sg-body-gutter:clamp(16px,2.7523cqi,48px);
+        width:min(1200px,calc(100% + 2 * var(--sg-body-gutter)));
+        margin-inline:calc((100% - min(1200px,calc(100% + 2 * var(--sg-body-gutter)))) / 2);
+        padding:max(6px,calc(62 * var(--sg-overview-unit) - 24px)) 20px 36px;
+      }
+      .sg-unified-top.sg-settings-page .sg-page-body{container-name:sg-settings}
+      @media (max-width:560px){.sg-unified-top:not(.sg-overview-page) .sg-page-body{padding-inline:12px;padding-bottom:26px}}
+      .sg-unified-top .sg-header{padding:calc(6 * var(--sg-overview-unit)) 0 0}
+      .sg-unified-top .sg-header-row{padding:0}
+      .sg-unified-top .sg-brand{gap:calc(20 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-logo{width:calc(46 * var(--sg-overview-unit));height:calc(46 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-brand-title{gap:calc(16 * var(--sg-overview-unit));flex-wrap:nowrap}
+      .sg-unified-top .sg-brand-name{font-family:var(--sg-serif);font-size:calc(34 * var(--sg-overview-unit));font-weight:600}
+      .sg-unified-top .sg-brand-version{font-size:calc(24 * var(--sg-overview-unit));font-weight:400}
+      .sg-unified-top .sg-header-usage{gap:calc(16 * var(--sg-overview-unit));font-size:calc(20 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-header-end{gap:calc(16 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-project{min-height:calc(56 * var(--sg-overview-unit));min-width:calc(210 * var(--sg-overview-unit));padding:0 calc(14 * var(--sg-overview-unit));gap:calc(12 * var(--sg-overview-unit));font-size:calc(24 * var(--sg-overview-unit));border-radius:calc(10 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-project-label{display:none}
+      .sg-unified-top .sg-project-select{flex:1;width:auto;max-width:20ch;font-size:calc(24 * var(--sg-overview-unit));font-weight:400}
+      .sg-unified-top .sg-ghstar{height:calc(56 * var(--sg-overview-unit));min-width:calc(220 * var(--sg-overview-unit));font-size:calc(24 * var(--sg-overview-unit));border-radius:calc(10 * var(--sg-overview-unit));color:color-mix(in srgb,var(--sg-text) 45%,var(--sg-muted))}
+      .sg-unified-top .sg-ghstar:hover{color:var(--sg-text)}
+      .sg-unified-top .sg-ghstar-label,.sg-unified-top .sg-ghstar-count{padding:0 calc(18 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-ghstar-label{flex:1;justify-content:center;gap:calc(12 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-ghstar-icon{width:calc(27 * var(--sg-overview-unit));height:calc(27 * var(--sg-overview-unit))}
+      .sg-unified-top .sg-ghstar-count{min-width:calc(82 * var(--sg-overview-unit));justify-content:center;font-family:inherit}
+      .sg-unified-top .sg-tabs{gap:calc(24 * var(--sg-overview-unit));margin:calc(22 * var(--sg-overview-unit)) calc(-1 * var(--sg-overview-gutter)) 0;padding:0 var(--sg-overview-gutter)}
+      .sg-unified-top .sg-tab{gap:calc(12 * var(--sg-overview-unit));padding:calc(14 * var(--sg-overview-unit)) calc(14 * var(--sg-overview-unit)) calc(20 * var(--sg-overview-unit));font-size:calc(26 * var(--sg-overview-unit));color:color-mix(in srgb,var(--sg-text) 35%,var(--sg-muted))}
+      .sg-unified-top .sg-tab.active{color:var(--sg-text)}
+      .sg-unified-top .sg-tab-swatch{width:calc(17 * var(--sg-overview-unit));height:calc(17 * var(--sg-overview-unit));border-radius:3px}
+      /* Native control/readability floors need less surrounding space as the
+         panel narrows; retain the original spacing at the reference width. */
+      .sg-overview-page .sg-view{padding-top:max(6px,calc(62 * var(--sg-overview-unit) - 24px))}
+      .sg-overview-page .sg-footer{margin:max(12px,calc(50 * var(--sg-overview-unit) - 11px)) calc(-1 * var(--sg-overview-gutter)) 0;padding:calc(26 * var(--sg-overview-unit)) var(--sg-overview-gutter) 0;font-size:calc(23 * var(--sg-overview-unit));flex-wrap:wrap}
+      .sg-overview-page .sg-footer-links{display:inline-flex;align-items:center;gap:calc(8 * var(--sg-overview-unit));flex-wrap:wrap}
+      .sg-overview-page .sg-footer a{color:inherit;text-decoration:none}
+      .sg-overview-page .sg-footer a:hover{text-decoration:underline}
+      .sg-ov{--sg-bar-width:calc(168 * var(--sg-overview-unit));display:grid;gap:calc(55 * var(--sg-overview-unit));min-width:0}
+      .sg-ov-top{display:grid;grid-template-columns:minmax(0,25%) minmax(0,1fr);gap:calc(44 * var(--sg-overview-unit));align-items:start}
+      .sg-ov-big{display:flex;align-items:flex-end;gap:calc(14 * var(--sg-overview-unit));min-width:0}
+      .sg-ov-big b{font:400 calc(144 * var(--sg-overview-unit))/.925 "Times New Roman",var(--sg-serif);letter-spacing:0}
+      .sg-ov-speech{display:block;width:calc(54 * var(--sg-overview-unit));height:calc(48 * var(--sg-overview-unit));flex:none;color:var(--sg-text)}
+      .sg-ov-big .sg-ov-speech{margin-bottom:calc(6 * var(--sg-overview-unit))}
+      .sg-ov-summary{margin:calc(32 * var(--sg-overview-unit)) 0 0;color:color-mix(in srgb,var(--sg-text) 35%,var(--sg-muted));font-size:calc(24 * var(--sg-overview-unit));line-height:1.6;text-wrap:pretty}
+      .sg-memory .sg-ov-status{display:inline-flex;align-items:center;gap:calc(14 * var(--sg-overview-unit));max-width:100%;margin:calc(22 * var(--sg-overview-unit)) 0 0;padding:0;border:0;background:none;color:var(--sg-muted);font-size:calc(24 * var(--sg-overview-unit));line-height:1.5;text-align:left;cursor:pointer}
+      .sg-ov-status:hover{color:var(--sg-text)}
+      .sg-runtime-dot{display:inline-block;flex:none;width:13px;height:13px;border-radius:50%;background:var(--sg-muted)}
+      .sg-unified-top .sg-runtime-dot{width:calc(13 * var(--sg-overview-unit));height:calc(13 * var(--sg-overview-unit))}
+      .sg-runtime-dot[data-state="ok"]{background:#2d8b57}
+      .sg-runtime-dot[data-state="processing"],.sg-runtime-dot[data-state="warning"]{background:#a98431}
+      .sg-runtime-dot[data-state="failed"]{background:var(--sg-danger)}
+      .sg-project .sg-runtime-dot{width:12px;height:12px}
+      .sg-unified-top .sg-project .sg-runtime-dot{width:calc(12 * var(--sg-overview-unit));height:calc(12 * var(--sg-overview-unit))}
+      .sg-pillar-group{min-width:0}
+      .sg-pillar-cap{display:flex;flex-direction:column;align-items:center;gap:calc(10 * var(--sg-overview-unit));width:var(--sg-bar-width);height:calc(92 * var(--sg-overview-unit));padding-top:calc(6 * var(--sg-overview-unit))}
+      .sg-pillar-cap:after{content:"";flex:none;width:3px;height:calc(20 * var(--sg-overview-unit));background:var(--sg-text)}
       .sg-pillar{display:grid;gap:0}
-      .sg-pillar-row{display:grid;grid-template-columns:72px minmax(0,1fr) auto minmax(108px,auto) minmax(132px,auto);column-gap:12px;align-items:center;width:100%;min-height:46px;padding:0;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
-      .sg-pillar-row:hover{background:color-mix(in srgb,var(--sg-soft) 65%,transparent)}
-      .sg-pillar-row:focus-visible{outline:2px solid var(--sg-accent);outline-offset:-2px;border-radius:6px}
-      .sg-pillar-tail{display:contents}
-      .sg-pillar-bar{width:72px;height:34px;border-radius:3px;background:var(--sg-ink);animation:sg-r6-rise .45s both}
-      .sg-pillar-bar.moss{background:var(--sg-moss)}
-      .sg-pillar-bar.water{background:var(--sg-water)}
-      .sg-pillar-bar.sand{background:var(--sg-sand)}
-      .sg-pillar-bar.lib{height:42px;background:color-mix(in srgb,var(--sg-moss) 12%,transparent);box-shadow:inset 0 0 0 1.5px var(--sg-moss)}
-      .sg-pillar-gap{height:0;margin:8px 0 8px 84px;border-top:1px dashed var(--sg-border)}
-      .sg-pillar-name,.sg-pillar-use,.sg-pillar-val,.sg-pillar-when{display:flex;align-items:center;min-width:0;min-height:40px}
-      .sg-pillar-name b{font-size:14px;font-weight:600;white-space:nowrap}
-      .sg-pillar-use{justify-content:flex-end}
-      .sg-pillar-use:empty{visibility:hidden}
-      .sg-pillar-val{justify-content:flex-end;gap:6px;color:var(--sg-muted);font-size:12px;white-space:nowrap}
-      .sg-pillar-val b{font:400 22px/1 var(--sg-serif);color:var(--sg-text)}
-      .sg-pillar-when{justify-content:flex-end;padding-left:14px;color:var(--sg-muted);font-size:12px;white-space:nowrap}
-      .sg-pillar-key{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;color:var(--sg-muted);font-size:12px}
-      .sg-pillar-key span{display:inline-flex;align-items:center;gap:6px}
-      .sg-heat{padding-top:16px;border-top:1px solid var(--sg-hair)}
-      .sg-heat-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px;color:var(--sg-muted);font-size:12px}
-      .sg-heat-head span:first-child{display:inline-flex;align-items:center;gap:6px;color:var(--sg-text);font-weight:600}
-      .sg-heat-grid{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));gap:4px}
-      .sg-heat-grid i{aspect-ratio:1;border-radius:3px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
-      .sg-heat-scale{display:flex;justify-content:space-between;margin-top:6px;color:var(--sg-muted);font:11px var(--sg-mono)}
-      @container sg-memory (max-width:520px){
-        .sg-ov-top{grid-template-columns:minmax(0,1fr);gap:18px}
-        .sg-ov-big b{font-size:58px}
-        .sg-pillar-row{grid-template-columns:44px minmax(0,1fr) auto;column-gap:10px;row-gap:2px;align-items:center;padding:7px 0 8px}
-        .sg-pillar-bar{width:44px;height:28px}
-        .sg-pillar-name,.sg-pillar-val,.sg-pillar-when{min-height:0}
-        .sg-pillar-name{grid-column:2;grid-row:1}
-        .sg-pillar-name b{white-space:nowrap}
-        .sg-pillar-use{display:none}
-        .sg-pillar-tail{grid-column:3;grid-row:1;display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
-        .sg-pillar-tail .sg-pillar-use{display:flex;min-height:0}
-        .sg-pillar-val{white-space:nowrap}
-        .sg-pillar-when{grid-column:2 / -1;grid-row:2;justify-content:flex-start;padding-left:0;font-size:11.5px;white-space:normal}
-        .sg-pillar-gap{margin:6px 0;margin-left:0}
-        .sg-heat-grid{grid-template-columns:repeat(14,minmax(0,1fr))}
+      .sg-memory .sg-pillar-row{display:grid;grid-template-columns:var(--sg-bar-width) minmax(0,1fr) auto;column-gap:calc(28 * var(--sg-overview-unit));align-items:center;width:100%;min-height:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;position:relative}
+      .sg-pillar-row:after{content:"";position:absolute;left:var(--sg-bar-width);right:0;bottom:0;border-bottom:1px solid var(--sg-hair);pointer-events:none}
+      .sg-memory .sg-pillar-row:hover{background:color-mix(in srgb,var(--sg-soft) 65%,transparent)}
+      .sg-pillar-row:focus-visible{outline:2px solid var(--sg-accent);outline-offset:3px}
+      .sg-pillar-tail{display:flex;align-items:center;justify-content:flex-end;gap:calc(66 * var(--sg-overview-unit));min-width:0}
+      .sg-pillar-bar{display:block;width:100%;height:calc(86 * var(--sg-overview-unit));margin:0 0 calc(6 * var(--sg-overview-unit));border-radius:3px 3px 0 0;background:var(--sg-ink)}
+      .sg-pillar-bar.moss{height:calc(66 * var(--sg-overview-unit));background:var(--sg-moss)}
+      .sg-pillar-bar.water{height:calc(94 * var(--sg-overview-unit));background:var(--sg-water)}
+      .sg-pillar-bar.sand{height:calc(78 * var(--sg-overview-unit));background:var(--sg-sand)}
+      .sg-pillar-bar.lib{height:calc(124 * var(--sg-overview-unit));margin:0;border:2px dashed var(--sg-moss);border-radius:3px;background:color-mix(in srgb,var(--sg-moss) 12%,var(--sg-page))}
+      .sg-pillar-gap{height:0;margin:calc(16 * var(--sg-overview-unit)) 0 calc(16 * var(--sg-overview-unit)) calc(var(--sg-bar-width) + calc(24 * var(--sg-overview-unit)));border-top:1px dashed var(--sg-border)}
+      .sg-pillar-name,.sg-pillar-use,.sg-pillar-val{display:flex;align-items:center;min-width:0}
+      .sg-pillar-name b{font-size:calc(28 * var(--sg-overview-unit));font-weight:600;white-space:nowrap}
+      .sg-pillar-use:empty{display:none}
+      .sg-ov .sg-used{gap:calc(6 * var(--sg-overview-unit));font-family:inherit;font-size:calc(24 * var(--sg-overview-unit));line-height:1.2}
+      .sg-ov .sg-used svg{width:calc(23 * var(--sg-overview-unit));height:calc(20 * var(--sg-overview-unit))}
+      .sg-pillar-val{justify-content:flex-end;gap:calc(10 * var(--sg-overview-unit));min-width:calc(178 * var(--sg-overview-unit));color:var(--sg-muted);font-size:calc(23 * var(--sg-overview-unit));white-space:nowrap}
+      .sg-pillar-val b{font:400 calc(40 * var(--sg-overview-unit))/1 var(--sg-serif);color:var(--sg-text)}
+      .sg-pillar-key{display:flex;gap:calc(40 * var(--sg-overview-unit));flex-wrap:wrap;margin-top:calc(30 * var(--sg-overview-unit));color:var(--sg-muted);font-size:calc(23 * var(--sg-overview-unit))}
+      .sg-pillar-key>span{display:inline-flex;align-items:center;gap:calc(10 * var(--sg-overview-unit))}
+      .sg-pillar-key .sg-sw{width:calc(19 * var(--sg-overview-unit));height:calc(19 * var(--sg-overview-unit));border-radius:3px;background:var(--sg-ink)}
+      .sg-pillar-key .sg-sw.lib{border:2px dashed currentColor;background:transparent;box-shadow:none}
+      .sg-heat{padding-top:calc(32 * var(--sg-overview-unit));border-top:1px solid var(--sg-hair)}
+      .sg-heat-head{display:flex;justify-content:space-between;gap:calc(16 * var(--sg-overview-unit));margin-bottom:calc(22 * var(--sg-overview-unit));color:var(--sg-muted);font-size:calc(23 * var(--sg-overview-unit))}
+      .sg-heat-head>span:first-child{display:inline-flex;align-items:center;gap:calc(12 * var(--sg-overview-unit));color:var(--sg-text);font-weight:600}
+      .sg-heat-grid{display:grid;grid-template-columns:repeat(28,minmax(0,1fr));gap:calc(8 * var(--sg-overview-unit))}
+      .sg-heat-grid i{aspect-ratio:1;border-radius:calc(5 * var(--sg-overview-unit));background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
+      .sg-heat-scale{display:flex;justify-content:space-between;margin-top:calc(10 * var(--sg-overview-unit));color:var(--sg-muted);font-size:calc(21 * var(--sg-overview-unit))}
+      /* Keep small text readable without restoring the reference's large
+         desktop minimums inside a host sidebar or a scaled application. */
+      @container (min-width:721px){
+        .sg-unified-top .sg-header-row-primary{min-height:0}
+        .sg-unified-top .sg-brand-name{font-size:max(18px,calc(34 * var(--sg-overview-unit)))}
+        .sg-unified-top .sg-brand-version{font-size:max(12px,calc(24 * var(--sg-overview-unit)))}
+        .sg-unified-top .sg-project{min-height:max(32px,calc(56 * var(--sg-overview-unit)));min-width:max(120px,calc(210 * var(--sg-overview-unit)))}
+        .sg-unified-top .sg-project,.sg-unified-top .sg-project-select{font-size:max(13px,calc(24 * var(--sg-overview-unit)))}
+        .sg-unified-top .sg-ghstar{height:max(32px,calc(56 * var(--sg-overview-unit)));min-width:max(126px,calc(220 * var(--sg-overview-unit)));font-size:max(13px,calc(24 * var(--sg-overview-unit)))}
+        .sg-unified-top .sg-tab{font-size:max(14px,calc(26 * var(--sg-overview-unit)))}
+        .sg-ov-summary{font-size:max(12px,calc(24 * var(--sg-overview-unit)))}
+        .sg-memory .sg-ov-status{font-size:max(12px,calc(24 * var(--sg-overview-unit)))}
+        .sg-pillar-name b{font-size:max(14px,calc(28 * var(--sg-overview-unit)))}
+        .sg-pillar-val{font-size:max(12px,calc(23 * var(--sg-overview-unit)))}
+        .sg-pillar-key,.sg-ov .sg-used,.sg-heat-head,.sg-overview-page .sg-footer{font-size:max(12px,calc(23 * var(--sg-overview-unit)))}
+        .sg-heat-scale{font-size:max(11px,calc(21 * var(--sg-overview-unit)))}
+      }
+      @container (min-width:721px) and (max-width:820px){
+        .sg-ov-top{grid-template-columns:minmax(220px,28%) minmax(0,1fr)}
+      }
+      @container (max-width:720px){
+        .sg-unified-top .sg-runtime-dot{width:10px;height:10px}
+        .sg-unified-top .sg-project .sg-runtime-dot{width:9px;height:9px}
+        .sg-unified-top .sg-brand{gap:10px}
+        .sg-unified-top .sg-logo{width:34px;height:34px}
+        .sg-unified-top .sg-brand-title{gap:4px 10px}
+        .sg-unified-top .sg-brand-name{font-size:24px}
+        .sg-unified-top .sg-brand-version{font-size:12px}
+        .sg-unified-top .sg-header-row-primary{flex-wrap:wrap;gap:16px}
+        .sg-unified-top .sg-header-usage{gap:10px}
+        .sg-unified-top .sg-project{min-width:0;padding:0 9px;gap:8px}
+        .sg-unified-top .sg-project,.sg-unified-top .sg-project-select{font-size:14px;min-height:34px}
+        .sg-unified-top .sg-header-end{gap:10px}
+        .sg-unified-top .sg-ghstar{height:34px;min-width:0;font-size:14px}
+        .sg-unified-top .sg-ghstar-label,.sg-unified-top .sg-ghstar-count{padding:0 9px}
+        .sg-unified-top .sg-ghstar-label{gap:6px}
+        .sg-unified-top .sg-ghstar-count{min-width:0}
+        .sg-unified-top .sg-ghstar-icon{width:17px;height:17px}
+        .sg-unified-top .sg-tabs{gap:8px;margin-top:20px}
+        .sg-unified-top .sg-tab{flex:0 0 auto;gap:6px;padding:12px 6px;font-size:14px}
+        .sg-unified-top .sg-tab-swatch{width:11px;height:11px}
+        .sg-overview-page .sg-view{padding-top:28px}
+        .sg-ov{--sg-bar-width:72px;gap:30px}
+        .sg-ov-top{grid-template-columns:minmax(0,1fr);gap:24px}
+        .sg-ov-big b{font-size:88px}
+        .sg-ov-big .sg-ov-speech{width:38px;height:34px}
+        .sg-ov-summary{margin-top:16px;font-size:16px}
+        .sg-memory .sg-ov-status{margin-top:18px;gap:10px;font-size:16px}
+        .sg-pillar-cap{height:66px;gap:6px}
+        .sg-pillar-cap .sg-ov-speech{width:38px;height:34px}
+        .sg-pillar-cap:after{height:14px;width:2px}
+        .sg-memory .sg-pillar-row{column-gap:14px}
+        .sg-pillar-bar{height:56px;margin-bottom:4px}
+        .sg-pillar-bar.moss{height:44px}.sg-pillar-bar.water{height:60px}.sg-pillar-bar.sand{height:52px}.sg-pillar-bar.lib{height:80px}
+        .sg-pillar-name b{font-size:18px}
+        .sg-pillar-tail{gap:12px}
+        .sg-pillar-val{gap:5px;min-width:0;font-size:14px}
+        .sg-pillar-val b{font-size:28px}
+        .sg-ov .sg-used{font-size:14px;gap:4px}
+        .sg-ov .sg-used svg{width:16px;height:14px}
+        .sg-pillar-gap{margin:12px 0 12px calc(var(--sg-bar-width) + 14px)}
+        .sg-pillar-key{gap:20px;margin-top:20px;font-size:14px}
+        .sg-pillar-key>span{gap:7px}.sg-pillar-key .sg-sw{width:13px;height:13px}
+        .sg-heat{padding-top:22px}.sg-heat-head{margin-bottom:14px;font-size:14px}
+        .sg-heat-grid{grid-template-columns:repeat(14,minmax(0,1fr));gap:5px}
         .sg-heat-grid i:nth-child(-n+14){display:none}
         .sg-heat-scale span:first-child{font-size:0}
-        .sg-heat-scale span:first-child:before{content:'2 周前';font-size:11px}
-            }
+        .sg-heat-scale span:first-child:before{content:'2 周前';font-size:13px}
+        .sg-overview-page .sg-footer{font-size:13px;margin-top:30px;padding-top:20px}
+      }
+      @container (max-width:380px){
+        .sg-unified-top .sg-tabs{gap:4px}
+        .sg-unified-top .sg-tab{flex:0 0 auto;gap:4px;padding-inline:2px;font-size:12px}
+        .sg-unified-top .sg-tab-swatch{width:9px;height:9px}
+        .sg-ov{--sg-bar-width:52px}
+        .sg-memory .sg-pillar-row{column-gap:10px}
+        .sg-pillar-name b{font-size:16px}
+        .sg-pillar-tail{gap:8px}
+        .sg-pillar-val{font-size:12px;gap:4px}.sg-pillar-val b{font-size:25px}
+        .sg-heat-head{gap:8px;font-size:12px}.sg-heat-head>span:first-child{gap:6px}
       }
 
       /* 常驻画像：分组列表，一行就是一项 */
@@ -6336,11 +6472,34 @@ window.__ModuleLoader__.load({
       return Number(value || 0).toLocaleString('en-US')
     }
 
-    function OverviewPage({ selected, loading, onOpenSection }) {
+    function OverviewSpeechMark() {
+      return h('svg', { className: 'sg-ov-speech', viewBox: '0 0 54 48', fill: 'none', stroke: 'currentColor', strokeWidth: 3, 'aria-hidden': 'true', focusable: 'false' },
+        h('path', { d: 'M7 3h40a4 4 0 0 1 4 4v24a4 4 0 0 1-4 4H23L10 45V35H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4Z' }),
+        h('path', { d: 'M14 15h27M14 23h18' }))
+    }
+
+    function overviewRuntimeState(selected, loading, error) {
+      if (error) return { state: 'warning', text: '暂时无法读取最新状态' }
+      if (loading) return { state: 'loading', text: '正在读取状态' }
+      if (!selected?.memoryOverview || !Number.isSafeInteger(selected.failedJobs) || selected.failedJobs < 0
+        || !Number.isSafeInteger(selected.processingJobs) || selected.processingJobs < 0) {
+        return { state: 'unknown', text: '状态暂不可用' }
+      }
+      if (selected.failedJobs > 0) return { state: 'failed', text: selected.failedJobs + ' 个任务需要处理' }
+      const layers = selected.memoryOverview.layers
+      if (selected.topicDirectoryReadError || !layers?.profile || !layers.directory || !layers.session || !layers.shortTerm || !layers.longTerm) {
+        return { state: 'warning', text: '部分记忆暂时无法读取' }
+      }
+      if (selected.processingJobs > 0) return { state: 'processing', text: '正在整理记忆' }
+      return { state: 'ok', text: '运行正常' }
+    }
+
+    function OverviewPage({ selected, loading, error, onOpenSection, onOpenStatus }) {
       const stats = selected?.memoryOverview
       if (loading && !stats) return h(Loading)
       if (!stats) return h(Empty, { title: '还没有可汇总的记忆', copy: '这个工作区的记忆读出来之后，会显示在这里。' })
-      // 每行只显示数字；单位放在 aria-label / title 里，保留语义又不挤占版式。
+      const runtimeState = overviewRuntimeState(selected, loading, error)
+      // Visible units identify the quantity; update times remain in the tooltip.
       const layers = [
         { key: 'profile', name: '常驻画像', tone: 'ink', section: 'profile', value: stats.layers.profile ? overviewCount(stats.layers.profile.characters) : '—', unit: '字', updatedAt: stats.layers.profile?.updatedAt },
         { key: 'directory', name: '记忆目录', tone: 'moss', section: 'long', value: stats.layers.directory ? overviewCount(stats.layers.directory.chapters) : '—', unit: '章', updatedAt: stats.layers.directory?.updatedAt },
@@ -6355,11 +6514,14 @@ window.__ModuleLoader__.load({
           h('div', { className: 'sg-ov-stat' },
             h('div', { className: 'sg-ov-big' },
               h('b', { className: 'sg-mono', 'data-testid': 'overview-answer-count' }, overviewCount(stats.answeredLast7Days)),
-              h(UsedMark, { title: '长期记忆帮到的回答' })),
-            stats.lastRecall
-              ? h('p', { 'data-testid': 'overview-last-recall' }, '最近一次：帮你想起了「' + stats.lastRecall.title + '」')
-              : h('p', { className: 'sg-ov-empty', 'data-testid': 'overview-last-recall' }, '最近还没有长期记忆被用到回答里')),
-          h('div', { className: 'sg-pillar', 'aria-label': '记忆分层' }, layers.map((layer, index) => {
+              h(OverviewSpeechMark)),
+            h('p', { className: 'sg-ov-summary', 'data-testid': 'overview-answer-summary' }, '最近 7 天，长期记忆帮到 ' + overviewCount(stats.answeredLast7Days) + ' 次回答'),
+            h(typeof onOpenStatus === 'function' ? 'button' : 'div', { type: typeof onOpenStatus === 'function' ? 'button' : undefined, className: 'sg-ov-status', 'data-testid': 'overview-runtime-status', 'data-state': runtimeState.state, onClick: onOpenStatus, title: typeof onOpenStatus === 'function' ? '查看系统状态' : undefined },
+              h('i', { className: 'sg-runtime-dot', 'data-state': runtimeState.state, 'aria-hidden': 'true' }),
+              h('span', null, runtimeState.text))),
+          h('div', { className: 'sg-pillar-group' },
+          h('div', { className: 'sg-pillar-cap', 'aria-hidden': 'true' }, h(OverviewSpeechMark)),
+          h('div', { className: 'sg-pillar', 'aria-label': '记忆分层' }, layers.map((layer) => {
             const when = '最近更新：' + overviewRelative(layer.updatedAt)
             const countText = layer.value === '—' ? '暂无数据' : layer.value + ' ' + layer.unit
             const summary = layer.name + ' ' + countText + '，' + when
@@ -6373,18 +6535,17 @@ window.__ModuleLoader__.load({
                 // key handler would fire the navigation twice.
                 onClick: open,
               },
-                h('span', { className: 'sg-pillar-bar ' + layer.tone, style: { animationDelay: index * 60 + 'ms' }, 'aria-hidden': 'true' }),
+                h('span', { className: 'sg-pillar-bar ' + layer.tone, 'aria-hidden': 'true' }),
                 h('span', { className: 'sg-pillar-name' }, h('b', null, layer.name)),
                 h('span', { className: 'sg-pillar-tail' },
                   h('span', { className: 'sg-pillar-use' }, layer.key === 'long' && layer.answers > 0 ? h(UsedMark, { count: layer.answers, title: '被回答用到 ' + layer.answers + ' 次' }) : null),
-                  h('span', { className: 'sg-pillar-val' }, h('b', { className: 'sg-mono' }, layer.value))),
-                h('span', { className: 'sg-pillar-when' }, when))
+                  h('span', { className: 'sg-pillar-val' }, h('b', { className: 'sg-mono' }, layer.value), layer.value !== '—' ? h('span', { className: 'sg-pillar-unit' }, layer.unit) : null)))
             )
           })),
           h('div', { className: 'sg-pillar-key' },
             h('span', null, h('i', { className: 'sg-sw', 'aria-hidden': 'true' }), '一直带着'),
             h('span', null, h('i', { className: 'sg-sw lib', 'aria-hidden': 'true' }), '需要时去找'),
-            h('span', null, h(UsedMark), '被用到'))),
+            h('span', null, h(UsedMark), '被用到')))),
         h('div', { className: 'sg-heat' },
           h('div', { className: 'sg-heat-head' },
             h('span', null, h(UsedMark), '每天被回答用到几次'),
@@ -6576,6 +6737,7 @@ window.__ModuleLoader__.load({
       }, [namespace, conversationId, pollFast, loadDashboard])
 
       const selected = (overview.namespaces || []).find((item) => item.namespace === namespace)
+      const runtimeState = overviewRuntimeState(selected, loading, error)
       const project = projectName(selected || namespace, workspaceTitles)
       const activeProjectKey = namespace.includes(':project:') ? namespace.split(':project:').pop() : ''
       const hostSessionIds = workspaceSessionIds[activeProjectKey] || []
@@ -6679,7 +6841,7 @@ window.__ModuleLoader__.load({
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
       else if (view.name === 'settings' && !selected) content = h(SettingsPage, { graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, selected: { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays })
-      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection })
+      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, error, onOpenSection: goSection, onOpenStatus: () => setView({ name: 'status' }) })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
@@ -6699,7 +6861,7 @@ window.__ModuleLoader__.load({
           : section === 'long' ? null
             : h(MoreHome, { setView, selected, overview, namespace, dataDirectory: overview.dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }))
 
-      return h('main', { className: 'sg-memory' + (view.name === 'duplicates' ? ' sg-memory-review' : '') + (view.name === 'settings' || view.name === 'display' || (section === 'more' && view.name === 'root') ? ' sg-settings-page' : ''), 'data-testid': 'stratagate-memory-ui' },
+      return h('main', { className: 'sg-memory sg-unified-top' + (section === 'overview' && view.name === 'root' ? ' sg-overview-page' : '') + (view.name === 'duplicates' ? ' sg-memory-review' : '') + (view.name === 'settings' || view.name === 'display' || (section === 'more' && view.name === 'root') ? ' sg-settings-page' : ''), 'data-testid': 'stratagate-memory-ui' },
         h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS + R6_STYLES),
         h('header', { className: 'sg-header' },
           h('div', { className: 'sg-header-row sg-header-row-primary' },
@@ -6708,9 +6870,10 @@ window.__ModuleLoader__.load({
               h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null), onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
             // Workspace switcher sits right beside Star, not on its own row.
             h('div', { className: 'sg-header-end' },
-              h('div', { className: 'sg-project' }, h('span', { className: 'sg-project-label' }, '当前工作区'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
+              h('div', { className: 'sg-project' }, h('i', { className: 'sg-runtime-dot', 'data-testid': 'overview-workspace-dot', 'data-state': runtimeState.state, role: 'img', 'aria-label': runtimeState.text, title: runtimeState.text }), h('span', { className: 'sg-project-label' }, '当前工作区'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
               GITHUB_FEEDBACK_ENABLED ? h(HeaderStarLink) : null)),
         h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['overview', '总览'], ['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, TAB_SWATCH[id] ? h('i', { key: 'sw', className: 'sg-tab-swatch ' + TAB_SWATCH[id], 'aria-hidden': 'true' }) : null, label))),
+        h('div', { className: 'sg-page-body' },
         error ? h('div', { className: 'sg-error' }, h('div', { className: 'sg-error-title' }, '暂时无法读取完整记忆'), h('div', null, '已显示能够读取的内容，请稍后重新加载。'), h('details', null, h('summary', null, '技术详情'), h('div', { className: 'sg-code' }, error))) : null,
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
@@ -6722,7 +6885,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'sg-footer-links' },
             h('a', { href: STAR_REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub 仓库'), ' · ',
             h('a', { href: ISSUE_URL, target: '_blank', rel: 'noopener noreferrer' }, '提 Issue'), ' · ',
-            h('a', { href: STAR_REPOSITORY_URL + '/releases', target: '_blank', rel: 'noopener noreferrer' }, '更新记录')))))
+            h('a', { href: STAR_REPOSITORY_URL + '/releases', target: '_blank', rel: 'noopener noreferrer' }, '更新记录'))))))
     }
 
     function MemoryPanel(props) {

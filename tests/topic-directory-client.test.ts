@@ -788,7 +788,7 @@ describe('Topic Directory client interactions', () => {
     expect(buttons(tree, '第一章新工作区主题›')).toHaveLength(1)
   })
 
-  it('opens each overview memory layer from the real page and keeps bare counts', () => {
+  it('opens each overview memory layer from the real page and shows count units', () => {
     const client = clientRenderer()
     const namespace = 'dsh:project:test'
     const overview = { namespaces: [{ namespace, memoryOverview: {
@@ -810,8 +810,8 @@ describe('Topic Directory client interactions', () => {
     const layer = (key: string) => find(tree, (node) => node.visible && node.props['data-testid'] === 'overview-layer-' + key)[0]!
     expect(find(tree, (node) => node.visible && /^overview-layer-/.test(String(node.props['data-testid'] || '')))).toHaveLength(5)
     expect(layer('long').type).toBe('button')
-    expect(layer('long').text).not.toContain('个事件')
-    expect(layer('profile').text).not.toContain('字')
+    expect(layer('long').text).toContain('58个事件')
+    expect(layer('profile').text).toContain('1,234字')
 
     layer('long').props.onClick()
     tree = client.render(client.MemoryPage, props)

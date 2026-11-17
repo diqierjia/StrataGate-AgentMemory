@@ -90,7 +90,7 @@ export interface MemoryOverviewStats {
   answeredLast7Days: number
   lastRecall: { title: string; at: string } | null
   heatmap: Array<{ day: string; answers: number }>
-  /** 各层只给原始数字；单位词和千分位由界面决定，概览记忆柱只显示数字。 */
+  /** 各层只给原始数字；单位词和千分位由界面决定。 */
   layers: {
     profile: { characters: number; updatedAt: string | null } | null
     directory: { chapters: number; updatedAt: string | null }
