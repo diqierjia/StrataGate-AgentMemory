@@ -2,6 +2,7 @@ export * from './blocks.js';
 export * from './graph.js';
 export * from './events.js';
 export * from './event-duplicates.js';
+export * from './event-quotes.js';
 export * from './external-memory.js';
 export * from './retrieval.js';
 export * from './search.js';

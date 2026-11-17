@@ -155,6 +155,8 @@ memory_record_use      memory_remember
 memory_profile_update
 ```
 
+Event 提取没有提供 `quotes` 时，运行时会从该 Event 的 `sourceMessageIds` 指向的原始消息中选择相关片段；保存内容始终是原文逐字子串，找不到足够相关的片段就保持为空。自动选择的引用在 `memory_expand_event` 的完整结果中带有 `quotesOrigin: "auto_extracted"` 和说明。已有历史 Event 在升级后只做一次同样的回填，已有 `quotes` 不会覆盖。
+
 `memory_get_blocks` 返回分页目录，每项含 `id`、`title`、`turnRange`、实际注入的 `level`，以及目标层不同时的 `targetLevel`；
 正文通过 `memory_expand_block` 获取。支持 `offset/limit`，默认每页 12 项，限制在 1–20 项，
 返回 `total/offset/limit/nextOffset`，末页的 `nextOffset` 为 `null`。

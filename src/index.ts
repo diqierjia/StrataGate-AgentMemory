@@ -188,6 +188,14 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     ? memoryProtocol(runtime.dailyNotesEnabled, runtime.dailyNotes.injectionDays) : memoryProtocol(runtime.dailyNotesEnabled, runtime.dailyNotes.injectionDays).split('\n').map(line => line.includes('Use memory_search_events for what happened')
       ? '- Use memory_search_events to retrieve durable facts and changes. Knowledge Graph is disabled.'
       : line.replaceAll('Event/Graph', 'Event').replaceAll('Event or Graph', 'Event').replaceAll(', Graph node,', ',')).join('\n') })
+  // The agent loop claims Inbox messages before system-prompt assembly and
+  // appends them to the session only afterwards. Bridge the current user input
+  // into request-path retrieval so the first model request uses this turn's
+  // question instead of the previous turn (or an empty query).
+  ctx.on('agent/inbox/claimed', ({ agent, message }) => {
+    if (message.source.kind !== 'user') return
+    runtime.noteClaimedUserMessage(agent.session, message.content)
+  })
   if (AGENT_FEEDBACK_ENABLED) ctx.systemPrompt.section({ name: 'tool:stratagate-feedback', order: 114, text: FEEDBACK_PROTOCOL })
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
     const assembled = await next()

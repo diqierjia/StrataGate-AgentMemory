@@ -27,6 +27,7 @@ import {
   rrfRank,
   StorageConflictError,
   StrataGate,
+  AUTO_EXTRACTED_QUOTES_NOTICE,
   renderPersistentProfile,
   PROFILE_FIELDS,
   PROFILE_TOTAL_MAX_LENGTH,
@@ -437,6 +438,10 @@ export class StrataGateRuntime {
   private readonly derivationTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly derivationRuns = new Map<string, Promise<void>>()
   private readonly knownSessions = new Map<string, WeakRef<Session>>()
+  // The agent loop claims a turn's Inbox message before assembling the system
+  // prompt, and only appends that message to the session after assembly. Keep
+  // the claimed user text available for this request-path retrieval window.
+  private readonly pendingUserInputs = new WeakMap<Session, string[]>()
   private readonly pendingSurfaceSync = new Map<string, SurfaceSyncRequest>()
   private readonly surfaceMaintenance = new Map<string, SurfaceMaintenance>()
   private readonly surfaceMaintenanceRuns = new Set<Promise<void>>()
@@ -1421,6 +1426,9 @@ export class StrataGateRuntime {
     await this.flush()
     const event = (await this.space(session)).listAllEvents().find((candidate) => candidate.id === id)
     if (!event) throw new Error(`Unknown event: ${id}`)
+    const expanded = event.quotesOrigin === 'auto_extracted'
+      ? { ...event, quotesNotice: AUTO_EXTRACTED_QUOTES_NOTICE }
+      : event
     return this.batch(session, [{
       ref: `event:${event.id}`,
       target: {
@@ -1428,7 +1436,7 @@ export class StrataGateRuntime {
         elementIds: [],
         citation: citation('event', event.id, event.title, `event:${event.id}`, 'eventId', { expanded: true }),
       },
-    }], event)
+    }], expanded)
   }
 
   async assess(session: Session, input: RetrievalAssessmentInput, batchId?: string): Promise<unknown> {
@@ -1606,7 +1614,26 @@ export class StrataGateRuntime {
     }
   }
 
+  /**
+   * Capture a user message at the Inbox-claimed boundary. The host appends the
+   * same message to the session immediately after system-prompt assembly, so
+   * this bridge makes first-request automatic recall see the input without
+   * changing the durable session ordering.
+   */
+  noteClaimedUserMessage(session: Session, content: readonly ContentBlock[]): void {
+    const text = renderBlocks(content).trim()
+    // Store an empty value too: an attachment-only/empty user message must not
+    // accidentally reuse the previous turn's pending query.
+    const pending = this.pendingUserInputs.get(session)
+    if (pending) pending.push(text)
+    else this.pendingUserInputs.set(session, [text])
+  }
+
   private async assembleAutoContext(session: Session): Promise<string> {
+    // Consume this claimed batch before any fallible setup. If setup fails,
+    // the next turn must not inherit the failed request's input.
+    const pendingUserInputs = this.pendingUserInputs.get(session)
+    this.pendingUserInputs.delete(session)
     await this.flush()
     const memory = await this.space(session)
     await this.refreshExternalImportMemory(this.namespaceFor(session), memory)
@@ -1614,7 +1641,7 @@ export class StrataGateRuntime {
     // Only explicit lifts and hard capacity repairs belong on the request path.
     await this.syncRequestSurface(session, memory)
     const openTail = memory.listOpenTail(threadId)
-    const activationQuery = [currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
+    const activationQuery = [pendingUserInputs?.join('\n\n') ?? currentUserMessage(session), renderMessages(recentTurns(openTail, 2))]
       .filter(Boolean)
       .join('\n\n')
     // Semantic lane: when embedding is unconfigured this is undefined and the
@@ -4391,8 +4418,13 @@ function sourceAttachmentBlocks(session: Session, seqs: readonly SessionSeq[]): 
   const seen = new Set<string>()
   for (const seq of seqs) {
     const event = session.eventAt(seq)
-    if (event?.type !== 'user/message') continue
-    for (const block of event.data.content) {
+    const content = event?.type === 'user/message'
+      ? event.data.content
+      : event?.type === 'tool/result'
+        ? event.data.message.content
+        : undefined
+    if (!content) continue
+    for (const block of content) {
       if (block.type !== 'image' && block.type !== 'file') continue
       const key = `${block.type}:${String(block.attachment.attachmentId)}`
       if (seen.has(key)) continue

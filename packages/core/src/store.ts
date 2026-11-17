@@ -14,6 +14,7 @@ import { applyElementChanges, elementViewAt } from './elements.js';
 import { EVENT_DUPLICATE_AUTO_CONFIDENCE, eventDuplicateCompatible, eventDuplicateMergeCompatible, eventDuplicateStructuralCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, eventDuplicateSimilarity, isExactEventDuplicate, validEventMergeDraft, type EventMergeDraft, type EventDuplicatePair, type EventDuplicateDecider } from './event-duplicates.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
 import { externalMemoryJsonExtractor, parseExternalMemoryExport } from './external-memory.js';
+import { findBestVerbatimQuote } from './event-quotes.js';
 import { GRAPH_PROVENANCE_LIMIT, applyGraphProjection, boundEffectiveGraphNodeView, effectiveGraphNodeView, graphTimeline } from './graph.js';
 import { normalizeRetrievalAssessment, type RetrievalAssessment, type RetrievalAssessmentInput } from './retrieval.js';
 import { SqliteStorage } from './sqlite.js';
@@ -547,9 +548,18 @@ export class StrataGate {
     // Freeze historical sources before returning a writer to ingestion or
     // running any resumed derivation. New spaces freeze an empty, completed set.
     if (options.storage.readonly) return memory;
-    await memory.initializeTopicBootstrap();
     if (loaded && loadedSnapshot) {
       await memory.recoverExpiredDerivations();
+      if (options.storage.eventQuoteBackfillPending?.(namespace)) {
+        await memory.backfillMissingEventQuotes();
+        options.storage.markEventQuoteBackfillComplete?.(namespace);
+      }
+    }
+    await memory.initializeTopicBootstrap();
+    if (!loaded && options.storage.eventQuoteBackfillPending?.(namespace)) {
+      options.storage.markEventQuoteBackfillComplete?.(namespace);
+    }
+    if (loaded && loadedSnapshot) {
       /* Legacy element projection has no concurrent DSH worker. */
       const interruptedProjections = [...memory.elementProjectionJobs.values()]
         .filter((job) => job.status === 'running');
@@ -1279,6 +1289,33 @@ export class StrataGate {
       this.queueElementProjection([event.id]);
       this.queueGraphProjection([event.id], 1_000);
       return event;
+    });
+  }
+
+  /** Fill only empty quote arrays, using the normal mutation/persistence path. */
+  async backfillMissingEventQuotes(): Promise<{ updated: number; inspected: number }> {
+    const candidates = this.listAllEvents().filter((event) => event.quotes.length === 0 && event.sourceMessageIds.length > 0);
+    if (candidates.length === 0) return { updated: 0, inspected: 0 };
+    const prepared = candidates.flatMap((event) => {
+      const messages = event.sourceMessageIds.flatMap((id) => {
+        const found = this.rawMessageLookup.get(id)?.message ?? this.openTail.find((message) => message.id === id);
+        return found ? [found] : [];
+      });
+      const quote = findBestVerbatimQuote(`${event.title} ${event.summary}`, messages);
+      return quote ? [{ event, quote }] : [];
+    });
+    if (prepared.length === 0) return { updated: 0, inspected: candidates.length };
+    return this.commitMutation(() => {
+      let updated = 0;
+      const now = toUtc8Iso(this.now());
+      for (const { event, quote } of prepared) {
+        if (event.quotes.length > 0) continue;
+        event.quotes = [quote];
+        event.quotesOrigin = 'auto_extracted';
+        event.updatedAt = now;
+        updated += 1;
+      }
+      return { updated, inspected: candidates.length };
     });
   }
 
@@ -2890,7 +2927,21 @@ export class StrataGate {
     const mergedCandidate = decision.mergedCandidate
       && typeof decision.mergedCandidate.title === 'string' && decision.mergedCandidate.title.trim()
       && typeof decision.mergedCandidate.summary === 'string' && decision.mergedCandidate.summary.trim()
-      ? decision.mergedCandidate
+      ? {
+          // The model returns the merged body, but it is not the authority for
+          // the recording session or its source relation. Keep the original
+          // candidate metadata so a legal title/summary-only response still
+          // cites the real conversation instead of creating synthetic source.
+          ...gate.candidate,
+          ...decision.mergedCandidate,
+          temporal: {
+            ...(gate.candidate.temporal ?? {}),
+            ...(decision.mergedCandidate.temporal ?? {}),
+            ...(gate.candidate.temporal?.threadId
+              ? { threadId: gate.candidate.temporal.threadId }
+              : {}),
+          },
+        }
       : undefined;
 
     if (requestedAction === 'IGNORE') {
@@ -3883,6 +3934,15 @@ export class StrataGate {
       for (const event of result.shouldExtract ? result.events : []) {
         const candidate = { ...event, sourceBlockId: target.id,
           ...(event.temporal ? { temporal: restrictExtractionRelations(event.temporal, allowedIds) } : {}) };
+        if ((!candidate.quotes || candidate.quotes.length === 0) && candidate.sourceMessageIds.length > 0) {
+          const sourceIds = new Set(candidate.sourceMessageIds);
+          const sourceMessages = target.l5Raw.filter((message) => sourceIds.has(message.id));
+          const quote = findBestVerbatimQuote(`${candidate.title} ${candidate.summary}`, sourceMessages);
+          if (quote) {
+            candidate.quotes = [quote];
+            candidate.quotesOrigin = 'auto_extracted';
+          }
+        }
         const candidateKey = JSON.stringify(candidate);
         if (seenCandidates.has(candidateKey)) continue;
         seenCandidates.add(candidateKey);

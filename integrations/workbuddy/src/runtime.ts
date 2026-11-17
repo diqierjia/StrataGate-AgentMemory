@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
   StrataGate,
+  AUTO_EXTRACTED_QUOTES_NOTICE,
   nowUtc8,
   StorageConflictError,
   normalizeRetrievalAssessment,
@@ -308,7 +309,9 @@ export class WorkBuddyRuntime {
         ref: `event:${event.id}:expanded`,
         kind: 'event' as const,
         title: event.title,
-        content: short(JSON.stringify({ summary: event.summary, quotes: event.quotes, temporal: event.temporal }), 5_000),
+        content: short(JSON.stringify({ summary: event.summary, quotes: event.quotes,
+          ...(event.quotesOrigin === 'auto_extracted' ? { quotesOrigin: event.quotesOrigin, quotesNotice: AUTO_EXTRACTED_QUOTES_NOTICE } : {}),
+          temporal: event.temporal }), 5_000),
         sourceTime: event.temporal.happenedStart ?? event.temporal.mentionedAt ?? event.createdAt,
         target: { eventIds: [event.id], elementIds: [] },
       }]

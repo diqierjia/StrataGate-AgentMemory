@@ -126,6 +126,8 @@ export interface EventCardInput {
   catalogHints?: string[];
   /** Rules used by the conversation extractor; absent on legacy/manual Events. */
   extractorVersion?: number;
+  /** Set only when the runtime selected a verbatim source fragment automatically. */
+  quotesOrigin?: 'auto_extracted';
 }
 
 export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> {
