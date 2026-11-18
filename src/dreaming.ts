@@ -1,7 +1,8 @@
-import { effectiveGraphNodeView, estimateTokens, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
+import { effectiveGraphNodeView, estimateTokens, dreamingEventVersion, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
   dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, DREAMING_SOURCE_PAGE_CHARACTERS,
   type BlockLevel, type DreamingRun, type EventCard, type StrataGate } from '@diqier/stratagate'
 import { topicPage } from './topics.js'
+import type { DailyNotes } from './daily-notes.js'
 
 export interface DreamingAction { tool: string; args: Record<string, unknown> }
 /** Shared by native and detached hosts so operation semantics cannot diverge. */
@@ -27,11 +28,14 @@ function textPage(value: unknown, args: Record<string, unknown>): { content: str
   return { content: content.slice(offset, offset + limit), contentVersion: dreamingTopicVersion(content), offset, totalCharacters: content.length, nextOffset: offset + limit < content.length ? offset + limit : null }
 }
 export function dreamingEvents(memory: StrataGate, run: DreamingRun): EventCard[] {
+  if (run.scope === 'memory') return (run.includeAgentEvents === false ? memory.listEvents() : memory.listAllEvents())
+    .filter(event => event.status !== 'forgotten' && event.status !== 'archived')
   return memory.listAllEvents().filter(event => event.status !== 'forgotten' && event.status !== 'archived'
     && run.sourceVersions[event.id] === memoryTopicEventFingerprint(event))
 }
 /** Deliberately bypasses Runtime's chat evidence batches and record-use hooks. */
-export async function dreamingTool(memory: StrataGate, run: DreamingRun, action: DreamingAction): Promise<{ result: unknown; evidenceIds: string[] }> {
+export async function dreamingTool(memory: StrataGate, run: DreamingRun, action: DreamingAction,
+  notes?: { store: DailyNotes; namespace: string }): Promise<{ result: unknown; evidenceIds: string[] }> {
   const { tool, args } = action
   const events = dreamingEvents(memory, run)
   const allowed = new Set(events.map(event => event.id))
@@ -47,6 +51,7 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
     const topic = topics.find(t => t.id === args.id)
     if (!topic) throw new Error('Unknown topic')
     return { result: { id: topic.id, title: topic.title, description: topic.description,
+      ...(run.scope === 'memory' ? { version: memory.getDreamingTopicVersion(topic.id) } : {}),
       sections: page(memoryTopicMembershipSections(topic), args), overview: page(topic.overview, args), totalEvents: topic.sourceEventIds.length }, evidenceIds }
   }
   if (tool === 'dreaming_search') {
@@ -65,18 +70,30 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
     }
     if (args.kind === 'raw') {
       // Only expose messages actually cited by surviving frozen Event evidence.
-      const messages = new Set(events.flatMap(event => event.sourceMessageIds))
-      const hits = memory.searchRawMemory(args.query, limit + 1, { messageIds: [...messages], offset })
+      const hits = run.scope === 'memory'
+        ? memory.searchDreamingMessages(args.query, limit + 1, offset, typeof args.threadId === 'string' ? args.threadId : undefined)
+        : memory.searchRawMemory(args.query, limit + 1, { messageIds: [...new Set(events.flatMap(event => event.sourceMessageIds))], offset })
       return { result: { items: hits.slice(0, limit).map(hit => ({ blockId: hit.blockId, messageId: hit.message.id,
+        threadId: hit.message.threadId, createdAt: hit.message.createdAt,
         text: hit.message.content.slice(0, 1500), needsFullRead: hit.message.content.length > 1500 })), offset,
         nextOffset: hits.length > limit ? offset + limit : null }, evidenceIds }
     }
     if (args.kind === 'graph') {
+      if (run.scope === 'memory' && !memory.graphEnabled) return { result: { items: [], note: 'Graph is disabled' }, evidenceIds }
       const hits = await memory.searchGraphNodes(args.query, Math.max(1, memory.listGraphNodes().length))
       return { result: page(hits.map(hit => {
         const view = effectiveGraphNodeView(hit.node, memory.listGraphEdges(), events)
         return view ? { id: hit.node.id, name: view.node.name, sourceEventIds: view.currentFacts.flatMap(fact => fact.sourceEventIds) } : null
       }).filter(Boolean), args), evidenceIds }
+    }
+    if (run.scope === 'memory' && args.kind === 'experiences') {
+      const items = memory.searchExperiences(args.query, limit + 1, offset, true)
+      return { result: { items: items.slice(0, limit).map(item => ({ id: item.id, title: item.title, scope: item.scope, status: item.status, preview: item.content.slice(0, 500) })),
+        nextOffset: items.length > limit ? offset + limit : null }, evidenceIds }
+    }
+    if (run.scope === 'memory' && args.kind === 'daily') {
+      if (!notes) throw new Error('Daily notes are disabled')
+      return { result: await notes.store.read(notes.namespace, { ...(args.query ? { query: args.query } : {}), offset }), evidenceIds }
     }
     throw new Error('Unknown search kind')
   }
@@ -85,6 +102,8 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
     if (args.kind === 'event') {
       const event = events.find(event => event.id === args.id)
       if (!event) throw new Error('Event unavailable or changed')
+      if (run.scope === 'memory') return { result: { id: event.id, ...textPage(dreamingEventContent(event), args),
+        sourceRefs: { [`event:${event.id}`]: dreamingEventVersion(event) } }, evidenceIds }
       const contentVersion = dreamingEventContentVersion(event)
       if (Number(args.offset) > 0 && run.readContentVersions?.[event.id] !== contentVersion) throw new Error('Event page version changed or not started; read from offset 0')
       const result = textPage(dreamingEventContent(event), args)
@@ -94,6 +113,16 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
     }
     if (args.kind === 'block') {
       const block = memory.listBlocks().find(block => block.id === args.id)
+      if (run.scope === 'memory') {
+        if (!block) throw new Error('Unknown Block')
+        const visible = new Set(memory.dreamingMessages().map(message => message.id))
+        const messages = block.l5Raw.filter(message => visible.has(message.id))
+        if (!messages.length) throw new Error('Block has no visible messages')
+        const requested = integer(args.level, 5, 5) as BlockLevel
+        const level = messages.length === block.l5Raw.length ? requested : 5
+        return { result: { id: block.id, level, ...textPage(level === 5 ? messages : renderBlock(block, level), args),
+          ...(level === 5 ? { sourceRefs: Object.fromEntries(messages.map(message => [`message:${message.id}`, dreamingTopicVersion(message)])) } : {}) }, evidenceIds }
+      }
       const sources = events.filter(event => event.sourceBlockId === args.id || event.sourceMessageIds.some(id => block?.l5Raw.some(message => message.id === id)))
       if (!block || !sources.length) throw new Error('Block has no visible source evidence')
       const level = integer(args.level, 5, 5) as BlockLevel
@@ -105,10 +134,28 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
       return { result: { id: block.id, level: complete ? level : 5, redacted: !complete, ...result }, evidenceIds }
     }
     if (args.kind === 'graph_node') {
+      if (run.scope === 'memory' && !memory.graphEnabled) throw new Error('Graph is disabled')
       const node = memory.listGraphNodes().find(node => node.id === args.id)
       const view = node && effectiveGraphNodeView(node, memory.listGraphEdges(), events)
       if (!view) throw new Error('Graph node unavailable')
       return { result: { id: view.node.id, ...textPage(view, args) }, evidenceIds }
+    }
+    if (run.scope === 'memory' && args.kind === 'message') {
+      const message = memory.dreamingMessages().find(item => item.id === args.id)
+      if (!message) throw new Error('Message unavailable')
+      return { result: { id: message.id, ...textPage(message, args),
+        sourceRefs: { [`message:${message.id}`]: dreamingTopicVersion(message) } }, evidenceIds }
+    }
+    if (run.scope === 'memory' && args.kind === 'experience') {
+      const item = memory.listExperiences(true).find(item => item.id === args.id)
+      if (!item) throw new Error('Experience unavailable')
+      return { result: { id: item.id, ...textPage(item, args),
+        sourceRefs: { [`experience:${item.id}`]: dreamingTopicVersion(item) } }, evidenceIds }
+    }
+    if (run.scope === 'memory' && args.kind === 'daily') {
+      if (!notes) throw new Error('Daily notes are disabled')
+      const note = await notes.store.read(notes.namespace, { date: args.id })
+      return { result: { id: args.id, ...textPage(note.content ?? '', args) }, evidenceIds }
     }
     throw new Error('Unknown read kind')
   }
@@ -117,6 +164,24 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
 
 export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
   const unit = run.units[run.cursor]!
+  if (run.scope === 'memory') {
+    const visible = new Set(memory.dreamingMessages().map(message => message.id))
+    return {
+      scope: 'memory', completedBatches: run.cursor, totalBatches: run.units.length, trigger: run.trigger,
+      blocks: memory.listBlocks().filter(block => unit.blockIds?.includes(block.id) && block.l5Raw.some(message => visible.has(message.id))).map(block => ({
+        id: block.id, threadId: block.threadId, createdAt: block.createdAt, turns: [block.startTurn, block.endTurn],
+        ...(block.l5Raw.every(message => visible.has(message.id)) ? { title: block.l0Title, summary: block.l1Summary?.slice(0, 400) } : {}),
+      })),
+      openMessages: memory.listOpenTail().filter(message => visible.has(message.id) && unit.messageIds?.includes(message.id))
+        .map(({ id, threadId, createdAt, role }) => ({ id, threadId, createdAt, role })),
+      events: dreamingEvents(memory, run).filter(event => unit.eventIds.includes(event.id)).map(({ id, title, status }) => ({ id, title, status })),
+      experiencesToReview: unit.experienceIds?.length ? memory.listExperiences(true)
+        .filter(item => item.status === 'needs-review' && unit.experienceIds?.includes(item.id)).map(({ id, title }) => ({ id, title })) : [],
+      noteDates: unit.noteDates ?? [], graphEnabled: memory.graphEnabled,
+      lastWriteFailure: run.lastWriteFailure ? { error: run.lastWriteFailure.error } : null,
+      savedChanges: run.changedBatches,
+    }
+  }
   const topic = memory.getMemoryTopic(unit.topicId)
   const events = dreamingEvents(memory, run).filter(event => unit.eventIds.includes(event.id)).map(event =>
     dreamingEventContent(event).length <= LIMIT ? event : { id: event.id, title: event.title, needsFullRead: true,
@@ -157,7 +222,8 @@ export function dreamingStatus(run?: DreamingRun): unknown {
   const legacyBoundary = run.status === 'paused' && run.tokenLimit != null && /消耗边界/.test(run.reason ?? '')
   return { id: run.id, sessionId: run.sessionId ?? null, status: interrupted ? 'paused' : run.status, scope: run.scope,
     activity: interrupted || run.status === 'paused'
-      ? run.replanRequired ? '需要重新开始；后台目录整理等待本轮终止' : '已暂停；后台目录整理等待本轮继续或终止'
+      ? run.scope === 'memory' ? '已暂停，进度已保存'
+        : run.replanRequired ? '需要重新开始；后台目录整理等待本轮终止' : '已暂停；后台目录整理等待本轮继续或终止'
       : run.activity,
     reason: interrupted ? '上次运行已中断，可以继续' : legacyBoundary ? '上次整理已暂停，可以继续；已完成的修改已保存。' : run.reason,
     waitingForProjection: !!run.waitingForProjection, replanRequired: !!run.replanRequired,

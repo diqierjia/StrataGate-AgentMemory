@@ -1,3 +1,16 @@
+/** A reusable method, independently stored and retrieved; evidence is never an instruction. */
+export interface Experience {
+  id: string;
+  title: string;
+  content: string;
+  scope: MemoryScope;
+  sourceMessageIds: string[];
+  sourceEventIds: string[];
+  status: 'active' | 'needs-review';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 export interface ToolTrace {
@@ -134,6 +147,8 @@ export interface EventCard extends Omit<EventCardInput, 'id' | 'sourceBlockId'> 
   id: string;
   /** Archived source cards contributing facts/provenance to this consolidated card. */
   mergedFromEventIds?: string[];
+  /** Direct provenance across sealed blocks, without storing redundant Event cards. */
+  sourceBlockIds?: string[];
   /** Conversation turn where this Event entered its long-term-memory lifecycle. */
   formedTurn?: number;
   tags: string[];

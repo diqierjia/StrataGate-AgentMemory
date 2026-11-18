@@ -1112,7 +1112,7 @@ describe('Topic Directory client interactions', () => {
     let tree = client.render(client.TopicDirectory, props)
     expect(tree.text).toContain('待整理')
     expect(tree.text).toContain('2 条')
-    const arrange = buttons(tree, '整理这些')[0]!
+    const arrange = buttons(tree, '整理记忆')[0]!
     await arrange.props.onClick()
     await client.flush()
     tree = client.render(client.TopicDirectory, props)

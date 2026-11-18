@@ -82,6 +82,7 @@ export interface TopicProjectionResult { topics: TopicProjectionProposal[] }
 export type TopicProjector = (context: TopicProjectionContext) => Promise<TopicProjectionResult>;
 
 export interface StoredMemoryTopic extends Omit<MemoryTopic, 'coverage' | 'isFallback'> {
+  dreamingManaged?: boolean;
   sourceVersions: Record<string, string>;
   /** All inputs read to derive cached language, including uncited background. */
   dependencyVersions?: Record<string, string>;
@@ -132,6 +133,8 @@ export interface TopicBootstrapState {
 
 export interface MemoryTopicState {
   dreaming?: DreamingRun;
+  dreamingWatermark?: Record<string, string>;
+  lastAutoDreamingAt?: string;
   topics: StoredMemoryTopic[];
   jobs: TopicProjectionJob[];
   projectedVersions: Record<string, string>;
@@ -274,6 +277,39 @@ export class MemoryTopicDirectory {
 
   dreaming(command: DreamingCommand, events: readonly EventCard[], now: string): DreamingRun {
     return updateDreaming(this.state, events, command, now);
+  }
+
+  saveMemoryDreamingRun(run: DreamingRun): void {
+    this.state.dreaming = run;
+  }
+
+  reconcileDreamingEvents(events: readonly EventCard[], affected: ReadonlySet<string>, redirects: ReadonlyMap<string, string>, now: string): void {
+    const versions = sourceVersions(new Map(events.filter(visible).map(event => [event.id, event])));
+    const needsOverview = new Set<string>();
+    for (const topic of this.state.topics) {
+      if (topic.invalidated || ![...topic.sourceEventIds, ...Object.keys(topic.dependencyVersions ?? {})].some(id => affected.has(id))) continue;
+      const retained = (ids: string[]) => unique(ids.map(id => redirects.get(id) ?? id).filter(id => versions.has(id)));
+      topic.sourceEventIds = retained(topic.sourceEventIds);
+      topic.sections = memoryTopicMembershipSections(topic).map(section => ({ ...section, sourceEventIds: retained(section.sourceEventIds) }));
+      topic.overview = topic.overview.filter(part => {
+        if (part.sourceEventIds.every(id => !affected.has(id))) return true;
+        for (const id of retained(part.sourceEventIds)) needsOverview.add(id);
+        return false;
+      });
+      topic.sourceVersions = Object.fromEntries(topic.sourceEventIds.map(id => [id, versions.get(id)!]));
+      topic.dependencyVersions = Object.fromEntries(retained(Object.keys(topic.dependencyVersions ?? {})).map(id => [id, versions.get(id)!]));
+      topic.updatedAt = now;
+    }
+    const assigned = new Set(this.state.topics.filter(topic => !topic.invalidated).flatMap(topic => topic.sourceEventIds));
+    for (const id of affected) {
+      const version = versions.get(id);
+      if (version && assigned.has(id) && this.state.projectedVersions[id] && !needsOverview.has(id)) this.state.projectedVersions[id] = version;
+      else delete this.state.projectedVersions[id];
+    }
+    // A dropped paragraph may also have surviving citations that were not
+    // edited. Requeue those sources without invalidating the whole chapter.
+    for (const id of needsOverview) delete this.state.projectedVersions[id];
+    this.state.topics = this.state.topics.filter(topic => topic.sourceEventIds.length > 0);
   }
 
   restore(state?: MemoryTopicState): void {
@@ -560,7 +596,8 @@ export class MemoryTopicDirectory {
   }
 
   private dreamingReservesDirectory(): boolean {
-    return !!this.state.dreaming && ['running', 'pausing', 'paused'].includes(this.state.dreaming.status);
+    const run = this.state.dreaming;
+    return !!run && (run.status === 'running' || run.status === 'pausing' || run.scope === 'directory' && run.status === 'paused');
   }
 
   private hasPendingWithVersions(events: readonly EventCard[], versions: ReadonlyMap<string, string>, now: number, mode: TopicProjectionMode): boolean {
@@ -830,13 +867,16 @@ export class MemoryTopicDirectory {
       const assignedIds = new Set(proposal.sections === undefined ? [] : assignments
         .flatMap((section) => section.sourceEventIds).filter((eventId) => batchIds.has(eventId)));
       const sections = existing && !existing.invalidated ? memoryTopicMembershipSections(existing) : [];
+      const protectedIds = new Set(existing?.dreamingManaged ? sections.flatMap(section => section.sourceEventIds) : []);
       const memberIds = new Set(membership);
       for (const section of sections) section.sourceEventIds = section.sourceEventIds.filter((eventId) =>
-        memberIds.has(eventId) && !assignedIds.has(eventId));
+        memberIds.has(eventId) && (!assignedIds.has(eventId) || protectedIds.has(eventId)));
       for (const assignment of assignments) {
+        const incoming = assignment.sourceEventIds.filter(id => !protectedIds.has(id));
+        if (!incoming.length) continue;
         const section = sections.find((current) => label(current.title) === label(assignment.title));
-        if (section) section.sourceEventIds = unique([...section.sourceEventIds, ...assignment.sourceEventIds]);
-        else sections.push({ title: assignment.title.trim(), sourceEventIds: [...assignment.sourceEventIds] });
+        if (section) section.sourceEventIds = unique([...section.sourceEventIds, ...incoming]);
+        else sections.push({ title: assignment.title.trim(), sourceEventIds: [...incoming] });
       }
       const finalSections = sections.filter((section) => section.sourceEventIds.length > 0);
       const titles = finalSections.map((section) => section.title);
@@ -853,9 +893,10 @@ export class MemoryTopicDirectory {
       // only while its section exists; never restore membership to save prose.
       for (const part of inherited) if (memoryTopicOverviewMatchesSection(part, titles)
         && !overview.some((current) => digest(current) === digest(part))) overview.push(structuredClone(part));
-      proposals.push({ id: topicId, title: job.sectionBackfillTopicId ? existing!.title : proposal.title.trim(),
+      proposals.push({ id: topicId, title: job.sectionBackfillTopicId || existing?.dreamingManaged ? existing!.title : proposal.title.trim(),
+        ...(existing?.dreamingManaged ? { dreamingManaged: true } : {}),
         ...(existing?.sectionAliases ? { sectionAliases: structuredClone(existing.sectionAliases) } : {}),
-        description: job.sectionBackfillTopicId ? existing!.description : proposal.description.trim(),
+        description: job.sectionBackfillTopicId || existing?.dreamingManaged ? existing!.description : proposal.description.trim(),
         sourceEventIds: membership, overview, sections: finalSections,
         sourceVersions: Object.fromEntries(membership.map((eventId) => [eventId, versions.get(eventId)!])),
         dependencyVersions: { ...(!existing?.invalidated ? existing?.dependencyVersions ?? {} : {}), ...job.dependencyVersions },

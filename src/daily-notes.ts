@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile, rename, rm } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { containsCredentials } from './diagnostics.js'
@@ -50,6 +50,17 @@ export class DailyNotes {
     try { return (await readdir(this.directory(namespace))).filter(name => /^\d{4}-\d{2}-\d{2}\.md$/.test(name)).map(name => name.slice(0, 10)).sort().reverse() }
     catch (error) { if (missing(error)) return []; throw error }
   }
+
+  async versions(namespace: string): Promise<Record<string, string>> {
+    const entries = await Promise.all((await this.dates(namespace)).map(async date => {
+      try {
+        const info = await stat(join(this.directory(namespace), `${date}.md`))
+        return [date, `${info.mtimeMs}:${info.size}`] as const
+      }
+      catch (error) { if (missing(error)) return null; throw error }
+    }))
+    return Object.fromEntries(entries.flatMap(entry => entry ? [entry] : []))
+  }
   /** 总览用：事项条数与最近一次写入时间。只读本地 Markdown，不建证据批次。 */
   async usage(namespace: string): Promise<{ items: number; updatedAt: string | null }> {
     const dates = await this.dates(namespace)
@@ -68,7 +79,7 @@ export class DailyNotes {
   private load(namespace: string, date: string): Promise<string> {
     return readFile(join(this.directory(namespace), `${validDate(date)}.md`), 'utf8')
   }
-  async write(namespace: string, args: DailyWrite) {
+  async write(namespace: string, args: DailyWrite, checkpoint?: { expectedVersion: string | null; beforePublish: () => Promise<void> }) {
     const date = validDate(args.date ?? dailyDate(new Date(), this.timeZone))
     if (typeof args.title !== 'string' || !args.title.trim() || /[\r\n]/.test(args.title)) throw new TypeError('title 必须是非空单行事项名称')
     if (typeof args.content !== 'string' || (args.old_text !== undefined && (typeof args.old_text !== 'string' || !args.old_text))) throw new TypeError('content 必须为字符串，old_text 必须为非空原文')
@@ -77,6 +88,9 @@ export class DailyNotes {
     const run = (queues.get(path) ?? Promise.resolve()).catch(() => {}).then(async () => {
       let previous: string | undefined
       try { previous = await this.load(namespace, date) } catch (error) { if (!missing(error)) throw error }
+      if (checkpoint && (previous === undefined ? null : dailyVersion(previous)) !== checkpoint.expectedVersion) {
+        throw new Error('笔记已变化，请重新读取后再修改。')
+      }
       const original = previous ?? `# ${date}\n`
       const item = items(original).find(item => item.title === args.title)?.text
       const current = item ?? `未找到事项《${args.title}》，以下为 ${date}.md 全文：\n${original}`
@@ -103,9 +117,12 @@ export class DailyNotes {
       try {
         await writeFile(temporary, updated, { encoding: 'utf8', flag: 'wx' })
         if (previous !== undefined) { await writeFile(backup, previous, { encoding: 'utf8', flag: 'wx' }); await rename(backup, `${path}.bak`) }
+        await checkpoint?.beforePublish()
         await rename(temporary, path)
       } finally { await rm(temporary, { force: true }); await rm(backup, { force: true }) }
-      return { date, filename: `${date}.md`, title: args.title, operation, message: `已保存到 ${date}.md：《${args.title}》（${operation}）。` }
+      const info = checkpoint ? await stat(path) : undefined
+      return { date, filename: `${date}.md`, title: args.title, operation, message: `已保存到 ${date}.md：《${args.title}》（${operation}）。`,
+        ...(info ? { version: `${info.mtimeMs}:${info.size}` } : {}) }
     })
     queues.set(path, run)
     try { return await run } finally { if (queues.get(path) === run) queues.delete(path) }
@@ -144,4 +161,8 @@ export class DailyNotes {
     if ((header + notice).length <= this.budget) return header + notice
     return header + `\n[Omitted for length: ${records.length} note dates (${records[records.length - 1]!.date} to ${records[0]!.date}). Use memory_daily_read to list dates and read their full text.]`
   }
+}
+
+function dailyVersion(text: string): string {
+  return createHash('sha256').update(JSON.stringify(text)).digest('hex')
 }

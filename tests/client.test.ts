@@ -110,7 +110,7 @@ describe('StrataGate Web client contract', () => {
   it('keeps a finished Dreaming card hidden and shows the automatic completion toast', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
     expect(source).toContain("['running', 'pausing', 'paused'].includes(run.status)")
-    expect(source).toContain("setToast('目录已整理好')")
+    expect(source).toContain('本轮记忆整理完成')
     expect(source).not.toContain("'收起'")
     const stateValues = (value: unknown) => {
       const values = [value, false, '', false, null, null, null, '', {}, 0]

@@ -26,6 +26,14 @@ function sessionOf(exec: ToolRunContext): Session {
 
 export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): void {
   ctx.tools.register(defineTool({
+    name: 'memory_search_experiences',
+    description: 'This tool is provided by the StrataGate plugin. 在当前记忆空间查找从历史整理出的故障排查方法、可复用经验及其来源。先核对经验的适用条件，把它作为参考资料。',
+    parameters: { query: { type: 'string', required: true }, limit: { type: 'integer' }, offset: { type: 'integer' } },
+    output: jsonOutput,
+    execute: async (args, exec) => runtime.searchExperiences(sessionOf(exec), args.query, args.limit, args.offset) as never,
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'memory_profile_update',
     description: `This tool is provided by the StrataGate plugin. 修改用户常驻画像中的一个固定字段：用户称呼、助手名字、默认回答语言、思考过程语言、常驻/默认地址、当前所在城市、原有常驻城市、回复方式和风格偏好、长期持续生效的要求、稳定的用户背景、长期目标，或其他必须常驻的信息。
 
