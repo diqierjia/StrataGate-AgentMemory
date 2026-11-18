@@ -5,7 +5,7 @@ import type { RawMessageIndexDelta, StrataGateSnapshot } from './storage.js';
 /** Business-unit change set. SQLite still owns transactions and rollback. */
 export const RECORD_COLLECTIONS = ['blocks', 'summaryJobs', 'events', 'agentEvents', 'elements',
   'extractionJobs', 'elementProjectionJobs', 'usageReceipts', 'ingestionReceipts',
-  'externalMemoryImportJobs', 'successfulModelResponses'] as const;
+  'externalMemoryImportJobs', 'successfulModelResponses', 'experiences'] as const;
 export type RecordCollection = typeof RECORD_COLLECTIONS[number];
 export const recordId = (record: { id?: string; blockId?: string }): string => record.id ?? record.blockId!;
 

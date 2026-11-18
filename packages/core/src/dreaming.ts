@@ -1,5 +1,6 @@
+import { dreamingEventVersion, updateDreamingMemory, type DreamingDiscovery } from './dreaming-v2.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, type MemoryTopicState, type MemoryTopicOverview } from './topics.js';
+import { MEMORY_TOPIC_PROJECTOR_VERSION, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, type MemoryTopicState, type MemoryTopicOverview } from './topics.js';
 import { validateTopicOverviewText } from './topic-diagnostics.js';
 import type { EventCard } from './types.js';
 import { estimateTokens } from './blocks.js';
@@ -13,10 +14,18 @@ export const DREAMING_SOURCE_PAGE_CHARACTERS = 12_000;
 /** A generous per-batch write boundary; explicit resume grants another window. */
 export const DREAMING_BATCH_WRITE_LIMIT = 64;
 const DREAMING_IDLE_CALL_LIMIT = 12;
-export interface DreamingUnit { topicId: string; eventIds: string[] }
+export interface DreamingUnit { topicId: string; eventIds: string[]; blockIds?: string[]; messageIds?: string[]; noteDates?: string[] }
 export interface DreamingTrace { tool: string; args: Record<string, unknown>; result: unknown }
 export interface DreamingRun {
-  id: string; policyVersion: number; scope: 'directory';
+  id: string; policyVersion: number; scope: 'directory' | 'memory';
+  discoveryVersions?: Record<string, string>;
+  readVersions?: Record<string, string>;
+  searchedExperiences?: boolean;
+  includeAgentEvents?: boolean;
+  lastToolSignature?: string;
+  interrupted?: boolean;
+  appliedOperations?: Record<string, { id?: string; saved: boolean }>;
+  trigger?: 'manual' | 'automatic';
   status: 'running' | 'pausing' | 'paused' | 'completed' | 'terminated';
   owner: string; epoch: number; leaseUntil: string | null;
   sessionId?: string;
@@ -39,14 +48,14 @@ export interface DreamingRun {
   createdAt: string; updatedAt: string;
 }
 export type DreamingDirectoryOperation =
-  | { kind: 'rename-chapter'; title: string; description?: string }
+  | { kind: 'rename-chapter' | 'create-chapter'; title: string; description?: string; eventIds?: string[] }
   | { kind: 'rename-section'; from: string; title: string }
   | { kind: 'merge-sections'; from: string[]; title: string }
   | { kind: 'move-events'; eventIds: string[]; title: string }
   | { kind: 'set-overview' | 'append-overview'; title: string; entries: MemoryTopicOverview[] }
   | { kind: 'rewrite-overview'; titles: string[]; entries: Array<MemoryTopicOverview & { title: string }> };
 export type DreamingCommand =
-  | { kind: 'start'; owner: string; allowedEventIds?: string[] }
+  | { kind: 'start'; owner: string; allowedEventIds?: string[]; discovery?: DreamingDiscovery; trigger?: 'manual' | 'automatic' }
   | { kind: 'resume'; id: string; owner: string }
   | { kind: 'pause'; id: string }
   | { kind: 'terminate'; id: string }
@@ -55,8 +64,9 @@ export type DreamingCommand =
   | { kind: 'bind-session'; id: string; owner: string; epoch: number; sessionId: string }
   | { kind: 'model-step'; id: string; owner: string; epoch: number; estimatedTokens: number }
   | { kind: 'model-usage'; id: string; owner: string; epoch: number; estimatedTokens: number }
-  | { kind: 'apply'; id: string; owner: string; epoch: number; operations: DreamingDirectoryOperation[] }
-  | { kind: 'suspend'; id: string; owner: string; epoch: number; reason: string; replanRequired?: boolean };
+  | { kind: 'apply'; id: string; owner: string; epoch: number; operations: DreamingDirectoryOperation[]; topicId?: string; topicVersion?: string }
+  | { kind: 'memory-write'; id: string; owner: string; epoch: number }
+  | { kind: 'suspend'; id: string; owner: string; epoch: number; reason: string; replanRequired?: boolean; interrupted?: boolean };
 
 export function dreamingTopicVersion(topic: unknown): string {
   return createHash('sha256').update(JSON.stringify(topic)).digest('hex');
@@ -110,18 +120,23 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
   let run = state.dreaming;
   if (command.kind === 'start') {
     if (run && ['running', 'pausing', 'paused'].includes(run.status)) throw new Error('A Dreaming run already exists; resume or terminate it');
-    const units = planUnits(state, sources);
+    const units = command.discovery ? (command.discovery.units.length ? command.discovery.units : [{ topicId: '', eventIds: [] }]) : planUnits(state, sources);
     const waitingForProjection = state.jobs.some(job => job.status === 'running' && Date.parse(job.leaseUntil ?? job.updatedAt) > Date.parse(now));
     if (!units.length && !waitingForProjection) throw new Error('尚无可整理的目录章节');
-    run = { id: `dream_${randomUUID()}`, policyVersion: DREAMING_POLICY_VERSION, scope: 'directory', status: 'running', owner: command.owner,
+    run = { id: `dream_${randomUUID()}`, policyVersion: command.discovery ? 2 : DREAMING_POLICY_VERSION, scope: command.discovery ? 'memory' : 'directory', status: 'running', owner: command.owner,
       epoch: 1, leaseUntil: new Date(Date.parse(now) + DREAMING_LEASE_MS).toISOString(), units, cursor: 0,
-      sourceVersions: Object.fromEntries([...sources].map(([id, event]) => [id, memoryTopicEventFingerprint(event)])),
+      sourceVersions: command.discovery ? {} : Object.fromEntries([...sources].map(([id, event]) => [id, memoryTopicEventFingerprint(event)])),
       evidenceVersions: {}, topicVersion: null, trace: [], calls: 0, estimatedTokens: 0, changedBatches: 0, readOffsets: {}, idleCalls: 0,
       tokenLimit: null, activity: '正在读取目录', reason: null, createdAt: now, updatedAt: now };
     if (waitingForProjection) {
       run.waitingForProjection = true;
       if (command.allowedEventIds) run.pendingAllowedEventIds = [...command.allowedEventIds];
       run.activity = '等待当前后台目录整理完成，随后开始 Dreaming';
+    }
+    if (command.discovery) {
+      run.discoveryVersions = command.discovery.versions; run.readVersions = {}; run.appliedOperations = {}; run.trigger = command.trigger ?? 'manual';
+      run.includeAgentEvents = !command.allowedEventIds;
+      if (run.trigger === 'automatic') state.lastAutoDreamingAt = now;
     }
     state.dreaming = run;
     return structuredClone(run);
@@ -139,9 +154,9 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
   if (command.kind === 'resume') {
     const expired = !!run.leaseUntil && Date.parse(run.leaseUntil) <= Date.parse(now);
     if (run.status !== 'paused' && !(expired && ['running', 'pausing'].includes(run.status))) throw new Error('Dreaming is not paused');
-    if (run.policyVersion !== DREAMING_POLICY_VERSION) throw new Error('Dreaming policy changed; terminate this run and start again');
+    if (run.scope !== 'memory' && run.policyVersion !== DREAMING_POLICY_VERSION) throw new Error('Dreaming policy changed; terminate this run and start again');
     if (run.replanRequired) throw new Error(run.reason ?? '请终止本轮后重新开始；已保存的修改会保留');
-    if (!run.waitingForProjection && run.topicVersion) {
+    if (run.scope !== 'memory' && !run.waitingForProjection && run.topicVersion) {
       const unit = run.units[run.cursor];
       const topic = state.topics.find(t => t.id === unit?.topicId && !t.invalidated);
       if (!topic || dreamingTopicVersion(topic) !== run.topicVersion
@@ -152,6 +167,8 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     }
     run.tokenLimit = null;
     run.status = 'running'; run.owner = command.owner; run.epoch++; run.reason = null;
+    delete run.interrupted;
+    if (run.scope === 'memory') run.waitingForProjection = state.jobs.some(job => job.status === 'running' && Date.parse(job.leaseUntil ?? job.updatedAt) > Date.parse(now));
     run.idleCalls = 0; run.idleModelSteps = 0;
     run.batchWriteStart = run.changedBatches;
     run.activity = '正在继续'; run.leaseUntil = new Date(Date.parse(now) + DREAMING_LEASE_MS).toISOString(); run.updatedAt = now;
@@ -175,6 +192,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     run.status = 'paused'; run.leaseUntil = null; run.activity = '已暂停';
     run.reason = command.kind === 'suspend' ? command.reason : null;
     if (command.kind === 'suspend' && command.replanRequired) run.replanRequired = true;
+    if (command.kind === 'suspend' && command.interrupted) run.interrupted = true;
     return structuredClone(run);
   }
   if (command.kind === 'model-step' || command.kind === 'model-usage') {
@@ -201,8 +219,10 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     // including new chapters from the pre-existing projection, exactly once.
     const pendingAllowed = run.pendingAllowedEventIds && new Set(run.pendingAllowedEventIds);
     const freshSources = new Map(events.filter(event => live(event) && (!pendingAllowed || pendingAllowed.has(event.id))).map(event => [event.id, event]));
-    run.units = planUnits(state, freshSources);
-    run.sourceVersions = Object.fromEntries([...freshSources].map(([id, event]) => [id, memoryTopicEventFingerprint(event)]));
+    if (run.scope !== 'memory') {
+      run.units = planUnits(state, freshSources);
+      run.sourceVersions = Object.fromEntries([...freshSources].map(([id, event]) => [id, memoryTopicEventFingerprint(event)]));
+    }
     delete run.waitingForProjection; delete run.pendingAllowedEventIds;
     if (!run.units.length) {
       run.status = 'completed'; run.leaseUntil = null; run.activity = '暂无可整理的目录章节';
@@ -210,10 +230,31 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     }
   }
   if (run.waitingForProjection) throw new Error('Dreaming is waiting for the current directory projection');
-  const unit = run.units[run.cursor];
+  if (run.scope === 'memory') {
+    const saved = updateDreamingMemory(state, run, command, events);
+    if (saved) return saved;
+  }
+  const unit = run.scope === 'memory' && command.kind === 'apply' ? { topicId: command.topicId, eventIds: [...sources.keys()] } : run.units[run.cursor];
   if (!unit) throw new Error('No remaining Dreaming unit');
+  if (run.scope === 'memory' && command.kind === 'apply' && command.operations?.[0]?.kind === 'create-chapter') {
+    const op = command.operations[0];
+    if (command.operations.length !== 1 || !op.eventIds?.length || op.eventIds.some(id => !sources.has(id))) {
+      throw new Error('Create one chapter with existing Events, then expand it to edit its sections');
+    }
+    const title = label(op.title, 120), description = label(op.description, 400);
+    if (state.topics.some(topic => !topic.invalidated && topic.title.trim().toLowerCase() === title.toLowerCase())) throw new Error('Duplicate chapter title');
+    const ids = [...new Set(op.eventIds)];
+    const versions = Object.fromEntries(ids.map(id => [id, memoryTopicEventFingerprint(sources.get(id)!)]));
+    const template = { id: `topic_${randomUUID()}`, title, description, sourceEventIds: ids, sourceVersions: versions, dependencyVersions: { ...versions },
+      sections: [{ title: '相关事件', sourceEventIds: ids }], overview: [], projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
+      invalidated: false, dreamingManaged: true, createdAt: now, updatedAt: now };
+    state.topics.push(template);
+    Object.assign(state.projectedVersions, versions);
+    run.changedBatches++;
+    return structuredClone(run);
+  }
   const topic = state.topics.find(t => t.id === unit.topicId && !t.invalidated);
-  if (!topic || unit.eventIds.some(id => !sources.has(id) || memoryTopicEventFingerprint(sources.get(id)!) !== run.sourceVersions[id])) {
+  if (!topic || run.scope !== 'memory' && unit.eventIds.some(id => !sources.has(id) || memoryTopicEventFingerprint(sources.get(id)!) !== run.sourceVersions[id])) {
     if (command.kind === 'prepare') return requireReplan(run);
     throw new Error('Dreaming sources changed; terminate and replan');
   }
@@ -348,8 +389,8 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
       if (run.idleCalls >= DREAMING_IDLE_CALL_LIMIT) run.reason = '连续调用没有有效进展，断点已保存';
     }
   } else if (command.kind === 'apply') {
-    if (dreamingTopicVersion(topic) !== run.topicVersion) throw new Error('Directory changed during Dreaming');
-    for (const [id, version] of Object.entries(run.evidenceVersions)) {
+    if (dreamingTopicVersion(topic) !== (run.scope === 'memory' && command.kind === 'apply' ? command.topicVersion : run.topicVersion)) throw new Error('Directory changed during Dreaming');
+    for (const [id, version] of Object.entries(run.scope === 'memory' ? {} : run.evidenceVersions)) {
       if (!sources.has(id) || memoryTopicEventFingerprint(sources.get(id)!) !== version) throw new Error('Dreaming evidence changed');
     }
     const updated = structuredClone(topic);
@@ -388,7 +429,16 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         for (const part of updated.overview) if (memoryTopicOverviewMatchesSection(part, op.from)) part.title = title;
       } else if (op.kind === 'move-events') {
         const title = label(op.title);
-        if (!Array.isArray(op.eventIds) || !op.eventIds.length || op.eventIds.some(id => !unit.eventIds.includes(id) || !members.has(id))) throw new Error('Membership changes must belong to the current batch');
+        if (!Array.isArray(op.eventIds) || !op.eventIds.length || op.eventIds.some(id => !unit.eventIds.includes(id) || run.scope === 'directory' && !members.has(id))) {
+          throw new Error(run.scope === 'memory' ? 'Membership changes need available Events' : 'Membership changes must belong to the current batch');
+        }
+        if (run.scope === 'memory') for (const id of op.eventIds) if (!members.has(id)) {
+          members.add(id);
+          updated.sourceEventIds.push(id);
+          const version = memoryTopicEventFingerprint(sources.get(id)!);
+          updated.sourceVersions[id] = version;
+          (updated.dependencyVersions ??= {})[id] = version;
+        }
         let target = sections.find(s => s.title === title);
         if (!target) { target = { id: `section:${randomUUID()}`, title, sourceEventIds: [] }; sections.push(target); }
         for (const section of sections) section.sourceEventIds = section.sourceEventIds.filter(id => !op.eventIds.includes(id));
@@ -402,7 +452,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         const requireEvidence = (id: string): void => {
           if (typeof id !== 'string' || !sources.has(id)) throw new Error(`overview-source-unavailable: Event ${JSON.stringify(id)} is unknown, changed or outside the frozen run; use an available current-chapter Event`);
           if (!members.has(id)) throw new Error(`overview-source-not-in-chapter: Event ${JSON.stringify(id)} does not belong to current chapter ${JSON.stringify(topic.id)}; reading it will not authorize this citation`);
-          if (!run.evidenceVersions[id]) throw new Error(`overview-source-not-retrieved: Event ${JSON.stringify(id)} needs a complete dreaming_read {kind:"event",id:${JSON.stringify(id)}}; follow nextOffset until null`);
+          if (!(run.scope === 'memory' ? run.readVersions?.[`event:${id}`] === dreamingEventVersion(sources.get(id)!) : run.evidenceVersions[id])) throw new Error(`overview-source-not-retrieved: Event ${JSON.stringify(id)} needs a complete dreaming_read {kind:"event",id:${JSON.stringify(id)}}; follow nextOffset until null`);
         };
         const entries = op.entries.map((part, index) => {
           if (!part || !['history', 'decision', 'change', 'open-question', 'scope', 'experience'].includes(part.kind)) throw new Error(`overview-kind-invalid: entries[${index}] needs a supported kind`);
@@ -420,7 +470,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         const newSources = new Set(entries.flatMap(part => part.sourceEventIds));
         for (const id of new Set(replaced.flatMap(part => part.sourceEventIds))) {
           requireEvidence(id);
-          if (!newSources.has(id)) throw new Error(`overview-source-reference-missing: preserve existing overview evidence for Event ${JSON.stringify(id)} across ${JSON.stringify(titles)}; use rewrite-overview to relocate or consolidate facts and references atomically`);
+          if (run.scope !== 'memory' && !newSources.has(id)) throw new Error(`overview-source-reference-missing: preserve existing overview evidence for Event ${JSON.stringify(id)} across ${JSON.stringify(titles)}; use rewrite-overview to relocate or consolidate facts and references atomically`);
         }
         if (op.kind !== 'append-overview') updated.overview = updated.overview.filter(part => !memoryTopicOverviewMatchesSection(part, titles));
         // Deduplicate only the edited sections; a local rewrite must not clean
@@ -432,13 +482,17 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     }
     // No Event or chapter membership is deleted by this adapter.
     const contentVersion = directoryContent(updated);
-    if (contentVersion === directoryContent(topic) || run.contentVersions?.includes(contentVersion)) throw new Error('Directory operation repeats an unchanged or previous state');
+    if (contentVersion === directoryContent(topic) || run.scope === 'directory' && run.contentVersions?.includes(contentVersion)) throw new Error('Directory operation repeats an unchanged or previous state');
     run.contentVersions = [...(run.contentVersions ?? []), contentVersion].slice(-128);
     updated.updatedAt = now;
-    updated.dependencyVersions = { ...updated.dependencyVersions, ...run.evidenceVersions };
+    if (run.scope === 'memory') {
+      updated.dreamingManaged = true;
+      for (const id of updated.sourceEventIds) if (!topic.sourceEventIds.includes(id)) state.projectedVersions[id] = updated.sourceVersions[id]!;
+    }
+    if (run.scope === 'directory') updated.dependencyVersions = { ...updated.dependencyVersions, ...run.evidenceVersions };
     state.topics[state.topics.indexOf(topic)] = updated;
     run.topicVersion = dreamingTopicVersion(updated); run.changedBatches++; run.idleCalls = 0; run.idleModelSteps = 0;
-    if (run.changedBatches - (run.batchWriteStart ?? 0) >= DREAMING_BATCH_WRITE_LIMIT) {
+    if (run.scope !== 'memory' && run.changedBatches - (run.batchWriteStart ?? 0) >= DREAMING_BATCH_WRITE_LIMIT) {
       run.status = 'pausing'; run.activity = '正在暂停，保存本批目录修改';
       run.reason = `本批已成功写入 ${DREAMING_BATCH_WRITE_LIMIT} 次，已达到本批写入边界；检查后可以继续`;
     }

@@ -5,7 +5,8 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { StrataGate, estimateTokens, dreamingEventContent, dreamingEventContentVersion, memoryTopicEventFingerprint, DREAMING_BATCH_WRITE_LIMIT, type DreamingRun } from '@diqier/stratagate'
+import { StrataGate, estimateTokens, dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, memoryTopicEventFingerprint,
+  DREAMING_BATCH_WRITE_LIMIT, DREAMING_IDLE_TIME, type DreamingRun } from '@diqier/stratagate'
 import { memoryTopicSectionNavigation } from '../src/topics.js'
 import { StrataGateRuntime } from '../src/runtime.js'
 import { dreamingPayload, dreamingTool } from '../src/dreaming.js'
@@ -403,7 +404,7 @@ function directoryTask(options: any) {
   expect(tasks.length).toBeGreaterThan(0)
   return tasks.at(-1)
 }
-async function nativeHost(runtime: StrataGateRuntime, directory: string, stream: (options: any) => AsyncIterable<any>, mountDreamingHost = true) {
+async function nativeHost(runtime: StrataGateRuntime, directory: string, stream: (options: any) => AsyncIterable<any>, mountDreamingHost = true, scope: DreamingRun['scope'] = 'directory') {
   const ctx = new Context()
   cleanups.push(async () => { await runtime.close(); await ctx.fiber.dispose() })
   await ctx.plugin(LlmRuntime); await ctx.plugin(SystemPrompt, {}); await ctx.plugin(ToolRuntime, { mode: 'native' })
@@ -411,13 +412,183 @@ async function nativeHost(runtime: StrataGateRuntime, directory: string, stream:
   await ctx.plugin(JsonlPersistence, { root: join(directory, 'sessions'), compression: 'none' })
   await ctx.plugin(AgentLoop, { agents: [], maxParallelToolCalls: 1 })
   ctx.on('llm/stream', stream)
-  if (mountDreamingHost) runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: 'fixture' })))
+  if (mountDreamingHost) runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: 'fixture' })), scope)
   return ctx
 }
 function* nativeCall(name: string, args: unknown, id = 'call', index = 0) {
   yield { type: 'tool-call-delta', index, id, name, argumentsDelta: JSON.stringify(args) }
   yield { type: 'finish', reason: { kind: 'tool-calls' } }
 }
+
+describe('Dreaming V2 across real DSH sessions and tools', () => {
+  it('repairs cross-session memory, resumes without replay, and completes successive pages unattended', async () => {
+    const f = await fixture(0)
+    const date = '2026-11-10'
+    const add = async (threadId: string, user: string, createdAt = `${date}T12:00:00Z`) => {
+      const turn = await f.memory.appendTurn({ threadId, user, assistant: '记录。', createdAt })
+      return turn.sealedBlock!
+    }
+    const first = await add('first', 'SqliteLock：两进程写入失败。关闭持锁进程后重试成功。')
+    const second = await add('second', 'SqliteLock 再次出现。先持久化队列，关闭持锁进程后重试，重启也没有重复写入。', '2026-11-12T12:00:00Z')
+    const third = await add('third', '确认部署计划 A 变为 B；此前 A 确实执行过。', '2026-11-13T12:00:00Z')
+    for (let index = 0; index < 23; index++) await add(`archive-${index}`, `已归档的正常工作 ${index}`)
+    const cards = async (block: typeof first, title: string, summary: string, happenedStart?: string) => f.memory.addEvent({
+      title, summary, scope: 'project', sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id],
+      temporal: { ...(happenedStart ? { happenedStart } : {}) },
+    })
+    const keep = await cards(first, '处理 SQLite 写锁', '先关闭持锁进程。')
+    const duplicate1 = await cards(second, '处理 SQLite 写锁', '关闭持锁进程后再重试。')
+    const duplicate2 = await cards(first, '处理 SQLite 写锁', '同一处理记录重复。')
+    const old = await cards(first, '部署计划 A', '最初选择 A。', '2026-11-10')
+    const newer = await cards(third, '部署计划 B', '后来选择 B。', '2026-11-13')
+    const wrong = await cards(third, '虚构决定 Omega', '模型误抽取了从未发生的决定。')
+    const toCorrect = await cards(second, '必须清空队列', '错误地把持久化队列提取成清空队列。')
+    const forgottenBlock = await add('forgotten', 'PrivateRecallSentinel')
+    const hidden = await cards(forgottenBlock, '需遗忘的事实', '用户要求忘记。')
+    await f.memory.forgetEvent(hidden.id)
+    let topicId = ''
+    for (;;) {
+      const job = await f.memory.claimNextTopicProjection()
+      if (!job) break
+      const ids = job.events.map(event => event.id)
+      const result = await f.memory.completeTopicProjection(job.jobId, { topics: [{ ...(topicId ? { topicId } : {}),
+        title: '部署维护', description: '部署与写锁', sourceEventIds: ids, sections: [{ title: '维护', sourceEventIds: ids }],
+        overview: ids.includes(wrong.id) ? [{ kind: 'decision', title: '维护', text: 'Omega 是一项部署决定。', sourceEventIds: [wrong.id] }] : [] }] })
+      topicId = result.topicIds[0]!
+    }
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const storage = new SqliteStorage({ filename: f.database })
+    try {
+      const state = f.memory.exportSnapshot()
+      state.graphNodes = [{ id: 'stale-omega', name: '虚构 Omega', type: 'project', currentState: '虚构状态',
+        aliases: [], status: 'active', confidence: 1, sourceEventIds: [wrong.id], facts: [],
+        createdAt: `${date}T12:00:00Z`, updatedAt: `${date}T12:00:00Z` }]
+      await storage.save(f.namespace, state, f.memory.storageRevision)
+    } finally { await storage.close() }
+
+    const runtime = runtimeFor(f.database, async () => { throw new Error('DSH native host is required') })
+    await runtime.dailyNotes.write(f.namespace, { date, title: 'SQLite 写锁', content: '今天仍被写锁阻塞。重复占位。' })
+    const originalNote = (await runtime.dailyNotes.read(f.namespace, { date })).content!
+    const messages = [first, second, third].map(block => block.l5Raw[0]!.id)
+    const eventRead = (id: string) => ['dreaming_read', { kind: 'event', id }] as const
+    const rawRead = (id: string) => ['dreaming_read', { kind: 'message', id }] as const
+    const merge = { kind: 'merge', id: keep.id, otherIds: [duplicate1.id, duplicate2.id], title: '处理 SQLite 写锁', summary: '关闭持锁进程后再重试。' }
+    const beforeRestart = [
+      ['dreaming_search', { kind: 'raw', query: 'SqliteLock' }] as const,
+      ...messages.map(rawRead), ...[keep, duplicate1, duplicate2].map(card => eventRead(card.id)),
+      ['dreaming_event', merge] as const,
+    ]
+    let firstStep = 0
+    let reachedCommit = false
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      const step = beforeRestart[firstStep++]
+      if (step) { yield* nativeCall(step[0], step[1], `v2-before-${firstStep}`); return }
+      reachedCommit = true
+      await new Promise<void>(resolve => options.signal.addEventListener('abort', resolve, { once: true }))
+      yield { type: 'finish', reason: { kind: 'aborted' } }
+    }, true, 'memory')
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(() => expect(reachedCommit).toBe(true), { timeout: 15_000 })
+    const started = (await runtime.adminDreamingStatus(f.namespace) as any).run
+    expect(started).toMatchObject({ scope: 'memory', total: 2, changedBatches: 1 })
+    const rawResult = JSON.stringify(ctx.agents.get(started.sessionId)!.session.deriveMessages())
+    expect(rawResult).toContain(second.l5Raw[0]!.id)
+    expect(rawResult).not.toContain('PrivateRecallSentinel')
+    await runtime.close()
+    await ctx.fiber.dispose()
+
+    const next = runtimeFor(f.database, async () => { throw new Error('DSH native host is required') })
+    const inspect = await f.reopen()
+    const steps: Array<readonly [string, Record<string, unknown>] | (() => Promise<readonly [string, Record<string, unknown>]>)> = [
+      ['dreaming_event', merge],
+      eventRead(old.id), eventRead(newer.id),
+      ['dreaming_event', { kind: 'merge', id: newer.id, otherIds: [old.id], title: '不应合并', summary: '两个真实的阶段。' }],
+      ['dreaming_event', { kind: 'supersede', id: newer.id, otherIds: [old.id], reason: '11 月 13 日改为 B，保留先前计划。' }],
+      eventRead(wrong.id),
+      ['dreaming_event', { kind: 'delete', id: wrong.id, reason: '原文未曾出现 Omega。' }],
+      eventRead(toCorrect.id),
+      ['dreaming_event', { kind: 'update', id: toCorrect.id, title: '保留持久化队列', summary: '重启前保留队列以免重复写入。', sourceMessageIds: [messages[1]] }],
+      ['dreaming_event', { kind: 'create', title: '重启后继续待写队列', summary: '已验证重启没有重复写入。', scope: 'project', sourceMessageIds: [messages[1]] }],
+      ['dreaming_search', { kind: 'experiences', query: 'SqliteLock' }],
+      ['dreaming_experience', { kind: 'create', title: 'SqliteLock 排查', content: '先定位持锁进程，再重试。', scope: 'project', sourceMessageIds: messages.slice(0, 2) }],
+      async () => { await inspect.reloadFromStorage(); return ['dreaming_read', { kind: 'experience', id: inspect.listExperiences()[0]!.id }] },
+      async () => { await inspect.reloadFromStorage(); return ['dreaming_experience', { kind: 'update', id: inspect.listExperiences()[0]!.id,
+        title: 'SqliteLock 排查', content: '先持久化队列，再关闭持锁进程并重试。重启后核对未重复写入。' }] },
+      ['dreaming_read', { kind: 'daily', id: date }],
+      ['dreaming_daily_write', { date, title: 'SQLite 写锁', old_text: '重复占位。', content: '', version: dreamingTopicVersion(originalNote) }],
+      ['memory_expand_topic', { id: topicId }],
+      async () => { await inspect.reloadFromStorage(); return ['dreaming_directory', { topicId, version: inspect.getDreamingTopicVersion(topicId),
+        operations: [{ kind: 'rename-section', from: '维护', title: '部署与恢复' }] }] },
+      ...Array.from({ length: 14 }, (_, index) => ['dreaming_search', { kind: 'raw', query: `unrelated-query-${index}` }] as const),
+      ['dreaming_finish', { summary: '第一批已整理' }], ['dreaming_finish', { summary: '第二批无需更改' }],
+    ]
+    let nextStep = 0
+    const nextCtx = await nativeHost(next, f.directory, async function* () {
+      const step = steps[nextStep++]
+      if (step) {
+        const [tool, args] = typeof step === 'function' ? await step() : step
+        yield* nativeCall(tool, args, `v2-after-${nextStep}`)
+        if (tool === 'dreaming_finish' && nextStep === steps.length - 1) {
+          for (const chunk of nativeCall(tool, args, 'duplicate-finish')) {
+            yield chunk.type === 'tool-call-delta' ? { ...chunk, index: 1 } : chunk
+          }
+        }
+      } else { yield { type: 'text-delta', index: 0, text: '整理完毕。' }; yield { type: 'finish', reason: { kind: 'stop' } } }
+    }, true, 'memory')
+    await next.adminDreamingControl(f.namespace, 'resume', started.id)
+    await vi.waitFor(async () => expect((await next.adminDreamingStatus(f.namespace) as any).run).toMatchObject({
+      status: 'completed', sessionId: started.sessionId, completed: 2,
+    }), { timeout: 25_000 })
+    await nextCtx.agents.get(started.sessionId)?.whenIdle()
+    const history = JSON.stringify(nextCtx.agents.get(started.sessionId)!.session.deriveMessages())
+    expect(history).toContain('different points in history')
+    expect(history).toContain('本批已完成。请根据最新任务继续。')
+    expect(history).toContain('整理完毕。')
+    await inspect.reloadFromStorage()
+    expect(inspect.listEvents().find(card => card.id === keep.id)?.sourceMessageIds).toEqual(messages.slice(0, 2))
+    expect(inspect.listEvents().filter(card => [wrong.id, duplicate1.id, duplicate2.id].includes(card.id))).toEqual([])
+    expect(inspect.listEvents().find(card => card.id === old.id)).toMatchObject({ status: 'superseded', supersededBy: newer.id })
+    expect(inspect.listEvents().find(card => card.id === newer.id)).toMatchObject({ status: 'active', temporal: { supersedesEventIds: [old.id] } })
+    expect(inspect.listEvents().find(card => card.id === toCorrect.id)?.title).toBe('保留持久化队列')
+    expect(inspect.listEvents().some(card => card.title === '重启后继续待写队列')).toBe(true)
+    expect((await inspect.searchEvents('部署计划', { limit: 20, trackRetrieval: false })).map(hit => hit.event.id)).toEqual(expect.arrayContaining([old.id, newer.id]))
+    expect(await inspect.searchEvents('Omega', { trackRetrieval: false })).toEqual([])
+    expect(inspect.getMemoryTopic(topicId)).toMatchObject({ overview: [], sections: [{ title: '部署与恢复' }] })
+    expect(inspect.listGraphNodes().flatMap(node => node.sourceEventIds)).not.toContain(wrong.id)
+    expect(next.graphEnabled).toBe(false)
+    expect(inspect.searchExperiences('SqliteLock')).toMatchObject([{ content: '先持久化队列，再关闭持锁进程并重试。重启后核对未重复写入。', sourceMessageIds: messages.slice(0, 2) }])
+    expect((await next.dailyNotes.read(f.namespace, { date })).content).toContain('今天仍被写锁阻塞。')
+    expect((await next.dailyNotes.read(f.namespace, { date })).content).not.toContain('重复占位')
+    expect(inspect.listBlocks().flatMap(block => block.l5Raw.map(message => message.id))).toEqual(expect.arrayContaining(messages))
+    expect(inspect.exportSnapshot().usageReceipts).toHaveLength(0)
+    expect((await next.adminDreamingStatus(f.namespace) as any).run.changedBatches).toBe(9)
+    expect(await inspect.startMemoryDreaming('no-self-trigger', 'automatic', await next.dailyNotes.versions(f.namespace))).toBeNull()
+  }, 60_000)
+
+  it('starts manually without Events and only starts automatically after idle time and with new changes', async () => {
+    const f = await fixture(0)
+    const runtime = runtimeFor(f.database, async () => { throw new Error('Expected native Dreaming') })
+    const host = { run: vi.fn(async (namespace: string, run: DreamingRun) => {
+      for (const _unit of run.units) await runtime.dreamingMutate(namespace, run, { kind: 'finish-unit' })
+    }), open: async () => '', close: async () => {} }
+    runtime.setDreamingHost(host)
+    const internal = runtime as unknown as { lastMainActivity: number; checkAutomaticDreaming(now: number): Promise<void> }
+    const start = Date.now()
+    internal.lastMainActivity = start
+    await internal.checkAutomaticDreaming(start + DREAMING_IDLE_TIME - 1)
+    expect(host.run).not.toHaveBeenCalled()
+    await internal.checkAutomaticDreaming(start + DREAMING_IDLE_TIME)
+    await vi.waitFor(async () => expect((await runtime.adminDreamingStatus(f.namespace) as any).run?.status).toBe('completed'))
+    expect(host.run.mock.calls[0]?.[1].trigger).toBe('automatic')
+    await f.memory.reloadFromStorage()
+    await f.memory.appendTurn({ user: '新的输入', assistant: '记录。' })
+    await internal.checkAutomaticDreaming(start + DREAMING_IDLE_TIME + 60_001)
+    expect(host.run).toHaveBeenCalledTimes(1)
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(() => expect(host.run).toHaveBeenCalledTimes(2))
+    expect(host.run.mock.calls[1]?.[1].trigger).toBe('manual')
+  })
+})
 async function historyController(ctx: Context) {
   await ctx.plugin(SessionQuery, { path: ':memory:', openAt: 'never' })
   // Exercise the host's actual history implementation, not a navigation stub.
@@ -1217,7 +1388,7 @@ describe('directory Dreaming persistence and source-only tools', () => {
     const runtime = runtimeFor(f.database, async () => { throw new Error('legacy') })
     const ctx = new Context()
     cleanups.push(async () => { await ctx.fiber.dispose() })
-    runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: 'fixture', maxTokens: 32768 })))
+    runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: 'fixture', maxTokens: 32768 })), 'directory')
     await runtime.adminDreamingControl(f.namespace, 'start')
     await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'paused', reason: expect.stringContaining('专属 Agent 会话接口') } }))
   })
@@ -1311,7 +1482,7 @@ describe('directory Dreaming persistence and source-only tools', () => {
       }
     })
     const runtime = runtimeFor(f.database, async () => { throw new Error('legacy loop must not run') })
-    runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: selectedModel, maxTokens: 32768 })))
+    runtime.setDreamingHost(new DshDreamingSessions(ctx, runtime, () => ({ provider: 'fixture', model: selectedModel, maxTokens: 32768 })), 'directory')
     cleanups.push(async () => { await runtime.close() })
     await runtime.adminDreamingControl(f.namespace, 'start')
     await vi.waitFor(async () => expect(await runtime.adminDreamingStatus(f.namespace)).toMatchObject({ run: { status: 'completed', completed: 2 } }), { timeout: 4000 })

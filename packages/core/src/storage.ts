@@ -178,6 +178,7 @@ export interface StrataGateSnapshot {
   usageReceipts: UsageReceipt[];
   ingestionReceipts: IngestionReceipt[];
   externalMemoryImportJobs: ExternalMemoryImportJob[];
+  experiences?: import('./types.js').Experience[];
   successfulModelResponses?: SuccessfulModelResponse[];
   /** Optional rebuildable projection; schema-12 snapshots without it stay valid. */
   memoryTopicState?: MemoryTopicState;
@@ -511,6 +512,7 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
   for (const key of ['openTail', 'blocks', 'summaryJobs', 'events', 'agentEvents', 'graphNodes', 'graphEdges', 'graphProjectionJobs', 'elements', 'extractionJobs', 'elementProjectionJobs', 'usageReceipts', 'ingestionReceipts', 'externalMemoryImportJobs'] as const) {
     if (!Array.isArray(snapshot[key])) throw new TypeError(`Invalid StrataGate snapshot: ${key} must be an array`);
   }
+  if (!Array.isArray(snapshot.experiences)) snapshot.experiences = [];
   if (!Array.isArray(snapshot.successfulModelResponses)) snapshot.successfulModelResponses = [];
   for (const job of snapshot.graphProjectionJobs) {
     // Schema 10 stored Graph jobs as JSON. Treat legacy failures without an

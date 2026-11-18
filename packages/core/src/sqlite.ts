@@ -597,6 +597,20 @@ CREATE TABLE IF NOT EXISTS graph_state (
   FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS event_source_blocks (
+  namespace TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  block_ids_json TEXT NOT NULL,
+  PRIMARY KEY (namespace, event_id),
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS experiences (
+  namespace TEXT NOT NULL,
+  id TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY (namespace, id),
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS memory_topic_state (
   namespace TEXT PRIMARY KEY,
   state_json TEXT NOT NULL,
@@ -1227,7 +1241,11 @@ export class SqliteStorage implements StorageAdapter {
     const topicState = hasTopics ? this.database.prepare('SELECT state_json FROM memory_topic_state WHERE namespace = ?')
       .get(key) as { state_json: string } | undefined : undefined;
 
+    const hasExperiences = this.database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiences'").get();
+    const experiences = hasExperiences ? (this.database.prepare('SELECT payload_json FROM experiences WHERE namespace = ? ORDER BY id').all(key) as Array<{payload_json: string}>)
+      .map(row => parseJson<import('./types.js').Experience>(row.payload_json, 'experiences.payload_json')) : [];
     const snapshot: StrataGateSnapshot = {
+      experiences,
       schemaVersion: space.schema_version as StrataGateSnapshot['schemaVersion'],
       currentTurn: space.current_turn,
       blockTurnSize: space.block_turn_size,
@@ -1849,7 +1867,7 @@ export class SqliteStorage implements StorageAdapter {
     }
 
     const changedEvent = (id: string): boolean => includes('events', id) || includes('agentEvents', id);
-    const clearEventAuxiliary = (table: 'event_merge_sources' | 'event_metadata'): void => {
+    const clearEventAuxiliary = (table: 'event_merge_sources' | 'event_metadata' | 'event_source_blocks'): void => {
       if (!changes) this.database.prepare(`DELETE FROM ${table} WHERE namespace = ?`).run(namespace);
       else for (const id of new Set([...changes.changed.get('events')!, ...changes.changed.get('agentEvents')!,
         ...changes.removed.get('events')!, ...changes.removed.get('agentEvents')!])) {
@@ -1857,10 +1875,16 @@ export class SqliteStorage implements StorageAdapter {
       }
     };
     clearEventAuxiliary('event_merge_sources');
+    clearEventAuxiliary('event_source_blocks');
+    if (changes) for (const id of new Set([...changes.removed.get('events')!, ...changes.removed.get('agentEvents')!])) {
+      this.database.prepare('DELETE FROM event_vectors WHERE namespace = ? AND event_id = ?').run(namespace, id);
+    }
     const insertMergedSources = this.database.prepare('INSERT INTO event_merge_sources (namespace, event_id, source_ids_json) VALUES (?, ?, ?)');
+    const insertSourceBlocks = this.database.prepare('INSERT INTO event_source_blocks (namespace, event_id, block_ids_json) VALUES (?, ?, ?)');
     for (const event of [...snapshot.events, ...snapshot.agentEvents]) {
       if (!changedEvent(event.id)) continue;
       if (event.mergedFromEventIds?.length) insertMergedSources.run(namespace, event.id, JSON.stringify(event.mergedFromEventIds));
+      if (event.sourceBlockIds?.length) insertSourceBlocks.run(namespace, event.id, JSON.stringify(event.sourceBlockIds));
     }
     clearEventAuxiliary('event_metadata');
     const insertEventMetadata = this.database.prepare(`
@@ -2082,6 +2106,13 @@ export class SqliteStorage implements StorageAdapter {
       insertIngestionReceipt.run(namespace, receipt.id, receipt.createdAt);
     }
 
+    if (!changes) this.database.prepare('DELETE FROM experiences WHERE namespace = ?').run(namespace);
+    else for (const id of new Set([...changes.changed.get('experiences')!, ...changes.removed.get('experiences')!])) {
+      this.database.prepare('DELETE FROM experiences WHERE namespace = ? AND id = ?').run(namespace, id);
+    }
+    for (const experience of snapshot.experiences ?? []) if (includes('experiences', experience.id)) {
+      this.database.prepare('INSERT INTO experiences (namespace,id,payload_json) VALUES (?,?,?)').run(namespace, experience.id, JSON.stringify(experience));
+    }
     if (!changes) this.database.prepare('DELETE FROM external_memory_import_jobs WHERE namespace = ?').run(namespace);
     else for (const id of new Set([...changes.changed.get('externalMemoryImportJobs')!, ...changes.removed.get('externalMemoryImportJobs')!])) {
       this.database.prepare('DELETE FROM external_memory_import_jobs WHERE namespace = ? AND id = ?').run(namespace, id);
@@ -2493,6 +2524,13 @@ export class SqliteStorage implements StorageAdapter {
     for (const row of rows) {
       const event = byId.get(row.event_id);
       if (event) event.mergedFromEventIds = parseJson<string[]>(row.source_ids_json, 'event_merge_sources.source_ids_json');
+    }
+    if (!this.database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_source_blocks'").get()) return;
+    const blocks = this.database.prepare('SELECT event_id, block_ids_json FROM event_source_blocks WHERE namespace = ?')
+      .all(namespace) as Array<{ event_id: string; block_ids_json: string }>;
+    for (const row of blocks) {
+      const event = byId.get(row.event_id);
+      if (event) event.sourceBlockIds = parseJson<string[]>(row.block_ids_json, 'event_source_blocks.block_ids_json');
     }
   }
 

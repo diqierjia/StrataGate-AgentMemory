@@ -69,7 +69,7 @@ StrataGate is a cross-session memory plugin for DeepSeek Harness. Daily notes he
 
    (1) **Events record what happened.** Important decisions, preferences, requirements, and changes become Events with scope, time, and source references. AI evaluates potential duplicates; uncertain cases can be reviewed by the user, and the processing history remains traceable. → [Event memory](#event-cards)
 
-   (2) **The topic directory shows what has been remembered.** Related Events form chapters, sections, and source-linked overviews. The agent can browse topics before retrieving specific Events. Users can also start Dreaming, a dedicated agent that reviews and organizes the existing directory. → [Topic directory](#memory-topics)
+   (2) **The topic directory shows what has been remembered.** Related Events form chapters, sections, and source-linked overviews. The agent can browse topics before retrieving specific Events. Users can also start Dreaming, a dedicated agent that reviews and organizes historical memory. → [Topic directory](#memory-topics)
 
    (3) **The optional knowledge graph organizes current state.** When enabled, it derives current information and relationships about people, projects, tools, and other entities from Events, retaining their sources. The graph is off by default; Event cards, topics, and ordinary retrieval work independently. → [Current-state graph](#current-state-graph)
 
@@ -293,9 +293,9 @@ A Topic represents a lasting subject such as “Project X,” with sections for 
 
 For “Where did we leave the project's technical plan?”, the agent can find the topic, read its overview, then retrieve specific Events to verify agreed choices and outstanding decisions.
 
-**Dreaming helps organize an existing directory.** Users can start a dedicated agent from the directory page to review existing Events and overviews and adjust chapters, sections, Event membership, and overview content. Its progress can be viewed, paused, resumed, or terminated; saved changes remain preserved.
+**Dreaming reviews historical memory.** Start it from the directory even when there are no unassigned Events. Its dedicated agent can inspect conversations across sessions, correct missing or erroneous Events, consolidate duplicates, update daily notes, and maintain the directory and reusable experiences. It also starts automatically when new material exists, the main agent has been idle for about 30 minutes, and at least 24 hours have passed since the last automatic start. You can view, pause, resume, or stop a run; saved changes are kept.
 
-Dreaming organizes the directory and overviews without rewriting original Event facts or reinforcing memory through organization or reading. **The directory helps locate information; specific facts still need checking against their sources.**
+Dreaming can remove incorrect or redundant derived Events. It keeps original conversations, earlier facts that were true at the time, and Profile settings. Later sessions can look up reusable methods with `memory_search_experiences`. **The directory helps locate information; specific facts still need checking against their sources.**
 
 <a id="persistent-profile"></a>
 
@@ -523,7 +523,7 @@ npm run build
 | [DeepSeek Harness guide](docs/DSH.md) | Installation, configuration, UI, memory tools, and recovery |
 | [Memory directory and topic overviews (Chinese)](docs/MEMORY_TOPICS.zh-CN.md) | Chapters and sections, source tracing, background organization, budgets, and recovery |
 | [Event extraction rules (Chinese)](docs/event-extractor.md) | Extraction decisions, scope, duplicates and historical relationships, and compatibility |
-| [Dreaming directory organization (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md) | Organization scope, run controls, source protection, and recovery |
+| [Dreaming memory maintenance (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md) | Scope, triggers, deletion, and recovery |
 | [Optional knowledge graph (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md) | Defaults, enabling, pausing, disabling, and historical backfill |
 | [Manual level selection (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/user-operation-priority.md) | Content preview, application, insufficient capacity, and recovery |
 | [Architecture](docs/ARCHITECTURE.md) | Layering, Events and graph, retrieval, evidence gate, weights, storage, and core APIs |

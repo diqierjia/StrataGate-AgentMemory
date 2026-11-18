@@ -3307,14 +3307,16 @@ window.__ModuleLoader__.load({
       }, [confirmStop, busy])
       const request = React.useRef(null)
       const previousStatus = React.useRef(initialRun?.status)
+      const previousRunId = React.useRef(initialRun?.id)
       const [toast, setToast] = React.useState('')
       React.useEffect(() => {
         if (initialRun && (!run || initialRun.updatedAt > run.updatedAt)) {
           if (initialRun.status === 'completed' && previousStatus.current && previousStatus.current !== 'completed') {
-            setToast('目录已整理好')
+            setToast(initialRun.scope === 'memory' ? '本轮记忆整理完成' : '目录已整理好')
             previousStatus.current = 'completed'
           }
           setRun(initialRun)
+          previousRunId.current = initialRun.id
         }
       }, [initialRun])
       React.useEffect(() => {
@@ -3324,19 +3326,22 @@ window.__ModuleLoader__.load({
       }, [toast])
       const accept = React.useCallback(value => {
         const next = value?.run || null
-        if (next && previousStatus.current !== next.status && ['completed', 'paused', 'terminated'].includes(next.status)) void onDirectoryChanged?.()
-        if (next?.status === 'completed' && previousStatus.current !== 'completed') setToast('目录已整理好')
+        const changed = previousRunId.current !== next?.id || previousStatus.current !== next?.status
+        if (next && changed && ['completed', 'paused', 'terminated'].includes(next.status)) void onDirectoryChanged?.()
+        if (next?.status === 'completed' && changed) setToast(next.scope === 'memory' ? '本轮记忆整理完成' : '目录已整理好')
+        previousRunId.current = next?.id
         previousStatus.current = next?.status
         setRun(next); setError('')
       }, [onDirectoryChanged])
       React.useEffect(() => {
-        if (!active || !run || !['running', 'pausing'].includes(run.status)) return
+        if (!active || !namespace) return
+        const pollingDelay = ['running', 'pausing'].includes(run?.status) ? 2000 : 45_000
         const controller = new AbortController()
         let timer
         const poll = () => api('dreaming', { namespace }, { signal: controller.signal }).then(accept).catch(() => {
           if (!controller.signal.aborted) setError('状态读取失败，可重新读取。')
-        }).finally(() => { if (!controller.signal.aborted) timer = window.setTimeout(poll, 2000) })
-        timer = window.setTimeout(poll, 1500)
+        }).finally(() => { if (!controller.signal.aborted) timer = window.setTimeout(poll, pollingDelay) })
+        timer = window.setTimeout(poll, pollingDelay)
         return () => { controller.abort(); window.clearTimeout(timer) }
       }, [active, namespace, run?.id, run?.status, accept])
       React.useEffect(() => () => request.current?.abort(), [])
@@ -3370,15 +3375,15 @@ window.__ModuleLoader__.load({
       const showCard = Boolean(run) && ['running', 'pausing', 'paused'].includes(run.status)
       if (!showCard) return h(React.Fragment, null, h('style', null, DREAMING_STYLES + DIRECTORY_PREVIEW_STYLES),
         toast ? h('p', { className: 'sg-dreaming-toast', role: 'status', 'aria-live': 'polite' }, toast) : null,
-        h('button', { type: 'button', className: 'sg-dreaming-start' + (inline ? ' sg-dreaming-arrange' : ''), disabled: busy || !available, onClick: () => control('start') }, inline ? '整理这些' : '🌙 Dreaming'),
+        h('button', { type: 'button', className: 'sg-dreaming-start' + (inline ? ' sg-dreaming-arrange' : ''), disabled: busy || !available, onClick: () => control('start') }, inline ? '整理记忆' : '🌙 Dreaming'),
         error ? h('p', { className: 'sg-dreaming-failure', role: 'alert' }, error, h('button', { type: 'button', className: 'sg-dreaming-retry', disabled: busy, onClick: () => api('dreaming', { namespace }).then(accept).catch(() => setError('状态读取失败，请稍后重试。')) }, '重试')) : null)
-      return h('aside', { className: 'sg-dreaming ' + (running ? 'running' : 'resting') + (inline ? ' inline' : ''), 'aria-label': 'Dreaming 目录整理', 'data-testid': 'stratagate-dreaming' },
+      return h('aside', { className: 'sg-dreaming ' + (running ? 'running' : 'resting') + (inline ? ' inline' : ''), 'aria-label': 'Dreaming 记忆整理', 'data-testid': 'stratagate-dreaming' },
         h('style', null, DREAMING_STYLES + DIRECTORY_PREVIEW_STYLES),
         toast ? h('p', { className: 'sg-dreaming-toast', role: 'status', 'aria-live': 'polite' }, toast) : null,
         h('div', { className: 'sg-dreaming-row' },
           h('div', { className: 'sg-dreaming-animation', 'aria-hidden': 'true' }, h('span', { className: 'sg-dreaming-moon' }, '☾'), h('span', { className: 'sg-dreaming-star' }, '✦'), h('span', { className: 'sg-dreaming-sleep' }, 'z')),
           h('div', { className: 'sg-dreaming-copy', role: 'status', 'aria-live': 'polite' }, h('strong', null, running ? run.waitingForProjection ? 'Dreaming 正在准备…' : '正在做梦…' : pausing ? '正在暂停…' : 'Dreaming 已暂停'),
-            h('span', null, run?.activity || '整理目录、总览与经验')),
+            h('span', null, run?.activity || '正在整理记忆')),
           h('div', { className: 'sg-dreaming-actions' },
             running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
             paused && !run.replanRequired ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
@@ -3390,7 +3395,7 @@ window.__ModuleLoader__.load({
         confirmStop ? h('div', { className: 'sg-import-overlay', role: 'presentation' }, h('section', { ref: stopDialog, className: 'sg-dlg', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'sg-stop-title', 'aria-describedby': 'sg-stop-copy' },
           h('h3', { id: 'sg-stop-title' }, '终止这次整理？'),
           h('div', { className: 'sg-steps', 'aria-hidden': 'true' }, Array.from({ length: 7 }, (_, index) => h('i', { key: index, className: index < Math.min(7, Math.max(0, Math.round(run.completed / Math.max(1, run.total) * 7))) ? '' : 'todo' }))),
-          h('div', { className: 'sg-steps-l', id: 'sg-stop-copy' }, h('span', null, h('b', null, Math.min(7, Math.max(0, Math.round(run.completed / Math.max(1, run.total) * 7))) + ' 章'), '整理好的会保留'), h('span', null, (7 - Math.min(7, Math.max(0, Math.round(run.completed / Math.max(1, run.total) * 7)))) + ' 章保持原样')),
+          h('div', { className: 'sg-steps-l', id: 'sg-stop-copy' }, h('span', null, '已保存的修改会保留。'), h('span', null, '已完成 ' + run.completed + '/' + run.total + ' 批。')),
           h('div', { className: 'sg-dlg-acts' }, h('button', { type: 'button', className: 'sg-btn ghost', disabled: busy, onClick: () => setConfirmStop(false) }, '继续整理'), h('button', { type: 'button', className: 'sg-btn danger', disabled: busy, onClick: async () => { await control('terminate'); setConfirmStop(false) } }, '终止')))) : null)
     }
 
@@ -3441,11 +3446,11 @@ window.__ModuleLoader__.load({
         const stamp = month && day ? month + '/' + day : formatTime(dreamRun.updatedAt)
         return h('span', { className: 'sg-toc-dream' },
           h('button', { type: 'button', className: 'sg-toc-dream-run', disabled: summaryBusy || !dreamRun.sessionId || !onOpenDreamingSession, onClick: openDreamRun, title: dreamRun.sessionId ? '打开当轮 Dreaming 会话' : '本轮没有创建会话' },
-            '上次整理 ' + stamp + (changed ? ' · ' + changed + ' 节 → ' + sections + ' 节' : '') + (dreamRun.status === 'terminated' ? ' · 已终止' : '')),
+            '上次整理 ' + stamp + (changed ? dreamRun.scope === 'memory' ? ' · 保存 ' + changed + ' 次修改' : ' · ' + changed + ' 节 → ' + sections + ' 节' : '') + (dreamRun.status === 'terminated' ? ' · 已终止' : '')),
           // A schematic “merge” glyph, matching the timeline strip; not a count.
           h('span', { className: 'sg-toc-dream-merge', 'aria-hidden': 'true' },
             Array.from({ length: 4 }, (_, index) => h('i', { key: 'f' + index })), h('span', null, '→'), Array.from({ length: 2 }, (_, index) => h('i', { key: 't' + index, className: 'o' }))),
-          dreamRun.status === 'terminated' ? h('span', { className: 'sg-toc-dream-note' }, '已整理的章节已保留') : null,
+          dreamRun.status === 'terminated' ? h('span', { className: 'sg-toc-dream-note' }, dreamRun.scope === 'memory' ? '已保存的修改已保留' : '已整理的章节已保留') : null,
           h('button', { type: 'button', className: 'sg-toc-dream-close', 'aria-label': '关闭这次整理记录', onClick: () => { dismissDream(dreamRun.id); setDreamHidden(true) } }, '×'),
           summaryError ? h('span', { className: 'sg-toc-dream-error', role: 'alert' }, summaryError, h('button', { type: 'button', className: 'sg-toc-dream-retry', onClick: openDreamRun, disabled: summaryBusy }, '重试')) : null)
       }
@@ -3466,11 +3471,11 @@ window.__ModuleLoader__.load({
               h('p', { className: 'sg-leaf-sum' }, (firstSection.part.paragraphs || []).map((paragraph) => paragraph.text || '').filter(Boolean).join('\n\n') || '点左侧小节，翻开具体事件。')) : null,
             // Pending events stay reachable through the existing lightweight
             // disclosure; CSS hides the old "待整理 N 条" label in the book.
-            unassignedTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' },
+            h('section', { className: 'sg-topic-pending', 'aria-label': unassignedTotal ? '待整理事件' : '记忆整理' },
               h('div', { className: 'sg-topic-pending-heading' },
-                h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', { className: 'sg-topic-pending-label' }, '待整理'), h('span', null, unassignedTotal + ' 条'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')),
-                h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: unassignedTotal > 0 && !blocked, inline: true, onDirectoryChanged, onOpenDreamingSession })),
-              h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null,
+                unassignedTotal ? h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', { className: 'sg-topic-pending-label' }, '待整理'), h('span', null, unassignedTotal + ' 条'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')) : null,
+                h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: !blocked, inline: true, onDirectoryChanged, onOpenDreamingSession })),
+              unassignedTotal ? h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' })) : null),
             h('div', { className: 'sg-toc-foot sg-leaf-foot' }, dreamSummary(), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
     }
 
