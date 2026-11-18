@@ -421,6 +421,107 @@ function* nativeCall(name: string, args: unknown, id = 'call', index = 0) {
 }
 
 describe('Dreaming V2 across real DSH sessions and tools', () => {
+  async function inspectSource(memory: StrataGate, run: DreamingRun, kind: string, id: string) {
+    const action = { tool: 'dreaming_read', args: { kind, id } }
+    const { result, evidenceIds } = await dreamingTool(memory, run, action)
+    return memory.dreaming({ ...claim(run), kind: 'checkpoint', trace: { ...action, result }, evidenceIds, estimatedTokens: 0 })
+  }
+
+  it('rejects moving session Event evidence across threads and keeps the original owner on correction', async () => {
+    const f = await fixture(0)
+    const first = (await f.memory.appendTurn({ threadId: 'alpha', user: 'The alpha build finished.', assistant: 'Saved.' })).sealedBlock!
+    const second = (await f.memory.appendTurn({ threadId: 'beta', user: 'The beta build failed.', assistant: 'Saved.' })).sealedBlock!
+    const a = first.l5Raw[0]!.id, b = second.l5Raw[0]!.id
+    const event = await f.memory.addEvent({ title: 'Build', summary: 'Wrong result', scope: 'session',
+      temporal: { threadId: 'alpha' }, sourceBlockId: first.id, sourceMessageIds: [a] })
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    run = await inspectSource(f.memory, run, 'event', event.id)
+    run = await inspectSource(f.memory, run, 'message', a)
+    run = await inspectSource(f.memory, run, 'message', b)
+    const edit = { kind: 'update' as const, id: event.id, title: 'Build finished', summary: 'The alpha build finished.' }
+    await expect(f.memory.editDreamingEvent(claim(run), { ...edit, sourceMessageIds: [a, b] })).rejects.toThrow('own session')
+    await expect(f.memory.editDreamingEvent(claim(run), { ...edit, sourceMessageIds: [b] })).rejects.toThrow('own session')
+    expect(f.memory.listEvents().find(card => card.id === event.id)).toMatchObject({ title: 'Build', sourceMessageIds: [a] })
+    await f.memory.editDreamingEvent(claim(run), { ...edit, sourceMessageIds: [a], temporal: { threadId: 'beta' } })
+    expect(f.memory.listEvents().find(card => card.id === event.id)).toMatchObject({
+      title: 'Build finished', temporal: { threadId: 'alpha' }, sourceMessageIds: [a],
+    })
+  })
+
+  it.each(['background', 'Dreaming'] as const)('rebuilds an invalidated overview via %s while preserving unaffected prose', async writer => {
+    const f = await fixture(0, 'Keep the queue and use WAL.')
+    const source = { sourceBlockId: f.block.id, sourceMessageIds: [f.block.l5Raw[0]!.id], scope: 'project' as const }
+    const corrected = await f.memory.addEvent({ ...source, title: 'Discard queue', summary: 'Wrong queue recommendation' })
+    const unchanged = await f.memory.addEvent({ ...source, title: 'Use WAL', summary: 'Keep WAL enabled' })
+    const section = 'Recovery'
+    const entry = (text: string, id: string) => ({ kind: 'decision' as const, title: section, text, sourceEventIds: [id] })
+    const obsolete = entry('Discard the queue before restarting.', corrected.id)
+    const retained = entry('Keep WAL enabled.', unchanged.id)
+    const replacement = entry('Preserve the queue before restarting.', corrected.id)
+    const result = (ids: string[], overview: typeof obsolete[], topicId?: string) => ({ topics: [{
+      ...(topicId ? { topicId } : {}), title: 'SQLite', description: 'SQLite recovery', sourceEventIds: ids,
+      sections: [{ title: section, sourceEventIds: ids }], overview,
+    }] })
+    const seed = (await f.memory.claimNextTopicProjection())!
+    const { topicIds: [topicId] } = await f.memory.completeTopicProjection(seed.jobId, result([corrected.id, unchanged.id], [obsolete, retained]))
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    run = await inspectSource(f.memory, run, 'event', corrected.id)
+    run = await inspectSource(f.memory, run, 'message', source.sourceMessageIds[0]!)
+    await f.memory.editDreamingEvent(claim(run), { kind: 'update', id: corrected.id, title: 'Preserve queue', summary: replacement.text,
+      sourceMessageIds: source.sourceMessageIds })
+    const reopened = await f.reopen()
+    expect(reopened.getMemoryTopic(topicId!)?.overview).toEqual([retained])
+    if (writer === 'Dreaming') {
+      run = await inspectSource(reopened, run, 'event', corrected.id)
+      await reopened.dreaming({ ...claim(run), kind: 'apply', topicId: topicId!, topicVersion: reopened.getDreamingTopicVersion(topicId!)!,
+        operations: [{ kind: 'append-overview', title: section, entries: [replacement] }] })
+      await reopened.dreaming({ ...claim(run), kind: 'finish-unit' })
+      expect(await reopened.claimNextTopicProjection()).toBeNull()
+    } else {
+      await reopened.dreaming({ ...claim(run), kind: 'finish-unit' })
+      const job = (await reopened.claimNextTopicProjection())!
+      expect(job.events.map(event => [event.id, event.title])).toEqual([[corrected.id, 'Preserve queue']])
+      expect(job.existingTopics.map(topic => topic.id)).toContain(topicId)
+      await reopened.completeTopicProjection(job.jobId, result([corrected.id], [replacement], topicId))
+    }
+    expect(reopened.getMemoryTopic(topicId!)?.overview).toEqual(expect.arrayContaining([retained, replacement]))
+    expect(reopened.getMemoryTopic(topicId!)?.overview).toHaveLength(2)
+  })
+
+  it('hands affected experience back to Dreaming and restores it to ordinary search with current evidence', async () => {
+    const f = await fixture(0, 'SQLite requires keeping the queue across a restart.')
+    const source = { sourceBlockId: f.block.id, sourceMessageIds: [f.block.l5Raw[0]!.id], scope: 'project' as const }
+    const event = await f.memory.addEvent({ ...source, title: 'Discard queue', summary: 'Misread the SQLite advice' })
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    run = await inspectSource(f.memory, run, 'event', event.id)
+    run = await f.memory.dreaming({ ...claim(run), kind: 'checkpoint', estimatedTokens: 0,
+      trace: { tool: 'dreaming_search', args: { kind: 'experiences', query: 'SQLite' }, result: { items: [] } } })
+    const exp = await f.memory.editDreamingExperience(claim(run), { kind: 'create', title: 'SQLite recovery', content: 'Discard the queue.',
+      scope: 'project', sourceEventIds: [event.id] })
+    expect(f.memory.searchExperiences('SQLite').map(item => item.id)).toEqual([exp.id])
+    run = await inspectSource(f.memory, run, 'message', source.sourceMessageIds[0]!)
+    const edit = await f.memory.editDreamingEvent(claim(run), { kind: 'update', id: event.id, title: 'Preserve queue',
+      summary: 'Keep the queue across a restart.', sourceMessageIds: source.sourceMessageIds })
+    expect(edit.experiencesToReview).toEqual([exp.id])
+    expect(f.memory.searchExperiences('SQLite')).toEqual([])
+    const reopened = await f.reopen()
+    const pending = reopened.exportSnapshot().memoryTopicState!.dreaming!
+    expect(dreamingPayload(reopened, pending)).toMatchObject({ experiencesToReview: [{ id: exp.id, title: 'SQLite recovery' }] })
+    // If the evidence could not be resolved before finishing, the next round still sees the pending review.
+    await reopened.dreaming({ ...claim(pending), kind: 'finish-unit' })
+    run = (await reopened.startMemoryDreaming('owner', 'automatic', {}))!
+    expect(dreamingPayload(reopened, run)).toMatchObject({ experiencesToReview: [{ id: exp.id }] })
+    run = await inspectSource(reopened, run, 'experience', exp.id!)
+    const repair = { kind: 'update' as const, id: exp.id!, title: 'SQLite recovery', content: 'Keep the queue before restarting.' }
+    await expect(reopened.editDreamingExperience(claim(run), repair)).rejects.toThrow('current evidence')
+    run = await inspectSource(reopened, run, 'event', event.id)
+    await reopened.editDreamingExperience(claim(run), { ...repair, sourceEventIds: [event.id] })
+    expect(reopened.searchExperiences('SQLite')).toMatchObject([{ id: exp.id, content: repair.content,
+      status: 'active', sourceEventIds: [event.id], sourceMessageIds: source.sourceMessageIds }])
+    await reopened.dreaming({ ...claim(run), kind: 'finish-unit' })
+    expect(await reopened.startMemoryDreaming('owner', 'automatic', {})).toBeNull()
+  })
+
   it('repairs cross-session memory, resumes without replay, and completes successive pages unattended', async () => {
     const f = await fixture(0)
     const date = '2026-11-10'

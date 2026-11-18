@@ -285,12 +285,17 @@ export class MemoryTopicDirectory {
 
   reconcileDreamingEvents(events: readonly EventCard[], affected: ReadonlySet<string>, redirects: ReadonlyMap<string, string>, now: string): void {
     const versions = sourceVersions(new Map(events.filter(visible).map(event => [event.id, event])));
+    const needsOverview = new Set<string>();
     for (const topic of this.state.topics) {
       if (topic.invalidated || ![...topic.sourceEventIds, ...Object.keys(topic.dependencyVersions ?? {})].some(id => affected.has(id))) continue;
       const retained = (ids: string[]) => unique(ids.map(id => redirects.get(id) ?? id).filter(id => versions.has(id)));
       topic.sourceEventIds = retained(topic.sourceEventIds);
       topic.sections = memoryTopicMembershipSections(topic).map(section => ({ ...section, sourceEventIds: retained(section.sourceEventIds) }));
-      topic.overview = topic.overview.filter(part => part.sourceEventIds.every(id => !affected.has(id)));
+      topic.overview = topic.overview.filter(part => {
+        if (part.sourceEventIds.every(id => !affected.has(id))) return true;
+        for (const id of retained(part.sourceEventIds)) needsOverview.add(id);
+        return false;
+      });
       topic.sourceVersions = Object.fromEntries(topic.sourceEventIds.map(id => [id, versions.get(id)!]));
       topic.dependencyVersions = Object.fromEntries(retained(Object.keys(topic.dependencyVersions ?? {})).map(id => [id, versions.get(id)!]));
       topic.updatedAt = now;
@@ -298,9 +303,12 @@ export class MemoryTopicDirectory {
     const assigned = new Set(this.state.topics.filter(topic => !topic.invalidated).flatMap(topic => topic.sourceEventIds));
     for (const id of affected) {
       const version = versions.get(id);
-      if (version && assigned.has(id)) this.state.projectedVersions[id] = version;
+      if (version && assigned.has(id) && this.state.projectedVersions[id] && !needsOverview.has(id)) this.state.projectedVersions[id] = version;
       else delete this.state.projectedVersions[id];
     }
+    // A dropped paragraph may also have surviving citations that were not
+    // edited. Requeue those sources without invalidating the whole chapter.
+    for (const id of needsOverview) delete this.state.projectedVersions[id];
     this.state.topics = this.state.topics.filter(topic => topic.sourceEventIds.length > 0);
   }
 

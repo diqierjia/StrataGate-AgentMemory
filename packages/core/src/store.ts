@@ -1002,7 +1002,8 @@ export class StrataGate {
     const messages = new Set(this.dreamingMessages().map(message => message.id));
     const blocks = this.blocks.filter(block => block.l5Raw.some(message => messages.has(message.id)));
     const events = (includeAgentEvents ? this.listAllEvents() : this.events).filter(event => event.status !== 'forgotten' && event.status !== 'archived');
-    const discovery = discoverDreaming(blocks, this.openTail.filter(message => messages.has(message.id)), events, current.dreamingWatermark, notes);
+    const reviewIds = this.listExperiences(true).filter(item => item.status === 'needs-review').map(item => item.id);
+    const discovery = discoverDreaming(blocks, this.openTail.filter(message => messages.has(message.id)), events, current.dreamingWatermark, notes, reviewIds);
     if (trigger === 'automatic' && !discovery.units.length) return null;
     return this.dreaming({ kind: 'start', owner, trigger, discovery, ...(includeAgentEvents ? {} : { allowedEventIds: events.map(event => event.id) }) });
   }
@@ -1100,16 +1101,20 @@ export class StrataGate {
           throw new Error('Keep existing relations when correcting text; use supersede for a real state change');
         }
         if (!ids.length || !this.rawMessageLookup.get(ids[0]!)) throw new Error('Read and cite raw evidence in a sealed Block');
+        // Session ownership belongs to the existing Event (or its original
+        // Block for legacy Events). A correction cannot move it to a new session.
+        const threadId = target ? target.temporal.threadId ?? this.blocks.find(block => block.id === target.sourceBlockId)?.threadId
+          : messages.get(ids[0]!)?.threadId;
+        if ((target?.scope ?? edit.scope ?? 'session') === 'session' && ids.some(id => messages.get(id)?.threadId !== threadId)) {
+          throw new Error('Session-scoped Events must cite only evidence from their own session');
+        }
+        delete temporal.threadId;
         if (target) {
           refuseProtected(target);
           const old = target.temporal;
           Object.assign(target, body, { updatedAt: now, quotes: [], temporal: { ...old, ...temporal } });
           delete target.quotesOrigin;
         } else {
-          const threadId = messages.get(ids[0]!)?.threadId;
-          if ((edit.scope ?? 'session') === 'session' && ids.some(id => messages.get(id)?.threadId !== threadId)) {
-            throw new Error('Session-scoped Events must cite a single session');
-          }
           event = this.addEventInMemory({ ...body, sourceMessageIds: ids, sourceBlockId: this.rawMessageLookup.get(ids[0]!)!.block.id,
             scope: edit.scope ?? 'session', temporal: { ...temporal, ...(threadId ? { threadId } : {}) } });
         }
@@ -1198,13 +1203,20 @@ export class StrataGate {
       if (edit.kind !== 'supersede' && edit.kind !== 'create') {
         this.invalidateDreamingProjections(affected);
       }
+      const experiencesToReview: string[] = [];
       for (const experience of this.experiences) {
         if (edit.kind === 'merge') {
           experience.sourceEventIds = [...new Set(experience.sourceEventIds.map(id => redirects.get(id) ?? id))];
         } else if ((edit.kind === 'update' || edit.kind === 'delete') && target && experience.sourceEventIds.includes(target.id)) {
           experience.status = 'needs-review';
+          experience.updatedAt = now;
           if (removed.has(target.id)) experience.sourceEventIds = experience.sourceEventIds.filter(id => id !== target.id);
+          experiencesToReview.push(experience.id);
         }
+      }
+      if (experiencesToReview.length) {
+        const unit = run.units[run.cursor]!;
+        unit.experienceIds = [...new Set([...(unit.experienceIds ?? []), ...experiencesToReview])];
       }
       const current = this.listAllEvents();
       this.topicDirectory.reconcileDreamingEvents(current, affected, redirects, now);
@@ -1219,7 +1231,7 @@ export class StrataGate {
         delete run.readVersions?.[`event:${card.id}`];
       }
       this.validateReferences();
-      return { ...(event ? { id: event.id } : {}), saved: true };
+      return { ...(event ? { id: event.id } : {}), saved: true, ...(experiencesToReview.length ? { experiencesToReview } : {}) };
     });
   }
 
@@ -1309,10 +1321,15 @@ export class StrataGate {
       if (!old && this.experiences.some(item => normalizeSearchText(item.title) === normalizeSearchText(edit.title!))) throw new Error('This experience title already exists; read and update it');
       const proposedMessages = [...new Set(edit.sourceMessageIds ?? [])];
       const proposedEvents = [...new Set(edit.sourceEventIds ?? [])];
+      const reviewing = old?.status === 'needs-review' || merged.some(item => item.status === 'needs-review');
+      if (reviewing && !proposedMessages.length && !proposedEvents.length) {
+        throw new Error('Read and cite current evidence before restoring a pending experience');
+      }
       this.dreamingReadMessages(run, proposedMessages);
       const rawFromEvents = proposedEvents.flatMap(id => this.dreamingReadEvent(run, id).sourceMessageIds);
-      const sourceMessageIds = [...new Set([...proposedMessages, ...rawFromEvents, ...(old?.sourceMessageIds ?? []), ...merged.flatMap(item => item.sourceMessageIds)])];
-      const sourceEventIds = [...new Set([...proposedEvents, ...(old?.sourceEventIds ?? []), ...merged.flatMap(item => item.sourceEventIds)])];
+      const inherited = [old, ...merged].filter(item => item?.status === 'active');
+      const sourceMessageIds = [...new Set([...proposedMessages, ...rawFromEvents, ...inherited.flatMap(item => item!.sourceMessageIds)])];
+      const sourceEventIds = [...new Set([...proposedEvents, ...inherited.flatMap(item => item!.sourceEventIds)])];
       const visible = new Set(this.dreamingMessages().map(message => message.id));
       if (!sourceMessageIds.length || sourceMessageIds.some(id => !visible.has(id))) throw new Error('An experience needs available original evidence');
       const scope = old?.scope ?? edit.scope ?? 'session';

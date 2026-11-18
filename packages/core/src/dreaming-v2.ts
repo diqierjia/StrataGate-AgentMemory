@@ -1,4 +1,4 @@
-import { dreamingTopicVersion, type DreamingCommand, type DreamingRun } from './dreaming.js';
+import { dreamingTopicVersion, type DreamingCommand, type DreamingRun, type DreamingUnit } from './dreaming.js';
 import { memoryTopicEventFingerprint, type MemoryTopicState } from './topics.js';
 import type { EventCard, EventTemporal, MemoryBlock, MemoryScope, RawMessage } from './types.js';
 
@@ -25,7 +25,7 @@ export interface DreamingExperienceEdit {
   sourceEventIds?: string[];
 }
 
-export type DreamingEditResult = { id?: string; saved: boolean };
+export type DreamingEditResult = { id?: string; saved: boolean; experiencesToReview?: string[] };
 export type DreamingClaim = { id: string; owner: string; epoch: number };
 export const DREAMING_AUTO_INTERVAL = 24 * 60 * 60_000;
 export const DREAMING_IDLE_TIME = 30 * 60_000;
@@ -36,14 +36,15 @@ export function dreamingEventVersion(event: EventCard): string {
 
 export interface DreamingDiscovery {
   versions: Record<string, string>;
-  units: Array<{ topicId: string; eventIds: string[]; blockIds?: string[]; messageIds?: string[]; noteDates?: string[] }>;
+  units: DreamingUnit[];
 }
 
 /** Pointer decay, retrieval and maintenance timestamps are not new user content. */
 export function discoverDreaming(blocks: readonly MemoryBlock[], tail: readonly RawMessage[], events: readonly EventCard[],
-  previous: Record<string, string> = {}, notes: Record<string, string> = {}): DreamingDiscovery {
+  previous: Record<string, string> = {}, notes: Record<string, string> = {}, reviewIds: string[] = []): DreamingDiscovery {
   const versions: Record<string, string> = {};
   const changes: DreamingDiscovery['units'] = [];
+  for (const id of reviewIds) changes.push({ topicId: '', eventIds: [], experienceIds: [id] });
   for (const block of blocks) {
     const key = `block:${block.id}`;
     versions[key] = dreamingTopicVersion([block.l0Title, block.l1Summary, block.l2Keypoints, block.processingStatus, block.l5Raw.map(message => message.id)]);
@@ -69,7 +70,8 @@ export function discoverDreaming(blocks: readonly MemoryBlock[], tail: readonly 
   for (let offset = 0; offset < changes.length; offset += 24) {
     const page = changes.slice(offset, offset + 24);
     units.push({ topicId: '', eventIds: page.flatMap(item => item.eventIds), blockIds: page.flatMap(item => item.blockIds ?? []),
-      messageIds: page.flatMap(item => item.messageIds ?? []), noteDates: page.flatMap(item => item.noteDates ?? []) });
+      messageIds: page.flatMap(item => item.messageIds ?? []), noteDates: page.flatMap(item => item.noteDates ?? []),
+      experienceIds: page.flatMap(item => item.experienceIds ?? []) });
   }
   return { versions, units };
 }

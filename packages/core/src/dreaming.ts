@@ -14,7 +14,7 @@ export const DREAMING_SOURCE_PAGE_CHARACTERS = 12_000;
 /** A generous per-batch write boundary; explicit resume grants another window. */
 export const DREAMING_BATCH_WRITE_LIMIT = 64;
 const DREAMING_IDLE_CALL_LIMIT = 12;
-export interface DreamingUnit { topicId: string; eventIds: string[]; blockIds?: string[]; messageIds?: string[]; noteDates?: string[] }
+export interface DreamingUnit { topicId: string; eventIds: string[]; blockIds?: string[]; messageIds?: string[]; noteDates?: string[]; experienceIds?: string[] }
 export interface DreamingTrace { tool: string; args: Record<string, unknown>; result: unknown }
 export interface DreamingRun {
   id: string; policyVersion: number; scope: 'directory' | 'memory';
@@ -24,7 +24,7 @@ export interface DreamingRun {
   includeAgentEvents?: boolean;
   lastToolSignature?: string;
   interrupted?: boolean;
-  appliedOperations?: Record<string, { id?: string; saved: boolean }>;
+  appliedOperations?: Record<string, { id?: string; saved: boolean; experiencesToReview?: string[] }>;
   trigger?: 'manual' | 'automatic';
   status: 'running' | 'pausing' | 'paused' | 'completed' | 'terminated';
   owner: string; epoch: number; leaseUntil: string | null;
@@ -487,7 +487,15 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     updated.updatedAt = now;
     if (run.scope === 'memory') {
       updated.dreamingManaged = true;
-      for (const id of updated.sourceEventIds) if (!topic.sourceEventIds.includes(id)) state.projectedVersions[id] = updated.sourceVersions[id]!;
+      const overviewEvidence = (part: typeof topic.overview[number]) => dreamingTopicVersion([part.kind, part.text, part.sourceEventIds]);
+      const originalOverview = new Set(topic.overview.map(overviewEvidence));
+      const writtenOverviewIds = new Set(updated.overview.filter(part => !originalOverview.has(overviewEvidence(part)))
+        .flatMap(part => part.sourceEventIds));
+      for (const id of updated.sourceEventIds) {
+        if (!writtenOverviewIds.has(id) || state.topics.some(other => other.id !== topic.id && !other.invalidated
+          && other.sourceEventIds.includes(id) && !other.overview.some(part => part.sourceEventIds.includes(id)))) continue;
+        state.projectedVersions[id] = updated.sourceVersions[id]!;
+      }
     }
     if (run.scope === 'directory') updated.dependencyVersions = { ...updated.dependencyVersions, ...run.evidenceVersions };
     state.topics[state.topics.indexOf(topic)] = updated;

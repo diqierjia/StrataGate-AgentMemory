@@ -175,6 +175,8 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       openMessages: memory.listOpenTail().filter(message => visible.has(message.id) && unit.messageIds?.includes(message.id))
         .map(({ id, threadId, createdAt, role }) => ({ id, threadId, createdAt, role })),
       events: dreamingEvents(memory, run).filter(event => unit.eventIds.includes(event.id)).map(({ id, title, status }) => ({ id, title, status })),
+      experiencesToReview: unit.experienceIds?.length ? memory.listExperiences(true)
+        .filter(item => item.status === 'needs-review' && unit.experienceIds?.includes(item.id)).map(({ id, title }) => ({ id, title })) : [],
       noteDates: unit.noteDates ?? [], graphEnabled: memory.graphEnabled,
       lastWriteFailure: run.lastWriteFailure ? { error: run.lastWriteFailure.error } : null,
       savedChanges: run.changedBatches,
