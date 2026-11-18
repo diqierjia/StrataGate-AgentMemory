@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { StrataGate, estimateTokens, dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, memoryTopicEventFingerprint,
+import { StrataGate, estimateTokens, dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, memoryTopicEventFingerprint, eventDuplicateFingerprint,
   DREAMING_BATCH_WRITE_LIMIT, DREAMING_IDLE_TIME, type DreamingRun } from '@diqier/stratagate'
 import { memoryTopicSectionNavigation } from '../src/topics.js'
 import { StrataGateRuntime } from '../src/runtime.js'
@@ -426,6 +426,36 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     const { result, evidenceIds } = await dreamingTool(memory, run, action)
     return memory.dreaming({ ...claim(run), kind: 'checkpoint', trace: { ...action, result }, evidenceIds, estimatedTokens: 0 })
   }
+
+  it('can repair an experience with an archived source after reopening without exposing forgotten evidence', async () => {
+    const f = await fixture(2, 'Use SQLite WAL when the queue has concurrent writers.')
+    const old = f.events[0]!, alternative = f.events[1]!
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    run = await inspectSource(f.memory, run, 'event', old.id)
+    run = await f.memory.dreaming({ ...claim(run), kind: 'checkpoint', estimatedTokens: 0,
+      trace: { tool: 'dreaming_search', args: { kind: 'experiences', query: 'SQLite' }, result: { items: [] } } })
+    const experience = await f.memory.editDreamingExperience(claim(run), {
+      kind: 'create', title: 'SQLite WAL', content: 'Use WAL with concurrent writers.', scope: 'project', sourceEventIds: [old.id],
+    })
+    await f.memory.dreaming({ ...claim(run), kind: 'finish-unit' })
+    expect(await f.memory.selectDuplicateEvent({
+      leftId: old.id, rightId: alternative.id, leftFingerprint: eventDuplicateFingerprint(old),
+      rightFingerprint: eventDuplicateFingerprint(alternative), exact: false, similarity: 1,
+    }, alternative.id)).toBe(true)
+    const reopened = await f.reopen()
+    expect(reopened.searchExperiences('SQLite')).toEqual([])
+    run = (await reopened.startMemoryDreaming('owner', 'automatic', {}))!
+    expect(dreamingPayload(reopened, run)).toMatchObject({ experiencesToReview: [{ id: experience.id }] })
+    run = await inspectSource(reopened, run, 'experience', experience.id!)
+    const msg = f.block.l5Raw[0]!.id
+    run = await inspectSource(reopened, run, 'message', msg)
+    await reopened.editDreamingExperience(claim(run), {
+      kind: 'update', id: experience.id!, title: 'SQLite WAL', content: 'Enable WAL when the queue has concurrent writers.', sourceMessageIds: [msg],
+    })
+    expect(reopened.searchExperiences('SQLite')).toMatchObject([{ id: experience.id, status: 'active', sourceEventIds: [], sourceMessageIds: [msg] }])
+    await reopened.forgetEvent(alternative.id)
+    expect(reopened.searchExperiences('SQLite', 12, 0, true)).toEqual([])
+  })
 
   it('rejects moving session Event evidence across threads and keeps the original owner on correction', async () => {
     const f = await fixture(0)

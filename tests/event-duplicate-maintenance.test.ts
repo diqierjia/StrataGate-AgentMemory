@@ -9,10 +9,11 @@ import { StrataGateRuntime } from '../src/runtime.js'
 import type { DshModelBridge } from '../src/llm.js'
 
 const fact = { title: 'Project storage preference', summary: 'The project uses SQLite for local durable storage.', scope: 'project' as const, criticality: 'preference' as const }
-async function fixture(changes: Partial<EventCardInput> = {}) {
+async function fixture(changes: Partial<EventCardInput> = {}, durable = false) {
   const directory = await mkdtemp(join(tmpdir(), 'stratagate-duplicate-repair-'))
   const database = join(directory, 'journal.db')
-  const memory = StrataGate.inMemory({ blockTurnSize: 1 })
+  const options = { database: join(directory, 'memory.db'), namespace: 'one', blockTurnSize: 1 }
+  const memory = durable ? await StrataGate.open(options) : StrataGate.inMemory({ blockTurnSize: 1 })
   const add = async (input: Partial<EventCardInput> = {}) => {
     const block = (await memory.appendTurn({ user: 'The project uses SQLite for local durable storage.', assistant: 'Saved.' }, { deferDerivation: true })).sealedBlock!
     return memory.addEvent({ ...fact, sourceBlockId: block.id, sourceMessageIds: [block.l5Raw[0]!.id], ...input })
@@ -22,11 +23,40 @@ async function fixture(changes: Partial<EventCardInput> = {}) {
   const decide = vi.fn(async (): Promise<EventDuplicateDecision> => ({ action: 'KEEP_LEFT', confidence: .99, reason: 'Same durable fact and same source-supported meaning.', draft:{title:fact.title,summary:fact.summary} }))
   const operations = { snapshot: async () => memory.exportSnapshot(), decide,
     archive: vi.fn((pair: EventDuplicatePair, keepId: string, draft?: EventMergeDraft, prepareUndo?: (undo: DuplicateReviewUndo)=>void) => memory.reviewDuplicateEvents(pair, keepId, 'merge', prepareUndo ?? (()=>{}), draft)) }
-  return { directory, database, memory, left, right, add, journal, decide, operations,
+  return { directory, database, memory, left, right, add, journal, decide, operations, reopen: () => StrataGate.open(options),
     close: async () => { journal.close(); await memory.close(); await rm(directory, { recursive: true, force: true }) } }
 }
 
 describe('durable one-time Event duplicate repair', () => {
+  it('redirects experience references in a background merge and restores them on undo', async () => {
+    const host = await fixture({}, true)
+    try {
+      const seed = (await host.memory.startMemoryDreaming('seed', 'manual', {}))!
+      const claim = { id: seed.id, owner: seed.owner, epoch: seed.epoch }
+      await host.memory.dreaming({ ...claim, kind: 'checkpoint', evidenceIds: [host.left.id, host.right.id], estimatedTokens: 0,
+        trace: { tool: 'dreaming_search', args: { kind: 'experiences', query: 'SQLite' }, result: { items: [] } } })
+      const experience = await host.memory.editDreamingExperience(claim, {
+        kind: 'create', title: 'SQLite storage', content: fact.summary, scope: 'project', sourceEventIds: [host.right.id, host.left.id],
+      })
+      await host.memory.dreaming({ ...claim, kind: 'finish-unit' })
+      const before = host.memory.searchExperiences('SQLite')[0]!
+
+      expect(await host.journal.tick('one', host.operations)).toBe(true)
+      const pair = host.journal.details('one')[0]!
+      expect(pair).toMatchObject({ outcome: 'merged' })
+      const archived = host.memory.listEvents().find(event => event.status === 'archived')!
+      expect(before.sourceEventIds).toContain(archived.id)
+      const reopened = await host.reopen()
+      try {
+        expect(reopened.searchExperiences('SQLite')).toMatchObject([{
+          id: experience.id, status: 'active', sourceEventIds: [pair.keepId], sourceMessageIds: before.sourceMessageIds,
+        }])
+        expect(await host.journal.undo('one', pair, pair.undo!.id, data => reopened.undoDuplicateReview(data))).toBe(true)
+        expect(reopened.searchExperiences('SQLite')).toEqual([before])
+      } finally { await reopened.close() }
+    } finally { await host.close() }
+  })
+
   it('recognizes a committed human merge whose archived original retains a third successor without another model call',async()=>{
     const host=await fixture()
     try{

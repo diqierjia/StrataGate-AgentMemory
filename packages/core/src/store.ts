@@ -335,7 +335,7 @@ function restrictExtractionRelations(temporal: EventTemporal, allowedIds: Readon
   return result;
 }
 
-type DuplicateUndoCollection = 'events' | 'agentEvents' | 'elementProjectionJobs' | 'graphProjectionJobs';
+type DuplicateUndoCollection = 'events' | 'agentEvents' | 'elementProjectionJobs' | 'graphProjectionJobs' | 'experiences';
 export interface DuplicateReviewUndo {
   version: 1;
   changes: Array<{ collection: DuplicateUndoCollection; id: string; before: unknown; after: unknown }>;
@@ -1205,9 +1205,7 @@ export class StrataGate {
       }
       const experiencesToReview: string[] = [];
       for (const experience of this.experiences) {
-        if (edit.kind === 'merge') {
-          experience.sourceEventIds = [...new Set(experience.sourceEventIds.map(id => redirects.get(id) ?? id))];
-        } else if ((edit.kind === 'update' || edit.kind === 'delete') && target && experience.sourceEventIds.includes(target.id)) {
+        if ((edit.kind === 'update' || edit.kind === 'delete') && target && experience.sourceEventIds.includes(target.id)) {
           experience.status = 'needs-review';
           experience.updatedAt = now;
           if (removed.has(target.id)) experience.sourceEventIds = experience.sourceEventIds.filter(id => id !== target.id);
@@ -1629,8 +1627,17 @@ export class StrataGate {
   listExperiences(includeNeedsReview = false): import('./types.js').Experience[] {
     if (!this.experiences.length) return [];
     const messages = new Set(this.dreamingMessages().map(message => message.id));
-    return structuredClone(this.experiences.filter(item => (includeNeedsReview || item.status === 'active') && item.sourceMessageIds.every(id => messages.has(id))
-      && item.sourceEventIds.every(id => { const event = this.findEvent(id); return event && event.status !== 'forgotten' && event.status !== 'archived'; })));
+    const visible: import('./types.js').Experience[] = [];
+    for (const item of this.experiences) {
+      if (!item.sourceMessageIds.every(id => messages.has(id))) continue;
+      const sources = item.sourceEventIds.map(id => this.findEvent(id));
+      if (sources.some(event => !event || event.status === 'forgotten')) continue;
+      // Older merges and choices may have left an archived source. Surface
+      // the experience for revalidation while keeping it out of ordinary recall.
+      const status = sources.some(event => event?.status === 'archived') ? 'needs-review' : item.status;
+      if (includeNeedsReview || status === 'active') visible.push({ ...item, status });
+    }
+    return structuredClone(visible);
   }
 
   searchExperiences(query: string, limit = 12, offset = 0, includeNeedsReview = false, threadId?: string): import('./types.js').Experience[] {
@@ -2920,9 +2927,9 @@ export class StrataGate {
       this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
       const after = this.exportSnapshot();
       const changes: DuplicateReviewUndo['changes'] = [];
-      for (const collection of ['events', 'agentEvents', 'elementProjectionJobs', 'graphProjectionJobs'] as const) {
-        const old = new Map<string, unknown>(before[collection].map(value => [value.id, value]));
-        const current = new Map<string, unknown>(after[collection].map(value => [value.id, value]));
+      for (const collection of ['events', 'agentEvents', 'elementProjectionJobs', 'graphProjectionJobs', 'experiences'] as const) {
+        const old = new Map<string, unknown>((before[collection] ?? []).map(value => [value.id, value]));
+        const current = new Map<string, unknown>((after[collection] ?? []).map(value => [value.id, value]));
         for (const id of new Set([...old.keys(), ...current.keys()])) {
           if (undoJson(old.get(id)) !== undoJson(current.get(id))) changes.push({ collection, id, before: old.get(id) ?? null, after: current.get(id) ?? null });
         }
@@ -2949,9 +2956,10 @@ export class StrataGate {
   async undoDuplicateReview(undo: DuplicateReviewUndo): Promise<boolean> {
     return this.commitMutation(() => {
       const current = this.exportSnapshot();
+      const find = ({ collection, id }: DuplicateReviewUndo['changes'][number]) => current[collection]?.find(value => value.id === id);
       // Already restored after an interrupted journal checkpoint is safe to acknowledge again.
-      if (undo.changes.every(change => undoJson(current[change.collection].find(value => value.id === change.id)) === undoJson(change.before))) return true;
-      if (undo.version !== 1 || undo.changes.some(change => undoJson(current[change.collection].find(value => value.id === change.id)) !== undoJson(change.after))
+      if (undo.changes.every(change => undoJson(find(change)) === undoJson(change.before))) return true;
+      if (undo.version !== 1 || undo.changes.some(change => undoJson(find(change)) !== undoJson(change.after))
         || undo.derivedFingerprint !== duplicateUndoDerived(current, undo.affectedEventIds)
         || undoJson(current.memoryTopicState) !== undoJson(undo.topicAfter)
         || undo.projectionFingerprint !== duplicateUndoProjections(current, undo.affectedEventIds)) {
@@ -2963,6 +2971,10 @@ export class StrataGate {
           const index = cards.findIndex(card => card.id === change.id);
           if (index >= 0) cards.splice(index, 1, ...(change.before ? [structuredClone(change.before) as EventCard] : []));
           else if (change.before) cards.push(structuredClone(change.before) as EventCard);
+        } else if (change.collection === 'experiences') {
+          const index = this.experiences.findIndex(item => item.id === change.id);
+          if (index >= 0) this.experiences.splice(index, 1);
+          if (change.before) this.experiences.push(structuredClone(change.before) as import('./types.js').Experience);
         } else {
           const jobs = this[change.collection] as Map<string, unknown>;
           jobs.delete(change.id);
@@ -3075,6 +3087,13 @@ export class StrataGate {
     duplicate.status = 'archived';
     if (!preserveHistory || !duplicate.supersededBy) duplicate.supersededBy = kept.id;
     duplicate.updatedAt = toUtc8Iso(this.now());
+    if (consolidate && !preserveHistory) {
+      for (const experience of this.experiences) {
+        if (!experience.sourceEventIds.includes(duplicate.id)) continue;
+        experience.sourceEventIds = [...new Set(experience.sourceEventIds.map(id => id === duplicate.id ? kept.id : id))];
+        experience.updatedAt = duplicate.updatedAt;
+      }
+    }
     // Preserve real adoption history without recording another use or replacing it with the current turn.
     kept.weight.mentionCount = Math.max(kept.weight.mentionCount, duplicate.weight.mentionCount);
     kept.weight.lastAdoptedTurn = Math.max(kept.weight.lastAdoptedTurn, duplicate.weight.lastAdoptedTurn);
