@@ -1,6 +1,6 @@
 import { dreamingEventVersion, updateDreamingMemory, type DreamingDiscovery } from './dreaming-v2.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { MEMORY_TOPIC_PROJECTOR_VERSION, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, type MemoryTopicState, type MemoryTopicOverview } from './topics.js';
+import { MEMORY_TOPIC_PROJECTOR_VERSION, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, memoryTopicSectionContent, normalizeMemoryTopicLabel, type MemoryTopicState, type MemoryTopicOverview } from './topics.js';
 import { validateTopicOverviewText } from './topic-diagnostics.js';
 import type { EventCard } from './types.js';
 import { estimateTokens } from './blocks.js';
@@ -85,7 +85,7 @@ function label(value: unknown, maximum = 80): string {
   return value.trim();
 }
 export function memoryTopicSectionIdentity(title: string): string {
-  return 'section:' + createHash('sha256').update(title.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase()).digest('hex');
+  return 'section:' + createHash('sha256').update(normalizeMemoryTopicLabel(title)).digest('hex');
 }
 function live(event: EventCard): boolean { return event.status !== 'forgotten' && event.status !== 'archived'; }
 function directoryContent(topic: MemoryTopicState['topics'][number]): string {
@@ -396,6 +396,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     const updated = structuredClone(topic);
     const sections = updated.sections = memoryTopicMembershipSections(updated);
     for (const section of sections) section.id ??= memoryTopicSectionIdentity(section.title);
+    const findSection = (title: string) => sections.find(section => normalizeMemoryTopicLabel(section.title) === normalizeMemoryTopicLabel(title));
     const members = new Set(updated.sourceEventIds);
     if (!Array.isArray(command.operations) || !command.operations.length) throw new Error('Directory operations are required');
     for (const op of command.operations) {
@@ -408,23 +409,27 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
           updated.description = op.description;
         }
       } else if (op.kind === 'rename-section') {
-        const section = sections.find(s => s.title === op.from);
+        const section = typeof op.from === 'string' ? findSection(op.from) : undefined;
         if (!section) throw new Error('Unknown section');
         const title = label(op.title);
-        if (sections.some(s => s !== section && s.title.toLowerCase() === title.toLowerCase())) throw new Error('Duplicate section');
+        const target = findSection(title);
+        if (target && target !== section) throw new Error('Duplicate section');
         section.title = title;
         for (const part of updated.overview) if (memoryTopicOverviewMatchesSection(part, [op.from])) part.title = title;
       } else if (op.kind === 'merge-sections') {
-        if (!Array.isArray(op.from) || op.from.length < 2 || new Set(op.from).size !== op.from.length || op.from.some(t => !sections.some(s => s.title === t))) throw new Error('Invalid merge sources');
+        if (!Array.isArray(op.from) || op.from.length < 2) throw new Error('Invalid merge sources');
+        const selected = new Set(op.from.map(name => typeof name === 'string' ? findSection(name) : undefined));
+        if (selected.has(undefined) || selected.size !== op.from.length) throw new Error('Invalid merge sources');
+        const merged = sections.filter(section => selected.has(section));
         const title = label(op.title);
-        if (sections.some(s => !op.from.includes(s.title) && s.title.toLowerCase() === title.toLowerCase())) throw new Error('Duplicate section');
-        const ids = [...new Set(sections.filter(s => op.from.includes(s.title)).flatMap(s => s.sourceEventIds))];
-        const merged = sections.filter(s => op.from.includes(s.title));
+        const target = findSection(title);
+        if (target && !selected.has(target)) throw new Error('Duplicate section');
+        const ids = [...new Set(merged.flatMap(section => section.sourceEventIds))];
         const stableId = merged[0]!.id!;
         updated.sectionAliases ??= {};
         for (const section of merged) if (section.id !== stableId) updated.sectionAliases[section.id!] = stableId;
         for (const [old, target] of Object.entries(updated.sectionAliases)) if (merged.some(section => section.id === target)) updated.sectionAliases[old] = stableId;
-        for (let i = sections.length - 1; i >= 0; i--) if (op.from.includes(sections[i]!.title)) sections.splice(i, 1);
+        for (let i = sections.length - 1; i >= 0; i--) if (selected.has(sections[i])) sections.splice(i, 1);
         sections.push({ id: stableId, title, sourceEventIds: ids });
         for (const part of updated.overview) if (memoryTopicOverviewMatchesSection(part, op.from)) part.title = title;
       } else if (op.kind === 'move-events') {
@@ -439,15 +444,22 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
           updated.sourceVersions[id] = version;
           (updated.dependencyVersions ??= {})[id] = version;
         }
-        let target = sections.find(s => s.title === title);
+        let target = findSection(title);
         if (!target) { target = { id: `section:${randomUUID()}`, title, sourceEventIds: [] }; sections.push(target); }
         for (const section of sections) section.sourceEventIds = section.sourceEventIds.filter(id => !op.eventIds.includes(id));
         target.sourceEventIds.push(...new Set(op.eventIds));
       } else if (op.kind === 'set-overview' || op.kind === 'append-overview' || op.kind === 'rewrite-overview') {
-        const titles = op.kind === 'rewrite-overview' ? op.titles : [op.title];
-        if (!Array.isArray(titles) || !titles.length || titles.some(title => label(title) !== title)
-          || new Set(titles).size !== titles.length) throw new Error('overview-sections-invalid: titles must be distinct existing section names');
-        for (const title of titles) if (!sections.some(s => s.title === title)) throw new Error(`overview-section-unknown: ${JSON.stringify(title)}; create it with move-events before writing its overview`);
+        const requested = op.kind === 'rewrite-overview' ? op.titles : [op.title];
+        if (!Array.isArray(requested) || !requested.length || requested.some(title => label(title) !== title)) {
+          throw new Error('overview-sections-invalid: titles must be distinct existing section names');
+        }
+        const titles = requested.map(title => {
+          const section = findSection(title);
+          if (!section) throw new Error(`overview-section-unknown: ${JSON.stringify(title)}; create it with move-events before writing its overview`);
+          return section.title;
+        });
+        const titlesByLabel = new Map(titles.map(title => [normalizeMemoryTopicLabel(title), title]));
+        if (titlesByLabel.size !== titles.length) throw new Error('overview-sections-invalid: titles must be distinct existing section names');
         if (!Array.isArray(op.entries)) throw new Error('overview-entries-invalid: entries must be an array');
         const requireEvidence = (id: string): void => {
           if (typeof id !== 'string' || !sources.has(id)) throw new Error(`overview-source-unavailable: Event ${JSON.stringify(id)} is unknown, changed or outside the frozen run; use an available current-chapter Event`);
@@ -461,9 +473,9 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
           for (const id of part.sourceEventIds) if (!members.has(id)) requireEvidence(id);
           for (const id of part.sourceEventIds) requireEvidence(id);
           validateTopicOverviewText(part.text, `entries[${index}].text`);
-          const title = op.kind === 'rewrite-overview' ? part.title : titles[0]!;
-          if (typeof title !== 'string' || !titles.includes(title)
-            || (part.title !== undefined && part.title !== title)) throw new Error(`overview-entry-section-invalid: entries[${index}].title must name one of ${JSON.stringify(titles)}; set-overview affects only its named section`);
+          const title = typeof part.title === 'string' ? titlesByLabel.get(normalizeMemoryTopicLabel(part.title))
+            : op.kind !== 'rewrite-overview' && part.title === undefined ? titles[0] : undefined;
+          if (!title) throw new Error(`overview-entry-section-invalid: entries[${index}].title must name one of ${JSON.stringify(titles)}; set-overview affects only its named section`);
           return { ...part, title };
         });
         const replaced = op.kind === 'append-overview' ? [] : updated.overview.filter(part => memoryTopicOverviewMatchesSection(part, titles));
@@ -480,6 +492,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         updated.overview.push(...additions);
       } else throw new Error('Unsupported directory operation');
     }
+    Object.assign(updated, memoryTopicSectionContent(updated));
     // No Event or chapter membership is deleted by this adapter.
     const contentVersion = directoryContent(updated);
     if (contentVersion === directoryContent(topic) || run.scope === 'directory' && run.contentVersions?.includes(contentVersion)) throw new Error('Directory operation repeats an unchanged or previous state');

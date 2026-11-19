@@ -199,6 +199,8 @@ describe('read-only Topic Directory admin data', () => {
       sections: [{ title: '新小节', sourceEventIds: ['moved'] }], overview: [],
     }] }, snapshot.events, now);
     snapshot.memoryTopicState = directory.snapshot();
+    snapshot.memoryTopicState.topics[0]!.sections!.push({ title: '旧小节', sourceEventIds: [] });
+    snapshot.memoryTopicState.topics[0]!.overview.push({ kind: 'history', title: '旧小节', text: '旧总览', sourceEventIds: ['moved'] });
     const runtime = fakeRuntime(snapshot); const before = JSON.stringify(snapshot);
     const response = await request(runtime);
     expect(response.status).toBe(200);
