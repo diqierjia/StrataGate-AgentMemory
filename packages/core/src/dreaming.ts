@@ -351,7 +351,9 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         && t.sourceEventIds.every(id => sources.has(id) && run.sourceVersions[id] === memoryTopicEventFingerprint(sources.get(id)!)));
       const result = command.trace.result as { id?: string; sections?: unknown; overview?: unknown };
       if (readTopic && result?.id === readTopic.id) {
-        for (const [field, items] of [['sections', memoryTopicMembershipSections(readTopic)], ['overview', readTopic.overview]] as const) {
+        const content = memoryTopicSectionContent(readTopic);
+        for (const field of ['sections', 'overview'] as const) {
+          const items = content[field];
           const page = result[field] as { contentVersion?: string; items?: unknown[]; offset?: number; total?: number; nextOffset?: number | null } | undefined;
           if (!page || !Number.isSafeInteger(page.offset) || page.offset! < 0 || !Array.isArray(page.items) || !page.items.length
             || page.total !== items.length || page.offset! + page.items.length > items.length
