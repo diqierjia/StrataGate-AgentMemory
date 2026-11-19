@@ -1,4 +1,5 @@
 export const TOPIC_OVERVIEW_MAX_CHARACTERS = 1000;
+export const LEGACY_TOPIC_OVERVIEW_SECTION_ERROR = 'New topic overview must match a final topic section.';
 
 /** Content-free diagnostics. Never copy arbitrary error messages or model output. */
 export type TopicFailureCategory = 'max-tokens' | 'schema-invalid' | 'validation-failed'
@@ -42,7 +43,7 @@ const TOPIC_SAFE_REASONS = new Set<string>([
   'Invalid topic section source events.',
   'Invalid topic sections.',
   'Invalid topic title or description.',
-  'New topic overview must match a final topic section.',
+  LEGACY_TOPIC_OVERVIEW_SECTION_ERROR,
   'Old overview evidence must be preserved verbatim; new sections need batch events.',
   'Old section membership must be preserved; reassignment needs batch events.',
   'Overview references must belong to returned topic membership.',

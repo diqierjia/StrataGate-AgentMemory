@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { StrataGate, DERIVATION_LEASE_MS, StorageConflictError, searchTokens, MemoryTopicDirectory,
+import { StrataGate, DERIVATION_LEASE_MS, StorageConflictError, searchTokens, MemoryTopicDirectory, LEGACY_TOPIC_OVERVIEW_SECTION_ERROR,
   TopicProjectionError, TOPIC_RECOVERY_VERSION, type TopicProjectionResult } from '../src/index.js';
 import { SqliteStorage } from '../src/sqlite.js';
 
@@ -28,12 +28,14 @@ describe('rebuildable SQLite background schedule', () => {
     directory.initializeBootstrap(events, new Date(clock).toISOString());
     for (let attempt = 0; attempt < 3; attempt++) {
       const claim = directory.claim(events, new Date(clock).toISOString(), 'bootstrap')!;
-      directory.fail(claim.jobId, new TopicProjectionError('provider-failed', 'provider or route error'), new Date(clock).toISOString());
+      const failure = version === 'missing' ? new TopicProjectionError('provider-failed', 'provider or route error')
+        : new TopicProjectionError('validation-failed', LEGACY_TOPIC_OVERVIEW_SECTION_ERROR);
+      directory.fail(claim.jobId, failure, new Date(clock).toISOString());
       clock += 120_000;
     }
     const state = directory.snapshot();
     expect(state.jobs.at(-1)).toMatchObject({ status: 'failed', attempts: 3, nextRetryAt: null });
-    state.recoveryVersion = TOPIC_RECOVERY_VERSION - 1;
+    state.recoveryVersion = version === 'missing' ? 1 : 2;
     const snapshot = memory.exportSnapshot(); snapshot.memoryTopicState = state;
     const creator = new SqliteStorage({ filename: database });
     await creator.save(namespace, snapshot, 0); await creator.close(); await memory.close();
@@ -65,8 +67,11 @@ describe('rebuildable SQLite background schedule', () => {
         expect(claim).not.toBeNull();
         expect(recovered.listTopicProjectionJobs().find(({ id }) => id === claim.jobId)!.attempts).toBe(1);
         await recovered.completeTopicProjection(claim.jobId, { topics: [{ title: 'Project', description: 'Decisions',
-          sourceEventIds: claim.events.map(({ id }) => id), overview: [],
+          sourceEventIds: claim.events.map(({ id }) => id),
+          overview: [{ kind: 'scope', title: 'Removed section', text: 'Optional draft.', sourceEventIds: claim.events.map(({ id }) => id) }],
           sections: [{ title: 'Decisions', sourceEventIds: claim.events.map(({ id }) => id) }] }] });
+        expect(recovered.listMemoryTopics()[0]).toMatchObject({ title: 'Project', overview: [] });
+        expect(await recovered.claimNextTopicProjection('bootstrap')).toBeNull();
         expect(recovered.exportSnapshot().memoryTopicState!.recoveryVersion).toBe(TOPIC_RECOVERY_VERSION);
       } finally { await recovered.close(); }
     } finally { db.close(); }

@@ -160,6 +160,52 @@ describe('Dreaming trace regressions: completion and overview maintenance', () =
     expect(topic.sections!.find(section => section.title === '开发')!.sourceEventIds).toEqual([f.events[0]!.id])
   })
 
+  it.each(['move-only', 'move-first', 'rewrite-first'] as const)('removes an emptied section after the atomic edit (%s)', async (mode) => {
+    const f = await fixture(2)
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'a' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    const [remaining, moving] = f.events
+    const entry = { kind: 'history' as const, text: '可追溯的历史事实', sourceEventIds: [moving!.id] }
+    run = await f.memory.dreaming({ kind: 'apply', ...claim(run), operations: [
+      { kind: 'move-events', eventIds: [remaining!.id], title: '目标' },
+      { kind: 'set-overview', title: '开发', entries: [entry] },
+    ] })
+    const move = { kind: 'move-events' as const, eventIds: [moving!.id], title: '目标' }
+    const rewrite = { kind: 'rewrite-overview' as const, titles: ['开发', '目标'], entries: [{ ...entry, title: '目标' }] }
+    await f.memory.dreaming({ kind: 'apply', ...claim(run), operations:
+      mode === 'move-only' ? [move] : mode === 'move-first' ? [move, rewrite] : [rewrite, move] })
+    const reopened = await f.reopen()
+    expect(reopened.exportSnapshot().memoryTopicState!.topics.find(topic => topic.id === f.topicId)).toMatchObject({
+      sections: [{ title: '目标', sourceEventIds: [remaining!.id, moving!.id] }],
+      overview: mode === 'move-only' ? [] : rewrite.entries,
+    })
+    expect(reopened.listAllEvents()).toEqual(f.memory.listAllEvents())
+  })
+
+  it('counts valid directory pages when a stored legacy section has no Events', async () => {
+    const f = await fixture(1)
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const snapshot = f.memory.exportSnapshot()
+    const topic = snapshot.memoryTopicState!.topics.find(item => item.id === f.topicId)!
+    const overview = { kind: 'history' as const, title: '开发', text: '保留有事件的小节', sourceEventIds: [f.events[0]!.id] }
+    topic.sections!.push({ title: '空小节', sourceEventIds: [] })
+    topic.overview = [{ ...overview, title: '空小节' }, overview]
+    const storage = new SqliteStorage({ filename: f.database })
+    try { await storage.save(f.namespace, snapshot, f.memory.storageRevision) } finally { storage.close() }
+    await f.memory.reloadFromStorage()
+
+    let run = await f.memory.dreaming({ kind: 'start', owner: 'legacy-directory-reader' })
+    run = await f.memory.dreaming({ kind: 'prepare', ...claim(run) })
+    const action = { tool: 'memory_expand_topic', args: { id: f.topicId } }
+    const { result } = await dreamingTool(f.memory, run, action)
+    expect(result).toMatchObject({ sections: { total: 1 }, overview: { total: 1, items: [overview] } })
+    run = await f.memory.dreaming({ kind: 'checkpoint', ...claim(run), trace: { ...action, result }, estimatedTokens: 0 })
+    expect(run.idleCalls).toBe(0)
+    for (const field of ['sections', 'overview']) {
+      expect(run.directoryReads?.[JSON.stringify([f.topicId, field])]?.indices).toEqual([0])
+    }
+  })
+
   it('leaves unselected legacy overview entries byte-for-byte intact', async () => {
     const f = await fixture(2)
     const { SqliteStorage } = await import('@diqier/stratagate/sqlite')

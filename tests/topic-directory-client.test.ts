@@ -1123,7 +1123,7 @@ describe('Topic Directory client interactions', () => {
     expect(find(tree, (node) => node.props.className === 'sg-topic-directory-intro')).toHaveLength(0)
   })
 
-  it('keeps zero/one/nine event overviews complete without inventing rows or show-all actions', async () => {
+  it('hides overview-only empty sections and keeps nonempty sections complete without show-all actions', async () => {
     for (const count of [0, 1, 9]) {
       const client = clientRenderer(true)
       const directory = fixture()
@@ -1132,6 +1132,12 @@ describe('Topic Directory client interactions', () => {
       directory.topics[0]!.sourceEventIds = directory.topics[0]!.overview[0]!.sourceEventIds
       const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn() }
       let tree = client.render(client.TopicDirectory, props)
+      if (count === 0) {
+        expect(buttons(tree, '1.1主题范围›')).toHaveLength(0)
+        expect(buttons(tree).filter((node) => node.props['data-topic-event-id'])).toHaveLength(0)
+        expect(client.fetch).not.toHaveBeenCalled()
+        continue
+      }
       buttons(tree, '1.1主题范围›')[0]!.props.onClick()
       tree = client.render(client.TopicDirectory, props)
       await client.flush()
@@ -1139,7 +1145,7 @@ describe('Topic Directory client interactions', () => {
       expect(buttons(tree).filter((node) => node.props['data-topic-event-id'])).toHaveLength(count)
       expect(buttons(tree, '1.1.0总览›')).toHaveLength(1)
       expect(buttons(tree).filter((node) => node.props.className === 'sg-topic-show-all')).toHaveLength(0)
-      expect(client.fetch).toHaveBeenCalledTimes(count ? 1 : 0)
+      expect(client.fetch).toHaveBeenCalledTimes(1)
     }
   })
 })

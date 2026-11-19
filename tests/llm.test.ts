@@ -1371,13 +1371,14 @@ describe('memory topic model projection', () => {
     expect((calls.mock.calls[0]![0] as any).tools[0].parameters.properties.topics.items.required).toContain('sections')
   })
 
-  it.each(['unnamed', 'unknown-title'] as const)('rejects %s new overview outside declared and inherited sections', async (invalid) => {
+  it.each(['unnamed', 'unknown-title'] as const)('leaves %s overview placement to the final directory without repeating the model request', async (invalid) => {
     const input = { ...context(), existingTopics: [] }; const output = proposal(); const topic = output.topics[0]!;
     delete topic.topicId; topic.sourceEventIds = ['evt_topic_new'];
     topic.overview = [{ kind: 'open-question', text: '迁移待确认。', sourceEventIds: ['evt_topic_new'],
       ...(invalid === 'unknown-title' ? { title: '不存在的小节' } : {}) }];
-    const { bridge, session } = modelBridge([{ tool: output }, { tool: output }]);
-    await expect(bridge.run(session, () => bridge.topicProjector(input))).rejects.toThrow(/overview.*section/i);
+    const { bridge, session, calls } = modelBridge([{ tool: output }]);
+    expect(await bridge.run(session, () => bridge.topicProjector(input))).toEqual(output);
+    expect(calls).toHaveBeenCalledTimes(1);
   });
 
   it.each(['default-kind', 'normalized', 'inherited'] as const)('accepts %s overview display title on a known section', async (mode) => {

@@ -215,7 +215,7 @@ describe('rebuildable Event-backed topic directory', () => {
     await memory.close();
   });
 
-  it.each(['named', 'default-kind'] as const)('rejects new overview attached to a section removed by this batch atomically (%s)', async (mode) => {
+  it.each(['named', 'default-kind', 'dreaming-managed'] as const)('commits membership and drops the new overview of a missing section (%s)', async (mode) => {
     const memory = StrataGate.inMemory(options); const [event] = await seed(memory);
     const events = memory.listAllEvents(); const now = new Date().toISOString();
     const directory = new MemoryTopicDirectory(); directory.initializeBootstrap([], now);
@@ -223,16 +223,20 @@ describe('rebuildable Event-backed topic directory', () => {
     const { topicIds: [id] } = directory.complete(initial.jobId, { topics: [{ title: '项目', description: '资料',
       sourceEventIds: [event!.id], sections: [{ title: oldTitle, sourceEventIds: [event!.id] }], overview: [],
     }] }, events, now);
-    const pending = directory.snapshot(); delete pending.projectedVersions[event!.id]; directory.restore(pending);
-    const next = directory.claim(events, now)!; const before = directory.snapshot();
+    const pending = directory.snapshot(); delete pending.projectedVersions[event!.id];
+    if (mode === 'dreaming-managed') pending.topics[0]!.dreamingManaged = true;
+    directory.restore(pending);
+    const next = directory.claim(events, now)!;
     const result = { topics: [{ topicId: id!, title: '项目', description: '资料', sourceEventIds: [event!.id],
       sections: [{ title: '新小节', sourceEventIds: [event!.id] }], overview: [{ kind: 'history' as const,
-        ...(mode === 'named' ? { title: oldTitle } : {}), text: '新总览', sourceEventIds: [event!.id] }],
+        ...(mode === 'named' ? { title: oldTitle } : mode === 'dreaming-managed' ? { title: '新小节' } : {}),
+        text: '新总览', sourceEventIds: [event!.id] }],
     }] };
-    expect(() => directory.complete(next.jobId, result, events, now)).toThrow(/overview.*section/i);
-    expect(directory.snapshot()).toEqual(before);
-    result.topics[0]!.overview = [];
     expect(directory.complete(next.jobId, result, events, now).topicIds).toEqual([id]);
+    expect(directory.list(events).find(topic => topic.id === id)).toMatchObject({
+      overview: [], sections: [{ title: mode === 'dreaming-managed' ? oldTitle : '新小节', sourceEventIds: [event!.id] }],
+    });
+    expect(directory.claim(events, now)).toBeNull();
     await memory.close();
   });
 
@@ -248,15 +252,17 @@ describe('rebuildable Event-backed topic directory', () => {
     expect(memory.exportSnapshot()).toEqual(before);
   });
 
-  it.each(['unnamed', 'unknown-title'] as const)('rejects %s new overview without a declared section atomically', async (invalid) => {
+  it.each(['unnamed', 'unknown-title'] as const)('discards %s unattached prose and commits valid membership and overview', async (invalid) => {
     const memory = StrataGate.inMemory(options); const [event] = await seed(memory);
-    const job = (await memory.claimNextTopicProjection())!; const before = memory.exportSnapshot();
+    const job = (await memory.claimNextTopicProjection())!;
     const paragraph = { kind: 'open-question' as const, text: '迁移待确认。', sourceEventIds: [event!.id],
       ...(invalid === 'unknown-title' ? { title: '不存在的小节' } : {}) };
-    await expect(memory.completeTopicProjection(job.jobId, { topics: [{ title: '数据库', description: '资料',
-      sourceEventIds: [event!.id], sections: [{ title: '数据库与迁移', sourceEventIds: [event!.id] }], overview: [paragraph],
-    }] })).rejects.toThrow(/overview.*section/i);
-    expect(memory.exportSnapshot()).toEqual(before);
+    const attached = { ...paragraph, title: '数据库与迁移' };
+    const { topicIds: [id] } = await memory.completeTopicProjection(job.jobId, { topics: [{ title: '数据库', description: '资料',
+      sourceEventIds: [event!.id], sections: [{ title: attached.title, sourceEventIds: [event!.id] }], overview: [paragraph, attached],
+    }] });
+    expect(memory.getMemoryTopic(id!)).toMatchObject({ overview: [attached],
+      sections: [{ title: attached.title, sourceEventIds: [event!.id] }] });
   });
 
   it.each(['named', 'default-kind', 'normalized'] as const)('accepts %s overview mapped to a declared section', async (mode) => {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { bm25Rank, estimateTokens, memoryTopicMembershipSections, memoryTopicSectionTitle, memoryTopicSectionIdentity, weightedSearchTokens, type EventCard, type MemoryTopic } from '@diqier/stratagate'
+import { bm25Rank, estimateTokens, memoryTopicSectionContent, memoryTopicSectionTitle, memoryTopicSectionIdentity, normalizeMemoryTopicLabel, weightedSearchTokens, type EventCard, type MemoryTopic } from '@diqier/stratagate'
 
 export function memoryTopicSectionKey(title: string): string {
   return memoryTopicSectionIdentity(title)
@@ -9,22 +9,20 @@ export function memoryTopicSectionKey(title: string): string {
 export function memoryTopicSections(topic: Pick<MemoryTopic, 'overview' | 'sourceEventIds' | 'sections'>) {
   const memberPositions = new Map<string, number>()
   topic.sourceEventIds.forEach((id, index) => { if (!memberPositions.has(id)) memberPositions.set(id, index) })
+  const content = memoryTopicSectionContent(topic)
   const sections = new Map<string, { key: string; title: string; paragraphs: MemoryTopic['overview']; sourceEventIds: string[] }>()
-  for (const membership of memoryTopicMembershipSections(topic)) {
+  const keyByLabel = new Map<string, string>()
+  for (const membership of content.sections) {
     const key = membership.id ?? memoryTopicSectionKey(membership.title)
     const section = sections.get(key) ?? { key, title: membership.title, paragraphs: [], sourceEventIds: [] }
-    section.sourceEventIds.push(...membership.sourceEventIds.filter((id) => memberPositions.has(id)))
+    section.sourceEventIds.push(...membership.sourceEventIds)
     sections.set(key, section)
+    const label = normalizeMemoryTopicLabel(membership.title)
+    if (!keyByLabel.has(label)) keyByLabel.set(label, key)
   }
-  for (const part of topic.overview) {
-    const title = memoryTopicSectionTitle(part)
-    const identity = [...sections.values()].find(section => section.title === title)?.key ?? memoryTopicSectionKey(title)
-    let section = sections.get(identity)
-    if (!section) {
-      section = { key: identity, title, paragraphs: [], sourceEventIds: [] }
-      sections.set(identity, section)
-    }
-    section.paragraphs.push(part)
+  for (const part of content.overview) {
+    const label = normalizeMemoryTopicLabel(memoryTopicSectionTitle(part))
+    sections.get(keyByLabel.get(label)!)!.paragraphs.push(part)
   }
   // Membership preserves older members before appended Events. Proposal prose
   // can precede inherited prose, so its array order must not renumber the book.
