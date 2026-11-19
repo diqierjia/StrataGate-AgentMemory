@@ -13,6 +13,9 @@ import {
 import { applyElementChanges, elementViewAt } from './elements.js';
 import { EVENT_DUPLICATE_AUTO_CONFIDENCE, eventDuplicateCompatible, eventDuplicateMergeCompatible, eventDuplicateStructuralCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, eventDuplicateSimilarity, isExactEventDuplicate, validEventMergeDraft, type EventMergeDraft, type EventDuplicatePair, type EventDuplicateDecider } from './event-duplicates.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
+import { dreamingTopicVersion, type DreamingRun } from './dreaming.js';
+import { discoverDreaming, dreamingEventVersion, DREAMING_AUTO_INTERVAL, type DreamingClaim, type DreamingEditResult,
+  type DreamingEventEdit, type DreamingExperienceEdit } from './dreaming-v2.js';
 import { externalMemoryJsonExtractor, parseExternalMemoryExport } from './external-memory.js';
 import { findBestVerbatimQuote } from './event-quotes.js';
 import { GRAPH_PROVENANCE_LIMIT, applyGraphProjection, boundEffectiveGraphNodeView, effectiveGraphNodeView, graphTimeline } from './graph.js';
@@ -332,7 +335,7 @@ function restrictExtractionRelations(temporal: EventTemporal, allowedIds: Readon
   return result;
 }
 
-type DuplicateUndoCollection = 'events' | 'agentEvents' | 'elementProjectionJobs' | 'graphProjectionJobs';
+type DuplicateUndoCollection = 'events' | 'agentEvents' | 'elementProjectionJobs' | 'graphProjectionJobs' | 'experiences';
 export interface DuplicateReviewUndo {
   version: 1;
   changes: Array<{ collection: DuplicateUndoCollection; id: string; before: unknown; after: unknown }>;
@@ -416,6 +419,7 @@ export class StrataGate {
   private readonly topicDirectory = new MemoryTopicDirectory();
   private readonly manualRetryRuns = new Map<string, Promise<unknown>>();
   private readonly usageReceipts = new Map<string, UsageReceipt>();
+  private readonly experiences: import('./types.js').Experience[] = [];
   private readonly successfulModelResponses: SuccessfulModelResponse[] = [];
   private readonly ingestionReceipts = new Map<string, IngestionReceipt>();
   private readonly externalMemoryImportJobs = new Map<string, ExternalMemoryImportJob>();
@@ -989,6 +993,26 @@ export class StrataGate {
     return this.listMemoryTopics().find((topic) => topic.id === id) ?? null;
   }
 
+  async startMemoryDreaming(owner: string, trigger: 'manual' | 'automatic', notes: Record<string, string>,
+    includeAgentEvents = true): Promise<DreamingRun | null> {
+    const current = this.topicDirectory.snapshot();
+    const now = this.now();
+    if (trigger === 'automatic' && (current.dreaming && ['running', 'pausing', 'paused'].includes(current.dreaming.status)
+      || Date.parse(current.lastAutoDreamingAt ?? '') + DREAMING_AUTO_INTERVAL > now.getTime())) return null;
+    const messages = new Set(this.dreamingMessages().map(message => message.id));
+    const blocks = this.blocks.filter(block => block.l5Raw.some(message => messages.has(message.id)));
+    const events = (includeAgentEvents ? this.listAllEvents() : this.events).filter(event => event.status !== 'forgotten' && event.status !== 'archived');
+    const reviewIds = this.listExperiences(true).filter(item => item.status === 'needs-review').map(item => item.id);
+    const discovery = discoverDreaming(blocks, this.openTail.filter(message => messages.has(message.id)), events, current.dreamingWatermark, notes, reviewIds);
+    if (trigger === 'automatic' && !discovery.units.length) return null;
+    return this.dreaming({ kind: 'start', owner, trigger, discovery, ...(includeAgentEvents ? {} : { allowedEventIds: events.map(event => event.id) }) });
+  }
+
+  getDreamingTopicVersion(id: string): string | undefined {
+    const topic = this.topicDirectory.snapshot().topics.find(item => item.id === id && !item.invalidated);
+    return topic && dreamingTopicVersion(topic);
+  }
+
   async dreaming(command: import('./dreaming.js').DreamingCommand): Promise<import('./dreaming.js').DreamingRun> {
     if (command.kind === 'prepare') {
       // Waiting polls observe other connections and lease-only projection heartbeats.
@@ -1003,6 +1027,322 @@ export class StrataGate {
           && Date.parse(job.leaseUntil ?? job.updatedAt) > now)) return run;
     }
     return this.commitMutation(() => this.topicDirectory.dreaming(command, this.listAllEvents(), toUtc8Iso(this.now())));
+  }
+
+  private async editDreaming(claim: DreamingClaim, operation: unknown, write: (run: DreamingRun, now: string) => DreamingEditResult): Promise<DreamingEditResult> {
+    return this.commitMutation(() => {
+      const now = toUtc8Iso(this.now());
+      const run = this.topicDirectory.dreaming({ kind: 'memory-write', ...claim }, this.listAllEvents(), now);
+      if (run.scope !== 'memory' || run.status !== 'running') throw new Error('Dreaming is not running');
+      const key = dreamingTopicVersion(operation);
+      const previous = run.appliedOperations?.[key];
+      if (previous) return { ...previous, saved: false };
+      const outcome = write(run, now);
+      (run.appliedOperations ??= {})[key] = outcome;
+      if (outcome.saved) {
+        run.changedBatches++;
+        run.idleCalls = 0;
+      }
+      this.topicDirectory.saveMemoryDreamingRun(run);
+      return outcome;
+    });
+  }
+
+  private dreamingReadEvent(run: DreamingRun, id: string | undefined): EventCard {
+    const event = id && this.findEvent(id);
+    if (!event || event.status === 'forgotten' || event.status === 'archived'
+      || run.readVersions?.[`event:${id}`] !== dreamingEventVersion(event)) throw new Error(`Read the current Event before editing or citing it: ${id ?? ''}`);
+    return event;
+  }
+
+  private dreamingReadMessages(run: DreamingRun, ids: string[]): Map<string, RawMessage> {
+    const available = new Map(this.dreamingMessages().map(message => [message.id, message]));
+    for (const id of ids) {
+      const message = available.get(id);
+      if (!message || run.readVersions?.[`message:${id}`] !== dreamingTopicVersion(message)) throw new Error(`Read the current raw message before citing it: ${id}`);
+    }
+    return available;
+  }
+
+  async editDreamingEvent(claim: DreamingClaim, edit: DreamingEventEdit): Promise<DreamingEditResult> {
+    return this.editDreaming(claim, ['event', edit], (run, now) => {
+      const target = edit.kind === 'create' ? undefined : this.dreamingReadEvent(run, edit.id);
+      if (target && !this.events.includes(target)) throw new Error('Only derived Events can be edited; explicitly recorded memories are read-only');
+      const ids = [...new Set(edit.sourceMessageIds ?? [])];
+      const messages = this.dreamingReadMessages(run, ids);
+      const affected = new Set<string>();
+      const removed = new Set<string>();
+      const redirects = new Map<string, string>();
+      let event = target;
+      const requireBody = () => {
+        if (!validEventMergeDraft(edit)) throw new Error('Event title (200 characters) and summary (12,000 characters) are required');
+        return { title: edit.title.trim(), summary: edit.summary.trim() };
+      };
+      const refuseProtected = (card: EventCard) => {
+        if (card.weight.pinned || !this.events.includes(card) || this.listAllEvents().some(other => other.mergedFromEventIds?.includes(card.id))) {
+          throw new Error(`Event is protected: ${card.id}`);
+        }
+      };
+      const relate = ['beforeEventIds', 'afterEventIds', 'supersedesEventIds', 'conflictsWithEventIds', 'relatedEventIds'] as const;
+      const setSources = (card: EventCard, sourceIds: string[]) => {
+        const blockIds = [...new Set(sourceIds.map(id => this.rawMessageLookup.get(id)?.block.id))];
+        if (!sourceIds.length || blockIds.includes(undefined) || sourceIds.some(id => !messages.has(id))) {
+          throw new Error('Derived Events need visible evidence in sealed Blocks; open messages can still support experiences');
+        }
+        card.sourceMessageIds = sourceIds;
+        card.sourceBlockId = blockIds[0]!;
+        if (blockIds.length > 1) card.sourceBlockIds = blockIds as string[];
+        else delete card.sourceBlockIds;
+      };
+      if (edit.kind === 'create' || edit.kind === 'update') {
+        const body = requireBody();
+        const temporal = normalizeEventTemporal(edit.temporal);
+        if (temporal.sameEventId || temporal.participantNodeIds || relate.some(key => temporal[key]?.length)) {
+          throw new Error('Keep existing relations when correcting text; use supersede for a real state change');
+        }
+        if (!ids.length || !this.rawMessageLookup.get(ids[0]!)) throw new Error('Read and cite raw evidence in a sealed Block');
+        // Session ownership belongs to the existing Event (or its original
+        // Block for legacy Events). A correction cannot move it to a new session.
+        const threadId = target ? target.temporal.threadId ?? this.blocks.find(block => block.id === target.sourceBlockId)?.threadId
+          : messages.get(ids[0]!)?.threadId;
+        if ((target?.scope ?? edit.scope ?? 'session') === 'session' && ids.some(id => messages.get(id)?.threadId !== threadId)) {
+          throw new Error('Session-scoped Events must cite only evidence from their own session');
+        }
+        delete temporal.threadId;
+        if (target) {
+          refuseProtected(target);
+          const old = target.temporal;
+          Object.assign(target, body, { updatedAt: now, quotes: [], temporal: { ...old, ...temporal } });
+          delete target.quotesOrigin;
+        } else {
+          event = this.addEventInMemory({ ...body, sourceMessageIds: ids, sourceBlockId: this.rawMessageLookup.get(ids[0]!)!.block.id,
+            scope: edit.scope ?? 'session', temporal: { ...temporal, ...(threadId ? { threadId } : {}) } });
+        }
+        setSources(event!, ids);
+        affected.add(event!.id);
+      } else if (edit.kind === 'delete') {
+        refuseProtected(target!);
+        if (!edit.reason?.trim() || !target!.sourceMessageIds.length || !target!.sourceMessageIds.every(id => {
+          const message = messages.get(id);
+          return message && run.readVersions?.[`message:${id}`] === dreamingTopicVersion(message);
+        })) {
+          throw new Error('Read the original sources and explain why the derived Event is erroneous or redundant before deleting it');
+        }
+        removed.add(target!.id);
+        affected.add(target!.id);
+      } else if (edit.kind === 'merge') {
+        const body = requireBody();
+        const keeper = target!;
+        refuseProtected(keeper);
+        this.dreamingReadMessages(run, keeper.sourceMessageIds);
+        for (const id of new Set(edit.otherIds ?? [])) {
+          const duplicate = this.dreamingReadEvent(run, id);
+          refuseProtected(duplicate);
+          this.dreamingReadMessages(run, duplicate.sourceMessageIds);
+          if (duplicate.id === keeper.id || ['happenedStart', 'happenedEnd', 'status'].some(key => {
+            const field = key as 'happenedStart' | 'happenedEnd' | 'status';
+            const left = keeper.temporal[field], right = duplicate.temporal[field];
+            return left && right && left !== 'unknown' && right !== 'unknown' && left !== right;
+          }) || !this.archiveDuplicateEventInMemory({
+            leftId: keeper.id, rightId: duplicate.id, leftFingerprint: eventDuplicateFingerprint(keeper),
+            rightFingerprint: eventDuplicateFingerprint(duplicate), similarity: 0, exact: false,
+          }, keeper.id, false, true, body)) throw new Error('Events are incompatible or represent different points in history');
+          redirects.set(id, keeper.id);
+          removed.add(id);
+          affected.add(id);
+        }
+        if (!removed.size) throw new Error('Select at least one redundant Event');
+        const archived = keeper.mergedFromEventIds?.filter(id => !removed.has(id)) ?? [];
+        if (archived.length) keeper.mergedFromEventIds = archived;
+        else delete keeper.mergedFromEventIds;
+        setSources(keeper, keeper.sourceMessageIds);
+        affected.add(keeper.id);
+      } else if (edit.kind === 'supersede') {
+        const newer = target!;
+        if (newer.status !== 'active' || !edit.reason?.trim()) throw new Error('Identify the active replacement and explain the change');
+        this.dreamingReadMessages(run, newer.sourceMessageIds);
+        for (const id of new Set(edit.otherIds ?? [])) {
+          const old = this.dreamingReadEvent(run, id);
+          this.dreamingReadMessages(run, old.sourceMessageIds);
+          if (!this.events.includes(old) || old.id === newer.id || old.status !== 'active' || old.scope !== newer.scope) throw new Error('Cannot replace this historical Event');
+          const [previousTime, laterTime] = [old, newer].map(card => Date.parse(card.temporal.happenedStart ?? card.temporal.mentionedAt
+            ?? card.sourceMessageIds.map(source => messages.get(source)?.createdAt ?? '').sort()[0] ?? ''));
+          if (!Number.isFinite(previousTime) || !Number.isFinite(laterTime) || previousTime! >= laterTime!) throw new Error('Replacement needs a later supported timestamp');
+          old.status = 'superseded'; old.supersededBy = newer.id; old.updatedAt = now; old.weight.forcedCap = 0.1;
+          newer.temporal.supersedesEventIds = [...new Set([...(newer.temporal.supersedesEventIds ?? []), id])];
+          affected.add(id);
+        }
+        if (!affected.size) throw new Error('Identify the earlier Event');
+        newer.updatedAt = now;
+        affected.add(newer.id);
+      } else throw new Error('Unsupported Event operation');
+
+      if (removed.size) {
+        this.events.splice(0, this.events.length, ...this.events.filter(card => !removed.has(card.id)));
+        for (const card of this.listAllEvents()) {
+          const redirect = (id: string) => redirects.get(id) ?? (!removed.has(id) ? id : undefined);
+          if (card.temporal.sameEventId && removed.has(card.temporal.sameEventId)) {
+            const next = redirect(card.temporal.sameEventId);
+            if (next && next !== card.id) card.temporal.sameEventId = next;
+            else delete card.temporal.sameEventId;
+            affected.add(card.id);
+          }
+          for (const key of relate) if (card.temporal[key]?.some(id => removed.has(id))) {
+            card.temporal[key] = [...new Set(card.temporal[key]!.flatMap(id => redirect(id) ?? []).filter(id => id !== card.id))];
+            affected.add(card.id);
+          }
+          if (card.supersededBy && removed.has(card.supersededBy)) {
+            card.supersededBy = redirect(card.supersededBy) ?? null;
+            if (card.status === 'superseded' && !card.supersededBy) { card.status = 'active'; card.weight.forcedCap = null; }
+            affected.add(card.id);
+          }
+        }
+        for (const receipt of this.usageReceipts.values()) receipt.eventIds = [...new Set(receipt.eventIds.flatMap(id => redirects.get(id) ?? (removed.has(id) ? [] : [id])))];
+      }
+
+      if (edit.kind !== 'supersede' && edit.kind !== 'create') {
+        this.invalidateDreamingProjections(affected);
+      }
+      const experiencesToReview: string[] = [];
+      for (const experience of this.experiences) {
+        if ((edit.kind === 'update' || edit.kind === 'delete') && target && experience.sourceEventIds.includes(target.id)) {
+          experience.status = 'needs-review';
+          experience.updatedAt = now;
+          if (removed.has(target.id)) experience.sourceEventIds = experience.sourceEventIds.filter(id => id !== target.id);
+          experiencesToReview.push(experience.id);
+        }
+      }
+      if (experiencesToReview.length) {
+        const unit = run.units[run.cursor]!;
+        unit.experienceIds = [...new Set([...(unit.experienceIds ?? []), ...experiencesToReview])];
+      }
+      const current = this.listAllEvents();
+      this.topicDirectory.reconcileDreamingEvents(current, affected, redirects, now);
+      const remaining = current.filter(card => affected.has(card.id) && (card.status === 'active' || card.status === 'superseded'));
+      if (edit.kind !== 'supersede') {
+        this.queueElementProjection(remaining.map(card => card.id));
+        this.queueGraphProjection(remaining.map(card => card.id), 1_000);
+      }
+      for (const id of removed) delete run.discoveryVersions?.[`event:${id}`];
+      for (const card of remaining) {
+        (run.discoveryVersions ??= {})[`event:${card.id}`] = dreamingEventVersion(card);
+        delete run.readVersions?.[`event:${card.id}`];
+      }
+      this.validateReferences();
+      return { ...(event ? { id: event.id } : {}), saved: true, ...(experiencesToReview.length ? { experiencesToReview } : {}) };
+    });
+  }
+
+  private invalidateDreamingProjections(affected: Set<string>): void {
+    const keep = (ids: readonly string[]) => ids.filter(id => !affected.has(id));
+    const graphRetry: string[] = [], elementRetry: string[] = [];
+    for (const [id, job] of this.graphProjectionJobs) if (job.sourceEventIds.some(source => affected.has(source))) {
+      const remaining = keep(job.sourceEventIds);
+      if (remaining.length && job.status === 'completed') job.sourceEventIds = remaining;
+      else { this.graphProjectionJobs.delete(id); graphRetry.push(...remaining); }
+    }
+    for (const [id, job] of this.elementProjectionJobs) if (job.sourceEventIds.some(source => affected.has(source))) {
+      const remaining = keep(job.sourceEventIds);
+      if (remaining.length && job.status === 'completed') job.sourceEventIds = remaining;
+      else { this.elementProjectionJobs.delete(id); elementRetry.push(...remaining); }
+    }
+    for (const element of this.elements) {
+      element.sourceEventIds = keep(element.sourceEventIds);
+      element.facts = element.facts.flatMap(fact => {
+        const sourceEventIds = keep(fact.sourceEventIds);
+        return sourceEventIds.length ? [{ ...fact, sourceEventIds }] : [];
+      });
+      const sources = new Set(element.sourceEventIds.flatMap(id => this.findEvent(id)?.sourceMessageIds ?? []));
+      element.sourceMessageIds = element.sourceMessageIds.filter(id => sources.has(id));
+      const current = [...element.facts].reverse().find(fact => fact.mode === 'state' && fact.status === 'active');
+      element.currentState = current ? [current.value].flat().join('、') : '';
+    }
+    for (const node of this.graphNodes) {
+      node.sourceEventIds = keep(node.sourceEventIds);
+      node.facts = node.facts.flatMap(fact => {
+        const sourceEventIds = keep(fact.sourceEventIds);
+        return sourceEventIds.length ? [{ ...fact, sourceEventIds }] : [];
+      });
+      const metadata = node.metadataProvenance;
+      if (metadata) {
+        if (metadata.name) metadata.name = keep(metadata.name);
+        for (const key of ['aliases', 'tags'] as const) if (metadata[key]) {
+          metadata[key] = metadata[key]!.flatMap(entry => {
+            const sourceEventIds = keep(entry.sourceEventIds);
+            return sourceEventIds.length ? [{ ...entry, sourceEventIds }] : [];
+          });
+          node[key] = metadata[key]!.map(entry => entry.value);
+        }
+      } else if (node.sourceEventIds.length === 0) {
+        node.aliases = []; delete node.tags;
+      }
+    }
+    for (const edge of this.graphEdges) edge.sourceEventIds = keep(edge.sourceEventIds);
+    this.graphEdges.splice(0, this.graphEdges.length, ...this.graphEdges.filter(edge => edge.sourceEventIds.length));
+    const linked = new Set(this.graphEdges.flatMap(edge => [edge.fromNodeId, edge.toNodeId]));
+    this.graphNodes.splice(0, this.graphNodes.length, ...this.graphNodes.filter(node => node.sourceEventIds.length || node.facts.length || linked.has(node.id)));
+    this.elements.splice(0, this.elements.length, ...this.elements.filter(element => element.sourceEventIds.length || element.facts.length));
+    const nodeIds = new Set(this.graphNodes.map(node => node.id));
+    for (const event of this.listAllEvents()) if (event.temporal.participantNodeIds) {
+      event.temporal.participantNodeIds = event.temporal.participantNodeIds.filter(id => nodeIds.has(id));
+    }
+    const edgeIds = new Set(this.graphEdges.map(edge => edge.id));
+    for (const job of this.graphProjectionJobs.values()) {
+      job.edgeIds = job.edgeIds.filter(id => edgeIds.has(id));
+      job.nodeIds = job.nodeIds.filter(id => nodeIds.has(id));
+    }
+    const elementIds = new Set(this.elements.map(element => element.id));
+    for (const job of this.elementProjectionJobs.values()) job.elementIds = job.elementIds.filter(id => elementIds.has(id));
+    for (const receipt of this.usageReceipts.values()) receipt.elementIds = receipt.elementIds.filter(id => elementIds.has(id));
+    this.queueGraphProjection(graphRetry, 1_000);
+    this.queueElementProjection(elementRetry);
+  }
+
+  async editDreamingExperience(claim: DreamingClaim, edit: DreamingExperienceEdit): Promise<DreamingEditResult> {
+    return this.editDreaming(claim, ['experience', edit], (run, now) => {
+      const byId = (id: string | undefined) => {
+        const item = this.listExperiences(true).find(item => item.id === id);
+        if (!item || run.readVersions?.[`experience:${id}`] !== dreamingTopicVersion(item)) throw new Error(`Read the current experience before editing it: ${id ?? ''}`);
+        return item;
+      };
+      const old = edit.kind === 'create' ? undefined : byId(edit.id);
+      const merged = edit.kind === 'merge' ? [...new Set(edit.otherIds ?? [])].map(byId) : [];
+      if (edit.kind === 'merge' && (!merged.length || merged.some(item => item.id === old?.id || item.scope !== old?.scope))) {
+        throw new Error('Choose redundant experiences in the same scope');
+      }
+      if (edit.kind === 'delete') {
+        this.experiences.splice(this.experiences.findIndex(item => item.id === old!.id), 1);
+        return { id: old!.id, saved: true };
+      }
+      if (!['create', 'update', 'merge'].includes(edit.kind) || !edit.title?.trim() || !edit.content?.trim()) throw new Error('Experience title and Markdown content are required');
+      if (!old && !run.searchedExperiences) throw new Error('Search existing experiences for related methods before creating one');
+      if (!old && this.experiences.some(item => normalizeSearchText(item.title) === normalizeSearchText(edit.title!))) throw new Error('This experience title already exists; read and update it');
+      const proposedMessages = [...new Set(edit.sourceMessageIds ?? [])];
+      const proposedEvents = [...new Set(edit.sourceEventIds ?? [])];
+      const reviewing = old?.status === 'needs-review' || merged.some(item => item.status === 'needs-review');
+      if (reviewing && !proposedMessages.length && !proposedEvents.length) {
+        throw new Error('Read and cite current evidence before restoring a pending experience');
+      }
+      this.dreamingReadMessages(run, proposedMessages);
+      const rawFromEvents = proposedEvents.flatMap(id => this.dreamingReadEvent(run, id).sourceMessageIds);
+      const inherited = [old, ...merged].filter(item => item?.status === 'active');
+      const sourceMessageIds = [...new Set([...proposedMessages, ...rawFromEvents, ...inherited.flatMap(item => item!.sourceMessageIds)])];
+      const sourceEventIds = [...new Set([...proposedEvents, ...inherited.flatMap(item => item!.sourceEventIds)])];
+      const visible = new Set(this.dreamingMessages().map(message => message.id));
+      if (!sourceMessageIds.length || sourceMessageIds.some(id => !visible.has(id))) throw new Error('An experience needs available original evidence');
+      const scope = old?.scope ?? edit.scope ?? 'session';
+      if (scope === 'session' && new Set(sourceMessageIds.map(id =>
+        (this.rawMessageLookup.get(id)?.message ?? this.openTail.find(message => message.id === id))?.threadId)).size !== 1) {
+        throw new Error('Session-scoped experiences must cite a single session');
+      }
+      const stored = { id: old?.id ?? `exp_${randomUUID()}`, title: edit.title.trim(), content: edit.content.trim(),
+        scope, status: 'active' as const, sourceMessageIds, sourceEventIds,
+        createdAt: old?.createdAt ?? now, updatedAt: now };
+      const remove = new Set([old?.id, ...merged.map(item => item.id)]);
+      this.experiences.splice(0, this.experiences.length, ...this.experiences.filter(item => !remove.has(item.id)), stored);
+      run.searchedExperiences = false;
+      return { id: stored.id, saved: true };
+    });
   }
 
   listTopicProjectionJobs(): readonly TopicProjectionJob[] {
@@ -1099,6 +1439,7 @@ export class StrataGate {
       usageReceipts: [...this.usageReceipts.values()],
       ingestionReceipts: [...this.ingestionReceipts.values()],
       externalMemoryImportJobs: [...this.externalMemoryImportJobs.values()],
+      experiences: this.experiences,
       successfulModelResponses: this.successfulModelResponses,
       memoryTopicState: includeTopics ? this.topicDirectory.snapshot()
         : this.committedMetadata?.memoryTopicState ?? { topics: [], jobs: [], projectedVersions: {} },
@@ -1281,6 +1622,43 @@ export class StrataGate {
     // worker pass keeps startup responsive and avoids burst token consumption.
     await this.projectEligibleGraph();
     return { sealedBlocks, readyBlocks, extractedEvents, projectedElements };
+  }
+
+  listExperiences(includeNeedsReview = false): import('./types.js').Experience[] {
+    if (!this.experiences.length) return [];
+    const messages = new Set(this.dreamingMessages().map(message => message.id));
+    const visible: import('./types.js').Experience[] = [];
+    for (const item of this.experiences) {
+      if (!item.sourceMessageIds.every(id => messages.has(id))) continue;
+      const sources = item.sourceEventIds.map(id => this.findEvent(id));
+      if (sources.some(event => !event || event.status === 'forgotten')) continue;
+      // Older merges and choices may have left an archived source. Surface
+      // the experience for revalidation while keeping it out of ordinary recall.
+      const status = sources.some(event => event?.status === 'archived') ? 'needs-review' : item.status;
+      if (includeNeedsReview || status === 'active') visible.push({ ...item, status });
+    }
+    return structuredClone(visible);
+  }
+
+  searchExperiences(query: string, limit = 12, offset = 0, includeNeedsReview = false, threadId?: string): import('./types.js').Experience[] {
+    const items = this.listExperiences(includeNeedsReview).filter(item => threadId === undefined || item.scope !== 'session'
+      || item.sourceMessageIds.every(id => (this.rawMessageLookup.get(id)?.message ?? this.openTail.find(message => message.id === id))?.threadId === threadId));
+    return (query.trim() ? bm25Rank(items, query, item => searchTokens(`${item.title} ${item.content}`))
+      .sort((a,b) => b.score-a.score).map(hit => hit.item) : items).slice(offset, offset + limit);
+  }
+
+  /** Forgotten Event provenance remains unavailable to maintenance, including through uncited raw reads. */
+  dreamingMessages(): RawMessage[] {
+    const forgotten = new Set(this.listAllEvents().filter(event => event.status === 'forgotten').flatMap(event => event.sourceMessageIds));
+    return [...this.blocks.flatMap(block => block.l5Raw), ...this.openTail].filter(message => !forgotten.has(message.id)
+      && !message.threadId?.startsWith('stratagate-dreaming:'));
+  }
+
+  searchDreamingMessages(query: string, limit: number, offset: number, threadId?: string) {
+    const messages = this.dreamingMessages().filter(message => threadId === undefined || message.threadId === threadId);
+    return bm25Rank(messages, query, message => searchTokens(message.content)).sort((left, right) => right.score - left.score
+      || right.item.createdAt.localeCompare(left.item.createdAt) || left.item.id.localeCompare(right.item.id))
+      .slice(offset, offset + limit).map(({ item }) => ({ message: item, blockId: this.rawMessageLookup.get(item.id)?.block.id ?? null }));
   }
 
   async addEvent(input: EventCardInput): Promise<EventCard> {
@@ -1716,6 +2094,10 @@ export class StrataGate {
       if (this.listAllEvents().some(event => event.mergedFromEventIds?.length
         && (importedEventIds.has(event.id) || event.sourceMessageIds.some(messageId => sourceMessageIds.has(messageId))))) {
         throw new Error('该导入已参与记忆合并，不能通过整批撤销删除合并后的来源');
+      }
+      if (this.listAllEvents().some(event => event.sourceBlockIds?.includes(id))
+        || this.experiences.some(item => item.sourceMessageIds.some(messageId => sourceMessageIds.has(messageId)))) {
+        throw new Error('该导入仍是整理后记忆的来源，无法整批撤销');
       }
       const restoredEventIds = new Set<string>();
       const now = toUtc8Iso(this.now());
@@ -2545,9 +2927,9 @@ export class StrataGate {
       this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
       const after = this.exportSnapshot();
       const changes: DuplicateReviewUndo['changes'] = [];
-      for (const collection of ['events', 'agentEvents', 'elementProjectionJobs', 'graphProjectionJobs'] as const) {
-        const old = new Map<string, unknown>(before[collection].map(value => [value.id, value]));
-        const current = new Map<string, unknown>(after[collection].map(value => [value.id, value]));
+      for (const collection of ['events', 'agentEvents', 'elementProjectionJobs', 'graphProjectionJobs', 'experiences'] as const) {
+        const old = new Map<string, unknown>((before[collection] ?? []).map(value => [value.id, value]));
+        const current = new Map<string, unknown>((after[collection] ?? []).map(value => [value.id, value]));
         for (const id of new Set([...old.keys(), ...current.keys()])) {
           if (undoJson(old.get(id)) !== undoJson(current.get(id))) changes.push({ collection, id, before: old.get(id) ?? null, after: current.get(id) ?? null });
         }
@@ -2574,9 +2956,10 @@ export class StrataGate {
   async undoDuplicateReview(undo: DuplicateReviewUndo): Promise<boolean> {
     return this.commitMutation(() => {
       const current = this.exportSnapshot();
+      const find = ({ collection, id }: DuplicateReviewUndo['changes'][number]) => current[collection]?.find(value => value.id === id);
       // Already restored after an interrupted journal checkpoint is safe to acknowledge again.
-      if (undo.changes.every(change => undoJson(current[change.collection].find(value => value.id === change.id)) === undoJson(change.before))) return true;
-      if (undo.version !== 1 || undo.changes.some(change => undoJson(current[change.collection].find(value => value.id === change.id)) !== undoJson(change.after))
+      if (undo.changes.every(change => undoJson(find(change)) === undoJson(change.before))) return true;
+      if (undo.version !== 1 || undo.changes.some(change => undoJson(find(change)) !== undoJson(change.after))
         || undo.derivedFingerprint !== duplicateUndoDerived(current, undo.affectedEventIds)
         || undoJson(current.memoryTopicState) !== undoJson(undo.topicAfter)
         || undo.projectionFingerprint !== duplicateUndoProjections(current, undo.affectedEventIds)) {
@@ -2588,6 +2971,10 @@ export class StrataGate {
           const index = cards.findIndex(card => card.id === change.id);
           if (index >= 0) cards.splice(index, 1, ...(change.before ? [structuredClone(change.before) as EventCard] : []));
           else if (change.before) cards.push(structuredClone(change.before) as EventCard);
+        } else if (change.collection === 'experiences') {
+          const index = this.experiences.findIndex(item => item.id === change.id);
+          if (index >= 0) this.experiences.splice(index, 1);
+          if (change.before) this.experiences.push(structuredClone(change.before) as import('./types.js').Experience);
         } else {
           const jobs = this[change.collection] as Map<string, unknown>;
           jobs.delete(change.id);
@@ -2700,6 +3087,13 @@ export class StrataGate {
     duplicate.status = 'archived';
     if (!preserveHistory || !duplicate.supersededBy) duplicate.supersededBy = kept.id;
     duplicate.updatedAt = toUtc8Iso(this.now());
+    if (consolidate && !preserveHistory) {
+      for (const experience of this.experiences) {
+        if (!experience.sourceEventIds.includes(duplicate.id)) continue;
+        experience.sourceEventIds = [...new Set(experience.sourceEventIds.map(id => id === duplicate.id ? kept.id : id))];
+        experience.updatedAt = duplicate.updatedAt;
+      }
+    }
     // Preserve real adoption history without recording another use or replacing it with the current turn.
     kept.weight.mentionCount = Math.max(kept.weight.mentionCount, duplicate.weight.mentionCount);
     kept.weight.lastAdoptedTurn = Math.max(kept.weight.lastAdoptedTurn, duplicate.weight.lastAdoptedTurn);
@@ -4198,6 +4592,7 @@ export class StrataGate {
     for (const receipt of copy.ingestionReceipts) this.ingestionReceipts.set(receipt.id, receipt);
     this.externalMemoryImportJobs.clear();
     for (const job of copy.externalMemoryImportJobs) this.externalMemoryImportJobs.set(job.id, job);
+    this.experiences.splice(0, this.experiences.length, ...(copy.experiences ?? []));
     this.successfulModelResponses.splice(0, this.successfulModelResponses.length, ...(copy.successfulModelResponses ?? []));
     this.topicDirectory.restore(copy.memoryTopicState);
     this.topicDirectory.synchronize(this.listAllEvents(), toUtc8Iso(this.now()));
@@ -4302,7 +4697,8 @@ export class StrataGate {
         for (const messageId of source.sourceMessageIds) mergedSources.add(messageId);
       }
       for (const messageId of event.sourceMessageIds) {
-        if (!messageBlockIds.has(messageId) || messageBlockIds.get(messageId) !== event.sourceBlockId && !mergedSources.has(messageId)) {
+        const blockId = messageBlockIds.get(messageId);
+        if (!blockId || blockId !== event.sourceBlockId && !(blockIds.has(blockId) && event.sourceBlockIds?.includes(blockId)) && !mergedSources.has(messageId)) {
           throw new Error(`Event ${event.id} references a message outside source block ${event.sourceBlockId}`);
         }
       }

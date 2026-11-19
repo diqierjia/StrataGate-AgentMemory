@@ -69,7 +69,7 @@ StrataGate 是 DeepSeek Harness 的跨会话记忆插件。每日笔记帮助接
 
    (1) **事件记录“发生过什么”。** 重要决定、偏好、要求和变化会被整理为 Event，保留适用范围、时间和来源。重复候选由 AI 判断，难以确定的内容可交给用户复核，处理历史可以追溯。→ [事件记忆](#event-cards)
 
-   (2) **主题目录说明“记过哪些内容”。** 相关事件整理为章节、小节和带来源的概览。Agent 可以先浏览主题，再查找具体事件；用户也可以启动 Dreaming，让专门的 Agent 检查和整理已有目录。→ [主题目录](#memory-topics)
+   (2) **主题目录说明“记过哪些内容”。** 相关事件整理为章节、小节和带来源的概览。Agent 可以先浏览主题，再查找具体事件；用户也可以启动 Dreaming，让独立 Agent 整理历史记忆。→ [主题目录](#memory-topics)
 
    (3) **知识图谱按需整理当前状态。** 开启后，图谱根据事件整理人物、项目、工具等实体的当前信息与关系，并保留来源。图谱默认关闭，不影响事件卡、主题目录和普通检索的使用。→ [当前状态图谱](#current-state-graph)
 
@@ -293,9 +293,9 @@ Block 的展示变化由指数衰减控制：
 
 例如，用户问“之前项目技术方案讨论到哪了”，Agent 可以先找到主题、查看概览，再查找具体事件，核对已确定的方案和待决定的问题。
 
-**Dreaming 帮助整理已有目录。** 用户可以从目录页启动专门的 Agent，让它检查已有事件和概览，调整章节、小节、事件归属及概览内容。运行过程可以查看、暂停、继续或终止；已经保存的修改保留。
+**Dreaming 整理历史记忆。** 从目录页点「整理记忆」，独立 Agent 按需查阅跨会话的原文、Event 和笔记，补记遗漏、修正错误、合并重复内容，并整理目录和可复用经验。主 Agent 空闲约 30 分钟、有新增或更新内容，且距上次自动运行至少 24 小时时，也会自动启动。运行可查看、暂停、继续或终止，已保存的修改会保留。
 
-Dreaming 整理的是目录与概览，不改写原始 Event 事实，也不因整理或读取而强化记忆。**目录帮助定位，具体事实仍需沿来源查证。**
+重复或确认错误的派生 Event 可以实际删除，真实变化仍保留前后记录。原始对话和 Profile 保持原样，读取不强化记忆。后续会话可以用 `memory_search_experiences` 查找适用的历史经验。**目录帮助定位，具体事实仍需沿来源查证。**
 
 <a id="persistent-profile"></a>
 
@@ -525,7 +525,7 @@ npm run build
 | [DeepSeek Harness 使用说明](docs/DSH.zh-CN.md) | 安装、配置、界面、记忆工具和恢复机制 |
 | [记忆目录与主题概览](docs/MEMORY_TOPICS.zh-CN.md) | 章节与小节、来源追溯、后台整理、预算和恢复 |
 | [事件提取规则](docs/event-extractor.md) | 提取判断、适用范围、重复与历史关系，以及兼容边界 |
-| [Dreaming 目录整理](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md) | 目录整理范围、运行控制、来源保护与恢复 |
+| [Dreaming 记忆整理](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md) | 整理范围、启动条件、删除语义和恢复 |
 | [可选知识图谱](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md) | 默认状态、开启、暂停、关闭及历史补建 |
 | [手动层级选择](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/user-operation-priority.md) | 内容预览、实际应用、容量不足与恢复操作 |
 | [架构文档](docs/ARCHITECTURE.md) | 分层规则、事件与图谱、检索、证据门、权重、存储和核心 API |

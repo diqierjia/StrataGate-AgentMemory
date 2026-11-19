@@ -5,7 +5,7 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
-import { StrataGate, type GraphRuntimePolicy, type GraphProjectionContext } from '../src/index.js';
+import { StrataGate, dreamingTopicVersion, type GraphRuntimePolicy, type GraphProjectionContext } from '../src/index.js';
 import { SqliteStorage } from '../src/sqlite.js';
 import { backgroundWorkTimes } from '../src/background-work.js';
 import { DERIVATION_LEASE_MS } from '../src/storage.js';
@@ -14,6 +14,51 @@ const summarizer = async () => ({ l0Title: 'source', l0Tags: [], l1Summary: 'sou
 const empty = { reason: 'none', nodes: [], edges: [] };
 
 describe('optional Graph policy', () => {
+  it('removes invalid Dreaming projections and rebuilds the corrected Event with Graph enabled', async () => {
+    const memory = await StrataGate.openWithStorage({
+      storage: new SqliteStorage({ filename: ':memory:' }), namespace: 'dreaming-graph',
+      blockTurnSize: 1, summarizer, graphEnabled: true, graphProjector: async () => empty,
+    });
+    try {
+      await memory.appendTurn({ user: 'Keep the queue before restarting.', assistant: 'Recorded.' });
+      const block = memory.listBlocks()[0]!;
+      const message = block.l5Raw[0]!;
+      const source = { sourceBlockId: block.id, sourceMessageIds: [message.id] };
+      const wrong = await memory.addEvent({ ...source, title: 'Invented migration', summary: 'Never happened' });
+      const corrected = await memory.addEvent({ ...source, title: 'Discard the queue', summary: 'Wrong interpretation' });
+      const project = async () => {
+        const job = await memory.claimNextGraphProjection();
+        if (!job) return null;
+        await memory.completeGraphProjection(job.jobId, {
+          reason: 'Project current Event titles', edges: [],
+          nodes: job.events.map(event => ({
+            ref: event.id, name: event.title, type: 'project', aliases: [], facts: [], sourceEventIds: [event.id],
+            metadataProvenance: { name: [event.id] },
+          })),
+        });
+        return job.events.map(event => event.id);
+      };
+      while (await project()) { /* seed existing projections */ }
+      expect(memory.listGraphNodes().map(node => node.name)).toEqual(expect.arrayContaining([wrong.title, corrected.title]));
+      const run = (await memory.startMemoryDreaming('owner', 'manual', {}))!;
+      const claim = { id: run.id, owner: 'owner', epoch: run.epoch };
+      await memory.dreaming({ ...claim, kind: 'checkpoint', evidenceIds: [wrong.id, corrected.id], estimatedTokens: 0, trace: {
+        tool: 'dreaming_read', args: { kind: 'message', id: message.id },
+        result: { content: message.content, contentVersion: 'page', offset: 0, nextOffset: null,
+          sourceRefs: { [`message:${message.id}`]: dreamingTopicVersion(message) } },
+      } });
+      await memory.editDreamingEvent(claim, { kind: 'delete', id: wrong.id, reason: 'Unsupported by the source' });
+      await memory.editDreamingEvent(claim, {
+        ...source, kind: 'update', id: corrected.id, title: 'Keep the queue', summary: 'Preserve it across restart',
+      });
+      expect(memory.listGraphNodes()).toEqual([]);
+      expect(await project()).toEqual([corrected.id]);
+      expect(await project()).toBeNull();
+      expect(memory.listGraphNodes()).toMatchObject([{ name: 'Keep the queue', sourceEventIds: [corrected.id] }]);
+      expect(memory.listBlocks()[0]!.l5Raw[0]).toEqual(message);
+    } finally { await memory.close(); }
+  });
+
   it('commits Event ingestion but suppresses a newly queued Graph job when disabled immediately before save', async () => {
     let policy: GraphRuntimePolicy = { enabled: true, paused: false, epoch: 1, backfillEventIds: [] };
     const storage = new SqliteStorage({ filename: ':memory:', graphPolicy: () => policy });
