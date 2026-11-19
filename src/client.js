@@ -802,8 +802,45 @@ window.__ModuleLoader__.load({
       .sg-ov-speech{display:block;width:calc(54 * var(--sg-overview-unit));height:calc(48 * var(--sg-overview-unit));flex:none;color:var(--sg-text)}
       .sg-ov-big .sg-ov-speech{margin-bottom:calc(6 * var(--sg-overview-unit))}
       .sg-ov-summary{margin:calc(32 * var(--sg-overview-unit)) 0 0;color:color-mix(in srgb,var(--sg-text) 35%,var(--sg-muted));font-size:calc(24 * var(--sg-overview-unit));line-height:1.6;text-wrap:pretty}
-      .sg-memory .sg-ov-status{display:inline-flex;align-items:center;gap:calc(14 * var(--sg-overview-unit));max-width:100%;margin:calc(22 * var(--sg-overview-unit)) 0 0;padding:0;border:0;background:none;color:var(--sg-muted);font-size:calc(24 * var(--sg-overview-unit));line-height:1.5;text-align:left;cursor:pointer}
-      .sg-ov-status:hover{color:var(--sg-text)}
+      .sg-memory .sg-ov-dreaming{display:flex;align-items:center;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;width:min(100%,290px);margin-top:calc(28 * var(--sg-overview-unit));padding-top:8px;border-top:1px solid var(--sg-hair);font-size:clamp(12px,calc(24 * var(--sg-overview-unit)),15px)}
+      .sg-ov-dreaming-controls{display:flex;align-items:center;gap:5px;min-width:0}
+      .sg-ov-dreaming .sg-dreaming-quiet{display:inline-flex;align-items:center;gap:7px;min-height:28px;padding:2px 0;border:0;background:none;color:var(--sg-text);white-space:nowrap;font:inherit;cursor:pointer}
+      .sg-ov-dreaming .sg-dreaming-quiet:hover:not(:disabled){color:var(--sg-moss);text-decoration:underline;text-underline-offset:.22em}
+      .sg-ov-dreaming .sg-dreaming-quiet:disabled{color:var(--sg-muted);cursor:default}
+      .sg-ov-dreaming .sg-dreaming-quiet.sg-dreaming-icon{justify-content:center;min-width:28px;color:var(--sg-muted)}
+      .sg-ov-dreaming .sg-dreaming-read{margin-left:auto}
+      .sg-ov-dreaming svg,.sg-daily-letter svg{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+      .sg-ov-dreaming svg{color:var(--sg-moss)}
+      .sg-ov-dreaming>p{flex-basis:100%;margin:0}
+      dialog.sg-daily-letter{--line:34px;--ink:var(--sg-text);--letter-link:color-mix(in srgb,var(--sg-moss) 65%,var(--sg-text));--paper:color-mix(in srgb,var(--sg-sand) 7%,var(--sg-page));width:min(610px,calc(100% - 30px));max-height:calc(100dvh - 30px);margin:auto;padding:0;border:1px solid var(--sg-border);border-radius:5px;background:var(--paper);color:var(--ink);box-shadow:0 20px 70px #292b2245;overscroll-behavior:contain}
+      .sg-daily-letter::backdrop{background:#29282038;backdrop-filter:blur(5px)}
+      .sg-daily-letter article{padding:24px clamp(19px,4.2vw,53px)}
+      .sg-daily-letter header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+      .sg-daily-letter time{color:var(--sg-muted);font:12px var(--sg-mono);font-variant-numeric:tabular-nums}
+      .sg-daily-letter h2{margin:0 0 13px;font:400 clamp(27px,4vw,36px)/1.35 "STKaiti","KaiTi","Kaiti SC",serif;color:var(--ink);overflow-wrap:anywhere}
+      .sg-daily-letter-lines{background:repeating-linear-gradient(to bottom,transparent 0 calc(var(--line) - 6px),var(--sg-hair) calc(var(--line) - 6px) calc(var(--line) - 5px),transparent calc(var(--line) - 5px) var(--line));font:400 clamp(18px,2.1vw,21px)/var(--line) "STKaiti","KaiTi","Kaiti SC",serif;overflow-wrap:anywhere;text-wrap:pretty}
+      .sg-daily-letter-lines p{margin:0}
+      .sg-daily-letter-lines p+p{margin-top:var(--line)}
+      .sg-daily-letter-signature{text-align:right}
+      .sg-daily-letter button,.sg-daily-letter summary{border:0;background:none;color:var(--letter-link);font:inherit;cursor:pointer}
+      .sg-daily-letter button:hover,.sg-daily-letter summary:hover{text-decoration:underline;text-underline-offset:.2em}
+      .sg-daily-letter button:focus-visible,.sg-daily-letter summary:focus-visible{outline:2px solid var(--letter-link);outline-offset:2px}
+      .sg-daily-letter .sg-daily-letter-close{display:grid;place-items:center;width:30px;height:30px;padding:0;border-radius:4px}
+      .sg-daily-letter summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;list-style:none}
+      .sg-daily-letter summary::-webkit-details-marker{display:none}
+      .sg-daily-letter details[open] summary svg{transform:rotate(90deg)}
+      .sg-daily-letter-changes{margin-top:17px;border-block:1px solid var(--sg-hair);font-size:13px;line-height:1.55}
+      .sg-daily-letter-changes section{padding:10px 0 12px;border-top:1px solid var(--sg-hair)}
+      .sg-daily-letter-changes h3{margin:0 0 7px;color:var(--letter-link);font-size:13px}
+      .sg-daily-letter-changes ul{display:grid;gap:7px;list-style:none;padding:0;margin:0}
+      .sg-daily-letter-changes li{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.65fr);gap:3px 12px;overflow-wrap:anywhere}
+      .sg-daily-letter-changes li span{color:var(--sg-muted)}
+      .sg-daily-letter-history{margin-top:8px;font-size:13px}
+      .sg-daily-letter-history summary{justify-content:flex-end}
+      .sg-daily-letter-dates{display:flex;justify-content:flex-end;gap:5px 8px;flex-wrap:wrap;max-height:120px;overflow:auto}
+      .sg-daily-letter-dates button{padding:4px 7px;border-radius:4px}
+      .sg-daily-letter-dates [aria-pressed="true"]{background:var(--sg-soft)}
+      @media(max-width:520px){.sg-daily-letter{--line:31px}.sg-daily-letter-changes li{grid-template-columns:minmax(0,1fr)}}
       .sg-runtime-dot{display:inline-block;flex:none;width:13px;height:13px;border-radius:50%;background:var(--sg-muted)}
       .sg-unified-top .sg-runtime-dot{width:calc(13 * var(--sg-overview-unit));height:calc(13 * var(--sg-overview-unit))}
       .sg-runtime-dot[data-state="ok"]{background:#2d8b57}
@@ -854,7 +891,6 @@ window.__ModuleLoader__.load({
         .sg-unified-top .sg-ghstar{height:max(32px,calc(56 * var(--sg-overview-unit)));min-width:max(126px,calc(220 * var(--sg-overview-unit)));font-size:max(13px,calc(24 * var(--sg-overview-unit)))}
         .sg-unified-top .sg-tab{font-size:max(14px,calc(26 * var(--sg-overview-unit)))}
         .sg-ov-summary{font-size:max(12px,calc(24 * var(--sg-overview-unit)))}
-        .sg-memory .sg-ov-status{font-size:max(12px,calc(24 * var(--sg-overview-unit)))}
         .sg-pillar-name b{font-size:max(14px,calc(28 * var(--sg-overview-unit)))}
         .sg-pillar-val{font-size:max(12px,calc(23 * var(--sg-overview-unit)))}
         .sg-pillar-key,.sg-ov .sg-used,.sg-heat-head,.sg-overview-page .sg-footer{font-size:max(12px,calc(23 * var(--sg-overview-unit)))}
@@ -890,7 +926,7 @@ window.__ModuleLoader__.load({
         .sg-ov-big b{font-size:88px}
         .sg-ov-big .sg-ov-speech{width:38px;height:34px}
         .sg-ov-summary{margin-top:16px;font-size:16px}
-        .sg-memory .sg-ov-status{margin-top:18px;gap:10px;font-size:16px}
+        .sg-memory .sg-ov-dreaming{margin-top:18px}
         .sg-pillar-cap{height:66px;gap:6px}
         .sg-pillar-cap .sg-ov-speech{width:38px;height:34px}
         .sg-pillar-cap:after{height:14px;width:2px}
@@ -1233,12 +1269,17 @@ window.__ModuleLoader__.load({
       .sg-dreaming-setting-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
       .sg-dreaming-setting-icon{display:grid;place-items:center;flex:none;width:36px;height:36px;border-radius:9px;background:var(--sg-soft);color:var(--sg-text);font:24px/1 'Segoe UI Symbol',sans-serif}
       .sg-dreaming-setting-title{flex:1;min-width:0;margin:0;font-size:14px;font-weight:650}
+      .sg-dreaming-setting-actions{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
       .sg-memory .sg-dreaming-setting .sg-dreaming-setting-start{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:34px;margin:0;padding:6px 12px;font:inherit;font-size:12px;font-weight:650;white-space:nowrap;transition:background-color var(--sg-fast) var(--sg-ease)}
+      .sg-memory .sg-dreaming-setting .sg-dreaming-open-letter{display:inline-flex;align-items:center;gap:5px;min-height:34px;padding:6px 12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-page);color:var(--sg-text);font-size:12px;font-weight:550;cursor:pointer;white-space:nowrap}
+      .sg-memory .sg-dreaming-setting .sg-dreaming-open-letter:hover{border-color:var(--sg-accent);color:var(--sg-accent)}
       .sg-dreaming-setting-start:focus-visible{outline:2px solid var(--sg-accent);outline-offset:3px}
       .sg-memory .sg-dreaming-setting .sg-dreaming{margin-top:12px;padding:12px;border-radius:8px}
       .sg-memory .sg-dreaming-setting .sg-dreaming-actions,.sg-memory .sg-dreaming-setting .sg-dreaming-session{margin-left:0}
       .sg-dreaming-setting .sg-dreaming-failure{overflow-wrap:anywhere}
       .sg-memory .sg-dreaming-setting .sg-dreaming-toast{margin:10px 0 0}
+      .sg-dreaming-done{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--sg-soft)}
+      .sg-dreaming-done .sg-dreaming-nums{margin-top:0}
       .sg-settings-shell .sg-pg-head .sg-pg-tag{display:none}
       @media (max-width:680px){.sg-more{grid-template-columns:minmax(0,1fr);gap:16px}}
       /* The settings dialog can be ~900px wide, where two columns get cramped.
@@ -1296,6 +1337,8 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-toc-dream-run{padding:0;border:0;background:none;color:var(--sg-muted);font:inherit;font-size:11.5px;text-align:left;cursor:pointer}
       .sg-memory .sg-toc-dream-run:hover:not(:disabled){color:var(--sg-text);text-decoration:underline}
       .sg-memory .sg-toc-dream-run:disabled{cursor:default}
+      .sg-memory .sg-toc-dream-letter{padding:0;border:0;background:none;color:var(--sg-accent);font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
+      .sg-memory .sg-toc-dream-letter:hover{text-decoration:underline}
       .sg-memory .sg-toc-dream-merge{display:inline-flex;align-items:center;gap:3px;color:var(--sg-muted)}
       .sg-memory .sg-toc-dream-merge i{width:7px;height:7px;border-radius:50%;background:var(--sg-moss)}
       .sg-memory .sg-toc-dream-merge i.o{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-muted)}
@@ -1317,7 +1360,8 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-topic-directory .sg-topic-pending-toggle{width:auto;flex:0 1 auto;min-width:0}
       .sg-memory .sg-topic-directory .sg-topic-pending .sg-topic-pending-toggle>span:first-child{font-family:var(--sg-serif);font-size:14px;font-weight:700;color:var(--sg-text)}
       .sg-memory .sg-topic-directory .sg-topic-pending-heading{gap:12px;flex-wrap:wrap;margin:0 0 2px}
-      .sg-memory .sg-topic-directory .sg-topic-pending-heading>.sg-dreaming-start{flex:0 0 auto;margin-left:auto}
+      .sg-memory .sg-topic-directory .sg-topic-pending-heading>.sg-dreaming-start,.sg-memory .sg-topic-directory .sg-topic-pending-heading>.sg-dreaming-idle-actions{flex:0 0 auto;margin-left:auto}
+      .sg-memory .sg-dreaming-idle-actions{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
       .sg-memory .sg-dreaming.inline{flex:0 0 auto;margin:0;padding:0;border:0;background:none}
       .sg-memory .sg-dreaming.inline .sg-dreaming-row{gap:8px;flex-wrap:nowrap}
       .sg-memory .sg-dreaming.inline .sg-dreaming-animation{width:22px;height:22px;flex-basis:22px}
@@ -1327,7 +1371,8 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-dreaming.inline .sg-dreaming-copy strong{font-size:12px}
       .sg-memory .sg-dreaming.inline .sg-dreaming-copy>span{display:none}
       .sg-memory .sg-dreaming.inline .sg-dreaming-actions{gap:6px}
-      .sg-memory .sg-dreaming.inline .sg-dreaming-progress{flex-basis:100%;margin-top:4px;gap:8px}
+      .sg-memory .sg-dreaming.inline .sg-dreaming-nums{flex-basis:100%;margin-top:6px;gap:6px}
+      .sg-memory .sg-dreaming.inline .sg-dreaming-num{padding:2px 7px;font-size:11.5px}
       .sg-memory .sg-dreaming.inline .sg-dreaming-session{margin:4px 0 0;font-size:11.5px!important}
       .sg-memory .sg-topic-directory .sg-topic-other-events>summary:before{content:'其他事件';font-size:11.5px;color:var(--sg-muted)}
       .sg-memory .sg-topic-directory .sg-topic-overview-toggle{display:flex}
@@ -2986,6 +3031,16 @@ window.__ModuleLoader__.load({
       try { localStorage.setItem(key, '1') } catch { /* a private window can block storage; the click still hides it */ }
     }
 
+    function dreamingChangesOf(run) {
+      const raw = run?.changes || {}
+      return {
+        editedEvents: Math.max(0, Number(raw.editedEvents || 0)),
+        deletedEvents: Math.max(0, Number(raw.deletedEvents || 0)),
+        experiences: Math.max(0, Number(raw.experiences || 0)),
+        items: Array.isArray(raw.items) ? raw.items : [],
+      }
+    }
+
     function TimelineList({ events, nodes, onSelect, selectedId, floating = false, onNode, openSource, dreaming = null }) {
       const [preview, setPreview] = React.useState(null)
       const pinnedId = React.useRef('')
@@ -3257,9 +3312,9 @@ window.__ModuleLoader__.load({
         h('p', { className: 'sg-muted' }, '历史记忆整理中' + (counted ? ' · 已处理 ' + completed + ' / ' + total + ' 条事件' : '')))
     }
 
-    const DREAMING_STYLES = `.sg-dreaming{margin:0 0 20px;padding:14px 16px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-surface)}.sg-dreaming-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.sg-dreaming-animation{position:relative;width:48px;height:48px;flex:0 0 48px;color:var(--sg-accent)}.sg-dreaming-moon{display:block;font-size:43px;line-height:48px;animation:sg-dream-breathe 4s ease-in-out infinite}.sg-dreaming-star{position:absolute;right:0;top:1px;font-size:12px;animation:sg-dream-twinkle 3s ease-in-out infinite}.sg-dreaming-sleep{position:absolute;right:4px;bottom:1px;font-size:13px;animation:sg-dream-float 3s ease-in-out infinite}.sg-dreaming.resting .sg-dreaming-animation span{animation-play-state:paused}.sg-dreaming-copy{display:grid;gap:5px;flex:1;min-width:150px}.sg-dreaming-copy strong{font-size:14px;color:var(--sg-text)}.sg-dreaming-copy>span,.sg-dreaming p{font-size:12px;color:var(--sg-muted);line-height:1.6}.sg-dreaming-actions{display:flex;gap:8px;flex-wrap:wrap}.sg-dreaming button{padding:7px 12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-page);color:var(--sg-text);cursor:pointer}.sg-dreaming button:hover{border-color:var(--sg-accent)}.sg-dreaming button:disabled{opacity:.5;cursor:default}.sg-dreaming .sg-dreaming-stop{color:var(--sg-danger)}.sg-dreaming-progress{display:flex;align-items:center;gap:12px;margin-top:12px;color:var(--sg-muted);font-size:11px}.sg-dreaming-progress progress{width:100%;height:7px;accent-color:var(--sg-accent);flex:1;min-width:0}@keyframes sg-dream-breathe{50%{opacity:.6;transform:translateY(-2px)}}@keyframes sg-dream-twinkle{50%{opacity:.25;transform:scale(.7)}}@keyframes sg-dream-float{50%{opacity:.4;transform:translate(2px,-5px)}}@media(prefers-reduced-motion:reduce){.sg-dreaming-animation span{animation:none!important}}`
+    const DREAMING_STYLES = `.sg-dreaming{margin:0 0 20px;padding:14px 16px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-surface)}.sg-dreaming-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.sg-dreaming-animation{position:relative;width:48px;height:48px;flex:0 0 48px;color:var(--sg-accent)}.sg-dreaming-moon{display:block;font-size:43px;line-height:48px;animation:sg-dream-breathe 4s ease-in-out infinite}.sg-dreaming-star{position:absolute;right:0;top:1px;font-size:12px;animation:sg-dream-twinkle 3s ease-in-out infinite}.sg-dreaming-sleep{position:absolute;right:4px;bottom:1px;font-size:13px;animation:sg-dream-float 3s ease-in-out infinite}.sg-dreaming.resting .sg-dreaming-animation span{animation-play-state:paused}.sg-dreaming-copy{display:grid;gap:5px;flex:1;min-width:150px}.sg-dreaming-copy strong{font-size:14px;color:var(--sg-text)}.sg-dreaming-copy>span,.sg-dreaming p{font-size:12px;color:var(--sg-muted);line-height:1.6}.sg-dreaming-actions{display:flex;gap:8px;flex-wrap:wrap}.sg-dreaming button{padding:7px 12px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-page);color:var(--sg-text);cursor:pointer}.sg-dreaming button:hover{border-color:var(--sg-accent)}.sg-dreaming button:disabled{opacity:.5;cursor:default}.sg-dreaming .sg-dreaming-stop{color:var(--sg-danger)}.sg-dreaming-state-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:600;width:fit-content}.sg-dreaming-state-pill.running{background:color-mix(in srgb,var(--sg-accent) 13%,transparent);color:var(--sg-accent)}.sg-dreaming-state-pill.paused{background:color-mix(in srgb,var(--sg-sand) 16%,transparent);color:var(--sg-sand)}.sg-dreaming-state-pill.done{background:color-mix(in srgb,var(--sg-good) 14%,transparent);color:var(--sg-good)}.sg-dreaming-state-dot{width:6px;height:6px;border-radius:50%;background:currentColor}.sg-dreaming-nums{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font:600 12px var(--sg-mono)}.sg-dreaming-num{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:7px;border:1px solid var(--sg-hair);background:var(--sg-page);color:var(--sg-text)}.sg-dreaming-num.edit .sg-dreaming-ico{color:var(--sg-water)}.sg-dreaming-num.del .sg-dreaming-ico{color:var(--sg-danger)}.sg-dreaming-num.exp .sg-dreaming-ico{color:var(--sg-sand)}.sg-dreaming-num small{font-family:var(--sg-sans);font-size:11.5px;font-weight:500;color:var(--sg-muted)}.sg-dlg .sg-dreaming-nums{margin:4px 0 10px}.sg-letter-overlay{position:fixed;inset:0;z-index:2147483040;display:grid;place-items:center;padding:24px 18px;overflow-y:auto;background:color-mix(in srgb,var(--sg-page) 58%,transparent);backdrop-filter:blur(11px);-webkit-backdrop-filter:blur(11px);animation:sg-r6-pop .2s both}.sg-letter-envelope{--letter-line:32px;--sg-hand:"KaiTi","STKaiti","DFKai-SB","BiauKai","Lucida Handwriting",cursive,serif;--sg-sign:"STXingkai","FZShuTi","KaiTi","Lucida Handwriting",cursive,serif;--sg-letter-paper:color-mix(in srgb,var(--sg-sand) 6%,var(--sg-page));--sg-letter-ink:color-mix(in srgb,var(--sg-text) 92%,var(--sg-sand));position:relative;width:min(580px,100%);padding:26px 28px 22px;border:1px solid color-mix(in srgb,var(--sg-sand) 28%,var(--sg-border));border-radius:14px;background:var(--sg-letter-paper);color:var(--sg-letter-ink);box-shadow:0 24px 60px rgba(0,0,0,.18),0 4px 14px rgba(0,0,0,.06)}.sg-wax-seal{position:absolute;top:18px;right:22px;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--sg-sand) 14%,var(--sg-page));border:1.5px dashed color-mix(in srgb,var(--sg-sand) 55%,transparent);color:var(--sg-sand);transform:rotate(-8deg)}.sg-letter-header{padding-right:58px;margin-bottom:10px}.sg-letter-heading{margin:0;font:400 22px/1.3 var(--sg-sign);color:var(--sg-letter-ink);letter-spacing:.03em}.sg-letter-meta{display:inline-flex;align-items:center;gap:6px;margin-top:6px;margin-right:6px;padding:2px 8px;border-radius:6px;background:color-mix(in srgb,var(--sg-sand) 15%,transparent);color:var(--sg-sand);font:600 11px var(--sg-sans)}.sg-letter-meta.profile{background:color-mix(in srgb,var(--sg-accent) 13%,transparent);color:var(--sg-accent)}.sg-letter-body{background-image:linear-gradient(to bottom,transparent 0,transparent calc(var(--letter-line) - 6px),color-mix(in srgb,var(--sg-sand) 18%,transparent) calc(var(--letter-line) - 6px),color-mix(in srgb,var(--sg-sand) 18%,transparent) calc(var(--letter-line) - 5px),transparent calc(var(--letter-line) - 5px),transparent var(--letter-line));background-size:100% var(--letter-line);background-repeat:repeat-y}.sg-hand-prose{margin:0;font-family:var(--sg-hand);font-size:16.5px;line-height:var(--letter-line);color:var(--sg-letter-ink);letter-spacing:.015em}.sg-hand-prose p{margin:0}.sg-hand-prose p+p{text-indent:2em}.sg-letter-sign-row{display:flex;align-items:baseline;justify-content:flex-end;height:var(--letter-line);line-height:var(--letter-line);margin-top:var(--letter-line);font-family:var(--sg-sign);font-size:20px;color:var(--sg-letter-ink)}.sg-letter-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:12px;border-top:1px dashed var(--sg-border)}.sg-letter-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.sg-ps-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);color:var(--sg-text);font-size:11.5px;cursor:pointer}.sg-ps-chip:hover:not(:disabled){border-color:var(--sg-accent)}.sg-ps-chip:disabled{opacity:.7;cursor:default}.sg-ps-chip.del{color:var(--sg-muted);text-decoration:line-through;cursor:default}.sg-ps-tag{font-weight:700}.sg-ps-tag.edit{color:var(--sg-water)}.sg-ps-tag.del{color:var(--sg-danger)}.sg-ps-tag.exp{color:var(--sg-sand)}.sg-ps-tag.daily{color:var(--sg-good)}.sg-letter-acts{display:inline-flex;align-items:center;gap:6px;margin-left:auto}.sg-letter-acts .sg-btn{height:30px;padding:0 13px;border:1px solid var(--sg-border);border-radius:7px;background:var(--sg-page);color:var(--sg-text);font-size:12px;font-weight:550;cursor:pointer;white-space:nowrap}.sg-letter-acts .sg-btn.primary{border-color:var(--sg-text);background:var(--sg-text);color:var(--sg-page)}.sg-letter-acts .sg-btn.ghost{border-color:transparent;background:transparent;color:var(--sg-muted)}@media(max-width:600px){.sg-letter-envelope{--letter-line:28px;padding:20px 18px 18px}.sg-hand-prose{font-size:15px}.sg-letter-sign-row{font-size:18px}}@keyframes sg-dream-breathe{50%{opacity:.6;transform:translateY(-2px)}}@keyframes sg-dream-twinkle{50%{opacity:.25;transform:scale(.7)}}@keyframes sg-dream-float{50%{opacity:.4;transform:translate(2px,-5px)}}@media(prefers-reduced-motion:reduce){.sg-dreaming-animation span{animation:none!important}}`
 
-    const DIRECTORY_PREVIEW_STYLES = `.sg-topic-directory-intro{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:14px}.sg-context-trigger{display:inline-flex;align-items:center;gap:7px;padding:5px 0;border:0;background:transparent;color:var(--sg-muted);font-size:12px;cursor:pointer}.sg-context-trigger:hover,.sg-context-trigger[aria-expanded=true]{color:var(--sg-accent)}.sg-dreaming-start{padding:6px 12px;border:0;border-radius:7px;background:var(--sg-soft);color:var(--sg-accent);font-size:12px;cursor:pointer}.sg-dreaming-start:disabled{opacity:.5;cursor:default}.sg-dreaming{flex:1 0 100%;margin:0;border:0;background:var(--sg-soft);padding:12px 14px}.sg-dreaming-animation{width:36px;height:40px;flex-basis:36px}.sg-dreaming-moon{font-size:34px;line-height:40px}.sg-dreaming-copy strong{font-size:13px}.sg-dreaming-copy>span{font-size:12px;color:var(--sg-muted)}.sg-dreaming-progress{margin-top:9px}.sg-dreaming-session{margin:5px 0 0 50px;padding:2px 0!important;border:0!important;background:transparent!important;color:var(--sg-accent)!important;font-size:12px!important}.sg-context-overlay{position:fixed;inset:0;z-index:2147483020;background:transparent}.sg-context-window{position:fixed;display:flex;flex-direction:column;width:min(520px,calc(100vw - 24px));padding:16px;border:1px solid var(--sg-border);border-radius:11px;background:var(--sg-page);color:var(--sg-text);box-shadow:0 12px 42px rgba(0,0,0,.25);overflow:auto}.sg-context-window-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-context-window-head h3{font-size:14px;margin:0;font-weight:600}.sg-context-close{display:grid;place-items:center;width:29px;height:29px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer}.sg-context-subtitle{font-size:12px;color:var(--sg-muted);margin:3px 0 13px}.sg-context-injection{margin:0;padding:13px;background:var(--sg-soft);border-radius:7px;font:12px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--sg-text)}@media(max-width:600px){.sg-context-overlay{background:rgba(0,0,0,.32)}.sg-context-window{left:12px!important;right:12px!important;top:auto!important;bottom:12px;width:auto;border-radius:13px;max-height:80vh!important}.sg-dreaming-actions{margin-left:50px}.sg-dreaming-copy{min-width:140px}}`
+    const DIRECTORY_PREVIEW_STYLES = `.sg-topic-directory-intro{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-bottom:14px}.sg-context-trigger{display:inline-flex;align-items:center;gap:7px;padding:5px 0;border:0;background:transparent;color:var(--sg-muted);font-size:12px;cursor:pointer}.sg-context-trigger:hover,.sg-context-trigger[aria-expanded=true]{color:var(--sg-accent)}.sg-dreaming-start{padding:6px 12px;border:0;border-radius:7px;background:var(--sg-soft);color:var(--sg-accent);font-size:12px;cursor:pointer}.sg-dreaming-start:disabled{opacity:.5;cursor:default}.sg-dreaming{flex:1 0 100%;margin:0;border:0;background:var(--sg-soft);padding:12px 14px}.sg-dreaming-animation{width:36px;height:40px;flex-basis:36px}.sg-dreaming-moon{font-size:34px;line-height:40px}.sg-dreaming-copy strong{font-size:13px}.sg-dreaming-copy>span{font-size:12px;color:var(--sg-muted)}.sg-dreaming-session{margin:5px 0 0 50px;padding:2px 0!important;border:0!important;background:transparent!important;color:var(--sg-accent)!important;font-size:12px!important}.sg-context-overlay{position:fixed;inset:0;z-index:2147483020;background:transparent}.sg-context-window{position:fixed;display:flex;flex-direction:column;width:min(520px,calc(100vw - 24px));padding:16px;border:1px solid var(--sg-border);border-radius:11px;background:var(--sg-page);color:var(--sg-text);box-shadow:0 12px 42px rgba(0,0,0,.25);overflow:auto}.sg-context-window-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sg-context-window-head h3{font-size:14px;margin:0;font-weight:600}.sg-context-close{display:grid;place-items:center;width:29px;height:29px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--sg-muted);cursor:pointer}.sg-context-subtitle{font-size:12px;color:var(--sg-muted);margin:3px 0 13px}.sg-context-injection{margin:0;padding:13px;background:var(--sg-soft);border-radius:7px;font:12px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--sg-text)}@media(max-width:600px){.sg-context-overlay{background:rgba(0,0,0,.32)}.sg-context-window{left:12px!important;right:12px!important;top:auto!important;bottom:12px;width:auto;border-radius:13px;max-height:80vh!important}.sg-dreaming-actions{margin-left:50px}.sg-dreaming-copy{min-width:140px}}`
 
     function DirectoryContextPreview({ context, active }) {
       const [open, setOpen] = React.useState(false)
@@ -3292,9 +3347,83 @@ window.__ModuleLoader__.load({
             h('p', { className: 'sg-context-subtitle' }, '以下目录内容默认提供给 AI'), h('pre', { className: 'sg-context-injection' }, context))) : null)
     }
 
-    function DreamingPanel({ namespace, initialRun, active, available, inline = false, settings = false, onDirectoryChanged, onOpenDreamingSession }) {
+    const DREAMING_MARKS = {
+      moon: 'M13.8 10.6A6 6 0 0 1 5.4 2.2a6.1 6.1 0 1 0 8.4 8.4Z',
+      mail: 'M2 3.5h12v9H2z M2.5 4 8 8.5l5.5-4.5',
+      pause: 'M6 3.5v9m4-9v9',
+      resume: 'M5 3.5l7 4.5-7 4.5z',
+      stop: 'M4.5 4.5h7v7h-7z',
+      close: 'm4 4 8 8m0-8-8 8',
+      more: 'm6 4 4 4-4 4',
+    }
+
+    function DreamingMark({ name }) {
+      return h('svg', { viewBox: '0 0 16 16', 'aria-hidden': 'true' }, h('path', { d: DREAMING_MARKS[name] }))
+    }
+
+    function DreamingLetterModal({ namespace, dates, date, onDate, onClose }) {
+      const dialogRef = React.useRef(null)
+      const [letter, setLetter] = React.useState(null)
+      const [error, setError] = React.useState('')
+      const [retry, setRetry] = React.useState(0)
+      React.useEffect(() => {
+        const dialog = dialogRef.current
+        dialog?.showModal()
+        return () => dialog?.close()
+      }, [])
+      React.useEffect(() => {
+        const controller = new AbortController()
+        setError('')
+        api('letters/note', { namespace, date }, { signal: controller.signal }).then(value => {
+          if (!controller.signal.aborted) setLetter(value)
+        }).catch(() => {
+          if (!controller.signal.aborted) setError('来信读取失败。')
+        })
+        if (dialogRef.current) dialogRef.current.scrollTop = 0
+        return () => controller.abort()
+      }, [namespace, date, retry])
+      const current = letter?.date === date ? letter : null
+      const runs = (current?.reports || []).map(dreamingChangesOf)
+      const items = runs.flatMap(run => run.items)
+      const edited = runs.reduce((sum, run) => sum + run.editedEvents, 0)
+      const deleted = runs.reduce((sum, run) => sum + run.deletedEvents, 0)
+      const experiences = runs.reduce((sum, run) => sum + run.experiences, 0)
+      const groups = [
+        ['event-edit', '修改的事件', edited], ['event-delete', '删除的事件', deleted], ['experience', '整理出的经验', experiences],
+      ]
+      const counts = `修改 ${edited} 个事件 · 删除 ${deleted} 个事件 · 提取 ${experiences} 条经验`
+      return h('dialog', { ref: dialogRef, className: 'sg-daily-letter', 'aria-labelledby': 'sg-letter-heading',
+        onCancel: event => { event.preventDefault(); onClose() },
+        onClick: event => { if (event.target === event.currentTarget) onClose() } },
+        h('article', null,
+          h('header', null,
+            h('time', { dateTime: date }, date.replaceAll('-', '.')),
+            h('button', { type: 'button', className: 'sg-daily-letter-close', 'aria-label': '收起信件', onClick: onClose }, h(DreamingMark, { name: 'close' }))),
+          h('h2', { id: 'sg-letter-heading' }, current?.title || '一封来信'),
+          current ? h('div', { className: 'sg-daily-letter-lines' },
+            ...current.paragraphs.map((text, index) => h('p', { key: index }, text)),
+            h('p', { className: 'sg-daily-letter-signature' }, '—— ' + current.signature)) : error
+              ? h('p', { role: 'alert' }, error, ' ', h('button', { type: 'button', onClick: () => setRetry(value => value + 1) }, '重试'))
+              : h('p', { role: 'status' }, '正在读取来信…'),
+          edited || deleted || experiences ? h('details', { key: date, className: 'sg-daily-letter-changes' },
+            h('summary', null, counts, h(DreamingMark, { name: 'more' })),
+            groups.filter(([, , count]) => count > 0).map(([kind, label, count]) => {
+              const group = items.filter(item => item.kind === kind)
+              return h('section', { key: kind }, h('h3', null, label),
+                h('ul', null, group.map((item, index) => h('li', { key: index }, h('strong', null, item.label), item.detail ? h('span', null, item.detail) : null))),
+                group.length < count ? h('p', null, '部分改动没有留存明细。') : null)
+            })) : null,
+          dates.length > 1 ? h('footer', null,
+            h('details', { className: 'sg-daily-letter-history' },
+              h('summary', null, '往期来信', h(DreamingMark, { name: 'more' })),
+              h('div', { className: 'sg-daily-letter-dates' }, dates.map(entry =>
+                h('button', { key: entry, type: 'button', 'aria-pressed': date === entry, onClick: () => onDate(entry) },
+                  h('time', { dateTime: entry }, entry.replaceAll('-', '.'))))))) : null))
+    }
+
+    function DreamingPanel({ namespace, initialRun, active, available, settings = false, onDirectoryChanged, onOpenDreamingSession }) {
       const [run, setRun] = React.useState(initialRun || null)
-      const [statusReady, setStatusReady] = React.useState(!settings)
+      const [statusReady, setStatusReady] = React.useState(Boolean(initialRun))
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
       const [confirmStop, setConfirmStop] = React.useState(false)
@@ -3320,6 +3449,8 @@ window.__ModuleLoader__.load({
       const previousStatus = React.useRef(initialRun?.status)
       const previousRunId = React.useRef(initialRun?.id)
       const [toast, setToast] = React.useState('')
+      const [letterDates, setLetterDates] = React.useState([])
+      const [letterDate, setLetterDate] = React.useState('')
       React.useEffect(() => {
         if (initialRun && (!run || initialRun.updatedAt > run.updatedAt)) {
           if (initialRun.status === 'completed' && previousStatus.current && previousStatus.current !== 'completed') {
@@ -3342,6 +3473,7 @@ window.__ModuleLoader__.load({
         if (announce && next?.status === 'completed' && changed) setToast(next.scope === 'memory' ? '本轮记忆整理完成' : '目录已整理好')
         previousRunId.current = next?.id
         previousStatus.current = next?.status
+        setLetterDates(Array.isArray(value?.letterDates) ? value.letterDates : [])
         setRun(next); setStatusReady(true); setError('')
       }, [settings, onDirectoryChanged])
       React.useEffect(() => {
@@ -3390,9 +3522,11 @@ window.__ModuleLoader__.load({
         } catch (reason) { setError(reason?.message || '无法打开会话，请稍后重试。') }
         finally { setBusy(false) }
       }
-      // Only a run that is still in flight keeps the card. Finished rounds fold
-      // into the single summary row under the directory, never a lingering card.
-      const showCard = Boolean(run) && ['running', 'pausing', 'paused'].includes(run.status)
+      const changes = dreamingChangesOf(run)
+      const renderChangesNums = (compact = false) => h('div', { className: 'sg-dreaming-nums', 'aria-label': '本次整理改动' },
+        h('span', { className: 'sg-dreaming-num edit', title: '修改 Event' }, h('span', { className: 'sg-dreaming-ico', 'aria-hidden': 'true' }, '✎'), h('b', null, changes.editedEvents), compact ? null : h('small', null, '修改 Event')),
+        h('span', { className: 'sg-dreaming-num del', title: '删除 Event' }, h('span', { className: 'sg-dreaming-ico', 'aria-hidden': 'true' }, '✕'), h('b', null, changes.deletedEvents), compact ? null : h('small', null, '删除 Event')),
+        h('span', { className: 'sg-dreaming-num exp', title: '提取经验' }, h('span', { className: 'sg-dreaming-ico', 'aria-hidden': 'true' }, '✦'), h('b', null, changes.experiences), compact ? null : h('small', null, '提取经验')))
       const renderSettings = (content, action = null) => h('section', { className: 'sg-settings-panel sg-dreaming-setting', 'aria-label': 'Dreaming 记忆整理' },
         h('div', { className: 'sg-dreaming-setting-head' },
           h('span', { className: 'sg-dreaming-setting-icon', 'aria-hidden': 'true' }, '☾'),
@@ -3401,44 +3535,66 @@ window.__ModuleLoader__.load({
       const feedback = error ? h('p', { className: 'sg-dreaming-failure', role: 'alert' }, error,
         h('button', { type: 'button', className: 'sg-dreaming-retry', disabled: !!busy, onClick: () => control('refresh') }, settings ? '刷新状态' : '重试')) : null
       const toastMessage = toast ? h('p', { className: 'sg-dreaming-toast', role: 'status', 'aria-live': 'polite' }, toast) : null
-      const styles = h('style', null, DREAMING_STYLES + DIRECTORY_PREVIEW_STYLES)
-      if (settings && !showCard) return renderSettings(h(React.Fragment, null, styles, toastMessage, feedback),
-        h('button', { type: 'button', className: 'sg-save-button sg-dreaming-setting-start', disabled: !!busy || !available || !statusReady, onClick: () => control('start') },
-          busy === 'start' ? '正在启动…' : '立即整理', h('span', { 'aria-hidden': 'true' }, '→')))
-      if (!showCard) return h(React.Fragment, null, styles,
-        toastMessage,
-        h('button', { type: 'button', className: 'sg-dreaming-start' + (inline ? ' sg-dreaming-arrange' : ''), disabled: busy || !available, onClick: () => control('start') }, inline ? '整理记忆' : '🌙 Dreaming'),
-        feedback)
-      const progressCard = h('aside', { className: 'sg-dreaming ' + (running ? 'running' : 'resting') + (inline ? ' inline' : ''), 'aria-label': 'Dreaming 记忆整理', 'data-testid': 'stratagate-dreaming' },
+      const styles = h('style', null, DREAMING_STYLES)
+      const showStopDialog = (event) => { stopTrigger.current = event.currentTarget; setConfirmStop(true) }
+      const stopConfirmation = confirmStop ? h('div', { className: 'sg-import-overlay', role: 'presentation' }, h('section', { ref: stopDialog, className: 'sg-dlg', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'sg-stop-title', 'aria-describedby': 'sg-stop-copy' },
+        h('h3', { id: 'sg-stop-title' }, '终止这次整理？'),
+        renderChangesNums(true),
+        h('p', { id: 'sg-stop-copy' }, '已修改的事件与经验会保留；未整理部分下次继续。'),
+        h('div', { className: 'sg-dlg-acts' }, h('button', { type: 'button', className: 'sg-btn ghost', disabled: busy, onClick: () => setConfirmStop(false) }, '继续整理'), h('button', { type: 'button', className: 'sg-btn danger', disabled: busy, onClick: async () => { await control('terminate'); setConfirmStop(false) } }, '终止')))) : null
+      if (!settings) {
+        const quiet = (name, label, onClick, options = {}) => h('button', { type: 'button', className: 'sg-dreaming-quiet' + (options.iconOnly ? ' sg-dreaming-icon' : options.read ? ' sg-dreaming-read' : ''),
+          disabled: Boolean(busy && !options.read) || options.disabled, onClick, 'aria-label': label, title: options.iconOnly ? label : undefined },
+        h(DreamingMark, { name }), options.iconOnly ? null : label)
+        const state = running ? '正在整理' : pausing ? '正在暂停' : '已暂停'
+        return h(React.Fragment, null, stopConfirmation ? styles : null,
+          h('div', { className: 'sg-ov-dreaming', 'data-testid': 'overview-dreaming' },
+            h('div', { className: 'sg-ov-dreaming-controls' },
+              outstanding ? h(React.Fragment, null,
+                quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
+                running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
+                paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
+                quiet('stop', '终止整理', showStopDialog, { iconOnly: true }))
+                : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
+            letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null,
+            run?.replanRequired ? h('p', { className: 'sg-dreaming-failure' }, '请终止这次整理后重新开始。') : null, toastMessage, feedback),
+          letterDate ? h(DreamingLetterModal, { namespace, dates: letterDates, date: letterDate, onDate: setLetterDate, onClose: () => setLetterDate('') }) : null,
+          stopConfirmation)
+      }
+      if (!outstanding) return renderSettings(h(React.Fragment, null, styles,
+        ['completed', 'terminated'].includes(run?.status) ? h('div', { className: 'sg-dreaming-done' },
+          h('span', { className: 'sg-dreaming-state-pill ' + (run.status === 'completed' ? 'done' : 'paused') }, h('i', { className: 'sg-dreaming-state-dot', 'aria-hidden': 'true' }), run.status === 'completed' ? '已完成' : '已终止'),
+          renderChangesNums(false)) : null,
+        run?.sessionId ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', disabled: Boolean(busy), onClick: openSession }, '查看上次整理') : null,
+        toastMessage, feedback),
+        h('div', { className: 'sg-dreaming-setting-actions' },
+          h('button', { type: 'button', className: 'sg-save-button sg-dreaming-setting-start', disabled: !!busy || !available || !statusReady, onClick: () => control('start') },
+            busy === 'start' ? '正在启动…' : '立即整理', h('span', { 'aria-hidden': 'true' }, '→'))))
+      const progressCard = h('aside', { className: 'sg-dreaming ' + (running ? 'running' : 'resting'), 'aria-label': 'Dreaming 记忆整理', 'data-testid': 'stratagate-dreaming' },
         styles,
         toastMessage,
         h('div', { className: 'sg-dreaming-row' },
-          settings ? null : h('div', { className: 'sg-dreaming-animation', 'aria-hidden': 'true' }, h('span', { className: 'sg-dreaming-moon' }, '☾'), h('span', { className: 'sg-dreaming-star' }, '✦'), h('span', { className: 'sg-dreaming-sleep' }, 'z')),
-          h('div', { className: 'sg-dreaming-copy', role: 'status', 'aria-live': 'polite' }, h('strong', null, running ? run.waitingForProjection ? 'Dreaming 正在准备…' : settings ? '正在整理记忆…' : '正在做梦…' : pausing ? '正在暂停…' : 'Dreaming 已暂停'),
-            settings && !run.activity ? null : h('span', null, run.activity || '正在整理记忆')),
+          h('div', { className: 'sg-dreaming-copy', role: 'status', 'aria-live': 'polite' },
+            h('span', { className: 'sg-dreaming-state-pill ' + (running ? 'running' : 'paused') },
+              h('i', { className: 'sg-dreaming-state-dot', 'aria-hidden': 'true' }),
+              running ? run.waitingForProjection ? 'Dreaming 正在准备…' : '☾ 正在整理' : pausing ? '⏸ 正在暂停…' : '⏸ 已暂停'),
+            run.activity ? h('span', null, run.activity) : null),
           h('div', { className: 'sg-dreaming-actions' },
             running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
             paused && !run.replanRequired ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
-            outstanding ? h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: (event) => { stopTrigger.current = event.currentTarget; setConfirmStop(true) } }, '终止') : null)),
-        run ? h('div', { className: 'sg-dreaming-progress' }, h('progress', { max: Math.max(1, run.total), value: run.completed, 'aria-label': 'Dreaming 整理进度（批次）' }), h('span', null, Math.round(100 * run.completed / Math.max(1, run.total)) + '% · ' + run.completed + '/' + run.total + ' 批次')) : null,
+            h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: showStopDialog }, '终止'))),
+        renderChangesNums(false),
         h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
         run?.reason ? h('p', null, run.reason) : null,
-        feedback,
-        confirmStop ? h('div', { className: 'sg-import-overlay', role: 'presentation' }, h('section', { ref: stopDialog, className: 'sg-dlg', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'sg-stop-title', 'aria-describedby': 'sg-stop-copy' },
-          h('h3', { id: 'sg-stop-title' }, '终止这次整理？'),
-          h('div', { className: 'sg-steps', 'aria-hidden': 'true' }, Array.from({ length: 7 }, (_, index) => h('i', { key: index, className: index < Math.min(7, Math.max(0, Math.round(run.completed / Math.max(1, run.total) * 7))) ? '' : 'todo' }))),
-          h('div', { className: 'sg-steps-l', id: 'sg-stop-copy' }, h('span', null, '已保存的修改会保留。'), h('span', null, '已完成 ' + run.completed + '/' + run.total + ' 批。')),
-          h('div', { className: 'sg-dlg-acts' }, h('button', { type: 'button', className: 'sg-btn ghost', disabled: busy, onClick: () => setConfirmStop(false) }, '继续整理'), h('button', { type: 'button', className: 'sg-btn danger', disabled: busy, onClick: async () => { await control('terminate'); setConfirmStop(false) } }, '终止')))) : null)
-      return settings ? renderSettings(progressCard) : progressCard
+        feedback, stopConfirmation)
+      return renderSettings(progressCard)
     }
 
-    function TopicDirectory({ directory, namespace, active = true, openEvent, onDirectoryChanged, onOpenDreamingSession }) {
+    function TopicDirectory({ directory, namespace, active = true, openEvent, onDirectoryChanged }) {
       const [pendingOpen, setPendingOpen] = React.useState(false)
       const [invalidatedRevision, setInvalidatedRevision] = React.useState(null)
       const [expandRequest, setExpandRequest] = React.useState(0)
       const [selectedSection, setSelectedSection] = React.useState('')
-      const [summaryBusy, setSummaryBusy] = React.useState(false)
-      const [summaryError, setSummaryError] = React.useState('')
       const chaptersRef = React.useRef(null)
       const revision = directory?.revision || ''
       const blocked = invalidatedRevision === revision
@@ -3455,38 +3611,6 @@ window.__ModuleLoader__.load({
       const unassignedTotal = pendingTotal
       const firstSection = topics.flatMap((topic) => topicSections(topic).map((part) => ({ topic, part })))[0]
       const openSection = selectedSection
-      const [dreamHidden, setDreamHidden] = React.useState(() => dreamDismissed(directory?.dreaming?.id))
-      const dreamRun = !dreamHidden && directory?.dreaming && ['completed', 'terminated'].includes(directory.dreaming.status) ? directory.dreaming : null
-      // A completed or terminated round keeps one quiet summary line under the
-      // table of contents; clicking it opens that round's real host session.
-      const openDreamRun = async () => {
-        if (summaryBusy || !dreamRun?.sessionId || !onOpenDreamingSession) return
-        setSummaryBusy(true); setSummaryError('')
-        try {
-          const response = await api('dreaming', { namespace, action: 'open-session', id: dreamRun.id }, { method: 'POST' })
-          if (!response.sessionId) throw new Error('当前宿主无法打开 Dreaming 会话')
-          await onOpenDreamingSession(response.sessionId)
-        } catch (reason) { setSummaryError(reason?.message || '无法打开会话，请稍后重试。') }
-        finally { setSummaryBusy(false) }
-      }
-      const dreamSummary = () => {
-        if (!dreamRun?.updatedAt) return h('span', null, '目录会随整理更新')
-        // changedBatches counts actual section rewrites; the destination count
-        // is the number of sections that survived the round.
-        const changed = Math.max(0, Number(dreamRun.changedBatches || 0))
-        const sections = topics.reduce((sum, topic) => sum + topicSections(topic).length, 0)
-        const [, month, day] = eventDayKey(dreamRun.updatedAt).split('-')
-        const stamp = month && day ? month + '/' + day : formatTime(dreamRun.updatedAt)
-        return h('span', { className: 'sg-toc-dream' },
-          h('button', { type: 'button', className: 'sg-toc-dream-run', disabled: summaryBusy || !dreamRun.sessionId || !onOpenDreamingSession, onClick: openDreamRun, title: dreamRun.sessionId ? '打开当轮 Dreaming 会话' : '本轮没有创建会话' },
-            '上次整理 ' + stamp + (changed ? dreamRun.scope === 'memory' ? ' · 保存 ' + changed + ' 次修改' : ' · ' + changed + ' 节 → ' + sections + ' 节' : '') + (dreamRun.status === 'terminated' ? ' · 已终止' : '')),
-          // A schematic “merge” glyph, matching the timeline strip; not a count.
-          h('span', { className: 'sg-toc-dream-merge', 'aria-hidden': 'true' },
-            Array.from({ length: 4 }, (_, index) => h('i', { key: 'f' + index })), h('span', null, '→'), Array.from({ length: 2 }, (_, index) => h('i', { key: 't' + index, className: 'o' }))),
-          dreamRun.status === 'terminated' ? h('span', { className: 'sg-toc-dream-note' }, dreamRun.scope === 'memory' ? '已保存的修改已保留' : '已整理的章节已保留') : null,
-          h('button', { type: 'button', className: 'sg-toc-dream-close', 'aria-label': '关闭这次整理记录', onClick: () => { dismissDream(dreamRun.id); setDreamHidden(true) } }, '×'),
-          summaryError ? h('span', { className: 'sg-toc-dream-error', role: 'alert' }, summaryError, h('button', { type: 'button', className: 'sg-toc-dream-retry', onClick: openDreamRun, disabled: summaryBusy }, '重试')) : null)
-      }
       return h('section', { className: 'sg-topic-directory', 'data-testid': 'stratagate-topic-directory', 'aria-label': '主题目录' },
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
@@ -3504,15 +3628,14 @@ window.__ModuleLoader__.load({
               h('p', { className: 'sg-leaf-sum' }, (firstSection.part.paragraphs || []).map((paragraph) => paragraph.text || '').filter(Boolean).join('\n\n') || '点左侧小节，翻开具体事件。')) : null,
             // Pending events stay reachable through the existing lightweight
             // disclosure; CSS hides the old "待整理 N 条" label in the book.
-            h('section', { className: 'sg-topic-pending', 'aria-label': unassignedTotal ? '待整理事件' : '记忆整理' },
+            unassignedTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' },
               h('div', { className: 'sg-topic-pending-heading' },
-                unassignedTotal ? h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', { className: 'sg-topic-pending-label' }, '待整理'), h('span', null, unassignedTotal + ' 条'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›')) : null,
-                h(DreamingPanel, { key: namespace, namespace, initialRun: directory?.dreaming, active, available: !blocked, inline: true, onDirectoryChanged, onOpenDreamingSession })),
-              unassignedTotal ? h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' })) : null),
-            h('div', { className: 'sg-toc-foot sg-leaf-foot' }, dreamSummary(), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
+                h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', { className: 'sg-topic-pending-label' }, '待整理'), h('span', null, unassignedTotal + ' 条'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
+              h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null,
+            h('div', { className: 'sg-toc-foot sg-leaf-foot' }, h('style', null, DIRECTORY_PREVIEW_STYLES), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
     }
 
-    function LongTermPage({ events, eventPage, graph, graphSettings = {}, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, onOpenDreamingSession, extractionGap = false, active = true, refresh }) {
+    function LongTermPage({ events, eventPage, graph, graphSettings = {}, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, extractionGap = false, active = true, refresh }) {
       const graphVisible = graphSettings.enabled === true || graphSettings.noticeSeen !== true
       const [mode, setMode] = React.useState('topics')
       const [selectedNodeId, setSelectedNodeId] = React.useState('')
@@ -3611,7 +3734,7 @@ window.__ModuleLoader__.load({
       return h('section', { className: 'sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
         h('div', { className: 'sg-pg-head' }, h('h2', null, '长期记忆'),
           h('span', { className: 'sg-pg-end' }, h('nav', { className: 'sg-long-tabs sg-seg', 'aria-label': '长期记忆视角' }, tabChildren))),
-        h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged, onOpenDreamingSession })),
+        h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged })),
         mode === 'topics' ? null : h(React.Fragment, null,
         mode === 'graph' && migrationNotice ? h('p', { className: 'sg-muted' }, migrationNotice) : null,
         mode === 'timeline' && extractionGap ? h('p', { className: 'sg-muted' }, '部分对话尚未形成长期记忆，暂不能通过长期记忆检索。') : null,
@@ -6533,11 +6656,10 @@ window.__ModuleLoader__.load({
       return { state: 'ok', text: '运行正常' }
     }
 
-    function OverviewPage({ selected, loading, error, onOpenSection, onOpenStatus }) {
+    function OverviewPage({ selected, loading, onOpenSection, dreaming }) {
       const stats = selected?.memoryOverview
       if (loading && !stats) return h(Loading)
       if (!stats) return h(Empty, { title: '还没有可汇总的记忆', copy: '这个工作区的记忆读出来之后，会显示在这里。' })
-      const runtimeState = overviewRuntimeState(selected, loading, error)
       // Visible units identify the quantity; update times remain in the tooltip.
       const layers = [
         { key: 'profile', name: '常驻画像', tone: 'ink', section: 'profile', value: stats.layers.profile ? overviewCount(stats.layers.profile.characters) : '—', unit: '字', updatedAt: stats.layers.profile?.updatedAt },
@@ -6555,9 +6677,7 @@ window.__ModuleLoader__.load({
               h('b', { className: 'sg-mono', 'data-testid': 'overview-answer-count' }, overviewCount(stats.answeredLast7Days)),
               h(OverviewSpeechMark)),
             h('p', { className: 'sg-ov-summary', 'data-testid': 'overview-answer-summary' }, '最近 7 天，长期记忆帮到 ' + overviewCount(stats.answeredLast7Days) + ' 次回答'),
-            h(typeof onOpenStatus === 'function' ? 'button' : 'div', { type: typeof onOpenStatus === 'function' ? 'button' : undefined, className: 'sg-ov-status', 'data-testid': 'overview-runtime-status', 'data-state': runtimeState.state, onClick: onOpenStatus, title: typeof onOpenStatus === 'function' ? '查看系统状态' : undefined },
-              h('i', { className: 'sg-runtime-dot', 'data-state': runtimeState.state, 'aria-hidden': 'true' }),
-              h('span', null, runtimeState.text))),
+            dreaming),
           h('div', { className: 'sg-pillar-group' },
           h('div', { className: 'sg-pillar-cap', 'aria-hidden': 'true' }, h(OverviewSpeechMark)),
           h('div', { className: 'sg-pillar', 'aria-label': '记忆分层' }, layers.map((layer) => {
@@ -6880,7 +7000,8 @@ window.__ModuleLoader__.load({
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
       else if (view.name === 'settings') content = h(SettingsPage, { selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
-      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, error, onOpenSection: goSection, onOpenStatus: () => setView({ name: 'status' }) })
+      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection,
+        dreaming: namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
@@ -6916,7 +7037,7 @@ window.__ModuleLoader__.load({
         view.name === 'root' && selected?.duplicateRepair?.needsReview > 0 ? h('button', { type: 'button', className: 'sg-dup-entry', onClick: () => setView({ name: 'duplicates' }) },
           h(DuplicateIcon, { size: 23 }), h('span', null, h('strong', null, selected.duplicateRepair.needsReview + ' 组相似记忆，等你确认'), h('small', null, '对比内容，选择保留哪张或合并双方证据')), h(DuplicateIcon, { kind: 'next' })) : null,
         h('section', { key: section, className: 'sg-view', 'aria-label': 'StrataGate 记忆内容' }, section === 'long' && selected && loadedNamespaceRef.current === namespace ? h(React.Fragment, null,
-          h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { graphSettings: overview.graphSettings, extractionGap: selected?.longTermExtractionGap === true, key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, onOpenDreamingSession, refresh, active: view.name === 'root' })),
+          h('div', { key: 'long-browser', hidden: view.name !== 'root' }, h(LongTermPage, { graphSettings: overview.graphSettings, extractionGap: selected?.longTermExtractionGap === true, key: namespace, events: data.events, eventPage: data.pagination?.events, graph: data.graph, project, query, setQuery, openEvent, namespace, focusNodeId: graphFocusNodeId, onFocusHandled: consumeGraphFocus, topicDirectory: data.topicDirectory, onDirectoryChanged: refreshDirectory, refresh, active: view.name === 'root' })),
           view.name === 'root' ? null : content) : content),
         h('footer', { className: 'sg-footer' },
           h('span', null, 'StrataGate-AgentMemory · MIT'),

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { DREAMING_DIRECTORY_GUIDANCE } from './dreaming.js'
+import { DAILY_LETTER_SKILL } from './letters.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BlockAssembler, createUserMessage, type ContentBlock, type ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { parameterSchemaSpecToJsonSchema, validateArgs, type ParameterSchemaSpec, type ValueSchemaSpec } from '@deepseek-ai/dsh-tools'
@@ -112,6 +113,7 @@ const STRUCTURED_FIELDS = {
   graphProjector: ['reason', 'nodes', 'edges'],
   topicProjector: ['topics'],
   dreamingStep: ['tool', 'args'],
+  dailyLetter: ['title', 'paragraphs', 'signature'],
   externalMemoryExtractor: ['reason', 'candidates'],
   externalMemoryDecider: ['action', 'reason', 'confidence'],
   eventDuplicateDecider: ['action', 'reason', 'confidence'],
@@ -383,6 +385,15 @@ const STRUCTURED_TOOLS = {
     parameters: {
       tool: { type: 'string', enum: ['memory_list_topics', 'memory_expand_topic', 'dreaming_search', 'dreaming_read', 'dreaming_directory', 'finish'], required: true },
       args: { ...OPEN_OBJECT, required: true },
+    },
+  },
+  dailyLetter: {
+    name: 'stratagate_write_daily_letter',
+    description: 'Save the title, short paragraphs, and signature of one dated letter.',
+    parameters: {
+      title: { type: 'string', required: true },
+      paragraphs: { type: 'array', items: { type: 'string' }, required: true },
+      signature: { type: 'string', required: true },
     },
   },
   externalMemoryDecider: {
@@ -740,6 +751,12 @@ dreaming_read {kind:event|block|graph_node,id,level?,offset?,limit?}: source det
 dreaming_directory {operations:[...]}: atomic current-chapter operations, chosen from rename-chapter {title,description?}, rename-section {from,title}, merge-sections {from:[titles],title}, move-events {eventIds:[current batch IDs],title}, set-overview / append-overview {title,entries:[{kind:history|decision|change|scope|open-question|experience,text,sourceEventIds}]}, rewrite-overview {titles,entries:[{title,kind,text,sourceEventIds}]}. Existing summaries are navigation; use supplied or retrieved full Event evidence. Other chapter membership is out of scope.
 ${DREAMING_DIRECTORY_GUIDANCE}
 Choose exactly one action using stratagate_dreaming_step. args is an object. Finish args may contain a short summary.`, payload) as { tool: string; args: Record<string, unknown> }
+  }
+
+  async writeDailyLetter(payload: unknown, profile: string): Promise<{ title: string; paragraphs: string[]; signature: string }> {
+    return await this.callStructured('dailyLetter', profile ? `${DAILY_LETTER_SKILL}\n\n${profile}` : DAILY_LETTER_SKILL, payload) as {
+      title: string; paragraphs: string[]; signature: string
+    }
   }
 
   takeSuccessfulResponses(): SuccessfulModelResponse[] {
@@ -1334,7 +1351,7 @@ Use project scope for repository decisions, user scope for stable preferences/id
           throw new ModelJsonResponseError(`StrataGate ${expectedTool} arguments were invalid: ${error instanceof Error ? error.message : String(error)}`,
             { cause: error, response: responseForError })
         }
-        if (kind !== 'profileMaintenance' && kind !== 'topicProjector' && kind !== 'dreamingStep' && kind !== 'eventDuplicateDecider') {
+        if (kind !== 'profileMaintenance' && kind !== 'topicProjector' && kind !== 'dreamingStep' && kind !== 'dailyLetter' && kind !== 'eventDuplicateDecider') {
           this.successfulResponses.push({
             id: `model_response_${crypto.randomUUID()}`,
             kind,

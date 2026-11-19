@@ -11,7 +11,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderStarLink, loadStarCount, formatStarCount, GitHubMarkIcon, StrataGateMark, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, OverviewPage, ProfilePage, ProfileLimitSettings, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
+  ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, overviewRuntimeState, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -109,7 +109,6 @@ describe('StrataGate Web client contract', () => {
 
   it('keeps a finished Dreaming card hidden and shows the automatic completion toast', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain("['running', 'pausing', 'paused'].includes(run.status)")
     expect(source).toContain('本轮记忆整理完成')
     expect(source).not.toContain("'收起'")
     const stateValues = (value: unknown) => {
@@ -123,7 +122,7 @@ describe('StrataGate Web client contract', () => {
     }
     const completed = loadSupportHelpers([], stateValues({ status: 'completed', total: 2, completed: 2, changedBatches: 2, updatedAt: '2026-10-04T00:00:00Z' })).DreamingPanel({ namespace: 'n', active: true, available: true })
     expect(JSON.stringify(completed)).not.toContain('stratagate-dreaming')
-    const paused = loadSupportHelpers([], stateValues({ status: 'paused', total: 4, completed: 2, changedBatches: 1, updatedAt: '2026-10-04T00:00:00Z' })).DreamingPanel({ namespace: 'n', active: true, available: true })
+    const paused = loadSupportHelpers([], stateValues({ status: 'paused', total: 4, completed: 2, changedBatches: 1, updatedAt: '2026-10-04T00:00:00Z' })).DreamingPanel({ namespace: 'n', active: true, available: true, settings: true })
     expect(JSON.stringify(paused)).toContain('stratagate-dreaming')
     expect(buttonProps(paused, '继续')).toBeDefined()
   })
@@ -225,17 +224,17 @@ describe('StrataGate Web client contract', () => {
       useEffect: () => {}, useCallback: (callback: unknown) => callback,
     } }
     const { DreamingPanel } = loadSupportHelpers([], globals)
-    const waiting = DreamingPanel({ namespace: 'test', initialRun: baseRun, active: true, available: true })
+    const waiting = DreamingPanel({ namespace: 'test', initialRun: baseRun, active: true, available: true, settings: true })
     expect(JSON.stringify(waiting)).toContain('Dreaming 正在准备…')
     expect(JSON.stringify(waiting)).toContain('等待当前后台目录整理完成')
     expect(buttonProps(waiting, '暂停')).toBeDefined()
     expect(buttonProps(waiting, '终止')).toBeDefined()
     const conflicted = DreamingPanel({ namespace: 'test', initialRun: { ...baseRun, status: 'paused', replanRequired: true,
-      reason: '请终止本轮后重新开始；已保存的修改会保留' }, active: true, available: true })
+      reason: '请终止本轮后重新开始；已保存的修改会保留' }, active: true, available: true, settings: true })
     expect(buttonProps(conflicted, '继续')).toBeUndefined()
     expect(buttonProps(conflicted, '终止')).toBeDefined()
     expect(JSON.stringify(conflicted)).toContain('请终止本轮后重新开始')
-    const paused = DreamingPanel({ namespace: 'test', initialRun: { ...baseRun, status: 'paused', replanRequired: false }, active: true, available: true })
+    const paused = DreamingPanel({ namespace: 'test', initialRun: { ...baseRun, status: 'paused', replanRequired: false }, active: true, available: true, settings: true })
     expect(buttonProps(paused, '继续')).toBeDefined()
   })
 
@@ -1469,8 +1468,10 @@ describe('StrataGate Web client contract', () => {
 
   it('uses the memory-first three-part information architecture', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain("'/' + run.total + ' 批次'")
-    expect(source).toContain('Dreaming 整理进度（批次）')
+    expect(source).toContain('sg-dreaming-nums')
+    expect(source).toContain('sg-daily-letter::backdrop')
+    expect(source).toContain('☾ 正在整理')
+    expect(source).not.toContain('Dreaming 整理进度（批次）')
     expect(source).toContain("const [section, setSection] = React.useState('overview')")
     expect(source).toContain("[['overview', '总览'], ['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
     expect(source).toContain('sg-ss-list')
@@ -2759,16 +2760,9 @@ describe('memory overview layers', () => {
     { name: 'invalid job state', patch: { processingJobs: -1 }, loading: false, error: '', state: 'unknown', text: '状态暂不可用' },
     { name: 'directory read failure', patch: { topicDirectoryReadError: true }, loading: false, error: '', state: 'warning', text: '部分记忆暂时无法读取' },
     { name: 'partial profile read', patch: { memoryOverview: { ...selected.memoryOverview, layers: { ...selected.memoryOverview.layers, profile: null } } }, loading: false, error: '', state: 'warning', text: '部分记忆暂时无法读取' },
-  ])('shows truthful overview status for $name', ({ patch, loading, error, state, text }) => {
-    const { OverviewPage } = loadSupportHelpers()
-    const onOpenStatus = vi.fn()
-    const tree = OverviewPage({ selected: { ...selected, failedJobs: 0, processingJobs: 0, ...patch }, loading, error, onOpenStatus })
-    const props = elementProps(tree).find((value) => value['data-testid'] === 'overview-runtime-status')
-    expect(props['data-state']).toBe(state)
-    expect(JSON.stringify(tree)).toContain(text)
-    expect(JSON.stringify(tree)).not.toContain('最近一次：')
-    props.onClick()
-    expect(onOpenStatus).toHaveBeenCalledOnce()
+  ])('computes a truthful workspace indicator for $name', ({ patch, loading, error, state, text }) => {
+    const { overviewRuntimeState } = loadSupportHelpers()
+    expect(overviewRuntimeState({ ...selected, failedJobs: 0, processingJobs: 0, ...patch }, loading, error)).toMatchObject({ state, text })
   })
 })
 

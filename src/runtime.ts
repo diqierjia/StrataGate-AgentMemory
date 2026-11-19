@@ -83,6 +83,7 @@ import { containsCredentials, DiagnosticsRecorder, type DiagnosticStage } from '
 import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
 import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, type DreamingAction } from './dreaming.js'
 import type { DreamingRun, DreamingCommand, DreamingDirectoryOperation, DreamingEventEdit, DreamingExperienceEdit } from '@diqier/stratagate'
+import { DailyLetters, shiftLetterDate, type ArchivedLetter } from './letters.js'
 
 function emptyProfileOverview(): { profile: PersistentProfile; revisions: Record<ProfileField, number> } {
   const profile = emptyProfile()
@@ -457,6 +458,10 @@ export class StrataGateRuntime {
   private dreamingHost: DreamingHost | undefined
   private dreamingScope: DreamingRun['scope'] = 'directory'
   private lastDreamingIdleCheck = 0
+  private dailyLetters?: DailyLetters
+  private dailyLetterRun: Promise<void> | undefined
+  private lastLetterCheck = 0
+  private readonly dailyLetterStop = new AbortController()
   private lastMainActivity = Date.now()
   private readonly adminJobRetryRuns = new Map<string, Promise<unknown>>()
   private readonly feedbackDrafts = new Map<string, FeedbackDraft>()
@@ -605,6 +610,7 @@ export class StrataGateRuntime {
     void this.runEventDuplicateMaintenance().catch((error: unknown) => this.onIngestError(error))
     if (!this.models.isReady()) return
     await this.checkAutomaticDreaming().catch((error: unknown) => this.onIngestError(error))
+    this.checkDailyLetters()
     void this.runProfileMaintenance().catch((error: unknown) => this.onIngestError(error))
     let namespaces: string[]
     try {
@@ -2407,6 +2413,7 @@ export class StrataGateRuntime {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.dailyLetterStop.abort()
     for (const controller of this.dreamingControllers.values()) controller.abort(new Error('宿主已关闭，任务保留为暂停'))
     this.disposeAdaptersUpdated()
     this.disposeWorkChanged()
@@ -2437,6 +2444,8 @@ export class StrataGateRuntime {
     this.surfaceMaintenance.clear()
     await Promise.allSettled(this.externalImportRuns.values())
     await Promise.allSettled(this.dreamingRuns.values())
+    await this.dailyLetterRun
+    this.dailyLetters?.close()
     await this.dreamingHost?.close()
     this.diagnostics.close()
     await Promise.all(settled.flatMap((result) => result.status === 'fulfilled' ? [result.value.close()] : []))
@@ -2880,8 +2889,67 @@ export class StrataGateRuntime {
     const snapshot = await this.adminSnapshot(namespace)
     if (!snapshot) throw new Error('Unknown memory namespace')
     const run = snapshot.memoryTopicState?.dreaming
-    if (!run) return { namespace, run: null }
-    return { namespace, run: dreamingStatus(run) }
+    return { namespace, run: dreamingStatus(run), letterDates: this.letterStore()?.dates(namespace) ?? [] }
+  }
+
+  adminDailyLetter(namespace: string, date: string): ArchivedLetter | null {
+    return this.letterStore()?.read(namespace, date) ?? null
+  }
+
+  private letterStore(): DailyLetters | undefined {
+    if (this.config.database === ':memory:' || !existsSync(this.config.database)) return undefined
+    return this.dailyLetters ??= new DailyLetters(this.config.database)
+  }
+
+  private checkDailyLetters(now = Date.now()): void {
+    if (this.dreamingScope !== 'memory' || this.dailyLetterRun || this.closed || now - this.lastLetterCheck < 60_000) return
+    this.lastLetterCheck = now
+    this.dailyLetterRun = this.writeClosedDayLetters(now).catch(error => this.onIngestError(error))
+      .finally(() => { this.dailyLetterRun = undefined })
+  }
+
+  private async writeClosedDayLetters(now: number): Promise<void> {
+    const store = this.letterStore()
+    if (!store) return
+    const { signal } = this.dailyLetterStop
+    const timeZone = this.dailyNotes.timeZone
+    const today = dailyDate(new Date(now), timeZone)
+    const yesterday = shiftLetterDate(today, -1)
+    for (const namespace of await this.adminNamespaces()) {
+      if (signal.aborted) return
+      let date = store.nextDate(namespace, yesterday)
+      for (let checked = 0; date < today && checked < 32 && !signal.aborted; checked++, date = shiftLetterDate(date, 1)) {
+        const claim = store.claim(namespace, date, now)
+        if (!claim) break
+        try {
+          const messages = store.material(namespace, date, timeZone)
+          if (!messages.some(message => message.role === 'user')) {
+            store.finish(namespace, date, claim, null)
+            continue
+          }
+          const profile = this.getPersistentProfile()
+          const profileContext = this.renderProfileContext()
+          const draft = await this.models.runDetached(`stratagate-letter:${date}`, () =>
+            this.models.writeDailyLetter({ date, messages }, profileContext ?? ''), signal, namespace)
+          signal.throwIfAborted()
+          const paragraphs = draft.paragraphs.map(text => text.trim().slice(0, 650)).filter(Boolean).slice(0, 3)
+          const title = draft.title.trim().slice(0, 160) || '一封来信'
+          const signature = draft.signature.trim().slice(0, 80) || profile.assistantPreferredName || 'StrataGate'
+          const letter = paragraphs.length ? {
+            date, title, paragraphs, signature, createdAt: new Date().toISOString(),
+            profileStyled: Boolean(profileContext),
+            reports: store.reports(namespace, date, timeZone),
+          } : null
+          if (letter && containsCredentials([title, signature, ...paragraphs].join('\n'))) {
+            store.finish(namespace, date, claim, null)
+          } else store.finish(namespace, date, claim, letter)
+        } catch (error) {
+          if (signal.aborted) store.release(namespace, date, claim)
+          else this.onIngestError(error)
+        }
+        break
+      }
+    }
   }
 
   setDreamingHost(host: DreamingHost, scope: DreamingRun['scope'] = 'memory'): void {

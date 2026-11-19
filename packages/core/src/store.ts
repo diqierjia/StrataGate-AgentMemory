@@ -14,7 +14,7 @@ import { applyElementChanges, elementViewAt } from './elements.js';
 import { EVENT_DUPLICATE_AUTO_CONFIDENCE, eventDuplicateCompatible, eventDuplicateMergeCompatible, eventDuplicateStructuralCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, eventDuplicateSimilarity, isExactEventDuplicate, validEventMergeDraft, type EventMergeDraft, type EventDuplicatePair, type EventDuplicateDecider } from './event-duplicates.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
 import { dreamingTopicVersion, type DreamingRun } from './dreaming.js';
-import { discoverDreaming, dreamingEventVersion, DREAMING_AUTO_INTERVAL, type DreamingClaim, type DreamingEditResult,
+import { discoverDreaming, dreamingEventVersion, recordDreamingChange, DREAMING_AUTO_INTERVAL, type DreamingClaim, type DreamingEditResult,
   type DreamingEventEdit, type DreamingExperienceEdit } from './dreaming-v2.js';
 import { externalMemoryJsonExtractor, parseExternalMemoryExport } from './external-memory.js';
 import { findBestVerbatimQuote } from './event-quotes.js';
@@ -1068,10 +1068,13 @@ export class StrataGate {
     return this.editDreaming(claim, ['event', edit], (run, now) => {
       const target = edit.kind === 'create' ? undefined : this.dreamingReadEvent(run, edit.id);
       if (target && !this.events.includes(target)) throw new Error('Only derived Events can be edited; explicitly recorded memories are read-only');
+      const previousTitle = target?.title;
+      const previousSummary = target?.summary;
       const ids = [...new Set(edit.sourceMessageIds ?? [])];
       const messages = this.dreamingReadMessages(run, ids);
       const affected = new Set<string>();
       const removed = new Set<string>();
+      const removedTitles = new Map<string, string>();
       const redirects = new Map<string, string>();
       let event = target;
       const requireBody = () => {
@@ -1149,6 +1152,7 @@ export class StrataGate {
           }, keeper.id, false, true, body)) throw new Error('Events are incompatible or represent different points in history');
           redirects.set(id, keeper.id);
           removed.add(id);
+          removedTitles.set(id, duplicate.title);
           affected.add(id);
         }
         if (!removed.size) throw new Error('Select at least one redundant Event');
@@ -1227,6 +1231,26 @@ export class StrataGate {
       for (const card of remaining) {
         (run.discoveryVersions ??= {})[`event:${card.id}`] = dreamingEventVersion(card);
         delete run.readVersions?.[`event:${card.id}`];
+      }
+      if (edit.kind === 'delete' && target) {
+        recordDreamingChange(run, { deletedEvents: 1, items: [{ kind: 'event-delete', id: target.id, label: target.title, detail: edit.reason!.trim().slice(0, 400), deleted: true }] });
+      } else if (edit.kind === 'merge' && target) {
+        recordDreamingChange(run, {
+          editedEvents: 1,
+          deletedEvents: removed.size,
+          items: [
+            { kind: 'event-edit', id: target.id, label: target.title, detail: `合并 ${removed.size} 条重复记录。` },
+            ...[...removedTitles].map(([id, label]) => ({ kind: 'event-delete' as const, id, label, detail: `合并到「${target.title}」。`, deleted: true })),
+          ],
+        });
+      } else if ((edit.kind === 'create' || edit.kind === 'update' || edit.kind === 'supersede') && event) {
+        const detail = edit.kind === 'create' ? `新建。${event.summary.slice(0, 220)}`
+          : edit.kind === 'supersede' ? `标记为更新的记录。${edit.reason?.trim().slice(0, 220) ?? ''}`
+          : [
+              previousTitle !== event.title ? `原名「${previousTitle}」。` : '',
+              previousSummary !== event.summary ? `摘要更新为：${event.summary.slice(0, 220)}` : '',
+            ].join('') || '更新了事件的来源或属性。';
+        recordDreamingChange(run, { editedEvents: 1, items: [{ kind: 'event-edit', id: event.id, label: event.title, detail }] });
       }
       this.validateReferences();
       return { ...(event ? { id: event.id } : {}), saved: true, ...(experiencesToReview.length ? { experiencesToReview } : {}) };
@@ -1341,6 +1365,7 @@ export class StrataGate {
       const remove = new Set([old?.id, ...merged.map(item => item.id)]);
       this.experiences.splice(0, this.experiences.length, ...this.experiences.filter(item => !remove.has(item.id)), stored);
       run.searchedExperiences = false;
+      recordDreamingChange(run, { experiences: 1, items: [{ kind: 'experience', id: stored.id, label: stored.title }] });
       return { id: stored.id, saved: true };
     });
   }

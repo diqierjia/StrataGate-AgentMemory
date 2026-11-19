@@ -16,6 +16,35 @@ export const DREAMING_BATCH_WRITE_LIMIT = 64;
 const DREAMING_IDLE_CALL_LIMIT = 12;
 export interface DreamingUnit { topicId: string; eventIds: string[]; blockIds?: string[]; messageIds?: string[]; noteDates?: string[]; experienceIds?: string[] }
 export interface DreamingTrace { tool: string; args: Record<string, unknown>; result: unknown }
+export interface DreamingChangeItem {
+  kind: 'event-edit' | 'event-delete' | 'experience' | 'daily-note';
+  id: string;
+  label: string;
+  detail?: string;
+  date?: string;
+  deleted?: boolean;
+}
+export interface DreamingChangeCounts {
+  editedEvents: number;
+  deletedEvents: number;
+  experiences: number;
+  items: DreamingChangeItem[];
+}
+export interface DreamingDiaryLetter {
+  date: string;
+  title: string;
+  paragraphs: string[];
+  signature: string;
+  dailySummarySaved?: boolean;
+  dailySummaryDate?: string;
+  profileStyled: boolean;
+  createdAt: string;
+}
+export interface DreamingReport {
+  id: string;
+  finishedAt: number;
+  changes: DreamingChangeCounts;
+}
 export interface DreamingRun {
   id: string; policyVersion: number; scope: 'directory' | 'memory';
   discoveryVersions?: Record<string, string>;
@@ -26,6 +55,8 @@ export interface DreamingRun {
   interrupted?: boolean;
   appliedOperations?: Record<string, { id?: string; saved: boolean; experiencesToReview?: string[] }>;
   trigger?: 'manual' | 'automatic';
+  changes?: DreamingChangeCounts;
+  letter?: DreamingDiaryLetter;
   status: 'running' | 'pausing' | 'paused' | 'completed' | 'terminated';
   owner: string; epoch: number; leaseUntil: string | null;
   sessionId?: string;
@@ -66,6 +97,7 @@ export type DreamingCommand =
   | { kind: 'model-usage'; id: string; owner: string; epoch: number; estimatedTokens: number }
   | { kind: 'apply'; id: string; owner: string; epoch: number; operations: DreamingDirectoryOperation[]; topicId?: string; topicVersion?: string }
   | { kind: 'memory-write'; id: string; owner: string; epoch: number }
+  | { kind: 'set-letter'; id: string; owner: string; epoch: number; letter: DreamingDiaryLetter }
   | { kind: 'suspend'; id: string; owner: string; epoch: number; reason: string; replanRequired?: boolean; interrupted?: boolean };
 
 export function dreamingTopicVersion(topic: unknown): string {
@@ -178,11 +210,17 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
   // A renewal already queued when finish-unit commits must not kill the final
   // response. A completed claim is read-only here: never renew its lease.
   const finalHeartbeat = run.status === 'completed' && command.kind === 'heartbeat';
-  if (run.owner !== command.owner || run.epoch !== command.epoch || (!finalUsage && !finalHeartbeat && (!['running', 'pausing'].includes(run.status)
+  const finalLetter = run.status === 'completed' && command.kind === 'set-letter';
+  if (run.owner !== command.owner || run.epoch !== command.epoch || (!finalUsage && !finalHeartbeat && !finalLetter && (!['running', 'pausing'].includes(run.status)
     || !run.leaseUntil || Date.parse(run.leaseUntil) <= Date.parse(now)))) throw new Error('Dreaming claim changed or expired');
   if (finalHeartbeat) return structuredClone(run);
   run.updatedAt = now;
-  if (!finalUsage) run.leaseUntil = new Date(Date.parse(now) + DREAMING_LEASE_MS).toISOString();
+  if (!finalUsage && !finalLetter) run.leaseUntil = new Date(Date.parse(now) + DREAMING_LEASE_MS).toISOString();
+  if (command.kind === 'set-letter') {
+    if (run.status !== 'completed') throw new Error('Dreaming run is not completed');
+    run.letter = command.letter;
+    return structuredClone(run);
+  }
   if (command.kind === 'heartbeat') return structuredClone(run);
   if (command.kind === 'bind-session') {
     if (run.sessionId && run.sessionId !== command.sessionId) throw new Error('Dreaming session identity changed');

@@ -43,7 +43,7 @@ export interface BlockSummaryJob {
   leaseUntil?: string | null;
 }
 
-export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance' | 'dreamingStep' | 'eventDuplicateDecider';
+export type SuccessfulModelResponseKind = 'summarizer' | 'extractor' | 'projector' | 'graphProjector' | 'topicProjector' | 'externalMemoryExtractor' | 'externalMemoryDecider' | 'profileMaintenance' | 'dreamingStep' | 'dailyLetter' | 'eventDuplicateDecider';
 
 export interface SuccessfulModelResponse {
   id: string;
