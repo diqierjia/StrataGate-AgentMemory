@@ -10,6 +10,7 @@ import { StrataGate, estimateTokens, dreamingEventContent, dreamingEventContentV
 import { memoryTopicSectionNavigation } from '../src/topics.js'
 import { StrataGateRuntime } from '../src/runtime.js'
 import { dreamingPayload, dreamingTool } from '../src/dreaming.js'
+import { DailyLetters } from '../src/letters.js'
 import type { DshModelBridge } from '../src/llm.js'
 import { handleAdminRequest } from '../src/web.js'
 import { Context } from '@deepseek-ai/cordis'
@@ -738,7 +739,15 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     expect((await next.dailyNotes.read(f.namespace, { date })).content).not.toContain('重复占位')
     expect(inspect.listBlocks().flatMap(block => block.l5Raw.map(message => message.id))).toEqual(expect.arrayContaining(messages))
     expect(inspect.exportSnapshot().usageReceipts).toHaveLength(0)
-    expect((await next.adminDreamingStatus(f.namespace) as any).run.changedBatches).toBe(9)
+    const completedStatus = (await next.adminDreamingStatus(f.namespace) as any).run
+    expect(completedStatus.changedBatches).toBe(9)
+    expect(completedStatus.changes).toMatchObject({ editedEvents: 4, deletedEvents: 3, experiences: 2 })
+    expect(completedStatus.changes.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'event-edit', id: keep.id }),
+      expect.objectContaining({ kind: 'event-delete', id: wrong.id, deleted: true }),
+      expect.objectContaining({ kind: 'experience', id: inspect.listExperiences()[0]!.id }),
+      expect.objectContaining({ kind: 'daily-note', id: date }),
+    ]))
     expect(await inspect.startMemoryDreaming('no-self-trigger', 'automatic', await next.dailyNotes.versions(f.namespace))).toBeNull()
   }, 60_000)
 
@@ -1888,8 +1897,9 @@ describe('directory Dreaming persistence and source-only tools', () => {
   })
 })
 
-function runtimeFor(database: string, step: (payload: any) => Promise<any>, abortable = false) {
+function runtimeFor(database: string, step: (payload: any) => Promise<any>, abortable = false, writeDailyLetter?: DshModelBridge['writeDailyLetter']) {
   const models = { isReady: () => false, onAdaptersUpdated: () => () => {}, dreamingStep: step,
+    writeDailyLetter,
     runDetached: (_id: string, operation: () => Promise<unknown>, signal?: AbortSignal) => abortable
       ? Promise.race([operation(), new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(new Error('Interrupted')), { once: true }))]) : operation() } as unknown as DshModelBridge
   const runtime = new StrataGateRuntime({ database, namespaceMode: 'project', namespacePrefix: 'dsh', globalNamespace: 'global', blockTurnSize: 1,
@@ -2200,4 +2210,56 @@ describe('Dreaming Agent orchestration and admin API', () => {
     }
     expect(f.memory.exportSnapshot().memoryTopicState?.dreaming).toBeUndefined()
   })
+
+  it('archives one dated letter after midnight, with both rounds’ committed changes and independent working notes', async () => {
+    const date = '2026-11-19'
+    const clock = () => new Date(`${date}T10:00:00+08:00`)
+    const f = await fixture(2, '决定重启前先保留待写队列。', 'dreaming-test', clock)
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const storage = new SqliteStorage({ filename: f.database })
+    cleanups.push(async () => { await storage.close() })
+    for (const index of [0, 1]) {
+      const run = await f.memory.dreaming({ kind: 'start', owner: 'test' })
+      const snapshot = f.memory.exportSnapshot()
+      const item = index === 0
+        ? { kind: 'event-edit' as const, id: f.events[0]!.id, label: '保留待写队列', detail: '摘要写明重启前保留队列。' }
+        : { kind: 'event-delete' as const, id: f.events[1]!.id, label: '重复草稿', detail: '合并到保留待写队列。' }
+      snapshot.memoryTopicState!.dreaming = { ...run, status: 'completed', leaseUntil: null,
+        changes: { editedEvents: 1 - index, deletedEvents: index, experiences: 0, items: [item] } }
+      await storage.save(f.namespace, snapshot, f.memory.storageRevision)
+      await f.memory.reloadFromStorage()
+    }
+
+    const write = vi.fn(async () => ({ title: '那条队列留下来了', signature: '小墨', paragraphs: ['林工，今天把重启前的队列安顿好了。'] }))
+    const runtime = runtimeFor(f.database, async () => { throw new Error('Dreaming should not run') }, false, write)
+    runtime.applyLiveDailyNotes(undefined, 'Asia/Shanghai', undefined)
+    runtime.updatePersistentProfile('assistantPreferredName', '小墨', 'settings')
+    runtime.updatePersistentProfile('userPreferredName', '林工', 'settings')
+    await runtime.dailyNotes.write(f.namespace, { date, title: '工作笔记', content: '定位重启问题。' })
+    const note = (await runtime.dailyNotes.read(f.namespace, { date })).content
+    const writeClosed = (at: string) => (runtime as any).writeClosedDayLetters(Date.parse(at))
+    await writeClosed(`${date}T23:59:59+08:00`)
+    expect(write).not.toHaveBeenCalled()
+    expect(runtime.adminDailyLetter(f.namespace, date)).toBeNull()
+    await Promise.all([writeClosed('2026-11-20T00:10:00+08:00'), writeClosed('2026-11-20T00:10:00+08:00')])
+    expect(write).toHaveBeenCalledExactlyOnceWith(
+      { date, messages: [{ role: 'user', text: '决定重启前先保留待写队列。' }, { role: 'assistant', text: '记录。' }] },
+      expect.stringContaining('小墨'),
+    )
+    expect(runtime.adminDailyLetter(f.namespace, date)).toMatchObject({
+      date, title: '那条队列留下来了', profileStyled: true,
+      reports: expect.arrayContaining([
+        expect.objectContaining({ changes: expect.objectContaining({ editedEvents: 1, items: [expect.objectContaining({ label: '保留待写队列' })] }) }),
+        expect.objectContaining({ changes: expect.objectContaining({ deletedEvents: 1, items: [expect.objectContaining({ label: '重复草稿', detail: '合并到保留待写队列。' })] }) }),
+      ]),
+    })
+    expect((await runtime.dailyNotes.read(f.namespace, { date })).content).toBe(note)
+    await runtime.close()
+    const archive = new DailyLetters(f.database)
+    try {
+      expect(archive.dates(f.namespace)).toEqual([date])
+      expect(archive.read(f.namespace, date)?.reports).toHaveLength(2)
+      expect(archive.read('other-workspace', date)).toBeNull()
+    } finally { archive.close() }
+  }, 30_000)
 })

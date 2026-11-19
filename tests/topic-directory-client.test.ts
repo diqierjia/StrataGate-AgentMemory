@@ -155,28 +155,20 @@ function find(tree: Rendered, predicate: (node: Rendered) => boolean): Rendered[
 }
 
 describe('Dreaming directory controls', () => {
-  it('folds a completed or terminated round into one summary row and hides the card', () => {
+  it('keeps the directory focused on its entries after a Dreaming round', () => {
     const client = clientRenderer()
     const directory = fixture() as any
     directory.dreaming = { id: 'dream-1', sessionId: 'stratagate-dreaming:one', status: 'completed', updatedAt: '2026-10-04T00:00:00.000Z', changedBatches: 4, completed: 4, total: 4 } as any
     const completed = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
     expect(find(completed, (node) => node.props['data-testid'] === 'stratagate-dreaming')).toHaveLength(0)
-    expect(find(completed, (node) => node.props.className === 'sg-toc-dream-run').map((node) => node.text)).toEqual(['上次整理 10/04 · 4 节 → 3 节'])
-    expect(find(completed, (node) => node.props.className === 'sg-toc-dream-merge').length).toBe(1)
+    expect(buttons(completed, 'AI 会看到的目录↗')).toHaveLength(1)
     directory.dreaming = { ...directory.dreaming, status: 'terminated' } as any
     const terminated = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
-    expect(terminated.text).toContain('已终止')
-    expect(terminated.text).toContain('已整理的章节已保留')
+    expect(terminated.text).not.toContain('已终止')
     expect(find(terminated, (node) => node.props['data-testid'] === 'stratagate-dreaming')).toHaveLength(0)
     const counts = find(terminated, (node) => node.props.className === 'sg-toc-cnt')
     expect(counts.map((node) => node.text)).toEqual(['20', '8', '12', '1', '1'])
     expect(counts[0]!.props.title).toBe('20 条事件')
-    buttons(terminated, '×')[0]!.props.onClick()
-    const hidden = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
-    expect(hidden.text).not.toContain('已整理的章节已保留')
-    const again = clientRenderer()
-    const remembered = again.render(again.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onOpenDreamingSession: vi.fn() })
-    expect(remembered.text).not.toContain('已整理的章节已保留')
   })
 
   it('opens the real host session returned by the server, with the exact run identity', async () => {
@@ -184,52 +176,91 @@ describe('Dreaming directory controls', () => {
     const onOpenDreamingSession = vi.fn()
     const tree = client.render(client.DreamingPanel, { namespace: 'test', active: true, available: true, onOpenDreamingSession,
       initialRun: { id: 'real', sessionId: 'stratagate-dreaming:real', status: 'running', completed: 0, total: 2 } })
-    await buttons(tree, '打开 Dreaming 会话 ↗')[0]!.props.onClick()
+    await buttons(tree, '正在整理')[0]!.props.onClick()
     expect(client.fetch.mock.calls[0]![0]).toContain('action=open-session')
     expect(client.fetch.mock.calls[0]![0]).toContain('id=real')
     expect(onOpenDreamingSession).toHaveBeenCalledWith('stratagate-dreaming:real')
   })
   it('starts an actual request and replaces the button with progress and controls', async () => {
-    const run = { id: 'dream-1', status: 'running', activity: '正在查阅来源', completed: 1, total: 4, changedBatches: 0, calls: 2, estimatedTokens: 500, updatedAt: '2026-10-14T00:00:00Z' }
+    const run = { id: 'dream-1', status: 'running', activity: '正在查阅来源', completed: 1, total: 4, changedBatches: 0, changes: { editedEvents: 2, deletedEvents: 1, experiences: 1, items: [] }, calls: 2, estimatedTokens: 500, updatedAt: '2026-10-14T00:00:00Z' }
     const client = clientRenderer(false, async () => ({ ok: true, status: 200, json: async () => ({ run }) }))
     const props = { namespace: 'test', active: true, available: true }
     let tree = client.render(client.DreamingPanel, props)
-    await buttons(tree, '🌙 Dreaming')[0]!.props.onClick()
+    await buttons(tree, '整理记忆')[0]!.props.onClick()
     await client.flush()
     tree = client.render(client.DreamingPanel, props)
-    expect(tree.text).toContain('正在做梦…')
-    expect(buttons(tree, '暂停')).toHaveLength(1)
-    expect(buttons(tree, '终止')).toHaveLength(1)
-    expect(find(tree, node => node.type === 'progress')[0]!.props).toMatchObject({ max: 4, value: 1 })
+    expect(tree.text).toContain('正在整理')
+    expect(find(tree, node => node.props['aria-label'] === '暂停整理')).toHaveLength(1)
+    expect(find(tree, node => node.props['aria-label'] === '终止整理')).toHaveLength(1)
+    expect(find(tree, node => node.type === 'progress')).toHaveLength(0)
+    expect(find(tree, node => node.props.className === 'sg-dreaming-nums')).toHaveLength(0)
     expect(client.fetch.mock.calls[0]![0]).toContain('action=start')
     expect(client.fetch.mock.calls[0]![0]).not.toContain('tokenLimit')
     expect(client.fetch.mock.calls[0]![1]).toMatchObject({ method: 'POST' })
   })
 
   it('retains progress on pause and sends the exact run ID for resume', async () => {
-    const initialRun = { id: 'dream-paused', status: 'paused', completed: 2, total: 5, changedBatches: 1, calls: 4, estimatedTokens: 17769, tokenLimit: 1000 }
+    const initialRun = { id: 'dream-paused', status: 'paused', completed: 2, total: 5, changedBatches: 1, changes: { editedEvents: 3, deletedEvents: 0, experiences: 2, items: [] }, calls: 4, estimatedTokens: 17769, tokenLimit: 1000 }
     const client = clientRenderer(false, async () => ({ ok: true, status: 200, json: async () => ({ run: { ...initialRun, status: 'running' } }) }))
-    const props = { namespace: 'test', initialRun, active: true, available: true }
+    const props = { namespace: 'test', initialRun, active: true, available: true, settings: true }
     const tree = client.render(client.DreamingPanel, props)
-    expect(tree.text).toContain('40%')
-    expect(tree.text).not.toMatch(/消耗边界|token 上限|估算消耗|17769/)
+    const card = find(tree, node => node.props.className === 'sg-dreaming resting')
+    expect(card).toHaveLength(1)
+    const cardText = card[0]!.children.filter(child => child.type !== 'style').map(child => child.text).join('')
+    expect(tree.text).toContain('⏸ 已暂停')
+    expect(tree.text).toContain('✎3修改 Event')
+    expect(tree.text).toContain('✦2提取经验')
+    expect(cardText).not.toMatch(/\d+%|批次/)
+    expect(cardText).not.toMatch(/消耗边界|token 上限|估算消耗|17769/)
     expect(find(tree, node => node.type === 'input')).toHaveLength(0)
-    expect(find(tree, node => node.props.className === 'sg-dreaming resting')).toHaveLength(1)
     await buttons(tree, '继续')[0]!.props.onClick()
     expect(client.fetch.mock.calls[0]![0]).toContain('id=dream-paused')
     expect(client.fetch.mock.calls[0]![0]).toContain('action=resume')
     expect(client.fetch.mock.calls[0]![0]).not.toContain('tokenLimit')
+    buttons(tree, '终止')[0]!.props.onClick({ currentTarget: null })
+    const confirmTree = client.render(client.DreamingPanel, props)
+    expect(confirmTree.text).toContain('终止这次整理？')
+    expect(confirmTree.text).toContain('已修改的事件与经验会保留')
+    expect(confirmTree.text).not.toContain('批。')
+  })
+
+  it('opens archived letters on request during an independent Dreaming run', async () => {
+    const letterDates = ['2026-11-19', '2026-11-18']
+    const client = clientRenderer(true, async (url: string) => {
+      const date = new URL(url, 'http://localhost').searchParams.get('date')
+      return { ok: true, status: 200, json: async () => date
+        ? { date, title: '写给那一天', paragraphs: ['今天终于搞定构建缓存。'], signature: '小墨',
+            reports: [{ changes: { deletedEvents: 1, items: [{ kind: 'event-delete', label: '旧草稿', detail: '重复记录。' }] } }] }
+        : { run: { id: 'new-run', status: 'running' }, letterDates } }
+    })
+    const props = { namespace: 'test', active: true, available: true, initialRun: { id: 'prior-run', status: 'completed' } }
+    const initial = client.render(client.DreamingPanel, props)
+    await buttons(initial, '整理记忆')[0]!.props.onClick()
+    let tree = client.render(client.DreamingPanel, props)
+    expect(find(tree, node => node.type === 'dialog')).toHaveLength(0)
+    buttons(tree, '读来信')[0]!.props.onClick()
+    client.render(client.DreamingPanel, props)
+    await client.flush()
+    tree = client.render(client.DreamingPanel, props)
+    const dialog = find(tree, node => node.type === 'dialog')[0]!
+    expect(dialog.text).toContain('删除 1 个事件')
+    expect(dialog.text).toContain('旧草稿重复记录。')
+    expect(dialog.text).not.toContain('每日笔记')
+    buttons(dialog, '2026.11.18')[0]!.props.onClick()
+    client.render(client.DreamingPanel, props)
+    await client.flush()
+    expect(client.fetch.mock.calls.at(-1)![0]).toContain('date=2026-11-18')
   })
 
   it('keeps an error visible when a control request fails and never claims success', async () => {
     const client = clientRenderer(false, async () => ({ ok: false, status: 409, json: async () => ({ error: '任务已变化' }) }))
     const props = { namespace: 'test', active: true, available: true }
     let tree = client.render(client.DreamingPanel, props)
-    await buttons(tree, '🌙 Dreaming')[0]!.props.onClick()
+    await buttons(tree, '整理记忆')[0]!.props.onClick()
     await client.flush()
     tree = client.render(client.DreamingPanel, props)
     expect(find(tree, node => node.props.role === 'alert')[0]!.text).toContain('任务已变化')
-    expect(buttons(tree, '🌙 Dreaming')).toHaveLength(1)
+    expect(buttons(tree, '整理记忆')).toHaveLength(1)
     expect(buttons(tree, '暂停')).toHaveLength(0)
   })
 })
@@ -1103,24 +1134,15 @@ describe('Topic Directory client interactions', () => {
     expect(client.fetch).not.toHaveBeenCalled()
   })
 
-  it('offers rearrangement only beside unclassified memory and folds progress into that section', async () => {
-    const run = { id: 'dream-pending', status: 'running', activity: '正在整理', completed: 1, total: 3 }
-    const client = clientRenderer(false, async (url: string) => ({ ok: true, status: 200, json: async () => String(url).includes('action=start') ? { run } : { run: null } }))
+  it('keeps pending events visible without embedding workspace-wide Dreaming controls', () => {
+    const client = clientRenderer()
     const directory = fixture()
     directory.pending.total = 2
     const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn(), onDirectoryChanged: vi.fn() }
-    let tree = client.render(client.TopicDirectory, props)
+    const tree = client.render(client.TopicDirectory, props)
     expect(tree.text).toContain('待整理')
     expect(tree.text).toContain('2 条')
-    const arrange = buttons(tree, '整理记忆')[0]!
-    await arrange.props.onClick()
-    await client.flush()
-    tree = client.render(client.TopicDirectory, props)
-    expect(tree.text).toContain('正在做梦…')
-    expect(find(tree, (node) => node.type === 'progress')).toHaveLength(1)
-    expect(client.fetch.mock.calls[0]![0]).toContain('action=start')
-    // The old top-of-directory entry is gone.
-    expect(find(tree, (node) => node.props.className === 'sg-topic-directory-intro')).toHaveLength(0)
+    expect(buttons(tree, '整理记忆')).toHaveLength(0)
   })
 
   it('hides overview-only empty sections and keeps nonempty sections complete without show-all actions', async () => {

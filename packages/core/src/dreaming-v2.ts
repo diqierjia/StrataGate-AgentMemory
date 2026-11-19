@@ -1,4 +1,4 @@
-import { dreamingTopicVersion, type DreamingCommand, type DreamingRun, type DreamingUnit } from './dreaming.js';
+import { dreamingTopicVersion, type DreamingChangeItem, type DreamingCommand, type DreamingRun, type DreamingUnit } from './dreaming.js';
 import { memoryTopicEventFingerprint, type MemoryTopicState } from './topics.js';
 import type { EventCard, EventTemporal, MemoryBlock, MemoryScope, RawMessage } from './types.js';
 
@@ -29,6 +29,20 @@ export type DreamingEditResult = { id?: string; saved: boolean; experiencesToRev
 export type DreamingClaim = { id: string; owner: string; epoch: number };
 export const DREAMING_AUTO_INTERVAL = 24 * 60 * 60_000;
 export const DREAMING_IDLE_TIME = 30 * 60_000;
+
+/** Accumulate committed user-visible changes in execution order. */
+export function recordDreamingChange(run: DreamingRun, delta: {
+  editedEvents?: number;
+  deletedEvents?: number;
+  experiences?: number;
+  items?: DreamingChangeItem[];
+}): void {
+  const current = (run.changes ??= { editedEvents: 0, deletedEvents: 0, experiences: 0, items: [] });
+  current.editedEvents += delta.editedEvents ?? 0;
+  current.deletedEvents += delta.deletedEvents ?? 0;
+  current.experiences += delta.experiences ?? 0;
+  current.items.push(...(delta.items ?? []));
+}
 
 export function dreamingEventVersion(event: EventCard): string {
   return memoryTopicEventFingerprint(event);
@@ -90,6 +104,7 @@ export function updateDreamingMemory(state: MemoryTopicState, run: DreamingRun, 
     if (trace.tool === 'dreaming_daily_write' && result.date && result.version) {
       (run.discoveryVersions ??= {})[`note:${result.date}`] = result.version;
       run.changedBatches++;
+      recordDreamingChange(run, { items: [{ kind: 'daily-note', id: result.date, label: `${result.date} 每日笔记`, date: result.date }] });
     }
     if (trace.tool === 'dreaming_read' && typeof result?.content === 'string' && result.contentVersion && result.offset !== undefined) {
       const key = JSON.stringify([trace.args.kind, trace.args.id, trace.args.level ?? null]);

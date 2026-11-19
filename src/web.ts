@@ -2104,6 +2104,15 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
     } else if (path === '/api/stratagate/topics/retry') {
       if (req.method !== 'POST') throw new AdminHttpError(405, 'Topic retry requires POST')
       sendJson(res, 200, await retryTopicProjection(runtime, url))
+    } else if (path === '/api/stratagate/letters/note') {
+      if (req.method !== 'GET') throw new AdminHttpError(405, 'Letters require GET')
+      const namespace = url.searchParams.get('namespace')?.trim()
+      if (!namespace) throw new AdminHttpError(400, 'namespace is required')
+      const date = url.searchParams.get('date') ?? ''
+      try { validDate(date) } catch { throw new AdminHttpError(400, 'date 必须是有效的 YYYY-MM-DD') }
+      const letter = runtime.adminDailyLetter(namespace, date)
+      if (!letter) throw new AdminHttpError(404, '该日期没有来信')
+      sendJson(res, 200, letter, true)
     } else if (path === '/api/stratagate/dreaming') {
       const namespace = url.searchParams.get('namespace')?.trim() ?? ''
       if (!namespace) throw new AdminHttpError(400, 'namespace is required')

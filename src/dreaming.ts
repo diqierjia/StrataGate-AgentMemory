@@ -228,5 +228,8 @@ export function dreamingStatus(run?: DreamingRun): unknown {
     reason: interrupted ? '上次运行已中断，可以继续' : legacyBoundary ? '上次整理已暂停，可以继续；已完成的修改已保存。' : run.reason,
     waitingForProjection: !!run.waitingForProjection, replanRequired: !!run.replanRequired,
     completed: run.cursor, total: run.units.length, changedBatches: run.changedBatches, calls: run.calls,
-    estimatedTokens: run.estimatedTokens, updatedAt: run.updatedAt }
+    estimatedTokens: run.estimatedTokens,
+    changes: run.changes ?? { editedEvents: 0, deletedEvents: 0, experiences: 0, items: [] },
+    letter: run.letter ?? null,
+    updatedAt: run.updatedAt }
 }

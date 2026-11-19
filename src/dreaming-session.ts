@@ -81,9 +81,10 @@ const TOOLS: Array<{ name: string; description: string; parameters: ParameterSch
   { name: 'dreaming_finish', description: '当前批次已全部检查后调用，保存完成进度并接收下一批；没有必要修改也可完成。', parameters: { summary: { type: 'string', description: '简短说明本批整理结果或无需修改的原因。' } } },
 ]
 const V2_ONLY = new Set(['dreaming_event', 'dreaming_experience', 'dreaming_daily_write'])
-interface Binding { namespace: string; id: string; agent: Agent; handle?: AgentHandle; finalStep: boolean; error?: string;
+interface Binding { namespace: string; id: string; agent: Agent; handle?: AgentHandle; finalStep: boolean;
+  reporting?: boolean; error?: string;
   scope: DreamingRun['scope'];
-  toolQueue?: Promise<unknown>; cursor?: number;
+  toolQueue?: Promise<unknown>; cursor?: number; totalUnits?: number;
   epoch?: number; accounting?: Promise<unknown>; outputEstimate?: number; reportedOutput?: number; taskKey?: string;
   outputText?: string }
 
@@ -117,7 +118,7 @@ export class DshDreamingSessions implements DreamingHost {
       } else {
         // An old completed conversation remains readable, but never becomes a general-purpose Agent.
         agent.ctx.tools.restrict({ allow: [] })
-        agent.ctx.tools.guard(() => '该 Dreaming 会话已结束，请从目录页开始新一轮')
+        agent.ctx.tools.guard(() => '该 Dreaming 会话已结束，请从总览开始新一轮')
         agent.ctx.on('agent/pre-step', async () => ({ kind: 'reject' }))
       }
     })
@@ -198,7 +199,9 @@ export class DshDreamingSessions implements DreamingHost {
     const modelTools = available.map(tool => ({ name: tool.name, description: tool.description,
       parameters: DshTools.parameterSchemaSpecToJsonSchema(tool.parameters) as unknown as Record<string, unknown> }))
     scoped.tools.restrict({ allow: [] })
-    scoped.tools.guard(exec => !names.has(exec.name) ? 'Dreaming 仅可使用授权整理工具' : undefined)
+    scoped.tools.guard(exec => binding.reporting
+      ? '本轮整理已完成，请直接回复本轮实际改动。'
+      : !names.has(exec.name) ? 'Dreaming 仅可使用授权整理工具' : undefined)
     for (const tool of available) scoped.tools.register(DshTools.defineTool({
       ...tool,
       output: { schema: { type: 'json' }, render: (_args, result): ContentBlock[] => [{ type: 'text', text: JSON.stringify(result) }] },
@@ -234,8 +237,11 @@ export class DshDreamingSessions implements DreamingHost {
       const selected = this.modelOptions()
       const assembled = await next()
       assembledModel = selected
-      return { ...assembled, sections: [{ name: 'stratagate:dreaming', text: this.systemPrompt(binding.scope), interpolate: false }], contexts: [],
-        variables: { ...assembled.variables, provider: selected.provider, model: selected.model }, tools: modelTools }
+      return { ...assembled,
+        sections: [{ name: 'stratagate:dreaming', text: this.systemPrompt(binding.scope), interpolate: false }],
+        contexts: [],
+        variables: { ...assembled.variables, provider: selected.provider, model: selected.model },
+        tools: modelTools }
     })
     scoped.on('agent/request', async (_payload, next) => {
       const resolved = await next()
@@ -248,7 +254,13 @@ export class DshDreamingSessions implements DreamingHost {
       let run = await this.runtime.dreamingRun(binding.namespace, binding.id)
       if (run.status === 'completed' && binding.finalStep) {
         binding.finalStep = false
-        return next()
+        const decision = await next()
+        if (decision.kind !== 'enter') return decision
+        binding.reporting = true
+        const changes = run.changes && { ...run.changes, items: run.changes.items.slice(-12) }
+        const messages = [...decision.messages, createUserMessage({ source: dshMessageSource(),
+          content: [{ type: 'text', text: `请用简洁中文说明本轮整理实际改动和未解决事项，仅以工具已确认的结果为依据。已保存的总数和最近改动：${JSON.stringify(changes ?? {})}` }] })]
+        return { ...decision, messages }
       }
       if (!['running', 'pausing'].includes(run.status)) { this.keepDirections(binding, _payload.messages); return { kind: 'reject' } }
       if (binding.epoch !== undefined && run.epoch !== binding.epoch) { this.keepDirections(binding, _payload.messages); return { kind: 'reject' } }
@@ -260,6 +272,7 @@ export class DshDreamingSessions implements DreamingHost {
       if (decision.kind !== 'enter') return decision
       binding.epoch = run.epoch
       binding.cursor = run.cursor
+      binding.totalUnits = run.units.length
       // Let the host retain and compact the real conversation. Add authoritative
       // task data once per batch/claim, rather than replacing history each step.
       const taskKey = `${run.epoch}:${run.cursor}`
@@ -294,6 +307,7 @@ export class DshDreamingSessions implements DreamingHost {
         if (binding.scope === 'directory' && chunk.type === 'finish' && chunk.reason.kind === 'max-tokens') binding.error = '单次模型输出达到上限，已暂停并保留断点；没有自动追加请求'
       } else if (frame.type === 'end') {
         const output = Math.max(binding.outputEstimate ?? 0, binding.reportedOutput ?? 0)
+        binding.reporting = false
         binding.accounting = this.runtime.dreamingRun(binding.namespace, binding.id).then(run => {
           if (run.status === 'running' || run.status === 'pausing' || run.status === 'completed') return this.runtime.dreamingMutate(binding.namespace, run, { kind: 'model-usage', estimatedTokens: output })
         }).catch(() => {
