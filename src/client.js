@@ -1186,7 +1186,7 @@ window.__ModuleLoader__.load({
       .sg-day li .sg-day-s{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sg-text);text-align:left;font:inherit}
       .sg-day.out li .sg-day-s{color:var(--sg-muted)}
       .sg-day-cut{display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:14px;align-items:center;margin:2px 0;color:var(--sg-muted);font-size:11px}
-      .sg-day-cut span{display:flex;align-items:center;gap:8px}
+      .sg-day-cut span{grid-column:2;display:flex;align-items:center;gap:8px}
       .sg-day-cut span:before{content:"";flex:0 0 8px;border-top:1px dashed var(--sg-border)}
       .sg-day-cut span:after{content:"";flex:1;border-top:1px dashed var(--sg-border)}
       .sg-daily-actions{display:flex;align-items:center;gap:6px}
