@@ -1170,4 +1170,12 @@ describe('Topic Directory client interactions', () => {
       expect(client.fetch).toHaveBeenCalledTimes(1)
     }
   })
+
+  it('does not trap wheel scroll chaining on the open book section pane', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    const rule = source.match(/\.sg-topic-directory\s+\.sg-directory-fold\.open>\.sg-directory-fold-inner>\.sg-topic-section-body\{[^}]+\}/)?.[0]
+    expect(rule).toBeTruthy()
+    expect(rule).toContain('overflow:auto')
+    expect(rule).not.toContain('overscroll-behavior:contain')
+  })
 })

@@ -1089,7 +1089,7 @@ window.__ModuleLoader__.load({
         .sg-topic-directory .sg-book-preview .sg-leaf-sum{display:block}
         .sg-topic-directory .sg-book>.sg-leaf{padding-right:calc(50% + 28px);min-height:320px}
         .sg-topic-directory .sg-book>.sg-leaf:after{content:"";position:absolute;left:50%;top:18px;bottom:18px;border-left:1px solid var(--sg-border);box-shadow:-1px 0 0 color-mix(in srgb,var(--sg-page) 70%,transparent);pointer-events:none}
-        .sg-topic-directory .sg-directory-fold.open>.sg-directory-fold-inner>.sg-topic-section-body{position:absolute;top:18px;right:22px;bottom:18px;width:calc(50% - 46px);padding:0 0 0 26px;overflow:auto;overscroll-behavior:contain}
+        .sg-topic-directory .sg-directory-fold.open>.sg-directory-fold-inner>.sg-topic-section-body{position:absolute;top:18px;right:22px;bottom:18px;width:calc(50% - 46px);padding:0 0 0 26px;overflow:auto}
         .sg-topic-directory .sg-topic-section>.sg-directory-fold.open>.sg-directory-fold-inner{overflow:visible}
         .sg-topic-directory .sg-topic-section>.sg-directory-fold.open{grid-template-rows:1fr;display:block}
         .sg-topic-directory .sg-topic-section>.sg-directory-fold.open>.sg-directory-fold-inner{display:block;height:auto;overflow:visible}
