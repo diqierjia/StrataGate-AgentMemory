@@ -2559,9 +2559,18 @@ export class StrataGateRuntime {
    * timeout degrades to the non-destructive conflict-mark path instead of
    * stalling every write in the namespace.
    */
-  async recordAgentMemory(session: Session, content: string, category?: AgentMemoryCategory): Promise<unknown> {
+  async recordAgentMemory(
+    session: Session,
+    content: string,
+    category?: AgentMemoryCategory,
+    options?: { supersedesEventIds?: readonly string[]; userAuthorized?: boolean; reason?: string },
+  ): Promise<unknown> {
     if (!this.agentMemoryEnabled) {
       throw new Error('StrataGate agent memory is disabled by configuration (agentMemoryEnabled=false).')
+    }
+    const supersedesEventIds = [...new Set((options?.supersedesEventIds ?? []).map((id) => id.trim()).filter(Boolean))]
+    if (supersedesEventIds.length > 0 && options?.userAuthorized !== true) {
+      throw new Error('替换既有记忆（supersedesEventIds）需要用户明确授权（user_authorized 必须为 true）。')
     }
     const memory = await this.space(session)
     // memory_remember can run before the host emits turn/end, so the current
@@ -2574,6 +2583,8 @@ export class StrataGateRuntime {
     const result = await this.models.run(session, () => memory.recordAgentEvent({
       content,
       ...(category !== undefined ? { category } : {}),
+      ...(supersedesEventIds.length > 0 ? { supersedesEventIds } : {}),
+      ...(options?.reason !== undefined ? { reason: options.reason } : {}),
       threadId: String(session.id),
       ...(hasDecider && this.models.isReady(session)
         ? {
@@ -2600,6 +2611,56 @@ export class StrataGateRuntime {
     // not only after the next retrieval sweep notices it is missing.
     if (result.recorded && result.eventId) void this.vectorizeNewEvents(memory, [result.eventId])
     return this.agentMemoryResultView(session, result)
+  }
+
+  async updateAgentMemoryEvent(
+    session: Session,
+    options: {
+      id: string
+      title?: string
+      summary?: string
+      supersedesEventIds?: readonly string[]
+      userAuthorized: boolean
+    },
+  ): Promise<unknown> {
+    if (options.userAuthorized !== true) {
+      throw new Error('修改既有记忆需要用户明确授权（user_authorized 必须为 true）。')
+    }
+    const memory = await this.space(session)
+    const updated = await memory.updateEventByAgent({
+      id: options.id,
+      ...(options.title !== undefined ? { title: options.title } : {}),
+      ...(options.summary !== undefined ? { summary: options.summary } : {}),
+      ...(options.supersedesEventIds !== undefined ? { supersedesEventIds: options.supersedesEventIds } : {}),
+    })
+    await this.persistSuccessfulResponses(memory)
+    if (options.title !== undefined || options.summary !== undefined) {
+      void this.vectorizeNewEvents(memory, [updated.id])
+    }
+    return {
+      updated: true,
+      eventId: updated.id,
+      title: updated.title,
+      summary: updated.summary,
+      status: updated.status,
+      ...(updated.temporal.supersedesEventIds?.length ? { supersedesEventIds: updated.temporal.supersedesEventIds } : {}),
+      namespace: this.namespaceFor(session),
+    }
+  }
+
+  async forgetAgentMemory(session: Session, id: string, userAuthorized: boolean, reason?: string): Promise<unknown> {
+    if (userAuthorized !== true) {
+      throw new Error('遗忘既有记忆需要用户明确授权（user_authorized 必须为 true）。')
+    }
+    const memory = await this.space(session)
+    await memory.forgetEvent(id)
+    await this.persistSuccessfulResponses(memory)
+    return {
+      forgotten: true,
+      eventId: id,
+      namespace: this.namespaceFor(session),
+      ...(reason?.trim() ? { reason: reason.trim() } : {}),
+    }
   }
 
   private agentMemoryResultView(session: Session, result: AgentEventRecordResult): Record<string, unknown> {
@@ -4907,10 +4968,10 @@ function blockSurfaceMessage(event: SessionEvent | undefined): { id: string; tex
 }
 
 function activatedEvents(memory: StrataGate, relevance: readonly EventSearchResult[]): EventCard[] {
-  const allowed = new Map(relevance.map(({ event }) => [event.id, event]))
+  const activeHits = relevance.filter(({ event }) => event.status === 'active')
+  const allowed = new Map(activeHits.map(({ event }) => [event.id, event]))
   for (const event of memory.listAllEvents()) {
-    if ((event.status === 'active' || event.status === 'superseded')
-      && (event.weight.pinned || event.criticality === 'safety')) {
+    if (event.status === 'active' && (event.weight.pinned || event.criticality === 'safety')) {
       allowed.set(event.id, event)
     }
   }
@@ -4919,7 +4980,7 @@ function activatedEvents(memory: StrataGate, relevance: readonly EventSearchResu
     memoryWeightAt(right, memory.turn) - memoryWeightAt(left, memory.turn)
       || right.updatedAt.localeCompare(left.updatedAt)
       || left.id.localeCompare(right.id))
-  return rrfRank([relevance.map(({ event }) => event), weight]).map(({ item }) => item)
+  return rrfRank([activeHits.map(({ event }) => event), weight]).map(({ item }) => item)
 }
 
 function activatedElements(memory: StrataGate, relevance: readonly ElementSearchResult[]): RankedElementFact[] {

@@ -272,6 +272,7 @@ type AgentEventGateOutcome =
       matches: ExternalMemoryMatch[];
       ambiguous: string[];
       matchedEventIds: string[];
+      fallbackConflicts: boolean;
       now: string;
     };
 
@@ -1067,7 +1068,6 @@ export class StrataGate {
   async editDreamingEvent(claim: DreamingClaim, edit: DreamingEventEdit): Promise<DreamingEditResult> {
     return this.editDreaming(claim, ['event', edit], (run, now) => {
       const target = edit.kind === 'create' ? undefined : this.dreamingReadEvent(run, edit.id);
-      if (target && !this.events.includes(target)) throw new Error('Only derived Events can be edited; explicitly recorded memories are read-only');
       const previousTitle = target?.title;
       const previousSummary = target?.summary;
       const ids = [...new Set(edit.sourceMessageIds ?? [])];
@@ -1082,19 +1082,22 @@ export class StrataGate {
         return { title: edit.title.trim(), summary: edit.summary.trim() };
       };
       const refuseProtected = (card: EventCard) => {
-        if (card.weight.pinned || !this.events.includes(card) || this.listAllEvents().some(other => other.mergedFromEventIds?.includes(card.id))) {
+        if (this.listAllEvents().some(other => other.mergedFromEventIds?.includes(card.id))) {
           throw new Error(`Event is protected: ${card.id}`);
         }
       };
       const relate = ['beforeEventIds', 'afterEventIds', 'supersedesEventIds', 'conflictsWithEventIds', 'relatedEventIds'] as const;
       const setSources = (card: EventCard, sourceIds: string[]) => {
-        const blockIds = [...new Set(sourceIds.map(id => this.rawMessageLookup.get(id)?.block.id))];
-        if (!sourceIds.length || blockIds.includes(undefined) || sourceIds.some(id => !messages.has(id))) {
+        const isAgent = this.agentEvents.includes(card);
+        const rawBlockIds = sourceIds.map(id => this.rawMessageLookup.get(id)?.block.id);
+        const sealedBlockIds = [...new Set(rawBlockIds.filter((id): id is string => id !== undefined))];
+        if (!sourceIds.length || sourceIds.some(id => !messages.has(id)) || (!isAgent && rawBlockIds.includes(undefined))) {
           throw new Error('Derived Events need visible evidence in sealed Blocks; open messages can still support experiences');
         }
         card.sourceMessageIds = sourceIds;
-        card.sourceBlockId = blockIds[0]!;
-        if (blockIds.length > 1) card.sourceBlockIds = blockIds as string[];
+        if (sealedBlockIds.length > 0) card.sourceBlockId = sealedBlockIds[0]!;
+        else delete card.sourceBlockId;
+        if (sealedBlockIds.length > 1) card.sourceBlockIds = sealedBlockIds;
         else delete card.sourceBlockIds;
       };
       if (edit.kind === 'create' || edit.kind === 'update') {
@@ -1103,7 +1106,8 @@ export class StrataGate {
         if (temporal.sameEventId || temporal.participantNodeIds || relate.some(key => temporal[key]?.length)) {
           throw new Error('Keep existing relations when correcting text; use supersede for a real state change');
         }
-        if (!ids.length || !this.rawMessageLookup.get(ids[0]!)) throw new Error('Read and cite raw evidence in a sealed Block');
+        const isAgent = target ? this.agentEvents.includes(target) : false;
+        if (!ids.length || (!isAgent && !this.rawMessageLookup.get(ids[0]!))) throw new Error('Read and cite raw evidence in a sealed Block');
         // Session ownership belongs to the existing Event (or its original
         // Block for legacy Events). A correction cannot move it to a new session.
         const threadId = target ? target.temporal.threadId ?? this.blocks.find(block => block.id === target.sourceBlockId)?.threadId
@@ -1129,7 +1133,7 @@ export class StrataGate {
           const message = messages.get(id);
           return message && run.readVersions?.[`message:${id}`] === dreamingTopicVersion(message);
         })) {
-          throw new Error('Read the original sources and explain why the derived Event is erroneous or redundant before deleting it');
+          throw new Error('Read the original sources and explain why the Event is erroneous or redundant before deleting it');
         }
         removed.add(target!.id);
         affected.add(target!.id);
@@ -1168,12 +1172,22 @@ export class StrataGate {
         for (const id of new Set(edit.otherIds ?? [])) {
           const old = this.dreamingReadEvent(run, id);
           this.dreamingReadMessages(run, old.sourceMessageIds);
-          if (!this.events.includes(old) || old.id === newer.id || old.status !== 'active' || old.scope !== newer.scope) throw new Error('Cannot replace this historical Event');
+          const crossPool = this.agentEvents.includes(old) || this.agentEvents.includes(newer);
+          if (old.id === newer.id || old.status !== 'active' || (!crossPool && old.scope !== newer.scope)) throw new Error('Cannot replace this historical Event');
           const [previousTime, laterTime] = [old, newer].map(card => Date.parse(card.temporal.happenedStart ?? card.temporal.mentionedAt
-            ?? card.sourceMessageIds.map(source => messages.get(source)?.createdAt ?? '').sort()[0] ?? ''));
-          if (!Number.isFinite(previousTime) || !Number.isFinite(laterTime) || previousTime! >= laterTime!) throw new Error('Replacement needs a later supported timestamp');
+            ?? (card.sourceMessageIds.map(source => messages.get(source)?.createdAt ?? '').filter(Boolean).sort()[0] || card.createdAt)));
+          if (!Number.isFinite(previousTime) || !Number.isFinite(laterTime) || previousTime! > laterTime!
+            || (previousTime === laterTime && Date.parse(old.createdAt) >= Date.parse(newer.createdAt))) {
+            throw new Error('Replacement needs a later supported timestamp');
+          }
           old.status = 'superseded'; old.supersededBy = newer.id; old.updatedAt = now; old.weight.forcedCap = 0.1;
+          if (old.temporal.conflictsWithEventIds?.includes(newer.id)) {
+            old.temporal.conflictsWithEventIds = old.temporal.conflictsWithEventIds.filter(item => item !== newer.id);
+          }
           newer.temporal.supersedesEventIds = [...new Set([...(newer.temporal.supersedesEventIds ?? []), id])];
+          if (newer.temporal.conflictsWithEventIds?.includes(id)) {
+            newer.temporal.conflictsWithEventIds = newer.temporal.conflictsWithEventIds.filter(item => item !== id);
+          }
           affected.add(id);
         }
         if (!affected.size) throw new Error('Identify the earlier Event');
@@ -1183,6 +1197,7 @@ export class StrataGate {
 
       if (removed.size) {
         this.events.splice(0, this.events.length, ...this.events.filter(card => !removed.has(card.id)));
+        this.agentEvents.splice(0, this.agentEvents.length, ...this.agentEvents.filter(card => !removed.has(card.id)));
         for (const card of this.listAllEvents()) {
           const redirect = (id: string) => redirects.get(id) ?? (!removed.has(id) ? id : undefined);
           if (card.temporal.sameEventId && removed.has(card.temporal.sameEventId)) {
@@ -2925,6 +2940,72 @@ export class StrataGate {
     });
   }
 
+  /** Update an existing Event card in place or link superseded Event IDs without altering raw history. */
+  async updateEventByAgent(options: {
+    id: string;
+    title?: string;
+    summary?: string;
+    supersedesEventIds?: readonly string[];
+  }): Promise<EventCard> {
+    return this.commitMutation(() => {
+      const event = this.requireEvent(options.id);
+      if (event.status === 'archived' || event.status === 'forgotten') {
+        throw new Error(`Cannot update ${event.status} Event: ${event.id}`);
+      }
+      const nextTitle = options.title !== undefined ? options.title.trim() : undefined;
+      const nextSummary = options.summary !== undefined ? options.summary.trim() : undefined;
+      const supersedesIds = [...new Set((options.supersedesEventIds ?? []).map((id) => id.trim()).filter(Boolean))];
+      if (nextTitle === undefined && nextSummary === undefined && supersedesIds.length === 0) {
+        throw new TypeError('Provide title, summary, or supersedesEventIds to update an Event');
+      }
+      if (!validEventMergeDraft({ title: nextTitle ?? event.title, summary: nextSummary ?? event.summary })) {
+        throw new TypeError('Event title (1-200 characters) and summary (1-12,000 characters) are required');
+      }
+      const now = toUtc8Iso(this.now());
+      const affected = new Set<string>([event.id]);
+      const textChanged = (nextTitle !== undefined && nextTitle !== event.title)
+        || (nextSummary !== undefined && nextSummary !== event.summary);
+      if (nextTitle !== undefined) event.title = nextTitle;
+      if (nextSummary !== undefined) event.summary = nextSummary;
+      if (textChanged) {
+        event.quotes = [];
+        delete event.quotesOrigin;
+      }
+      for (const oldId of supersedesIds) {
+        if (oldId === event.id) throw new Error('An Event cannot supersede itself');
+        const old = this.requireEvent(oldId);
+        if (old.status !== 'active') throw new Error(`Only active Events can be superseded: ${oldId} (${old.status})`);
+        old.status = 'superseded';
+        old.supersededBy = event.id;
+        old.weight.forcedCap = 0.1;
+        old.updatedAt = now;
+        if (old.temporal.conflictsWithEventIds?.includes(event.id)) {
+          old.temporal.conflictsWithEventIds = old.temporal.conflictsWithEventIds.filter((id) => id !== event.id);
+        }
+        event.temporal.supersedesEventIds = [...new Set([...(event.temporal.supersedesEventIds ?? []), oldId])];
+        if (event.temporal.conflictsWithEventIds?.includes(oldId)) {
+          event.temporal.conflictsWithEventIds = event.temporal.conflictsWithEventIds.filter((id) => id !== oldId);
+        }
+        affected.add(oldId);
+      }
+      event.updatedAt = now;
+      if (textChanged) {
+        this.invalidateDreamingProjections(new Set([event.id]));
+        for (const experience of this.experiences) {
+          if (experience.sourceEventIds.includes(event.id)) {
+            experience.status = 'needs-review';
+            experience.updatedAt = now;
+          }
+        }
+        this.queueElementProjection([event.id]);
+        this.queueGraphProjection([event.id], 1_000);
+      }
+      this.topicDirectory.reconcileDreamingEvents(this.listAllEvents(), affected, new Map(), now);
+      this.validateReferences();
+      return structuredClone(event);
+    });
+  }
+
   /** Apply a reviewed pair atomically. Archive the redundant card, retaining its provenance. */
   async archiveDuplicateEvent(pair: EventDuplicatePair, keepId: string): Promise<boolean> {
     return this.commitMutation(() => this.archiveDuplicateEventInMemory(pair, keepId));
@@ -3249,6 +3330,7 @@ export class StrataGate {
     if (options.category !== undefined && !['preference', 'decision', 'correction', 'fact'].includes(options.category)) {
       throw new TypeError(`Unknown agent memory category: ${String(options.category)}`);
     }
+    const explicitSupersedes = [...new Set((options.supersedesEventIds ?? []).map((id) => id.trim()).filter(Boolean))];
     const topK = Math.max(1, Math.min(20, Math.floor(options.topK ?? 5)));
     const decider = options.decider;
 
@@ -3258,6 +3340,22 @@ export class StrataGate {
     const gate = await this.commitMutation(async (): Promise<AgentEventGateOutcome> => {
       const now = toUtc8Iso(options.importedAt ?? this.now());
       const candidate = agentEventCandidate(content, options.category, now, options.threadId?.trim() || undefined);
+      if (explicitSupersedes.length > 0) {
+        for (const id of explicitSupersedes) {
+          const existing = this.findEvent(id);
+          if (!existing) throw new Error(`Unknown event to supersede: ${id}`);
+          if (existing.status !== 'active') throw new Error(`Only active Events can be superseded: ${id} (${existing.status})`);
+        }
+        return {
+          phase: 'done',
+          result: this.writeAgentEvent(candidate, 'SUPERSEDED', 'explicit', explicitSupersedes, {
+            now,
+            matchedEventIds: explicitSupersedes,
+            supersedes: true,
+            ...(options.reason?.trim() ? { reason: options.reason.trim().slice(0, 500) } : {}),
+          }),
+        };
+      }
       const candidateTokens = searchTokens(`${candidate.title} ${candidate.summary}`);
       const reinforced = this.scanAgentEventDuplicates(candidate, now);
       if (reinforced) return { phase: 'done', result: reinforced };
@@ -3270,6 +3368,9 @@ export class StrataGate {
         .map(({ event }) => event.id);
 
       if (ambiguous.length === 0) {
+        if (options.category === 'correction' && decider && matches.length > 0) {
+          return { phase: 'adjudicate', candidate, matches, ambiguous: [], matchedEventIds, fallbackConflicts: false, now };
+        }
         return { phase: 'done', result: this.writeAgentEvent(candidate, 'ADDED', 'clear-new', [], { now, matchedEventIds }) };
       }
       if (!decider) {
@@ -3280,7 +3381,7 @@ export class StrataGate {
           reason: '存在语义相关的既有记忆且当前没有可用的仲裁器，已标记冲突',
         }) };
       }
-      return { phase: 'adjudicate', candidate, matches, ambiguous, matchedEventIds, now };
+      return { phase: 'adjudicate', candidate, matches, ambiguous, matchedEventIds, fallbackConflicts: true, now };
     });
     if (gate.phase === 'done') return gate.result;
     // Unreachable: the adjudicate branch requires a decider.
@@ -3305,6 +3406,12 @@ export class StrataGate {
       const reinforced = this.scanAgentEventDuplicates(gate.candidate, now);
       if (reinforced) return reinforced;
       if (!decision) {
+        if (!gate.fallbackConflicts) {
+          return this.writeAgentEvent(gate.candidate, 'ADDED', 'clear-new', [], {
+            now,
+            matchedEventIds: gate.matchedEventIds,
+          });
+        }
         return this.writeAgentEvent(gate.candidate, 'CONFLICT_MARKED', 'decider-error', gate.ambiguous, {
           now,
           matchedEventIds: gate.matchedEventIds,
@@ -3508,7 +3615,7 @@ export class StrataGate {
     const event = provenance.synthetic
       ? this.addEventInMemory(input as EventCardInput, this.agentEvents)
       : this.addAgentEventInMemory(input, this.agentEvents);
-    if (targetIds.length > 0) {
+    if (opts.conflicts && targetIds.length > 0) {
       for (const id of targetIds) {
         const existing = this.findEvent(id);
         if (!existing || existing.id === event.id) continue;

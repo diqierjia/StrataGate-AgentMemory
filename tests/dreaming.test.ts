@@ -2262,4 +2262,90 @@ describe('Dreaming Agent orchestration and admin API', () => {
       expect(archive.read('other-workspace', date)).toBeNull()
     } finally { archive.close() }
   }, 30_000)
+
+  it('lets Dreaming update, supersede, merge, and delete agentEvents (including openTail) and pinned cards across reopen', async () => {
+    let tick = Date.parse('2026-11-20T09:00:00Z')
+    const f = await fixture(0, 'Initial policy: use Redis.', 'dreaming-agent-edit', () => new Date(tick += 1000))
+    const pinnedDerived = await f.memory.addEvent({
+      title: 'Pinned Redis policy',
+      summary: 'The service uses Redis.',
+      sourceBlockId: f.block.id,
+      sourceMessageIds: [f.block.l5Raw[0]!.id],
+    })
+    await f.memory.pinEvent(pinnedDerived.id, true)
+    await f.memory.reserveUserMessage({
+      id: 'open-msg-1',
+      content: 'Actually we switched to PostgreSQL and dropped Memcached.',
+      threadId: 'thread-open',
+    })
+    const agentOne = await f.memory.recordAgentEvent({
+      content: 'Service switched to PostgreSQL.',
+      category: 'correction',
+      threadId: 'thread-open',
+    })
+    const agentDup = await f.memory.recordAgentEvent({
+      content: 'Database backend is PostgreSQL.',
+      category: 'fact',
+      threadId: 'thread-open',
+    })
+    const agentDrop = await f.memory.recordAgentEvent({
+      content: 'Obsolete Memcached note.',
+      category: 'fact',
+      threadId: 'thread-open',
+    })
+
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const readSource = async (kind: string, id: string) => {
+      const action = { tool: 'dreaming_read', args: { kind, id } }
+      const { result, evidenceIds } = await dreamingTool(f.memory, run, action)
+      run = await f.memory.dreaming({ ...claim(run), kind: 'checkpoint', trace: { ...action, result }, evidenceIds, estimatedTokens: 0 })
+    }
+    for (const id of [pinnedDerived.id, agentOne.eventId!, agentDup.eventId!, agentDrop.eventId!]) {
+      await readSource('event', id)
+    }
+    await readSource('message', f.block.l5Raw[0]!.id)
+    await readSource('message', 'open-msg-1')
+
+    await f.memory.editDreamingEvent(claim(run), {
+      kind: 'update',
+      id: agentOne.eventId!,
+      title: 'Service backend PostgreSQL',
+      summary: 'Service switched from Redis to PostgreSQL.',
+      sourceMessageIds: ['open-msg-1'],
+    })
+    await readSource('event', agentOne.eventId!)
+    await f.memory.editDreamingEvent(claim(run), {
+      kind: 'supersede',
+      id: agentOne.eventId!,
+      otherIds: [pinnedDerived.id],
+      reason: 'PostgreSQL replaced pinned Redis policy',
+    })
+    await readSource('event', agentOne.eventId!)
+    await f.memory.editDreamingEvent(claim(run), {
+      kind: 'merge',
+      id: agentOne.eventId!,
+      otherIds: [agentDup.eventId!],
+      title: 'Service backend PostgreSQL',
+      summary: 'Service switched from Redis to PostgreSQL.',
+    })
+    await f.memory.editDreamingEvent(claim(run), {
+      kind: 'delete',
+      id: agentDrop.eventId!,
+      reason: 'Obsolete Memcached note',
+    })
+
+    const reopened = await f.reopen()
+    expect(reopened.listEvents().find(card => card.id === pinnedDerived.id)).toMatchObject({
+      status: 'superseded',
+      supersededBy: agentOne.eventId,
+    })
+    expect(reopened.listAgentEvents().find(card => card.id === agentOne.eventId)).toMatchObject({
+      title: 'Service backend PostgreSQL',
+      summary: 'Service switched from Redis to PostgreSQL.',
+      sourceMessageIds: ['open-msg-1'],
+      temporal: expect.objectContaining({ supersedesEventIds: [pinnedDerived.id] }),
+    })
+    expect(reopened.listAgentEvents().some(card => card.id === agentDup.eventId)).toBe(false)
+    expect(reopened.listAgentEvents().some(card => card.id === agentDrop.eventId)).toBe(false)
+  })
 })
