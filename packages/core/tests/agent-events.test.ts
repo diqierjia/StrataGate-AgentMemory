@@ -224,7 +224,9 @@ describe('StrataGate.recordAgentEvent', () => {
     expect(passive.status).toBe('superseded')
     expect(passive.supersededBy).toBe(result.eventId)
     expect(passive.weight.forcedCap).toBe(0.1)
+    expect(passive.temporal.conflictsWithEventIds ?? []).toEqual([])
     expect(memory.listAgentEvents()[0]!.temporal.supersedesEventIds).toEqual([passiveId])
+    expect(memory.listAgentEvents()[0]!.temporal.conflictsWithEventIds ?? []).toEqual([])
   })
 
   describe('automatic historical target protection', () => {
@@ -562,6 +564,38 @@ describe('StrataGate.recordAgentEvent', () => {
       action: 'IGNORE', existingEventIds: [agentEvent.id], confidence: 1,
     })
   })
+
+  it('supports explicit supersedesEventIds and low-overlap correction adjudication without false fallback conflicts', async () => {
+    const memory = openMemory()
+    const passiveId = await seedPassiveEvent(memory)
+    const explicit = await memory.recordAgentEvent({
+      content: 'The pipeline actually uses Buildkite now.',
+      category: 'correction',
+      supersedesEventIds: [passiveId],
+      reason: 'User corrected deployment tool',
+    })
+    expect(explicit).toMatchObject({
+      recorded: true,
+      action: 'SUPERSEDED',
+      gate: 'explicit',
+      existingEventIds: [passiveId],
+    })
+    expect(memory.listEvents().find(({ id }) => id === passiveId)).toMatchObject({
+      status: 'superseded',
+      supersededBy: explicit.eventId,
+    })
+    expect(memory.listEvents().find(({ id }) => id === passiveId)?.temporal.conflictsWithEventIds ?? []).toEqual([])
+
+    // Low-overlap correction invokes decider when matches exist, and falls back to ADDED on decider error when ambiguous was empty.
+    const first = await memory.recordAgentEvent({ content: '0.3.0 引入了主动记忆。', category: 'fact' })
+    const decided = await memory.recordAgentEvent({
+      content: '纠正：是 0.3.39 版本才上线的功能。',
+      category: 'correction',
+      decider: async () => { throw new Error('decider unavailable') },
+    })
+    expect(decided).toMatchObject({ action: 'ADDED', gate: 'clear-new', recorded: true })
+    expect(memory.listAgentEvents().find(({ id }) => id === first.eventId)?.temporal.conflictsWithEventIds ?? []).toEqual([])
+  })
 })
 
 describe('agent event persistence', () => {
@@ -835,6 +869,60 @@ describe('agent event persistence', () => {
       const second = await StrataGate.open(options)
       expect(second.listElements()[0]!.sourceEventIds).toEqual([recorded.eventId])
       await second.close()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('updates both derived and agent events via updateEventByAgent and persists across reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-update-event-agent-'))
+    const database = join(directory, 'memory.db')
+    try {
+      const options = {
+        database,
+        namespace: 'agent:update-event',
+        blockTurnSize: 1,
+        now: (): Date => new Date('2026-09-23T08:00:00Z'),
+        idFactory: ids(),
+        summarizer: nonExtractingSummarizer,
+        graphEnabled: true,
+        graphProjector: async () => ({ reason: 'projected', nodes: [], edges: [] }),
+      }
+      const memory = await StrataGate.open(options)
+      await memory.appendTurn({ user: 'Use npm for builds.', assistant: 'Recorded.' }, { deferDerivation: true })
+      const block = memory.listBlocks()[0]!
+      const rawBefore = structuredClone(block.l5Raw)
+      const derived = await memory.addEvent({
+        title: 'Build tool',
+        summary: 'Project uses npm.',
+        criticality: 'safety',
+        sourceBlockId: block.id,
+        sourceMessageIds: [block.l5Raw[0]!.id],
+      })
+      await memory.pinEvent(derived.id, true)
+      const agent = await memory.recordAgentEvent({ content: 'Project migrated to pnpm.', category: 'correction' })
+      const updated = await memory.updateEventByAgent({
+        id: agent.eventId!,
+        title: 'Build tool migrated to pnpm',
+        summary: 'Project migrated from npm to pnpm.',
+        supersedesEventIds: [derived.id],
+      })
+      expect(updated.title).toBe('Build tool migrated to pnpm')
+      expect(updated.temporal.supersedesEventIds).toEqual([derived.id])
+      expect(memory.listBlocks()[0]!.l5Raw).toEqual(rawBefore)
+      await memory.close()
+
+      const reopened = await StrataGate.open(options)
+      expect(reopened.listEvents().find(({ id }) => id === derived.id)).toMatchObject({
+        status: 'superseded',
+        supersededBy: agent.eventId,
+      })
+      expect(reopened.listAgentEvents().find(({ id }) => id === agent.eventId)).toMatchObject({
+        title: 'Build tool migrated to pnpm',
+        summary: 'Project migrated from npm to pnpm.',
+        temporal: expect.objectContaining({ supersedesEventIds: [derived.id] }),
+      })
+      await reopened.close()
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

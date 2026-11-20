@@ -1838,24 +1838,20 @@ describe('DSH runtime ingestion', () => {
         const value = JSON.parse(line.slice(2)) as { id?: string }
         return value.id ? [value] : []
       })
-      expect(injected).toContainEqual(expect.objectContaining({
-        id: old.id,
-        status: 'superseded',
-        supersededBy: successor.id,
-        scope: 'project',
-        temporal: expect.objectContaining({
-          status: 'ongoing',
-          happenedStart: '2024-05-01T00:00:00.000Z',
-          happenedEnd: '2024-06-01T00:00:00.000Z',
-          precision: 'day',
-          participants: ['ops'],
-        }),
-      }))
+      expect(injected.some((item) => item.id === old.id)).toBe(false)
       expect(injected).toContainEqual(expect.objectContaining({
         id: successor.id,
         status: 'active',
         scope: 'project',
         temporal: expect.objectContaining({ supersedesEventIds: [old.id] }),
+      }))
+      const searched = await runtime.searchEvents(activeSession, 'Redis connection') as {
+        results: Array<{ id: string; status: string; supersededBy?: string | null }>
+      }
+      expect(searched.results).toContainEqual(expect.objectContaining({
+        id: old.id,
+        status: 'superseded',
+        supersededBy: successor.id,
       }))
     } finally {
       await runtime.close()
@@ -2542,6 +2538,99 @@ describe('DSH runtime agent memory', () => {
       }
     } finally {
       await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('enforces authorization for explicit supersede, update, and forget across both Event pools and persists across reopen', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-agent-edit-auth-'))
+    const database = join(directory, 'memory.db')
+    const first = new StrataGateRuntime(agentRuntimeConfig(database), fakeModels)
+    try {
+      let derivedPinnedId = ''
+      let correctionId = ''
+      let extraId = ''
+      try {
+        const memory = await (first as unknown as { space(s: Session): Promise<StrataGate> }).space(session)
+        const block = (await memory.appendTurn({
+          user: '0.3.0 引入了主动记忆。', assistant: '已记录。', threadId: 'history-thread',
+        })).sealedBlock!
+        const derivedPinned = await memory.addEvent({
+          title: '0.3.0 主动记忆',
+          summary: '0.3.0 引入了主动记忆。',
+          criticality: 'safety',
+          sourceBlockId: block.id,
+          sourceMessageIds: [block.l5Raw[0]!.id],
+        })
+        await memory.pinEvent(derivedPinned.id, true)
+        derivedPinnedId = derivedPinned.id
+        const correction = await first.recordAgentMemory(session, '主动记忆在 0.3.39 才引入，不是 0.3.0。', 'correction') as { eventId: string }
+        correctionId = correction.eventId
+
+        await expect(first.recordAgentMemory(session, '更正版本记录', 'correction', {
+          supersedesEventIds: [derivedPinned.id],
+        })).rejects.toThrow(/user_authorized/)
+        await expect(first.updateAgentMemoryEvent(session, {
+          id: correction.eventId,
+          supersedesEventIds: [derivedPinned.id],
+          userAuthorized: false,
+        })).rejects.toThrow(/user_authorized/)
+        await expect(first.forgetAgentMemory(session, derivedPinned.id, false)).rejects.toThrow(/user_authorized/)
+
+        const updated = await first.updateAgentMemoryEvent(session, {
+          id: correction.eventId,
+          title: '主动记忆引入版本更正',
+          summary: '主动记忆在 0.3.39 引入，不是 0.3.0。',
+          supersedesEventIds: [derivedPinned.id],
+          userAuthorized: true,
+        })
+        expect(updated).toMatchObject({
+          updated: true,
+          eventId: correction.eventId,
+          supersedesEventIds: [derivedPinned.id],
+        })
+
+        const activeSession = {
+          ...session,
+          deriveMessages: () => [{ id: 'q1', role: 'user', content: [{ type: 'text', text: '主动记忆是什么版本引入的？' }], source: { kind: 'user' } }],
+        } as unknown as Session
+        const context = await first.buildAutoContext(activeSession)
+        const injected = context.split('\n').flatMap((line) => {
+          if (!line.startsWith('- {')) return []
+          const value = JSON.parse(line.slice(2)) as { id?: string }
+          return value.id ? [value] : []
+        })
+        expect(injected.some((item) => item.id === derivedPinned.id)).toBe(false)
+        expect(injected).toContainEqual(expect.objectContaining({
+          id: correction.eventId,
+          status: 'active',
+          temporal: expect.objectContaining({ supersedesEventIds: [derivedPinned.id] }),
+        }))
+
+        const extra = await first.recordAgentMemory(session, '临时记住端口 9999。', 'fact') as { eventId: string }
+        extraId = extra.eventId
+        await first.forgetAgentMemory(session, extra.eventId, true, '用户不再需要')
+      } finally {
+        await first.close()
+      }
+
+      const second = new StrataGateRuntime(agentRuntimeConfig(database), fakeModels)
+      try {
+        const reopened = await (second as unknown as { space(s: Session): Promise<StrataGate> }).space(session)
+        expect(reopened.listEvents().find((e) => e.id === derivedPinnedId)).toMatchObject({
+          status: 'superseded',
+          supersededBy: correctionId,
+        })
+        expect(reopened.listAgentEvents().find((e) => e.id === correctionId)).toMatchObject({
+          title: '主动记忆引入版本更正',
+          summary: '主动记忆在 0.3.39 引入，不是 0.3.0。',
+          temporal: expect.objectContaining({ supersedesEventIds: [derivedPinnedId] }),
+        })
+        expect(reopened.listAgentEvents().find((e) => e.id === extraId)?.status).toBe('forgotten')
+      } finally {
+        await second.close()
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
     }
   })
 })

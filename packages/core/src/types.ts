@@ -346,6 +346,7 @@ export type AgentEventGatePath =
   | 'exact-duplicate'
   | 'near-duplicate'
   | 'clear-new'
+  | 'explicit'
   | 'decider'
   | 'heuristic-conflict'
   | 'decider-error';
@@ -362,6 +363,9 @@ export type AgentEventGateAction =
 export interface AgentEventRecordOptions {
   content: string;
   category?: AgentMemoryCategory;
+  /** Active Event IDs explicitly superseded by this recording. */
+  supersedesEventIds?: readonly string[];
+  reason?: string;
   /**
    * Optional synchronous adjudicator reusing the external-memory decision
    * contract. Omitted → deterministic/heuristic policy only.
