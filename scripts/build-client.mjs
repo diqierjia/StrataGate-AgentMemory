@@ -1,10 +1,13 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { checkFeedbackPolicy } from './check-feedback-policy.mjs'
+import { checkClient } from './check-client.mjs'
 
 const root = new URL('../', import.meta.url)
-checkFeedbackPolicy(fileURLToPath(root))
+const rootDir = fileURLToPath(root)
+checkClient(rootDir)
 mkdirSync(new URL('dist/', root), { recursive: true })
 const clientSource = readFileSync(new URL('src/client.js', root), 'utf8')
 const packageMetadata = JSON.parse(readFileSync(new URL('package.json', root), 'utf8'))
@@ -24,8 +27,35 @@ globalThis.__StrataGateGraphLibraries = { cytoscape }
 globalThis.__STRATAGATE_GITHUB_STARS__ = ${globalThis.__STRATAGATE_GITHUB_STARS__}
 ${clientSource}
 `
+
+function createSandboxFallbackPlugin(baseDir) {
+  const rootRequire = createRequire(join(baseDir, 'package.json'))
+  return {
+    name: 'sandbox-node-fs',
+    setup(b) {
+      b.onResolve({ filter: /.*/ }, (args) => {
+        const req = args.importer && args.importer.includes('node_modules')
+          ? createRequire(args.importer)
+          : rootRequire
+        try {
+          const pkgJsonPath = req.resolve(`${args.path}/package.json`)
+          const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'))
+          const entry = pkg.module || pkg.main
+          if (entry) return { path: join(dirname(pkgJsonPath), entry), namespace: 'sandbox-node-fs' }
+        } catch {}
+        return { path: req.resolve(args.path), namespace: 'sandbox-node-fs' }
+      })
+      b.onLoad({ filter: /.*/, namespace: 'sandbox-node-fs' }, (args) => ({
+        contents: readFileSync(args.path, 'utf8'),
+        loader: 'js',
+      }))
+    },
+  }
+}
+
 const result = await build({
-  stdin: { contents: bootstrap, resolveDir: fileURLToPath(root), sourcefile: 'stratagate-client.js' },
+  stdin: { contents: bootstrap, sourcefile: 'stratagate-client.js' },
+  plugins: [createSandboxFallbackPlugin(rootDir)],
   bundle: true,
   write: false,
   platform: 'browser',
