@@ -362,6 +362,7 @@ export type AgentEventGateAction =
 
 export interface AgentEventRecordOptions {
   content: string;
+  title?: string;
   category?: AgentMemoryCategory;
   /** Active Event IDs explicitly superseded by this recording. */
   supersedesEventIds?: readonly string[];

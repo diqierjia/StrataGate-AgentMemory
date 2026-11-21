@@ -16,6 +16,16 @@ function source(id: string, eventType: string): EventCard {
 }
 
 describe('shared memory directory order', () => {
+  it('shortens fallback titles without breaking an identifier or modifying the original', () => {
+    const fallback = topic('fallback:evt_example', '2026-10-01', ['evt_example'], true)
+    const prefix = '确认 '.repeat(20)
+    const title = `${prefix}memory_remember 保存记录`
+    fallback.title = title
+
+    expect(renderMemoryDirectory([fallback], [])).toContain(`- ${fallback.id}：${prefix.trimEnd()}…`)
+    expect(fallback.title).toBe(title)
+  })
+
   it('injects chapter titles, descriptions and stable section titles without overview prose', () => {
     const chapter = topic('stratagate', '2026-10-01', ['E1', 'E2', 'E3'])
     chapter.title = 'StrataGate'

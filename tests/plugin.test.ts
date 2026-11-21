@@ -578,6 +578,7 @@ Memory writing:
       expect(remember!.description).toContain('同一信息默认只写一处')
       const remembered = await remember!.execute({
         content: '用户偏好 pnpm 作为包管理器。',
+        title: '包管理器首选 pnpm',
         category: 'preference',
       }, {
         agent,
@@ -589,6 +590,17 @@ Memory writing:
         gate: 'clear-new',
         namespace: expect.stringContaining('dsh:project:'),
       })
+      const recalled = await search!.execute({ query: '包管理器首选 pnpm' }, {
+        agent, callId: 'recall-custom-title',
+      } as never) as unknown as { batchId: string }
+      expect(recalled).toMatchObject({
+        results: expect.arrayContaining([expect.objectContaining({
+          id: remembered.eventId, title: '包管理器首选 pnpm', summary: '用户偏好 pnpm 作为包管理器。',
+        })]),
+      })
+      await recordUse!.execute({ batch_id: recalled.batchId, evidence_refs: [] }, {
+        agent, callId: 'close-custom-title-recall',
+      } as never)
       await expect(remember!.execute({
         content: '用户改用 npm 作为包管理器。',
         category: 'correction',

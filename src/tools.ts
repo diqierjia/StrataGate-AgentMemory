@@ -306,6 +306,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 每次用一句完整、可独立理解的话记录一个事实（保留必要的项目、时间与范围），不记推测、秘密或凭据。若本条记忆直接更正或替代既有记忆，传入 supersedesEventIds 并在获得用户明确授权后设置 user_authorized=true；同一信息默认只写一处。`,
       parameters: {
         content: { type: 'string', required: true, description: 'The fact to remember, stated as one self-contained sentence.' },
+        title: { type: 'string', description: '简短标题（1–200 字符）。写清主体和主要变化或结论，细节放在 content。' },
         category: { type: 'string', enum: ['preference', 'decision', 'correction', 'fact'] as const },
         supersedesEventIds: { type: 'array', items: { type: 'string' }, description: 'Optional active Event IDs explicitly replaced by this memory. Requires user_authorized=true.' },
         user_authorized: { type: 'boolean', description: 'Must be true when supersedesEventIds is provided, confirming explicit user authorization.' },
@@ -313,6 +314,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
       },
       output: jsonOutput,
       execute: async (args, exec) => runtime.recordAgentMemory(sessionOf(exec), args.content, args.category, {
+        ...(args.title !== undefined ? { title: args.title } : {}),
         ...(args.supersedesEventIds !== undefined ? { supersedesEventIds: args.supersedesEventIds } : {}),
         ...(args.user_authorized !== undefined ? { userAuthorized: args.user_authorized } : {}),
         ...(args.reason !== undefined ? { reason: args.reason } : {}),

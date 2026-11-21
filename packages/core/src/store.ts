@@ -12,7 +12,7 @@ import {
 } from './blocks.js';
 import { applyElementChanges, elementViewAt } from './elements.js';
 import { EVENT_DUPLICATE_AUTO_CONFIDENCE, eventDuplicateCompatible, eventDuplicateMergeCompatible, eventDuplicateStructuralCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, eventDuplicateSimilarity, isExactEventDuplicate, validEventMergeDraft, type EventMergeDraft, type EventDuplicatePair, type EventDuplicateDecider } from './event-duplicates.js';
-import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
+import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType, previewMemoryTitle } from './events.js';
 import { dreamingTopicVersion, type DreamingRun } from './dreaming.js';
 import { discoverDreaming, dreamingEventVersion, recordDreamingChange, DREAMING_AUTO_INTERVAL, type DreamingClaim, type DreamingEditResult,
   type DreamingEventEdit, type DreamingExperienceEdit } from './dreaming-v2.js';
@@ -294,13 +294,14 @@ const AGENT_MEMORY_TAG = 'agent-recorded';
 
 function agentEventCandidate(
   content: string,
+  explicitTitle: string | undefined,
   category: AgentMemoryCategory | undefined,
   now: string,
   threadId: string | undefined,
 ): ExternalMemoryCandidate {
   const summary = content.replace(/\s+/gu, ' ').trim().slice(0, 2_000);
-  const firstSentence = summary.split(/[。．!！?？;\n]/u).map((part) => part.trim()).find(Boolean);
-  const title = (firstSentence ?? summary).slice(0, 80) || 'Agent memory';
+  const firstSentence = summary.split(/[。．!！?？;；]/u).map((part) => part.trim()).find(Boolean);
+  const title = explicitTitle ?? (previewMemoryTitle(firstSentence ?? summary, 80) || 'Agent memory');
   return {
     title,
     summary,
@@ -3327,6 +3328,10 @@ export class StrataGate {
   async recordAgentEvent(options: AgentEventRecordOptions): Promise<AgentEventRecordResult> {
     const content = options.content.trim();
     if (!content) throw new TypeError('Agent memory content must not be empty');
+    const title = options.title?.trim();
+    if (title !== undefined && (!title || title.length > 200)) {
+      throw new TypeError('Agent memory title must contain 1-200 characters');
+    }
     if (options.category !== undefined && !['preference', 'decision', 'correction', 'fact'].includes(options.category)) {
       throw new TypeError(`Unknown agent memory category: ${String(options.category)}`);
     }
@@ -3339,7 +3344,7 @@ export class StrataGate {
     // these need a model. Only an ambiguous fact WITH an adjudicator defers.
     const gate = await this.commitMutation(async (): Promise<AgentEventGateOutcome> => {
       const now = toUtc8Iso(options.importedAt ?? this.now());
-      const candidate = agentEventCandidate(content, options.category, now, options.threadId?.trim() || undefined);
+      const candidate = agentEventCandidate(content, title, options.category, now, options.threadId?.trim() || undefined);
       if (explicitSupersedes.length > 0) {
         for (const id of explicitSupersedes) {
           const existing = this.findEvent(id);
@@ -3431,7 +3436,10 @@ export class StrataGate {
     const live = this.listAllEvents()
       .filter((event) => event.status === 'active');
     const candidateFingerprint = externalMemoryFingerprint(candidate);
-    const exact = live.find((event) => externalMemoryFingerprint(event) === candidateFingerprint);
+    const candidateSummary = normalizeSearchText(candidate.summary);
+    const exact = live.find((event) => externalMemoryFingerprint(event) === candidateFingerprint)
+      ?? this.agentEvents.find((event) => event.status === 'active'
+        && normalizeSearchText(event.summary) === candidateSummary);
     if (exact) return this.reinforceAgentEvent(exact, 'exact-duplicate', now);
     return null;
   }

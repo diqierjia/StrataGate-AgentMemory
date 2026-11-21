@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { bm25Rank, estimateTokens, memoryTopicSectionContent, memoryTopicSectionTitle, memoryTopicSectionIdentity, normalizeMemoryTopicLabel, weightedSearchTokens, type EventCard, type MemoryTopic } from '@diqier/stratagate'
+import { bm25Rank, estimateTokens, memoryTopicSectionContent, memoryTopicSectionTitle, memoryTopicSectionIdentity, normalizeMemoryTopicLabel, previewMemoryTitle, weightedSearchTokens, type EventCard, type MemoryTopic } from '@diqier/stratagate'
 
 export function memoryTopicSectionKey(title: string): string {
   return memoryTopicSectionIdentity(title)
@@ -151,9 +151,9 @@ export function renderMemoryDirectory(topics: readonly MemoryTopic[], events: re
   const byId = new Map(topics.map((topic) => [topic.id, topic]))
   const chapters = entries.map((entry) => ({
     ...entry,
-    line: `- ${entry.id}：${lineText(entry.title, 64)}${entry.description ? `；${lineText(entry.description, 48)}` : ''}`,
+    line: `- ${entry.id}：${previewMemoryTitle(entry.title, 64)}${entry.description ? `；${lineText(entry.description, 48)}` : ''}`,
     // Reuse the book's stable section order, including summary-free and legacy sections.
-    sections: memoryTopicSections(byId.get(entry.id)!).map(({ title }) => `  - ${lineText(title, 64)}`),
+    sections: memoryTopicSections(byId.get(entry.id)!).map(({ title }) => `  - ${previewMemoryTitle(title, 64)}`),
   }))
   const render = (prefix: string, selected: Array<{ line: string; sections: string[] }>) =>
     `${prefix}\n${selected.flatMap(({ line, sections }) => [line, ...sections]).join('\n')}`.trim()
@@ -167,7 +167,7 @@ export function renderMemoryDirectory(topics: readonly MemoryTopic[], events: re
   if (estimateTokens(render(navigation, selected)) > MEMORY_DIRECTORY_TOKEN_BUDGET) {
     selected = []
     const admit = (chapter: typeof chapters[number]) => {
-      for (const line of [chapter.line, `- ${chapter.id}：${lineText(chapter.title, 64)}`]) {
+      for (const line of [chapter.line, `- ${chapter.id}：${previewMemoryTitle(chapter.title, 64)}`]) {
         const candidate = { ...chapter, line, sections: [] as string[] }
         if (estimateTokens(render(navigation, [...selected, candidate])) <= MEMORY_DIRECTORY_TOKEN_BUDGET) {
           selected.push(candidate)

@@ -116,6 +116,10 @@ Choose by scope: `memory_profile_update` changes a global Persistent Profile fie
 
 `memory_remember` lets the agent record facts proactively: context-specific user preferences or
 corrections, decisions, and durable project facts when they need to be recalled in relevant situations.
+The optional `title` names the subject and main change in 1–200 characters. Put the complete fact in
+`content`. When you omit `title`, StrataGate uses the first sentence and adds an ellipsis if the
+sentence exceeds the title preview limit. Recording the same active agent memory with a different title reinforces
+the existing card.
 Recordings enter the same long-term Event pipeline as conversation-derived memory, with
 two differences:
 
