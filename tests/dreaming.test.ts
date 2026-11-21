@@ -2348,4 +2348,173 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(reopened.listAgentEvents().some(card => card.id === agentDup.eventId)).toBe(false)
     expect(reopened.listAgentEvents().some(card => card.id === agentDrop.eventId)).toBe(false)
   })
+
+  it('surfaces today and cross-batch changed events and blocks as lightweight paths without full bodies', async () => {
+    const now = () => new Date('2026-11-21T06:00:00.000Z')
+    const f = await fixture(0, '初始对话。', 'dreaming-today-paths', now)
+    for (let index = 0; index < 25; index++) {
+      await f.memory.appendTurn({
+        threadId: `thread-${index}`,
+        user: `普通对话轮次 ${index}`,
+        assistant: '好的。',
+        createdAt: '2026-11-21T06:00:00.000Z',
+      })
+    }
+    const agentCard = await f.memory.recordAgentEvent({
+      content: '腾讯实习进展：已拿到组面通知，下周二下午三点面试。这里有一段很长的补充背景说明。',
+      category: 'fact',
+      threadId: 'thread-0',
+    })
+    const forgottenBlock = (await f.memory.appendTurn({
+      threadId: 'forgotten-thread',
+      user: 'ForgottenPathSecret',
+      assistant: '记下。',
+      createdAt: '2026-11-21T06:00:00.000Z',
+    })).sealedBlock!
+    const forgottenEvent = await f.memory.addEvent({
+      title: 'HiddenEventTitle',
+      summary: 'HiddenEventSummary',
+      sourceBlockId: forgottenBlock.id,
+      sourceMessageIds: [forgottenBlock.l5Raw[0]!.id],
+    })
+    await f.memory.forgetEvent(forgottenEvent.id)
+
+    const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    expect(run.units.length).toBeGreaterThan(1)
+    const payload = dreamingPayload(f.memory, run) as any
+    expect(payload.events).toEqual([])
+    expect(payload.todayAndChanged.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: agentCard.eventId,
+        source: 'agent-recorded',
+        status: 'active',
+      }),
+    ]))
+    const listedAgent = payload.todayAndChanged.events.find((item: any) => item.id === agentCard.eventId)
+    expect(listedAgent).not.toHaveProperty('summary')
+    expect(JSON.stringify(payload.todayAndChanged)).not.toContain('很长的补充背景说明')
+    expect(JSON.stringify(payload)).not.toContain('ForgottenPathSecret')
+    expect(JSON.stringify(payload)).not.toContain('HiddenEventTitle')
+    expect(payload.todayAndChanged.blocks?.length).toBeGreaterThan(0)
+    for (const block of payload.todayAndChanged.blocks) {
+      expect(block).not.toHaveProperty('summary')
+    }
+  })
+
+  it('keeps earlier-today watermarked agent-recorded cards visible when a block seals later the same day', async () => {
+    const now = () => new Date('2026-11-21T08:00:00.000Z')
+    const f = await fixture(0, '早些时候的对话。', 'dreaming-watermarked-today', now)
+    const agentCard = await f.memory.recordAgentEvent({
+      content: '腾讯实习：今天确认入职时间为下周一。',
+      category: 'fact',
+      threadId: 'thread-today',
+    })
+
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    while (run.status === 'running') {
+      run = await f.memory.dreaming({ ...claim(run), kind: 'finish-unit' })
+    }
+    expect(run.status).toBe('completed')
+
+    await f.memory.appendTurn({
+      threadId: 'thread-today',
+      user: '顺便把腾讯实习入职资料发给 HR 了。',
+      assistant: '收到。',
+      createdAt: '2026-11-21T08:30:00.000Z',
+    })
+    const nextRun = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const payload = dreamingPayload(f.memory, nextRun) as any
+    expect(payload.events).toEqual([])
+    expect(payload.todayAndChanged.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: agentCard.eventId,
+        source: 'agent-recorded',
+        status: 'active',
+      }),
+    ]))
+  })
+
+  it('delivers todayAndChanged to a live DSH native Dreaming session so the model reads and updates an agent-recorded card without creating a duplicate', async () => {
+    const f = await fixture(0, '腾讯实习初步沟通。', 'dreaming-e2e-today-agent')
+    const firstTurn = await f.memory.appendTurn({
+      threadId: 'thread-0',
+      user: '腾讯实习最新进展：已提交入职资料。',
+      assistant: '记下。',
+    })
+    for (let index = 1; index < 25; index++) {
+      await f.memory.appendTurn({
+        threadId: `thread-${index}`,
+        user: `普通对话轮次 ${index}`,
+        assistant: '好的。',
+      })
+    }
+    const agentCard = await f.memory.recordAgentEvent({
+      content: '腾讯实习：已拿到录用通知，下周一入职。',
+      category: 'fact',
+      threadId: 'thread-0',
+    })
+    const updateMessageId = firstTurn.sealedBlock!.l5Raw[0]!.id
+    const runtime = runtimeFor(f.database, async () => { throw new Error('DSH native host is required') })
+    const memoryTasks: any[] = []
+    const steps: Array<readonly [string, Record<string, unknown>]> = [
+      ['dreaming_read', { kind: 'event', id: agentCard.eventId! }],
+      ['dreaming_read', { kind: 'message', id: updateMessageId }],
+      ['dreaming_event', {
+        kind: 'update',
+        id: agentCard.eventId!,
+        title: '腾讯实习录用与入职资料',
+        summary: '已拿到录用通知，下周一入职并已提交入职资料。',
+        sourceMessageIds: [updateMessageId],
+      }],
+      ['dreaming_finish', { summary: '第一批已更新已有主动记忆卡' }],
+      ['dreaming_finish', { summary: '第二批无需新建重复卡' }],
+    ]
+    let stepIndex = 0
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      const latestTask = options.messages.flatMap((message: any) => message.role === 'user' ? message.content.flatMap((block: any) => {
+        if (block.type !== 'text') return []
+        try { const value = JSON.parse(block.text); return value.currentMemoryTask ? [value.currentMemoryTask] : [] } catch { return [] }
+      }) : []).at(-1)
+      if (latestTask && stepIndex === 0) memoryTasks.push(latestTask)
+      const step = steps[stepIndex++]
+      if (step) { yield* nativeCall(step[0], step[1], `e2e-today-${stepIndex}`); return }
+      yield { type: 'text-delta', index: 0, text: '整理完成。' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }, true, 'memory')
+
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    let sessionId: any
+    await vi.waitFor(async () => {
+      const status = (await runtime.adminDreamingStatus(f.namespace) as any).run
+      expect(status).toMatchObject({ status: 'completed', changedBatches: 1 })
+      sessionId = status.sessionId
+    }, { timeout: 20_000 })
+    await ctx.agents.get(sessionId)?.whenIdle()
+
+    expect(memoryTasks).toHaveLength(1)
+    expect(memoryTasks[0]).toMatchObject({
+      scope: 'memory',
+      events: [],
+      todayAndChanged: {
+        events: expect.arrayContaining([
+          expect.objectContaining({
+            id: agentCard.eventId,
+            source: 'agent-recorded',
+            status: 'active',
+          }),
+        ]),
+      },
+    })
+    expect(memoryTasks[0].todayAndChanged.events.find((item: any) => item.id === agentCard.eventId)).not.toHaveProperty('summary')
+
+    const reopened = await f.reopen()
+    const activeEvents = reopened.listAllEvents().filter(event => event.status === 'active')
+    expect(activeEvents).toHaveLength(1)
+    expect(activeEvents[0]).toMatchObject({
+      id: agentCard.eventId,
+      title: '腾讯实习录用与入职资料',
+      summary: '已拿到录用通知，下周一入职并已提交入职资料。',
+      sourceMessageIds: [updateMessageId],
+    })
+  }, 30_000)
 })

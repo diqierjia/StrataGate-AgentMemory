@@ -760,6 +760,10 @@ export class StrataGate {
     return this.blocks;
   }
 
+  currentTime(): Date {
+    return this.now();
+  }
+
   listEvents(): readonly EventCard[] {
     return this.events;
   }
