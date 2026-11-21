@@ -1084,7 +1084,7 @@ window.__ModuleLoader__.load({
       .sg-topic-directory .sg-topic-event-title{white-space:nowrap;font-size:13px;font-weight:500}
       .sg-topic-directory .sg-topic-event:hover .sg-topic-event-title{color:var(--sg-accent)}
       /* 宽屏：目录在左页，打开的节在右页；同一份事件数据，不重复读取。 */
-      @media (min-width:681px){
+      @container sg-memory (min-width:761px){
         .sg-topic-directory .sg-book-preview{position:absolute;top:18px;right:22px;width:calc(50% - 46px);max-height:calc(100% - 36px);padding:0 0 0 26px;overflow:auto}
         .sg-topic-directory .sg-book-preview .sg-leaf-sum{display:block}
         .sg-topic-directory .sg-book>.sg-leaf{padding-right:calc(50% + 28px);min-height:320px}
@@ -3249,7 +3249,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'sg-topic-chapter-number', 'aria-hidden': 'true' }, String(number).padStart(2, '0')),
           h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'data-count': String(chapterEvents), 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', title: chapterEvents + ' 条事件'}, String(chapterEvents)), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
-          topicSections(topic).map((part, index) => h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, open: openSection === part.uiKey, onToggle: (key) => onSectionToggle?.(key, part), active: active && open, openEvent, onDirectoryChanged })),
+          topicSections(topic).map((part, index) => { const selectionKey = topic.id + ':' + part.uiKey; return h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, open: openSection === selectionKey, onToggle: () => onSectionToggle?.(selectionKey, part), active: active && open, openEvent, onDirectoryChanged }) }),
           !(topic.sections || []).length ? h('p', { className: 'sg-topic-no-overview' }, '这个主题还没有小节。') : null,
           // Keep the unassigned-event disclosure for pagination and aria; CSS
           // hides its old "待归类事件" wording in the book view.
