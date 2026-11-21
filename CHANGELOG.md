@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.63
+
+- 在 `scripts/worktree-slots.mjs` 中新增 `queue` 子命令与非阻塞版本排队/撞号提醒，支持 `--chore` / `--non-business`（`🔧`）非业务代码单标识；更新 `AGENTS.md` 明确“一个 PR 一个独立版本”规范并补充单测。
+
 ## 0.3.62
 
 - 同步多工位并行开发与顺序合并工作流、独立递增版本号及前端真机验收截图规范（`AGENTS.md`、`scripts/worktree-slots.mjs`）。
