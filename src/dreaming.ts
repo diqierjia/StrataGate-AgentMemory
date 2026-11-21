@@ -1,5 +1,6 @@
 import { effectiveGraphNodeView, estimateTokens, dreamingEventVersion, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
   dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, DREAMING_SOURCE_PAGE_CHARACTERS,
+  toUtc8Iso,
   type BlockLevel, type DreamingRun, type EventCard, type StrataGate } from '@diqier/stratagate'
 import { topicPage } from './topics.js'
 import type { DailyNotes } from './daily-notes.js'
@@ -166,6 +167,67 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
   const unit = run.units[run.cursor]!
   if (run.scope === 'memory') {
     const visible = new Set(memory.dreamingMessages().map(message => message.id))
+    const today = toUtc8Iso(memory.currentTime()).slice(0, 10)
+    const batchBlockIds = new Set(unit.blockIds ?? [])
+    const batchMessageIds = new Set(unit.messageIds ?? [])
+    const batchEventIds = new Set(unit.eventIds)
+    const batchNoteDates = new Set(unit.noteDates ?? [])
+    const runBlockIds = new Set(run.units.flatMap(item => item.blockIds ?? []))
+    const runMessageIds = new Set(run.units.flatMap(item => item.messageIds ?? []))
+    const runEventIds = new Set(run.units.flatMap(item => item.eventIds))
+    const runNoteDates = new Set(run.units.flatMap(item => item.noteDates ?? []))
+    const eventPath = (event: EventCard) => ({
+      id: event.id,
+      title: event.title,
+      status: event.status,
+      createdAt: event.createdAt,
+      updatedAt: event.updatedAt,
+      ...(event.tags.includes('agent-recorded') ? { source: 'agent-recorded' as const } : {}),
+      ...(event.sourceBlockId ? { sourceBlockId: event.sourceBlockId } : {}),
+    })
+    const blockPath = (block: ReturnType<StrataGate['listBlocks']>[number]) => ({
+      id: block.id,
+      threadId: block.threadId,
+      createdAt: block.createdAt,
+      turns: [block.startTurn, block.endTurn] as const,
+      ...(block.l5Raw.every(message => visible.has(message.id)) ? { title: block.l0Title } : {}),
+    })
+    const visibleEvents = dreamingEvents(memory, run)
+    const sameDay = (iso: string) => {
+      const time = Date.parse(iso)
+      return Number.isFinite(time) && toUtc8Iso(time).slice(0, 10) === today
+    }
+    const otherEvents = visibleEvents
+      .filter(event => !batchEventIds.has(event.id) && (
+        runEventIds.has(event.id)
+        || sameDay(event.createdAt)
+        || sameDay(event.updatedAt)
+        || (event.sourceBlockId !== undefined && batchBlockIds.has(event.sourceBlockId))
+        || event.sourceMessageIds.some(id => batchMessageIds.has(id))
+      ))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+      .slice(0, 100)
+      .map(eventPath)
+    const otherBlocks = memory.listBlocks()
+      .filter(block => !batchBlockIds.has(block.id)
+        && block.l5Raw.some(message => visible.has(message.id))
+        && (runBlockIds.has(block.id) || sameDay(block.createdAt)))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))
+      .slice(0, 60)
+      .map(blockPath)
+    const otherOpenMessages = memory.listOpenTail()
+      .filter(message => !batchMessageIds.has(message.id)
+        && visible.has(message.id)
+        && (runMessageIds.has(message.id) || sameDay(message.createdAt)))
+      .slice(0, 60)
+      .map(({ id, threadId, createdAt, role }) => ({ id, threadId, createdAt, role }))
+    const otherNoteDates = [...runNoteDates].filter(date => !batchNoteDates.has(date))
+    const todayAndChanged = {
+      ...(otherEvents.length ? { events: otherEvents } : {}),
+      ...(otherBlocks.length ? { blocks: otherBlocks } : {}),
+      ...(otherOpenMessages.length ? { openMessages: otherOpenMessages } : {}),
+      ...(otherNoteDates.length ? { noteDates: otherNoteDates } : {}),
+    }
     return {
       scope: 'memory', completedBatches: run.cursor, totalBatches: run.units.length, trigger: run.trigger,
       blocks: memory.listBlocks().filter(block => unit.blockIds?.includes(block.id) && block.l5Raw.some(message => visible.has(message.id))).map(block => ({
@@ -174,10 +236,11 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       })),
       openMessages: memory.listOpenTail().filter(message => visible.has(message.id) && unit.messageIds?.includes(message.id))
         .map(({ id, threadId, createdAt, role }) => ({ id, threadId, createdAt, role })),
-      events: dreamingEvents(memory, run).filter(event => unit.eventIds.includes(event.id)).map(({ id, title, status }) => ({ id, title, status })),
+      events: visibleEvents.filter(event => batchEventIds.has(event.id)).map(eventPath),
       experiencesToReview: unit.experienceIds?.length ? memory.listExperiences(true)
         .filter(item => item.status === 'needs-review' && unit.experienceIds?.includes(item.id)).map(({ id, title }) => ({ id, title })) : [],
       noteDates: unit.noteDates ?? [], graphEnabled: memory.graphEnabled,
+      ...(Object.keys(todayAndChanged).length ? { todayAndChanged } : {}),
       lastWriteFailure: run.lastWriteFailure ? { error: run.lastWriteFailure.error } : null,
       savedChanges: run.changedBatches,
     }
