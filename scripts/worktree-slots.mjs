@@ -73,6 +73,19 @@ function sanitizeSlug(raw) {
     .toLowerCase()
 }
 
+function parseBooleanFlag(value, fallback = false) {
+  if (value === undefined) return fallback
+  return !['false', '0', 'no'].includes(String(value).trim().toLowerCase())
+}
+
+function formatThreadTitle(slotNumber, title, { frontend = false, releaseStage = '', versionTag = '' } = {}) {
+  const uiTag = frontend ? '🎨' : ''
+  if (releaseStage) {
+    return `【${releaseStage}${versionTag || '<版本号>'}${uiTag}】${title}`
+  }
+  return `【${slotNumber}号${uiTag}】${title}`
+}
+
 function parseArgs(argv) {
   const positional = []
   const flags = {}
@@ -114,6 +127,11 @@ function ensureWorktreeDeps(worktreePath, repoRoot) {
 
 function buildWorkerPrompt(entry, bugDetail = '') {
   const detail = String(bugDetail || entry.title || '').trim()
+  const pendingReleaseTitle = formatThreadTitle(entry.slot, entry.title, {
+    frontend: Boolean(entry.frontend),
+    releaseStage: '待发版',
+    versionTag: '<版本号>',
+  })
   return [
     `你已被总管会话分配到 StrataGate 的【${entry.slot} 号工位】。`,
     ``,
@@ -127,7 +145,7 @@ function buildWorkerPrompt(entry, bugDetail = '') {
     `1. 全程在 \`${entry.path}\` 下定位并修复该问题，不要混入其他工位或主目录的改动。`,
     `2. 每次向用户汇报开头第一行必须输出工位状态（可运行 \`node scripts/worktree-slots.mjs status --path "${entry.path}"\` 获取）：\`当前并行工位：共 N 个 ｜ 我是【${entry.slot} 号工位】\`。`,
     `3. 阶段进展变化时，用 \`node scripts/worktree-slots.mjs claim --path "${entry.path}" --slot ${entry.slot} --state "<当前状态>"\` 更新工位状态（如“排查中”、“本地测试通过·待验收”）。`,
-    `4. 修复完成后跑通对应单测/E2E 验证，等待用户 \`pass\` 后再按先完先合流程合入 \`main\` 并执行 \`node scripts/worktree-slots.mjs release ${entry.slot}\` 释放工位。`,
+    `4. 修复完成后跑通对应单测/E2E 验证（凡涉及前端或界面展示的改动，必须先打出 \`.tgz\` 候选包而非正式发布，装入桌面版 DeepSeek Harness，用 computer use 基于有旧数据的非空真实库端到端实测并看图确认；交付用户验收时必须直接展示修改前与修改后的对比截图）。本仓库采用**并行开发、顺序合并**（前面独立同时开发，最后严禁多工位并发合入 \`main\`）：等待用户 \`pass\` 并确认轮到自己顺序合并后，先基于最新 \`origin/main\` 变基并递增为**全新的独立版本号**（严禁与前序待发版单共用同一版本号，如已有 \`0.3.60\` 则本单必须先升为 \`0.3.61\`）再合入 \`main\`，随后执行 \`node scripts/worktree-slots.mjs release ${entry.slot}\` 释放工位，并调用 \`set_thread_title\` 去掉工位号改为 \`${pendingReleaseTitle}\`（\`<版本号>\` 取本单独占的新版本号末位，如 \`61\`；正式发版后改为 \`已发版\`；如过程中新增了前端改动，请确保加上 \`🎨\` 标识）。`,
   ].filter(Boolean).join('\n')
 }
 
@@ -180,10 +198,13 @@ if (command === 'create' || command === 'new') {
     }
   }
   ensureWorktreeDeps(worktreePath, repoRoot)
+  const taskTitle = flags.title || positional.slice(1).join(' ') || slug
+  const isFrontend = parseBooleanFlag(flags.frontend, false)
   const entry = {
     slot: slotNumber,
-    title: flags.title || positional.slice(1).join(' ') || slug,
-    threadTitle: `【${slotNumber}号工位】${flags.title || positional.slice(1).join(' ') || slug}`,
+    title: taskTitle,
+    frontend: isFrontend,
+    threadTitle: formatThreadTitle(slotNumber, taskTitle, { frontend: isFrontend }),
     branch: branchName,
     path: worktreePath,
     state: flags.state || '进行中',
@@ -199,6 +220,7 @@ if (command === 'create' || command === 'new') {
       projectId: STRATAGATE_PROJECT_ID,
       slot: entry.slot,
       title: entry.title,
+      frontend: entry.frontend,
       threadTitle: entry.threadTitle,
       branch: entry.branch,
       path: entry.path,
@@ -218,10 +240,13 @@ if (command === 'create' || command === 'new') {
     const slotNumber = requestedSlot && !registry.slots.some((s) => Number(s.slot) === requestedSlot)
       ? requestedSlot
       : smallestAvailableSlot(registry.slots)
+    const taskTitle = flags.title || positional.join(' ') || getBranch(targetPath)
+    const isFrontend = parseBooleanFlag(flags.frontend, false)
     existing = {
       slot: slotNumber,
-      title: flags.title || positional.join(' ') || getBranch(targetPath),
-      threadTitle: `【${slotNumber}号工位】${flags.title || positional.join(' ') || getBranch(targetPath)}`,
+      title: taskTitle,
+      frontend: isFrontend,
+      threadTitle: formatThreadTitle(slotNumber, taskTitle, { frontend: isFrontend }),
       branch: flags.branch || getBranch(targetPath),
       path: targetPath,
       state: flags.state || '进行中',
@@ -231,10 +256,15 @@ if (command === 'create' || command === 'new') {
     }
     registry.slots.push(existing)
   } else {
+    if (flags.frontend !== undefined) {
+      existing.frontend = parseBooleanFlag(flags.frontend, Boolean(existing.frontend))
+    }
     if (flags.title || positional.length) {
       existing.title = flags.title || positional.join(' ')
-      existing.threadTitle = `【${existing.slot}号工位】${existing.title}`
     }
+    existing.threadTitle = formatThreadTitle(existing.slot, existing.title, {
+      frontend: Boolean(existing.frontend),
+    })
     if (flags.state) existing.state = flags.state
     if (flags['thread-id'] || flags.threadId) existing.threadId = flags['thread-id'] || flags.threadId
     existing.branch = flags.branch || getBranch(targetPath)
@@ -251,10 +281,15 @@ if (command === 'create' || command === 'new') {
   }
   if (flags['thread-id'] || flags.threadId) target.threadId = flags['thread-id'] || flags.threadId
   if (flags.state) target.state = flags.state
+  if (flags.frontend !== undefined) {
+    target.frontend = parseBooleanFlag(flags.frontend, Boolean(target.frontend))
+  }
   if (flags.title) {
     target.title = flags.title
-    target.threadTitle = `【${target.slot}号工位】${target.title}`
   }
+  target.threadTitle = formatThreadTitle(target.slot, target.title, {
+    frontend: Boolean(target.frontend),
+  })
   target.updatedAt = new Date().toISOString()
   saveRegistry(registry)
   printStatus(registry, target.path)

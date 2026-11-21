@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.62
+
+- 同步多工位并行开发与顺序合并工作流、独立递增版本号及前端真机验收截图规范（`AGENTS.md`、`scripts/worktree-slots.mjs`）。
+
 ## 0.3.61
 
 - 修复 Dreaming 在多批次或同日增量整理时看不到当天已打水印主动记忆卡导致重复建卡的问题：在 `currentMemoryTask.todayAndChanged` 中补充当天新增/更新与本轮联动变动的事件、对话块、未封消息与笔记轻量路径索引（含 `source: "agent-recorded"`），引导模型按需 `dreaming_read` 后就地更新或替代。
