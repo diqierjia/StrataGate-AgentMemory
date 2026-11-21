@@ -70,7 +70,7 @@ jobs:
       # finish the install output while leaving a child process alive until the
       # job timeout; audit/fund lookups add no signal to CI.
       - run: npm ci --foreground-scripts --no-audit --no-fund
-      - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs tests/classify-ci-risk.test.mjs tests/stage-candidate.test.mjs tests/dsh-cli-isolate.test.mjs
+      - run: node --test tests/find-release-ci.test.mjs tests/find-pr-ci.test.mjs tests/verify-package-supplied.test.mjs tests/classify-ci-risk.test.mjs tests/stage-candidate.test.mjs tests/dsh-cli-isolate.test.mjs tests/worktree-slots.test.mjs
       - run: npm run check
       - run: npm test
       - run: npm run build
