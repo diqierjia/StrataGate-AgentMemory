@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { bm25Rank, weightedSearchTokens } from './search.js';
+import { previewMemoryTitle } from './events.js';
 import type { EventCard } from './types.js';
 import { LEGACY_TOPIC_OVERVIEW_SECTION_ERROR, TopicProjectionError, safeTopicDiagnostics, validateTopicOverviewText, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
 import { uniqueTopicOverviewEntries, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
@@ -341,7 +342,7 @@ export class MemoryTopicDirectory {
     const topics = this.state.topics.flatMap((topic) => topicView(topic, sources, versions) ?? []);
     const assigned = new Set(topics.flatMap((topic) => topic.sourceEventIds));
     for (const event of sources.values()) if (!assigned.has(event.id)) topics.push({
-      id: `fallback:${event.id}`, title: bounded(event.title, 120),
+      id: `fallback:${event.id}`, title: previewMemoryTitle(event.title, 120),
       description: '尚未归入主题，查看事件获得详情。', sourceEventIds: [event.id], overview: [],
       createdAt: event.createdAt, updatedAt: event.createdAt, isFallback: true,
       coverage: { totalEvents: 1, summarizedEvents: 0, omittedEvents: 1 },

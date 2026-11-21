@@ -22,6 +22,7 @@ import {
   buildBlockTimeline,
   getBlockDecayView,
   normalizeBlockLevel,
+  previewMemoryTitle,
   renderBlock,
   memoryWeightAt,
   rrfRank,
@@ -1307,7 +1308,7 @@ export class StrataGateRuntime {
       && topic.sourceEventIds.every((id) => allowed.has(id)))
     const assigned = new Set(visible.flatMap(({ sourceEventIds }) => sourceEventIds))
     return [...visible, ...events.filter(({ id }) => !assigned.has(id)).map((event): MemoryTopic => ({
-      id: `fallback:${event.id}`, title: event.title.slice(0, 120), description: '查看事件获得详情。',
+      id: `fallback:${event.id}`, title: previewMemoryTitle(event.title, 120), description: '查看事件获得详情。',
       sourceEventIds: [event.id], overview: [], createdAt: event.createdAt, updatedAt: event.updatedAt,
       coverage: { totalEvents: 1, summarizedEvents: 0, omittedEvents: 1 }, isFallback: true,
     }))]
@@ -2563,7 +2564,7 @@ export class StrataGateRuntime {
     session: Session,
     content: string,
     category?: AgentMemoryCategory,
-    options?: { supersedesEventIds?: readonly string[]; userAuthorized?: boolean; reason?: string },
+    options?: { title?: string; supersedesEventIds?: readonly string[]; userAuthorized?: boolean; reason?: string },
   ): Promise<unknown> {
     if (!this.agentMemoryEnabled) {
       throw new Error('StrataGate agent memory is disabled by configuration (agentMemoryEnabled=false).')
@@ -2582,6 +2583,7 @@ export class StrataGateRuntime {
     const deciderBudgetMs = Math.min(this.config.structuredTaskTimeoutMs ?? 120_000, 30_000)
     const result = await this.models.run(session, () => memory.recordAgentEvent({
       content,
+      ...(options?.title !== undefined ? { title: options.title } : {}),
       ...(category !== undefined ? { category } : {}),
       ...(supersedesEventIds.length > 0 ? { supersedesEventIds } : {}),
       ...(options?.reason !== undefined ? { reason: options.reason } : {}),

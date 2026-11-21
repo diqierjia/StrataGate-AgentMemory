@@ -92,13 +92,31 @@ describe('StrataGate.recordAgentEvent', () => {
     ]))
   })
 
+  it('rejects empty or overlong explicit titles before recording', async () => {
+    const memory = openMemory()
+    for (const title of ['  ', '题'.repeat(201)]) {
+      await expect(memory.recordAgentEvent({ content: '项目使用 pnpm。', title })).rejects.toThrow('1-200')
+    }
+    expect(memory.listAgentEvents()).toHaveLength(0)
+  })
+
+  it.each([
+    ['确认 '.repeat(24) + 'memory_remember 用于主动记录。', '确认 '.repeat(24).trimEnd() + '…'],
+    ['确认 '.repeat(25) + '👩‍💻 需要继续处理。', '确认 '.repeat(25).trimEnd() + '…'],
+    ['发布记录确认项目采用新的目录导航；' + '补充说明'.repeat(25), '发布记录确认项目采用新的目录导航'],
+  ])('keeps the summary when deriving a title for %s', async (content, title) => {
+    const memory = openMemory()
+    await memory.recordAgentEvent({ content })
+    expect(memory.listAgentEvents()[0]).toMatchObject({ title, summary: content })
+  })
+
   it('reinforces instead of writing on an exact duplicate', async () => {
     const memory = openMemory()
     const first = await memory.recordAgentEvent({ content: '用户偏好 pnpm 作为包管理器。' })
     expect(first.action).toBe('ADDED')
     const beforeCount = memory.listAgentEvents()[0]!.weight.mentionCount
     const beforeTurn = memory.listAgentEvents()[0]!.weight.lastAdoptedTurn
-    const second = await memory.recordAgentEvent({ content: '用户偏好 pnpm 作为包管理器。' })
+    const second = await memory.recordAgentEvent({ content: '用户偏好 pnpm 作为包管理器。', title: '包管理器偏好' })
     expect(second).toMatchObject({
       action: 'REINFORCED', gate: 'exact-duplicate', recorded: false, reinforcedEventId: first.eventId,
     })

@@ -3,6 +3,39 @@ import type { EventCardInput, EventTemporal, StandardEventType } from './types.j
 
 export const EVENT_EXTRACTOR_VERSION = 2;
 
+const titleWords = new Intl.Segmenter(undefined, { granularity: 'word' });
+
+export function previewMemoryTitle(value: string, limit: number): string {
+  const title = value.replace(/\s+/gu, ' ').trim();
+  if (title.length <= limit) return title;
+
+  const available = limit - 1;
+  let end = 0;
+  let clauseEnd = 0;
+  let bracketDepth = 0;
+  let outsideBracketsEnd = 0;
+  for (const { segment, index } of titleWords.segment(title)) {
+    if (index + segment.length > available) break;
+    end = index + segment.length;
+    if (/^[（([【]$/u.test(segment)) bracketDepth += 1;
+    if (bracketDepth > 0 && /^[）)\]】]$/u.test(segment)) bracketDepth -= 1;
+    if (bracketDepth === 0) {
+      outsideBracketsEnd = end;
+      if (index >= available / 2 && /^[。！？!?；;，、：]$/u.test(segment)) clauseEnd = index;
+    }
+  }
+  if (clauseEnd) end = clauseEnd;
+  else if (outsideBracketsEnd >= available / 2) end = outsideBracketsEnd;
+  for (const identifier of title.matchAll(/[A-Za-z0-9_]+(?:[./:@-][A-Za-z0-9_]+)*/gu)) {
+    if (identifier.index >= end) break;
+    if (identifier.index + identifier[0].length > end) {
+      end = identifier.index;
+      break;
+    }
+  }
+  return `${title.slice(0, end).replace(/[\s,，、:：;；（([【…]+$/u, '')}…`;
+}
+
 /** Optional metadata is bounded at admission and load, without inventing defaults. */
 export function normalizeEventMetadata(value: unknown): Pick<EventCardInput, 'catalogHints' | 'extractorVersion' | 'quotesOrigin'> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
