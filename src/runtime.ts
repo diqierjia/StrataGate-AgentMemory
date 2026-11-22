@@ -190,6 +190,7 @@ export interface FeedbackDraft extends Required<Omit<FeedbackDraftInput, 'bodyMa
 const AUTO_EVENT_LIMIT = 4
 const AUTO_ELEMENT_LIMIT = 4
 const AUTO_MEMORY_TOKEN_BUDGET = 900
+const EXPAND_EVENT_SOURCE_MAX_CHARS = 1_200
 
 /**
  * The text an Event is embedded from. Title plus summary is what retrieval
@@ -1363,7 +1364,7 @@ export class StrataGateRuntime {
     })
   }
 
-  async blocks(session: Session, scope: BlockQueryScope = 'session', options: { offset?: number; limit?: number } = {}): Promise<unknown> {
+  async blocks(session: Session, scope: BlockQueryScope = 'session', options: { offset?: number; limit?: number; order?: 'oldest' | 'latest' } = {}): Promise<unknown> {
     await this.flush()
     const memory = await this.space(session)
     const threadId = String(session.id)
@@ -1371,7 +1372,10 @@ export class StrataGateRuntime {
     const namespaceBlockCount = snapshot.blocks.length
     const namespaceThreadIds = [...new Set(snapshot.blocks.map((block) => block.threadId).filter((value): value is string => Boolean(value)))]
     const openTailCount = snapshot.openTail.filter((message) => scope === 'namespace' || message.threadId === threadId).length
-    const matches = memory.getBlockContext(scope === 'session' ? threadId : undefined)
+    const rawMatches = memory.getBlockContext(scope === 'session' ? threadId : undefined)
+    const latestBlock = rawMatches.at(-1)
+    const order = options.order === 'latest' ? 'latest' : 'oldest'
+    const matches = order === 'latest' ? [...rawMatches].reverse() : rawMatches
     const offset = Math.max(0, Math.floor(Number.isFinite(options.offset) ? options.offset! : 0))
     const limit = Math.max(1, Math.min(20, Math.floor(Number.isFinite(options.limit) ? options.limit! : 12)))
     const blockTitles = new Map(memory.listBlocks().map((block) => [block.id, blockCitationTitle(block)]))
@@ -1389,11 +1393,13 @@ export class StrataGateRuntime {
       scope,
       namespace: this.namespaceFor(session),
       threadId,
+      order,
       blockCount: matches.length,
       total: matches.length,
       offset,
       limit,
       nextOffset: offset + results.length < matches.length ? offset + results.length : null,
+      ...(latestBlock ? { latestBlockId: latestBlock.id, latestBlockTurnRange: latestBlock.turnRange } : {}),
       namespaceBlockCount,
       namespaceThreadIds,
       openTailCount,
@@ -1443,11 +1449,29 @@ export class StrataGateRuntime {
 
   async expandEvent(session: Session, id: string): Promise<unknown> {
     await this.flush()
-    const event = (await this.space(session)).listAllEvents().find((candidate) => candidate.id === id)
+    const memory = await this.space(session)
+    const event = memory.listAllEvents().find((candidate) => candidate.id === id)
     if (!event) throw new Error(`Unknown event: ${id}`)
-    const expanded = event.quotesOrigin === 'auto_extracted'
-      ? { ...event, quotesNotice: AUTO_EXTRACTED_QUOTES_NOTICE }
-      : event
+    const sourceMessages = memory.getRawMessagesByIds(event.sourceMessageIds).slice(0, 6).map((message) => {
+      const bounded = boundVerbatimText(message.content, EXPAND_EVENT_SOURCE_MAX_CHARS)
+      return {
+        id: message.id,
+        role: message.role,
+        content: bounded.text,
+        ...(bounded.truncated ? { truncated: true } : {}),
+        createdAt: message.createdAt,
+        ...(message.threadId ? { threadId: message.threadId } : {}),
+      }
+    })
+    const sourceHint = event.sourceBlockId
+      ? `For full surrounding conversation turns, call memory_expand_block with id="${event.sourceBlockId}" and target="L4" (readable transcript) or "L5" (complete raw messages).`
+      : undefined
+    const expanded = {
+      ...event,
+      ...(event.quotesOrigin === 'auto_extracted' ? { quotesNotice: AUTO_EXTRACTED_QUOTES_NOTICE } : {}),
+      ...(sourceMessages.length > 0 ? { sourceMessages } : {}),
+      ...(sourceHint ? { sourceHint } : {}),
+    }
     return this.batch(session, [{
       ref: `event:${event.id}`,
       target: {
@@ -5159,6 +5183,11 @@ function renderActivatedMemory(
 
   if (eventCount === 0 && nodeCount === 0) lines.push('(no memory selected for automatic context)')
   return lines.join('\n')
+}
+
+function boundVerbatimText(value: string, maxChars: number): { text: string; truncated: boolean } {
+  if (value.length <= maxChars) return { text: value, truncated: false }
+  return { text: `${value.slice(0, maxChars)}\n... [truncated; expand source block for full text]`, truncated: true }
 }
 
 function activeTurn(session: Session): number | undefined {

@@ -189,11 +189,12 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_get_blocks',
-    description: 'This tool is provided by the StrataGate plugin. Browse a paginated block directory containing id, title, turnRange, the layer actually injected into the model, and targetLevel when the decay target differs. Use memory_expand_block for source content. Defaults to blocks with the active threadId only; use scope=namespace to browse every thread and legacy unthreaded blocks in the current namespace. Reports counts, offset, limit, nextOffset, and emptyReason; use nextOffset to continue.',
+    description: 'This tool is provided by the StrataGate plugin. Browse a paginated block directory containing id, title, turnRange, the layer actually injected into the model, and targetLevel when the decay target differs; use memory_expand_block for source content. Defaults to blocks with the active threadId only (oldest-first unless order="latest" is passed); use scope=namespace to browse every thread and legacy unthreaded blocks in the current namespace. Reports counts, offset, limit, nextOffset, latestBlockId, and emptyReason; use nextOffset to continue.',
     parameters: {
       scope: { type: 'string', enum: ['session', 'namespace'] as const, description: 'Query range. Defaults to session to preserve existing isolation behavior.' },
       offset: { type: 'integer', description: '从第几项开始，使用返回的 nextOffset 继续。' },
       limit: { type: 'integer', description: '每页 1-20 项，默认 12 项。' },
+      order: { type: 'string', enum: ['oldest', 'latest'] as const, description: 'Sort order: oldest (default) or latest (newest blocks first).' },
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.blocks(sessionOf(exec), args.scope, args) as never,
@@ -201,10 +202,10 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_expand_block',
-    description: 'This tool is provided by the StrataGate plugin. Expand one historical conversation Block to a more detailed layer. Use it when a Block checkpoint lacks the detail needed for the current task; pass the Block id shown in the checkpoint or returned by memory_get_blocks. The result is a new evidence batch and must be assessed.',
+    description: 'This tool is provided by the StrataGate plugin. Expand one historical conversation Block to a more detailed layer (L0-L5 or "next"). Use it when a Block checkpoint lacks the detail needed for the current task, choosing L4 (near-verbatim transcript) or L5 (complete raw messages) for exact wording; pass the Block id shown in the checkpoint or returned by memory_get_blocks. The result is a new evidence batch and must be assessed.',
     parameters: {
       id: { type: 'string', required: true },
-      target: { oneOf: [{ type: 'string' }, { type: 'integer' }] },
+      target: { oneOf: [{ type: 'string' }, { type: 'integer' }], description: 'Target level: "L0" (title/tags), "L1" (summary), "L2" (key points), "L3" (condensed), "L4" (near-verbatim transcript), "L5" (complete raw messages and tool records), or "next" (one level deeper than current).' },
     },
     output: jsonOutput,
     execute: async (args, exec) => runtime.expandBlock(sessionOf(exec), args.id, args.target) as never,
@@ -212,7 +213,7 @@ export function registerMemoryTools(ctx: Context, runtime: StrataGateRuntime): v
 
   ctx.tools.register(defineTool({
     name: 'memory_expand_event',
-    description: 'This tool is provided by the StrataGate plugin. Retrieve one complete Event card by id. The result is a new evidence batch and must be assessed.',
+    description: 'This tool is provided by the StrataGate plugin. Retrieve one complete Event card by id along with bounded source message excerpts and a sourceHint pointing to memory_expand_block for full surrounding turns. The result is a new evidence batch and must be assessed.',
     parameters: {
       id: { type: 'string', required: true },
     },

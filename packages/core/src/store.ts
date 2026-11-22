@@ -2770,6 +2770,34 @@ export class StrataGate {
     });
   }
 
+  private forgottenSourceMessageIds(): Set<string> {
+    return new Set(
+      this.listAllEvents()
+        .filter((event) => event.status === 'forgotten')
+        .flatMap((event) => event.sourceMessageIds),
+    );
+  }
+
+  /** Resolve stored source messages across sealed blocks and open tails, omitting forgotten provenance. */
+  getRawMessagesByIds(ids: readonly string[]): RawMessage[] {
+    if (ids.length === 0) return [];
+    const forgotten = this.forgottenSourceMessageIds();
+    const result: RawMessage[] = [];
+    const seen = new Set<string>();
+    for (const rawId of ids) {
+      const id = rawId.trim();
+      if (!id || seen.has(id) || forgotten.has(id)) continue;
+      seen.add(id);
+      const message = this.rawMessageLookup.get(id)?.message ?? this.openTail.find((candidate) => candidate.id === id);
+      if (!message) continue;
+      result.push({
+        ...message,
+        ...(message.toolCalls ? { toolCalls: structuredClone(message.toolCalls) } : {}),
+      });
+    }
+    return result;
+  }
+
   async setBlockSurfaceLevel(id: string, level: BlockLevel): Promise<void> {
     await this.setBlockSurfaceLevels([{ id, level }]);
   }
