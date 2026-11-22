@@ -234,4 +234,50 @@ describe('StrataGate lifecycle', () => {
     await memory.expandBlock(first.sealedBlock!.id, 5, 'user');
     expect(memory.listBlocks()[0]?.lastLiftedBy).toBe('user');
   });
+
+  it('resolves source messages across sealed blocks and open tails while omitting forgotten provenance', async () => {
+    const memory = StrataGate.inMemory({
+      blockTurnSize: 2,
+      summarizer: async (messages) => ({
+        l0Title: messages[0]!.content,
+        l0Tags: ['secret'],
+        l1Summary: 'Summary',
+        l2Keypoints: ['Point'],
+        shouldExtract: true,
+      }),
+      extractor: async ({ target }) => ({
+        shouldExtract: true,
+        reason: 'has event',
+        events: [{
+          title: 'Secret token',
+          summary: 'A secret token was shared.',
+          tags: ['secret'],
+          quotes: ['secret-val'],
+          sourceBlockId: target.id,
+          sourceMessageIds: [target.l5Raw[0]!.id],
+        }],
+      }),
+      idFactory: ids(),
+    });
+    await memory.appendTurn({ user: 'Turn 1 secret-val', assistant: 'Ack 1', threadId: 'session-1' });
+    const sealed = await memory.appendTurn({ user: 'Turn 2 visible', assistant: 'Ack 2', threadId: 'session-1' });
+    await memory.appendTurn({ user: 'Turn 3 open tail', assistant: 'Ack 3', threadId: 'session-1' });
+    const block = sealed.sealedBlock!;
+    const openMessages = memory.exportSnapshot().openTail;
+    const sealedSecondUser = block.l5Raw[2]!;
+    const openUser = openMessages.find((message) => message.role === 'user')!;
+    const beforeForget = memory.getRawMessagesByIds([
+      block.l5Raw[0]!.id,
+      sealedSecondUser.id,
+      sealedSecondUser.id,
+      openUser.id,
+      'missing_id',
+    ]);
+    expect(beforeForget.map((message) => message.id)).toEqual([block.l5Raw[0]!.id, sealedSecondUser.id, openUser.id]);
+
+    const event = memory.listEvents()[0]!;
+    await memory.forgetEvent(event.id);
+    const afterForget = memory.getRawMessagesByIds([block.l5Raw[0]!.id, sealedSecondUser.id, openUser.id]);
+    expect(afterForget.map((message) => message.id)).toEqual([sealedSecondUser.id, openUser.id]);
+  });
 });

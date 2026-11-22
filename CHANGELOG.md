@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.65
+
+- 修复折叠态导致助手「记不住上一轮」的回溯断层（Issue #131）：优化封块 L0–L2 摘要提示词，要求明确保留用户直接要求、助手提出的具体方案/编号选项清单与待定项，让折叠块自身具备可回溯钩子。
+- 增强对话块与事件原话检索路径：`memory_get_blocks` 新增可选 `order: "oldest" | "latest"` 排序并返回 `latestBlockId` / `latestBlockTurnRange`；`memory_expand_block.target` 补齐 `L0`–`L5` 与 `"next"` 层级说明；`memory_expand_event` 附带受控截断且过滤已遗忘来源的 `sourceMessages` 原话片段及指向 `memory_expand_block(..., target="L4"|"L5")` 的 `sourceHint`。
+
 ## 0.3.64
 
 - 调整长期记忆 Event 默认衰减系数 `eventDecayLambda` 从 `0.15` 降至 `0.015`（保留原有 `currentTurn` 时钟与指数衰减公式，半衰期由约 4.6 轮延长至约 46.2 轮，解决普通历史事件权重过快贴底及与短期 Block 衰减倒挂的问题）；历史事件原始记录保持不变，升级打开旧库时非破坏性补充 `memory_spaces.event_decay_lambda` 并按当前系数实时重算权重与轨迹。

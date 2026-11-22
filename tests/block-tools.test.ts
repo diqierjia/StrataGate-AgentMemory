@@ -17,7 +17,7 @@ type Page = {
   emptyReason: string | null; openTailCount: number
 }
 
-async function harness(blockTurnSize = 1) {
+async function harness(blockTurnSize = 1, modelOverrides: Partial<DshModelBridge> = {}) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SystemPrompt, {})
@@ -31,6 +31,7 @@ async function harness(blockTurnSize = 1) {
     summarizer: async () => ({ l0Title: 'Test block', l0Tags: [], l1Summary: 'Test summary', l2Keypoints: [], shouldExtract: false }),
     extractor: async () => ({ shouldExtract: false, reason: 'none', events: [] }),
     graphProjector: async () => ({ reason: 'none', nodes: [], edges: [] }),
+    ...modelOverrides,
   } as unknown as DshModelBridge
   const runtime = new StrataGateRuntime({ database: ':memory:', namespaceMode: 'global', namespacePrefix: 'test',
     globalNamespace: 'global', blockTurnSize, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048,
@@ -136,6 +137,100 @@ describe('block tools through the real DSH output boundary', () => {
       await host.memory.appendTurn({ user: 'Own pending', assistant: 'Saved.', threadId: String(host.session.id) })
       expect(await host.call('memory_get_blocks', {}))
         .toMatchObject({ results: [], openTailCount: 2, emptyReason: 'open_tail_pending' })
+    } finally { await host.close() }
+  })
+
+  it('supports latest-first block directory ordering and documents expand_block target levels', async () => {
+    const host = await harness(1)
+    try {
+      const tools = host.ctx.tools.schemas()
+      const blocksTool = tools.find(({ name }) => name === 'memory_get_blocks')!
+      expect(blocksTool.parameters.properties).toMatchObject({
+        order: { type: 'string', enum: ['oldest', 'latest'] },
+      })
+      const expandBlockTool = tools.find(({ name }) => name === 'memory_expand_block')!
+      const targetDescription = String((expandBlockTool.parameters.properties as Record<string, { description?: string }>).target?.description ?? '')
+      expect(targetDescription).toContain('"L0"')
+      expect(targetDescription).toContain('"L4"')
+      expect(targetDescription).toContain('"L5"')
+      expect(targetDescription).toContain('"next"')
+
+      const b1 = (await host.memory.appendTurn({ user: 'First turn', assistant: 'Reply 1', threadId: String(host.session.id) })).sealedBlock!
+      const b2 = (await host.memory.appendTurn({ user: 'Second turn', assistant: 'Reply 2', threadId: String(host.session.id) })).sealedBlock!
+      const b3 = (await host.memory.appendTurn({ user: 'Third turn', assistant: 'Reply 3', threadId: String(host.session.id) })).sealedBlock!
+
+      const oldest = await host.call('memory_get_blocks', { limit: 2 })
+      expect(oldest).toMatchObject({ order: 'oldest', latestBlockId: b3.id, latestBlockTurnRange: [b3.startTurn, b3.endTurn] })
+      expect(oldest.results.map(({ id }) => id)).toEqual([b1.id, b2.id])
+
+      const latest = await host.call('memory_get_blocks', { order: 'latest', limit: 2 })
+      expect(latest).toMatchObject({ order: 'latest', latestBlockId: b3.id, latestBlockTurnRange: [b3.startTurn, b3.endTurn], nextOffset: 2 })
+      expect(latest.results.map(({ id }) => id)).toEqual([b3.id, b2.id])
+
+      const nextPage = await host.call('memory_get_blocks', { order: 'latest', offset: 2, limit: 2 })
+      expect(nextPage.results.map(({ id }) => id)).toEqual([b1.id])
+      expect(nextPage.nextOffset).toBeNull()
+    } finally { await host.close() }
+  })
+
+  it('attaches bounded sourceMessages and a sourceHint when expanding an Event', async () => {
+    const host = await harness(1, {
+      summarizer: async () => ({
+        l0Title: 'Route comparison',
+        l0Tags: ['route'],
+        l1Summary: 'Compared Option 1 and Option 2.',
+        l2Keypoints: ['Option 1: Keep Route A.'],
+        shouldExtract: true,
+      }),
+      extractor: async ({ target }) => ({
+        shouldExtract: true,
+        reason: 'route comparison',
+        events: [{
+          title: 'Route comparison',
+          summary: 'Compared Option 1 and Option 2.',
+          tags: ['route'],
+          quotes: ['Option 1: Keep Route A.'],
+          sourceBlockId: target.id,
+          sourceMessageIds: [target.l5Raw[0]!.id, target.l5Raw[1]!.id],
+        }],
+      }),
+    })
+    try {
+      const longBody = `Option 1: Keep Route A. ${'details '.repeat(300)}`
+      const sealed = await host.memory.appendTurn({
+        user: 'Please compare Option 1 and Option 2.',
+        assistant: longBody,
+        threadId: String(host.session.id),
+      })
+      const block = sealed.sealedBlock!
+      const userMsg = block.l5Raw[0]!
+      const assistantMsg = block.l5Raw[1]!
+      const event = sealed.extractedEvents[0]!
+      const expanded = await host.call('memory_expand_event', { id: event.id }) as unknown as {
+        results: {
+          id: string
+          sourceHint?: string
+          sourceMessages?: Array<{ id: string; role: string; content: string; truncated?: boolean }>
+        }
+      }
+      expect(expanded.results.id).toBe(event.id)
+      expect(expanded.results.sourceHint).toContain(block.id)
+      expect(expanded.results.sourceHint).toContain('memory_expand_block')
+      expect(expanded.results.sourceHint).toContain('L4')
+      expect(expanded.results.sourceHint).toContain('L5')
+      expect(expanded.results.sourceMessages).toHaveLength(2)
+      expect(expanded.results.sourceMessages?.[0]).toMatchObject({
+        id: userMsg.id,
+        role: 'user',
+        content: 'Please compare Option 1 and Option 2.',
+      })
+      expect(expanded.results.sourceMessages?.[0]?.truncated).toBeUndefined()
+      expect(expanded.results.sourceMessages?.[1]).toMatchObject({
+        id: assistantMsg.id,
+        role: 'assistant',
+        truncated: true,
+      })
+      expect(expanded.results.sourceMessages?.[1]?.content).toContain('[truncated; expand source block for full text]')
     } finally { await host.close() }
   })
 })
