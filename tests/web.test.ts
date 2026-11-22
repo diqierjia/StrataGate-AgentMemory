@@ -124,6 +124,7 @@ const snapshot: StrataGateSnapshot = {
 }
 
 let updatedLambda: number | null = null
+let updatedEventLambda: number | null = null
 let updatedTurnSize: number | null = null
 let updatedAgentWeight: number | null = null
 let expandedBlock: { namespace: string; id: string; target: string | number } | null = null
@@ -140,6 +141,10 @@ const runtime = {
   },
   adminSetBlockDecayLambda: async (value: number) => {
     updatedLambda = value
+    return value
+  },
+  adminSetEventDecayLambda: async (value: number) => {
+    updatedEventLambda = value
     return value
   },
   adminSetAgentMemoryRetrievalWeight: (value: number) => {
@@ -1091,9 +1096,21 @@ describe('StrataGate admin routes', () => {
       expect.objectContaining({ certainty: 'incomplete' }),
     ]));
     expect(trajectory.points).toContainEqual(expect.objectContaining({ turn: 4, weight: 1, kind: 'creation', label: '形成' }));
-    expect(trajectory.points).toContainEqual(expect.objectContaining({ turn: 8, weight: Math.exp(-0.15 * 2), kind: 'current', label: '当前' }));
+    expect(trajectory.points).toContainEqual(expect.objectContaining({ turn: 8, weight: Math.exp(-0.015 * 2), kind: 'current', label: '当前' }));
     expect(trajectory.segments.flatMap(({ points }: { points: Array<{ weight: number }> }) => points).every(({ weight }: { weight: number }) => weight >= 0 && weight <= 1)).toBe(true);
     expect(legacy).toEqual(before);
+  });
+
+  it('uses snapshot.eventDecayLambda when sampling the Event weight trajectory', async () => {
+    const custom = structuredClone(snapshot);
+    custom.eventDecayLambda = 0.05;
+    custom.usageReceipts = [];
+    custom.events[0]!.weight.mentionCount = 1;
+    custom.events[0]!.weight.lastAdoptedTurn = 4;
+    const result = await request('/api/stratagate/memories?namespace=custom-decay&kind=events', 'GET', {
+      adminSnapshot: async () => custom,
+    } as unknown as StrataGateRuntime);
+    expect(result.body.items[0].weightTrajectory.currentWeight).toBeCloseTo(Math.exp(-0.05 * 4), 12);
   });
 
   it('draws every confirmed adoption and a solid tail when older adoption turns are missing', async () => {
@@ -1541,16 +1558,20 @@ describe('StrataGate admin routes', () => {
 
   it('updates the global Block settings while memory routes remain read-only', async () => {
     updatedLambda = null
+    updatedEventLambda = null
     updatedTurnSize = null
     updatedAgentWeight = null
-    const settings = await request('/api/stratagate/settings?blockTurnSize=3&blockDecayLambda=0.15&agentMemoryRetrievalWeight=2.5', 'PATCH')
-    expect(settings).toMatchObject({ status: 200, body: { blockTurnSize: 3, blockDecayLambda: 0.15, agentMemoryRetrievalWeight: 2.5 } })
+    const settings = await request('/api/stratagate/settings?blockTurnSize=3&blockDecayLambda=0.15&eventDecayLambda=0.02&agentMemoryRetrievalWeight=2.5', 'PATCH')
+    expect(settings).toMatchObject({ status: 200, body: { blockTurnSize: 3, blockDecayLambda: 0.15, eventDecayLambda: 0.02, agentMemoryRetrievalWeight: 2.5 } })
     expect(updatedTurnSize).toBe(3)
     expect(updatedLambda).toBe(0.15)
+    expect(updatedEventLambda).toBe(0.02)
     expect(updatedAgentWeight).toBe(2.5)
 
     const invalid = await request('/api/stratagate/settings?blockDecayLambda=nope', 'PATCH')
     expect(invalid).toMatchObject({ status: 400, body: { error: expect.stringContaining('blockDecayLambda') } })
+    const invalidEventLambda = await request('/api/stratagate/settings?eventDecayLambda=-0.01', 'PATCH')
+    expect(invalidEventLambda).toMatchObject({ status: 400, body: { error: expect.stringContaining('eventDecayLambda') } })
     const invalidTurnSize = await request('/api/stratagate/settings?blockTurnSize=2.5', 'PATCH')
     expect(invalidTurnSize).toMatchObject({ status: 400, body: { error: expect.stringContaining('blockTurnSize') } })
     const invalidWeight = await request('/api/stratagate/settings?agentMemoryRetrievalWeight=9', 'PATCH')

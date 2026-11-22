@@ -2401,6 +2401,8 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("type: 'number'")
     expect(source).toContain("step: 1, label: '每个 Block 的对话轮数'")
     expect(source).toContain("step: 0.05, label: 'Block 衰减系数 λ'")
+    expect(source).toContain("step: 0.005, label: 'Event 衰减系数 λ'")
+    expect(source).toContain("['eventDecayLambda', 'Event 衰减系数', '', 0, 0.2, 0.005]")
     expect(source).toContain('每个 Block 的对话轮数')
     expect(source).toContain('只影响后续未封存内容。')
     expect(source).toContain('建议 λ 调整为')

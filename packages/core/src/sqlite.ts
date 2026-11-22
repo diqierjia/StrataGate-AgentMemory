@@ -3,6 +3,7 @@ import { snapshotWriteSet, type RecordCollection } from './storage-write-set.js'
 import { resolve } from 'node:path';
 import { BACKGROUND_WORK_INDEX_VERSION, backgroundWorkTimes, type BackgroundWorkTimes } from './background-work.js';
 import { TOPIC_LEASE_MS, type MemoryTopicState } from './topics.js';
+import { DEFAULT_EVENT_DECAY_LAMBDA } from './weights.js';
 import {
   STRATAGATE_STORAGE_SCHEMA_VERSION,
   DERIVATION_LEASE_MS,
@@ -75,6 +76,7 @@ interface SpaceRow {
   current_turn: number;
   block_turn_size: number;
   block_decay_lambda: number;
+  event_decay_lambda?: number;
   graph_enabled?: number;
   graph_epoch?: number;
   graph_approved_event_ids_json?: string;
@@ -300,6 +302,7 @@ CREATE TABLE IF NOT EXISTS memory_spaces (
   current_turn INTEGER NOT NULL,
   block_turn_size INTEGER NOT NULL,
   block_decay_lambda REAL NOT NULL,
+  event_decay_lambda REAL NOT NULL DEFAULT 0.015,
   graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1)),
   graph_epoch INTEGER NOT NULL DEFAULT 0,
   graph_approved_event_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -947,8 +950,9 @@ export class SqliteStorage implements StorageAdapter {
     this.assertOpen();
     const key = nonEmptyNamespace(namespace);
     const hasGraphEnabled = this.hasColumn('memory_spaces', 'graph_enabled');
+    const hasEventDecayLambda = this.hasColumn('memory_spaces', 'event_decay_lambda');
     const space = this.database.prepare(`
-      SELECT schema_version, revision, current_turn, block_turn_size, block_decay_lambda${hasGraphEnabled ? ', graph_enabled, graph_epoch' : ''}${this.hasColumn('memory_spaces', 'graph_approved_event_ids_json') ? ', graph_approved_event_ids_json' : ''}
+      SELECT schema_version, revision, current_turn, block_turn_size, block_decay_lambda${hasEventDecayLambda ? ', event_decay_lambda' : ''}${hasGraphEnabled ? ', graph_enabled, graph_epoch' : ''}${this.hasColumn('memory_spaces', 'graph_approved_event_ids_json') ? ', graph_approved_event_ids_json' : ''}
       FROM memory_spaces WHERE namespace = ?
     `).get(key) as SpaceRow | undefined;
     if (!space) return null;
@@ -1260,6 +1264,7 @@ export class SqliteStorage implements StorageAdapter {
       currentTurn: space.current_turn,
       blockTurnSize: space.block_turn_size,
       blockDecayLambda: space.block_decay_lambda,
+      eventDecayLambda: space.event_decay_lambda ?? DEFAULT_EVENT_DECAY_LAMBDA,
       graphEnabled: Boolean(space.graph_enabled),
       graphEpoch: space.graph_epoch ?? 0,
       graphBackfillEventIds: parseJson<string[]>(space.graph_approved_event_ids_json ?? '[]', 'memory_spaces.graph_approved_event_ids_json'),
@@ -1603,7 +1608,7 @@ export class SqliteStorage implements StorageAdapter {
     if (current) {
       this.database.prepare(`
         UPDATE memory_spaces
-        SET schema_version = ?, revision = ?, current_turn = ?, block_turn_size = ?, block_decay_lambda = ?, graph_enabled = ?, graph_epoch = ?, graph_approved_event_ids_json = ?, updated_at = ?
+        SET schema_version = ?, revision = ?, current_turn = ?, block_turn_size = ?, block_decay_lambda = ?, event_decay_lambda = ?, graph_enabled = ?, graph_epoch = ?, graph_approved_event_ids_json = ?, updated_at = ?
         WHERE namespace = ?
       `).run(
         snapshot.schemaVersion,
@@ -1611,6 +1616,7 @@ export class SqliteStorage implements StorageAdapter {
         snapshot.currentTurn,
         snapshot.blockTurnSize,
         snapshot.blockDecayLambda,
+        snapshot.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA,
         snapshot.graphEnabled === true ? 1 : 0,
         snapshot.graphEpoch ?? 0,
         JSON.stringify(snapshot.graphBackfillEventIds ?? []),
@@ -1620,8 +1626,8 @@ export class SqliteStorage implements StorageAdapter {
     } else {
       this.database.prepare(`
         INSERT INTO memory_spaces (
-          namespace, schema_version, revision, current_turn, block_turn_size, block_decay_lambda, graph_enabled, graph_epoch, graph_approved_event_ids_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          namespace, schema_version, revision, current_turn, block_turn_size, block_decay_lambda, event_decay_lambda, graph_enabled, graph_epoch, graph_approved_event_ids_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         namespace,
         snapshot.schemaVersion,
@@ -1629,6 +1635,7 @@ export class SqliteStorage implements StorageAdapter {
         snapshot.currentTurn,
         snapshot.blockTurnSize,
         snapshot.blockDecayLambda,
+        snapshot.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA,
         snapshot.graphEnabled === true ? 1 : 0,
         snapshot.graphEpoch ?? 0,
         JSON.stringify(snapshot.graphBackfillEventIds ?? []),
@@ -2588,6 +2595,9 @@ export class SqliteStorage implements StorageAdapter {
         if (!spaceColumns.some(({ name }) => name === 'block_decay_lambda')) {
           this.database.exec('ALTER TABLE memory_spaces ADD COLUMN block_decay_lambda REAL NOT NULL DEFAULT 0.3');
         }
+        if (!spaceColumns.some(({ name }) => name === 'event_decay_lambda')) {
+          this.database.exec(`ALTER TABLE memory_spaces ADD COLUMN event_decay_lambda REAL NOT NULL DEFAULT ${DEFAULT_EVENT_DECAY_LAMBDA}`);
+        }
         if (!spaceColumns.some(({ name }) => name === 'graph_enabled')) {
           this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1))');
         }
@@ -2695,6 +2705,9 @@ export class SqliteStorage implements StorageAdapter {
         }
         if (!this.hasColumn('memory_spaces', 'graph_enabled')) {
           this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_enabled INTEGER NOT NULL DEFAULT 0 CHECK (graph_enabled IN (0, 1))');
+        }
+        if (!this.hasColumn('memory_spaces', 'event_decay_lambda')) {
+          this.database.exec(`ALTER TABLE memory_spaces ADD COLUMN event_decay_lambda REAL NOT NULL DEFAULT ${DEFAULT_EVENT_DECAY_LAMBDA}`);
         }
         if (!this.hasColumn('memory_spaces', 'graph_epoch')) this.database.exec('ALTER TABLE memory_spaces ADD COLUMN graph_epoch INTEGER NOT NULL DEFAULT 0');
         if (!this.hasColumn('memory_spaces', 'graph_approved_event_ids_json')) this.database.exec("ALTER TABLE memory_spaces ADD COLUMN graph_approved_event_ids_json TEXT NOT NULL DEFAULT '[]'");

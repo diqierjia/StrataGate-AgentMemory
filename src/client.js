@@ -4707,7 +4707,8 @@ window.__ModuleLoader__.load({
       const current = Number(value)
       const bump = (direction) => {
         if (!Number.isFinite(current) || disabled) return
-        const next = Math.min(max, Math.max(min, Number((current + direction * step).toFixed(2))))
+        const decimals = Math.max(2, (String(step).split('.')[1] || '').length)
+        const next = Math.min(max, Math.max(min, Number((current + direction * step).toFixed(decimals))))
         if (next !== current) onChange(next)
       }
       return h('span', { className: 'sg-stp', role: 'group', 'aria-label': label },
@@ -4724,23 +4725,29 @@ window.__ModuleLoader__.load({
       const [savingKey, setSavingKey] = React.useState('')
       const [copyState, setCopyState] = React.useState('')
       React.useEffect(() => {
-        setPending({ blockTurnSize: String(selected?.blockTurnSize ?? 6), blockDecayLambda: String(selected?.blockDecayLambda ?? 0.3), agentMemoryRetrievalWeight: String(selected?.agentMemoryRetrievalWeight ?? 1) })
-      }, [selected?.blockTurnSize, selected?.blockDecayLambda, selected?.agentMemoryRetrievalWeight])
+        setPending({
+          blockTurnSize: String(selected?.blockTurnSize ?? 6),
+          blockDecayLambda: String(selected?.blockDecayLambda ?? 0.3),
+          eventDecayLambda: String(selected?.eventDecayLambda ?? 0.015),
+          agentMemoryRetrievalWeight: String(selected?.agentMemoryRetrievalWeight ?? 1),
+        })
+      }, [selected?.blockTurnSize, selected?.blockDecayLambda, selected?.eventDecayLambda, selected?.agentMemoryRetrievalWeight])
       const engine = [
         ['blockTurnSize', '每块轮数', '', 1, 30, 1],
-        ['blockDecayLambda', '衰减系数', '', 0, 0.4, 0.05],
+        ['blockDecayLambda', 'Block 衰减系数', '', 0, 0.4, 0.05],
+        ['eventDecayLambda', 'Event 衰减系数', '', 0, 0.2, 0.005],
         ['agentMemoryRetrievalWeight', '主动检索占比', '', 0, 5, 0.05],
       ]
-      const saved = (key) => Number(selected?.[key] ?? (key === 'blockTurnSize' ? 6 : key === 'blockDecayLambda' ? 0.3 : 1))
+      const saved = (key) => Number(selected?.[key] ?? (key === 'blockTurnSize' ? 6 : key === 'blockDecayLambda' ? 0.3 : key === 'eventDecayLambda' ? 0.015 : 1))
       const changedKeys = engine.map(([key]) => key).filter((key) => pending[key] !== undefined && Number(pending[key]) !== saved(key) && pending[key] !== '')
       const validEngine = engine.every(([key]) => { const raw = pending[key]; return raw !== undefined && raw !== '' && Number.isFinite(Number(raw)) })
       const saveEngine = async () => {
         if (!changedKeys.length || !validEngine || savingSettings) return
         setSettingError({ key: '', text: '' })
-        try { await updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) }) }
+        try { await updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), eventDecayLambda: Number(pending.eventDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) }) }
         catch (reason) { setSettingError({ key: 'engine', text: '未能保存引擎参数：' + String(reason?.message || reason) }) }
       }
-      const discardEngine = () => setPending({ blockTurnSize: String(saved('blockTurnSize')), blockDecayLambda: String(saved('blockDecayLambda')), agentMemoryRetrievalWeight: String(saved('agentMemoryRetrievalWeight')) })
+      const discardEngine = () => setPending({ blockTurnSize: String(saved('blockTurnSize')), blockDecayLambda: String(saved('blockDecayLambda')), eventDecayLambda: String(saved('eventDecayLambda')), agentMemoryRetrievalWeight: String(saved('agentMemoryRetrievalWeight')) })
       // Every switch writes its own setting immediately; a failure is reported on
       // the row that caused it instead of a page-level banner.
       const toggle = async (key, setter, next) => {
@@ -4831,7 +4838,7 @@ window.__ModuleLoader__.load({
             group('显示', displayRows),
             group('短期记忆', dailyRows),
             group('引擎参数', engineRows, h(React.Fragment, null,
-              rowError('engine', () => updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) })),
+              rowError('engine', () => updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), eventDecayLambda: Number(pending.eventDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) })),
               changedKeys.length ? h('li', { className: 'sg-dirty' },
                 h('span', null, changedKeys.length + ' 项未保存'),
                 h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: discardEngine }, '放弃'),
@@ -6489,20 +6496,25 @@ window.__ModuleLoader__.load({
     function SettingsPage({ selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged, onOpenDreamingSession }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
+      const [eventLambda, setEventLambda] = React.useState(String(selected.eventDecayLambda ?? 0.015))
       const [agentWeight, setAgentWeight] = React.useState(String(selected.agentMemoryRetrievalWeight ?? 1))
       const [directoryOpening, setDirectoryOpening] = React.useState(false)
       const [directoryFeedback, setDirectoryFeedback] = React.useState({ kind: '', text: '' })
       React.useEffect(() => {
         setTurnSize(String(selected.blockTurnSize ?? 6))
         setLambda(String(selected.blockDecayLambda ?? 0.3))
+        setEventLambda(String(selected.eventDecayLambda ?? 0.015))
         setAgentWeight(String(selected.agentMemoryRetrievalWeight ?? 1))
-      }, [selected.blockTurnSize, selected.blockDecayLambda, selected.agentMemoryRetrievalWeight])
+      }, [selected.blockTurnSize, selected.blockDecayLambda, selected.eventDecayLambda, selected.agentMemoryRetrievalWeight])
       const turnSizeValue = Number(turnSize)
       const lambdaValue = Number(lambda)
+      const eventLambdaValue = Number(eventLambda)
       const agentWeightValue = Number(agentWeight)
       const valid = Number.isSafeInteger(turnSizeValue) && turnSizeValue >= 1 && lambda !== '' && Number.isFinite(lambdaValue) && lambdaValue >= 0
+        && eventLambda !== '' && Number.isFinite(eventLambdaValue) && eventLambdaValue >= 0
         && agentWeight !== '' && Number.isFinite(agentWeightValue) && agentWeightValue >= 0 && agentWeightValue <= 5
       const changed = valid && (turnSizeValue !== selected.blockTurnSize || lambdaValue !== selected.blockDecayLambda
+        || eventLambdaValue !== (selected.eventDecayLambda ?? 0.015)
         || agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1))
       const suggestedLambda = Math.round(((selected.blockDecayLambda ?? 0.3) * turnSizeValue / (selected.blockTurnSize || 6)) / 0.05) * 0.05
       const showSuggestion = Number.isSafeInteger(turnSizeValue) && turnSizeValue >= 1 && turnSizeValue !== selected.blockTurnSize
@@ -6543,7 +6555,8 @@ window.__ModuleLoader__.load({
         const delta = allowFloat ? step : 1
         const bump = (direction) => {
           if (!Number.isFinite(current)) return
-          const next = Math.min(max, Math.max(min, Number((current + direction * delta).toFixed(2))))
+          const decimals = Math.max(2, (String(delta).split('.')[1] || '').length)
+          const next = Math.min(max, Math.max(min, Number((current + direction * delta).toFixed(decimals))))
           onChange(String(next))
         }
         return h('span', { className: 'sg-stp sg-stp-wide' },
@@ -6557,11 +6570,13 @@ window.__ModuleLoader__.load({
         h('div', { className: 'sg-stage' }, h('span', null, 'Block 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, stepper({ value: lambda, onChange: setLambda, min: 0, max: 0.4, step: 0.05, label: 'Block 衰减系数 λ', allowFloat: true }))),
         h('p', { className: 'sg-setting-note' }, '越小遗忘越慢，token 消耗越多。'),
         showSuggestion ? h('div', { className: 'sg-setting-suggestion' }, h('span', null, '建议 λ 调整为 ' + suggestedLambda.toFixed(2) + '。'), h('button', { type: 'button', className: 'sg-quiet-button', onClick: () => setLambda(String(Number(suggestedLambda.toFixed(2)))) }, '采用建议值')) : null,
+        h('div', { className: 'sg-stage' }, h('span', null, 'Event 衰减系数 λ'), h('span', { className: 'sg-lambda-control' }, stepper({ value: eventLambda, onChange: setEventLambda, min: 0, max: 0.2, step: 0.005, label: 'Event 衰减系数 λ', allowFloat: true }))),
+        h('p', { className: 'sg-setting-note' }, '默认 0.015，越小长期记忆权重衰减越慢，0 表示不衰减；只影响检索排序与展示，不会删除记忆。'),
         h('div', { className: 'sg-stage' }, h('span', null, '主动记忆检索占比'), h('span', { className: 'sg-lambda-control' }, stepper({ value: agentWeight, onChange: setAgentWeight, min: 0, max: 5, step: 0.05, label: '主动记忆检索占比', allowFloat: true }))),
         h('p', { className: 'sg-setting-note' }, '1 为平权，0 不展示 agent 记录。'),
-        changed ? h('div', { className: 'sg-dirty' }, h('span', null, [turnSizeValue !== selected.blockTurnSize, lambdaValue !== selected.blockDecayLambda, agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1)].filter(Boolean).length + ' 项未保存'),
-          h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: () => { setTurnSize(String(selected.blockTurnSize ?? 6)); setLambda(String(selected.blockDecayLambda ?? 0.3)); setAgentWeight(String(selected.agentMemoryRetrievalWeight ?? 1)) } }, '放弃'),
-          h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : '保存'))
+        changed ? h('div', { className: 'sg-dirty' }, h('span', null, [turnSizeValue !== selected.blockTurnSize, lambdaValue !== selected.blockDecayLambda, eventLambdaValue !== (selected.eventDecayLambda ?? 0.015), agentWeightValue !== (selected.agentMemoryRetrievalWeight ?? 1)].filter(Boolean).length + ' 项未保存'),
+          h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: () => { setTurnSize(String(selected.blockTurnSize ?? 6)); setLambda(String(selected.blockDecayLambda ?? 0.3)); setEventLambda(String(selected.eventDecayLambda ?? 0.015)); setAgentWeight(String(selected.agentMemoryRetrievalWeight ?? 1)) } }, '放弃'),
+          h('button', { type: 'button', className: 'sg-save-button', disabled: !changed || savingSettings, onClick: () => void updateSettings({ blockTurnSize: turnSizeValue, blockDecayLambda: lambdaValue, eventDecayLambda: eventLambdaValue, agentMemoryRetrievalWeight: agentWeightValue }) }, savingSettings ? '保存中…' : '保存'))
           : h('span', { className: 'sg-status organized sg-save-state', role: 'status', title: '已保存', 'aria-label': '已保存' }))
       const effortSettings = h('div', { className: 'sg-settings-panel sg-pipeline' },
         h('div', { className: 'sg-stage' }, h('span', null, '结构化推理档位'), h('span', { className: 'sg-lambda-control' },
@@ -6999,7 +7014,7 @@ window.__ModuleLoader__.load({
       let content = null
       if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings') content = h(SettingsPage, { selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
+      else if (view.name === 'settings') content = h(SettingsPage, { selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, eventDecayLambda: 0.015, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
       else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection,
         dreaming: namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)

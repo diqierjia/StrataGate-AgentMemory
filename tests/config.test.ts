@@ -27,6 +27,7 @@ describe('DeepSeek Harness plugin config', () => {
       globalNamespace: 'global',
       blockTurnSize: 6,
       blockDecayLambda: 0.3,
+      eventDecayLambda: 0.015,
       ingestSubagents: false,
       agentMemoryEnabled: true,
       agentMemoryRetrievalWeight: 1,
@@ -65,6 +66,18 @@ describe('DeepSeek Harness plugin config', () => {
       comment: '默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。',
     })
     expect(resolveConfig({ database: 'memory.db', blockDecayLambda: 0.15 }).blockDecayLambda).toBe(0.15)
+  })
+
+  it('exposes the Event decay coefficient and guidance in the plugin form', () => {
+    const field = Config.dict?.eventDecayLambda
+    expect(field?.meta).toMatchObject({
+      default: 0.015,
+      min: 0,
+      step: 0.005,
+      description: 'Event 衰减系数 λ',
+    })
+    expect(resolveConfig({ database: 'memory.db', eventDecayLambda: 0.02 }).eventDecayLambda).toBe(0.02)
+    expect(resolveConfig({ database: 'memory.db', eventDecayLambda: 0 }).eventDecayLambda).toBe(0)
   })
 
   it('exposes the agent memory switch and retrieval weight with safe defaults', () => {
