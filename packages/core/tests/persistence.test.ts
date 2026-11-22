@@ -687,16 +687,20 @@ describe('SQLite persistence', () => {
       namespace: 'project:block-size-change',
       blockTurnSize: 6,
       blockDecayLambda: 0.35,
+      eventDecayLambda: 0.02,
       now: fixedNow,
       idFactory: ids(),
     });
     expect(changed.blockTurnSize).toBe(6);
     expect(changed.blockDecayLambda).toBe(0.35);
+    expect(changed.eventDecayLambda).toBe(0.02);
     expect(changed.listOpenTail()).toHaveLength(2);
     await changed.setBlockTurnSize(3);
     await changed.setBlockDecayLambda(0.15);
+    await changed.setEventDecayLambda(0.01);
     expect(changed.blockTurnSize).toBe(3);
     expect(changed.blockDecayLambda).toBe(0.15);
+    expect(changed.eventDecayLambda).toBe(0.01);
     await changed.close();
 
     const restored = await StrataGate.open({
@@ -707,6 +711,7 @@ describe('SQLite persistence', () => {
     });
     expect(restored.blockTurnSize).toBe(3);
     expect(restored.blockDecayLambda).toBe(0.15);
+    expect(restored.eventDecayLambda).toBe(0.01);
     await restored.close();
   });
 

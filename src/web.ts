@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   DERIVATION_MAX_ATTEMPTS,
+  DEFAULT_EVENT_DECAY_LAMBDA,
   AUTO_EXTRACTED_QUOTES_NOTICE,
   deterministicBlockLayers,
   buildBlockTimeline,
@@ -266,11 +267,12 @@ function sampledEventWeight(
   turn: number,
   lastAdoptedTurn: number,
   mentionCount: number,
+  eventDecayLambda = DEFAULT_EVENT_DECAY_LAMBDA,
 ): number {
   return memoryWeightAt({
     status: event.status,
     weight: { ...event.weight, lastAdoptedTurn, mentionCount },
-  }, turn)
+  }, turn, eventDecayLambda)
 }
 
 function appendWeightSegment(
@@ -279,6 +281,7 @@ function appendWeightSegment(
   fromTurn: number,
   toTurn: number,
   mentionCount: number,
+  eventDecayLambda = DEFAULT_EVENT_DECAY_LAMBDA,
 ): void {
   if (toTurn < fromTurn) return
   if (toTurn === fromTurn) return
@@ -286,13 +289,14 @@ function appendWeightSegment(
   const samples = Math.min(256, Math.max(12, Math.ceil(span * 12)))
   const step = span / samples
   for (let turn = fromTurn; turn < toTurn; turn += step) {
-    points.push({ turn, weight: sampledEventWeight(event, turn, fromTurn, mentionCount), kind: 'sample' })
+    points.push({ turn, weight: sampledEventWeight(event, turn, fromTurn, mentionCount, eventDecayLambda), kind: 'sample' })
   }
-  points.push({ turn: toTurn, weight: sampledEventWeight(event, toTurn, fromTurn, mentionCount), kind: 'sample' })
+  points.push({ turn: toTurn, weight: sampledEventWeight(event, toTurn, fromTurn, mentionCount, eventDecayLambda), kind: 'sample' })
 }
 
 function eventWeightTrajectory(snapshot: AdminReadModel, event: EventCard): unknown {
   const currentTurn = snapshot.currentTurn
+  const eventDecayLambda = snapshot.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA
   const formedTurn = Number.isSafeInteger(event.formedTurn) && event.formedTurn! >= 0
     ? event.formedTurn!
     : null
@@ -359,12 +363,12 @@ function eventWeightTrajectory(snapshot: AdminReadModel, event: EventCard): unkn
     let mentionCount = 1
     for (const { turn, adoptionCount } of groupedAdoptions) {
       if (turn < trajectoryStartTurn || turn > currentTurn) continue
-      appendWeightSegment(lifecycle, event, anchorTurn, turn, mentionCount)
+      appendWeightSegment(lifecycle, event, anchorTurn, turn, mentionCount, eventDecayLambda)
       lifecycle.push({ turn, weight: 1, kind: 'adoption', adoptionCount, label: adoptionCount > 1 ? `采纳 ×${adoptionCount}` : '采纳' })
       anchorTurn = turn
       mentionCount += adoptionCount
     }
-    appendWeightSegment(lifecycle, event, anchorTurn, currentTurn, mentionCount)
+    appendWeightSegment(lifecycle, event, anchorTurn, currentTurn, mentionCount, eventDecayLambda)
     segments.push({ certainty: 'known', points: lifecycle })
   } else if (canInterpolate) {
     let anchorPoint = originPoint
@@ -373,7 +377,7 @@ function eventWeightTrajectory(snapshot: AdminReadModel, event: EventCard): unkn
     for (const { turn, adoptionCount } of visibleAdoptions) {
       if (anchorPoint && turn > anchorPoint.turn) {
         const incomplete: EventWeightTrajectoryPoint[] = [anchorPoint]
-        appendWeightSegment(incomplete, event, anchorPoint.turn, turn, mentionCount)
+        appendWeightSegment(incomplete, event, anchorPoint.turn, turn, mentionCount, eventDecayLambda)
         incomplete.push({ turn, weight: 1, kind: 'adoption', adoptionCount, label: adoptionCount > 1 ? `采纳 ×${adoptionCount}` : '采纳' })
         segments.push({ certainty: 'incomplete', points: incomplete })
       } else {
@@ -387,11 +391,11 @@ function eventWeightTrajectory(snapshot: AdminReadModel, event: EventCard): unkn
         && anchorPoint.turn === event.weight.lastAdoptedTurn
         && visibleAdoptions.at(-1)?.turn === event.weight.lastAdoptedTurn
       const tail: EventWeightTrajectoryPoint[] = [anchorPoint]
-      appendWeightSegment(tail, event, anchorPoint.turn, currentTurn, latestIsReliable ? event.weight.mentionCount : mentionCount)
+      appendWeightSegment(tail, event, anchorPoint.turn, currentTurn, latestIsReliable ? event.weight.mentionCount : mentionCount, eventDecayLambda)
       if (tail.length > 1) segments.push({ certainty: latestIsReliable ? 'known' : 'incomplete', points: tail })
     } else if (originPoint && originPoint.turn <= currentTurn) {
       const tail: EventWeightTrajectoryPoint[] = [originPoint]
-      appendWeightSegment(tail, event, originPoint.turn, currentTurn, 1)
+      appendWeightSegment(tail, event, originPoint.turn, currentTurn, 1, eventDecayLambda)
       if (tail.length > 1) segments.push({ certainty: historyComplete ? 'known' : 'incomplete', points: tail })
       else segments.push({ certainty: 'known', points: [originPoint] })
     }
@@ -399,7 +403,7 @@ function eventWeightTrajectory(snapshot: AdminReadModel, event: EventCard): unkn
     segments.push({ certainty: 'known', points: [originPoint] })
   }
 
-  const currentWeight = memoryWeightAt(event, currentTurn)
+  const currentWeight = memoryWeightAt(event, currentTurn, eventDecayLambda)
   const lastSegment = segments.at(-1)
   if (!lastSegment || lastSegment.points.at(-1)?.turn !== currentTurn) {
     segments.push({ certainty: 'known', points: [{ turn: currentTurn, weight: currentWeight, kind: 'current', label: '当前' }] })
@@ -956,6 +960,7 @@ async function overview(runtime: StrataGateRuntime, cachedEntries?: readonly Adm
       currentTurn: snapshot.currentTurn,
       blockTurnSize: snapshot.blockTurnSize,
       blockDecayLambda: snapshot.blockDecayLambda,
+      eventDecayLambda: snapshot.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA,
       agentMemoryRetrievalWeight: runtime.adminAgentMemoryRetrievalWeight?.() ?? 1,
       blocks: snapshot.blocks.length,
       openTailMessages: snapshot.openTail.length,
@@ -1036,6 +1041,7 @@ async function jsonBody(req: WebRequest, label: string, limit = 16 * 1024): Prom
 async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequest): Promise<unknown> {
   const rawTurnSize = url.searchParams.get('blockTurnSize')?.trim()
   const rawLambda = url.searchParams.get('blockDecayLambda')?.trim()
+  const rawEventLambda = url.searchParams.get('eventDecayLambda')?.trim()
   const rawAgentWeight = url.searchParams.get('agentMemoryRetrievalWeight')?.trim()
   const vectorParams = ['embeddingUrl', 'embeddingKey', 'embeddingModel', 'vectorWeight', 'embeddingMinScore',
     'rerankUrl', 'rerankKey', 'rerankModel'] as const
@@ -1047,11 +1053,12 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequ
   const body = hasBody ? await jsonBody(req, 'Embedding settings') : {}
   const suppliedVectorParams = vectorParams.filter((name) => Object.hasOwn(body, name))
   const suppliedProfileLimit = Object.hasOwn(body, 'profileMaxLength')
-  if (rawTurnSize === undefined && rawLambda === undefined && rawAgentWeight === undefined && suppliedVectorParams.length === 0 && !suppliedProfileLimit) {
-    throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, agentMemoryRetrievalWeight, profileMaxLength, or an embedding setting is required')
+  if (rawTurnSize === undefined && rawLambda === undefined && rawEventLambda === undefined && rawAgentWeight === undefined && suppliedVectorParams.length === 0 && !suppliedProfileLimit) {
+    throw new AdminHttpError(400, 'blockTurnSize, blockDecayLambda, eventDecayLambda, agentMemoryRetrievalWeight, profileMaxLength, or an embedding setting is required')
   }
   let turnSize: number | undefined
   let lambda: number | undefined
+  let eventLambda: number | undefined
   let agentWeight: number | undefined
   if (rawTurnSize !== undefined) {
     const value = Number(rawTurnSize)
@@ -1067,6 +1074,13 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequ
     }
     lambda = value
   }
+  if (rawEventLambda !== undefined) {
+    const value = Number(rawEventLambda)
+    if (!rawEventLambda || !Number.isFinite(value) || value < 0) {
+      throw new AdminHttpError(400, 'eventDecayLambda must be a non-negative finite number')
+    }
+    eventLambda = value
+  }
   if (rawAgentWeight !== undefined) {
     const value = Number(rawAgentWeight)
     if (rawAgentWeight === '' || !Number.isFinite(value) || value < 0 || value > 5) {
@@ -1074,9 +1088,10 @@ async function updateSettings(runtime: StrataGateRuntime, url: URL, req: WebRequ
     }
     agentWeight = value
   }
-  const result: { blockTurnSize?: number; blockDecayLambda?: number; agentMemoryRetrievalWeight?: number; profileMaxLength?: number; vectorSettings?: Record<string, unknown> } = {}
+  const result: { blockTurnSize?: number; blockDecayLambda?: number; eventDecayLambda?: number; agentMemoryRetrievalWeight?: number; profileMaxLength?: number; vectorSettings?: Record<string, unknown> } = {}
   if (turnSize !== undefined) result.blockTurnSize = await runtime.adminSetBlockTurnSize(turnSize)
   if (lambda !== undefined) result.blockDecayLambda = await runtime.adminSetBlockDecayLambda(lambda)
+  if (eventLambda !== undefined) result.eventDecayLambda = await runtime.adminSetEventDecayLambda(eventLambda)
   if (agentWeight !== undefined) result.agentMemoryRetrievalWeight = runtime.adminSetAgentMemoryRetrievalWeight(agentWeight)
   if (suppliedProfileLimit) {
     const value = body.profileMaxLength

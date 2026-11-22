@@ -169,7 +169,7 @@ Event decay uses:
 
 ```text
 w(t, n) = max(floor, exp(-lambda(n) * t))
-lambda(n) = 0.15 / (1 + 1.5 * ln(n))
+lambda(n) = eventDecayLambda / (1 + 1.5 * ln(n))   (default eventDecayLambda = 0.015)
 ```
 
 `n` is the number of recorded adoptions, not retrieval hits. Search updates `lastRetrievedAt` for observability, while `recordMemoryUse()` increments the adoption count and moves the decay anchor.

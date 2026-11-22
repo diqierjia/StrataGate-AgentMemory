@@ -1421,13 +1421,17 @@ describe('DSH runtime ingestion', () => {
         .space(futureSession)
       expect(future.blockTurnSize).toBe(6)
       expect(future.blockDecayLambda).toBe(0.3)
+      expect(future.eventDecayLambda).toBe(0.015)
 
       await runtime.adminSetBlockTurnSize(3)
       await runtime.adminSetBlockDecayLambda(0.15)
+      await runtime.adminSetEventDecayLambda(0.02)
       expect((await runtime.adminSnapshot(namespace))?.blockTurnSize).toBe(3)
       expect((await runtime.adminSnapshot(namespace))?.blockDecayLambda).toBe(0.15)
+      expect((await runtime.adminSnapshot(namespace))?.eventDecayLambda).toBe(0.02)
       expect(future.blockTurnSize).toBe(3)
       expect(future.blockDecayLambda).toBe(0.15)
+      expect(future.eventDecayLambda).toBe(0.02)
       expect(runtime.adminWorkspaceName(futureNamespace)).toBe('StrataGate')
     } finally {
       await runtime.close()
@@ -1447,8 +1451,10 @@ describe('DSH runtime ingestion', () => {
       await restored.syncConfiguredSettings()
       expect((await restored.adminSnapshot(namespace))?.blockTurnSize).toBe(3)
       expect((await restored.adminSnapshot(namespace))?.blockDecayLambda).toBe(0.15)
+      expect((await restored.adminSnapshot(namespace))?.eventDecayLambda).toBe(0.02)
       expect((await restored.adminSnapshot(futureNamespace))?.blockTurnSize).toBe(3)
       expect((await restored.adminSnapshot(futureNamespace))?.blockDecayLambda).toBe(0.15)
+      expect((await restored.adminSnapshot(futureNamespace))?.eventDecayLambda).toBe(0.02)
       expect(restored.adminWorkspaceName(futureNamespace)).toBe('StrataGate')
     } finally {
       await restored.close()

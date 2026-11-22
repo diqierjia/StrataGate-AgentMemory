@@ -1,4 +1,5 @@
 import z from '@deepseek-ai/schemastery'
+import { DEFAULT_EVENT_DECAY_LAMBDA } from '@diqier/stratagate'
 
 export type NamespaceMode = 'project' | 'session' | 'global'
 export type StructuredReasoningEffortMode = 'auto' | 'force-off'
@@ -34,6 +35,7 @@ export interface Config {
   globalNamespace?: string
   blockTurnSize?: number
   blockDecayLambda?: number
+  eventDecayLambda?: number
   ingestSubagents?: boolean
   agentMemoryEnabled?: boolean
   agentMemoryRetrievalWeight?: number
@@ -69,6 +71,7 @@ export interface ResolvedConfig {
   globalNamespace: string
   blockTurnSize: number
   blockDecayLambda: number
+  eventDecayLambda?: number
   ingestSubagents: boolean
   agentMemoryEnabled?: boolean
   agentMemoryRetrievalWeight?: number
@@ -140,6 +143,9 @@ export const Config = z.object({
   blockDecayLambda: z.number().step(0.05).min(0).default(0.3)
     .description('Block 衰减系数 λ')
     .comment('默认 0.3；数字越小，记忆遗忘越慢，消耗 token 越多，不建议大于 0.4。'),
+  eventDecayLambda: z.number().step(0.005).min(0).default(DEFAULT_EVENT_DECAY_LAMBDA)
+    .description('Event 衰减系数 λ')
+    .comment('默认 0.015（未采纳事件半衰期约 46 轮）；数字越小，长期记忆权重衰减越慢，0 表示不衰减。'),
   ingestSubagents: z.boolean().default(false),
   agentMemoryEnabled: z.boolean().default(true)
     .description('启用 agent 主动记忆（memory_remember）')
@@ -223,6 +229,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     globalNamespace,
     blockTurnSize: Math.max(1, Math.floor(config.blockTurnSize ?? 6)),
     blockDecayLambda: Math.max(0, config.blockDecayLambda ?? 0.3),
+    eventDecayLambda: Math.max(0, config.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA),
     ingestSubagents: config.ingestSubagents ?? false,
     agentMemoryEnabled: config.agentMemoryEnabled ?? true,
     agentMemoryRetrievalWeight: Math.min(5, Math.max(0, config.agentMemoryRetrievalWeight ?? 1)),

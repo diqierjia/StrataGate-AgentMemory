@@ -11,6 +11,7 @@ import { validateArgs } from '@deepseek-ai/dsh-tools'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import {
   DERIVATION_MAX_ATTEMPTS,
+  DEFAULT_EVENT_DECAY_LAMBDA,
   KNOWLEDGE_GRAPH_PROJECTOR_VERSION,
   type GraphRuntimePolicy,
   GRAPH_PROVENANCE_LIMIT,
@@ -484,6 +485,7 @@ export class StrataGateRuntime {
   private closed = false
   private blockTurnSize: number
   private blockDecayLambda: number
+  private eventDecayLambda: number
   private agentMemoryRetrievalWeight: number
   /** Host-side embedding bridge: every embedding HTTP call lives behind it. */
   private readonly embedding: EmbeddingBridge
@@ -578,6 +580,7 @@ export class StrataGateRuntime {
       ? this.namespaceFor(session) : this.diagnosticNamespaceForSession(sessionId ?? '') ?? '@shared')
     this.blockTurnSize = config.blockTurnSize
     this.blockDecayLambda = config.blockDecayLambda
+    this.eventDecayLambda = config.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA
     this.agentMemoryRetrievalWeight = config.agentMemoryRetrievalWeight ?? 1
     this.embedding = new EmbeddingBridge(config)
     this.disposeAdaptersUpdated = this.models.onAdaptersUpdated(() => this.wakeModelWorkers())
@@ -2704,7 +2707,7 @@ export class StrataGateRuntime {
           createdAt: event.createdAt,
           updatedAt: event.updatedAt,
           sourceBlockId: event.sourceBlockId,
-          weight: Number(memoryWeightAt(event, snapshot.currentTurn).toFixed(3)),
+          weight: Number(memoryWeightAt(event, snapshot.currentTurn, snapshot.eventDecayLambda ?? this.eventDecayLambda).toFixed(3)),
         })
       }
     }
@@ -2800,6 +2803,7 @@ export class StrataGateRuntime {
     try {
       this.blockTurnSize = metadata.blockTurnSize() ?? this.config.blockTurnSize
       this.blockDecayLambda = metadata.blockDecayLambda() ?? this.config.blockDecayLambda
+      this.eventDecayLambda = metadata.eventDecayLambda() ?? this.config.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA
       this.agentMemoryRetrievalWeight = metadata.agentMemoryRetrievalWeight() ?? this.config.agentMemoryRetrievalWeight ?? 1
       const savedProfileLimit = Number(this.readRuntimeSetting(PROFILE_LIMIT_SETTING_KEY))
       if (Number.isSafeInteger(savedProfileLimit) && savedProfileLimit >= PROFILE_TOTAL_MAX_LENGTH_MIN && savedProfileLimit <= PROFILE_TOTAL_MAX_LENGTH_MAX) {
@@ -2839,11 +2843,13 @@ export class StrataGateRuntime {
         if (!loaded || (
           loaded.snapshot.blockTurnSize === this.blockTurnSize
           && loaded.snapshot.blockDecayLambda === this.blockDecayLambda
+          && (loaded.snapshot.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA) === this.eventDecayLambda
         )) continue
         await storage.save(namespace, {
           ...loaded.snapshot,
           blockTurnSize: this.blockTurnSize,
           blockDecayLambda: this.blockDecayLambda,
+          eventDecayLambda: this.eventDecayLambda,
         }, loaded.revision)
       }
     } finally {
@@ -3705,6 +3711,16 @@ export class StrataGateRuntime {
     return value
   }
 
+  async adminSetEventDecayLambda(value: number): Promise<number> {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new TypeError('eventDecayLambda must be a non-negative finite number')
+    }
+    const update = this.settingsTail.catch(() => {}).then(() => this.applyEventDecayLambda(value))
+    this.settingsTail = update.then(() => {}, () => {})
+    await update
+    return value
+  }
+
   /** Runtime-tunable agent-memory retrieval share (0–5); persisted next to the Block knobs. */
   adminAgentMemoryRetrievalWeight(): number {
     return this.agentMemoryRetrievalWeight
@@ -3951,6 +3967,39 @@ export class StrataGateRuntime {
     }
   }
 
+  private async applyEventDecayLambda(value: number): Promise<void> {
+    await this.flush()
+    this.eventDecayLambda = value
+    if (this.config.database !== ':memory:') {
+      const metadata = new DshMetadataStore(this.config.database)
+      try {
+        metadata.setEventDecayLambda(value)
+      } finally {
+        metadata.close()
+      }
+    }
+
+    const openNamespaces = new Set<string>()
+    for (const [namespace, opening] of this.spaces) {
+      const memory = await opening
+      await memory.setEventDecayLambda(value)
+      openNamespaces.add(namespace)
+    }
+    if (this.config.database !== ':memory:' && existsSync(this.config.database)) {
+      const storage = new SqliteStorage({ filename: this.config.database })
+      try {
+        for (const namespace of storage.listNamespaces()) {
+          if (openNamespaces.has(namespace)) continue
+          const loaded = await storage.load(namespace)
+          if (!loaded || (loaded.snapshot.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA) === value) continue
+          await storage.save(namespace, { ...loaded.snapshot, eventDecayLambda: value }, loaded.revision)
+        }
+      } finally {
+        await storage.close()
+      }
+    }
+  }
+
   private async applyBlockTurnSize(value: number): Promise<void> {
     await this.flush()
     this.blockTurnSize = value
@@ -3997,6 +4046,7 @@ export class StrataGateRuntime {
         graphPolicy: () => this.graphPolicyFor(namespace),
         blockTurnSize: this.blockTurnSize,
         blockDecayLambda: this.blockDecayLambda,
+        eventDecayLambda: this.eventDecayLambda,
         summarizer: this.models.summarizer,
         extractor: this.models.extractor,
         ...(typeof this.models.eventDuplicateDecider === 'function' ? { eventDuplicateDecider: this.models.eventDuplicateDecider } : {}),
@@ -4212,6 +4262,7 @@ export class StrataGateRuntime {
         graphPolicy: () => this.graphPolicyFor(namespace),
         blockTurnSize: this.blockTurnSize,
         blockDecayLambda: this.blockDecayLambda,
+        eventDecayLambda: this.eventDecayLambda,
         ...(options.derivation ? {
           summarizer: this.models.summarizer,
           extractor: this.models.extractor,
@@ -4979,7 +5030,7 @@ function activatedEvents(memory: StrataGate, relevance: readonly EventSearchResu
   }
   const candidates = [...allowed.values()]
   const weight = [...candidates].sort((left, right) =>
-    memoryWeightAt(right, memory.turn) - memoryWeightAt(left, memory.turn)
+    memoryWeightAt(right, memory.turn, memory.eventDecayLambda) - memoryWeightAt(left, memory.turn, memory.eventDecayLambda)
       || right.updatedAt.localeCompare(left.updatedAt)
       || left.id.localeCompare(right.id))
   return rrfRank([activeHits.map(({ event }) => event), weight]).map(({ item }) => item)
@@ -4994,7 +5045,7 @@ function activatedElements(memory: StrataGate, relevance: readonly ElementSearch
   for (const hit of relevance) {
     const element = elements.get(hit.elementId)
     if (hit.fact.status === 'active' && element) {
-      allowed.set(hit.id, { ...hit, weight: memoryWeightAt(element, memory.turn) })
+      allowed.set(hit.id, { ...hit, weight: memoryWeightAt(element, memory.turn, memory.eventDecayLambda) })
     }
   }
   for (const element of elements.values()) {
@@ -5008,7 +5059,7 @@ function activatedElements(memory: StrataGate, relevance: readonly ElementSearch
         type: element.type,
         fact,
         score: 0,
-        weight: memoryWeightAt(element, memory.turn),
+        weight: memoryWeightAt(element, memory.turn, memory.eventDecayLambda),
       })
     }
   }

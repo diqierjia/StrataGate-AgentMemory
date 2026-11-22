@@ -104,13 +104,14 @@ import type {
   SearchOptions,
   ToolTrace,
 } from './types.js';
-import { criticalityFloor, memoryWeightAt } from './weights.js';
+import { DEFAULT_EVENT_DECAY_LAMBDA, criticalityFloor, memoryWeightAt } from './weights.js';
 import { toUtc8Iso } from './time.js';
 import { MEMORY_TOPIC_PROJECTOR_VERSION, TOPIC_LEASE_MS, MemoryTopicDirectory, type MemoryTopic, type TopicBootstrapState, type TopicProjectionContext, type TopicProjectionJob, type TopicProjectionMode, type TopicProjectionResult } from './topics.js';
 
 export interface StrataGateOptions {
   blockTurnSize?: number;
   blockDecayLambda?: number;
+  eventDecayLambda?: number;
   graphEnabled?: boolean;
   /** Installation-wide policy, synchronously read at every Graph boundary. */
   graphPolicy?: () => GraphRuntimePolicy;
@@ -393,6 +394,7 @@ export function eventMatchesSearchFilters(event: EventCard, options: SearchOptio
 export class StrataGate {
   private blockTurnSizeValue: number;
   private blockDecayLambdaValue: number;
+  private eventDecayLambdaValue: number;
   private graphEnabledValue: boolean;
   private graphEpoch = 0;
   private graphApprovedEventIds: string[] = [];
@@ -445,6 +447,11 @@ export class StrataGate {
       throw new TypeError('blockDecayLambda must be a non-negative finite number');
     }
     this.blockDecayLambdaValue = blockDecayLambda;
+    const eventDecayLambda = options.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA;
+    if (!Number.isFinite(eventDecayLambda) || eventDecayLambda < 0) {
+      throw new TypeError('eventDecayLambda must be a non-negative finite number');
+    }
+    this.eventDecayLambdaValue = eventDecayLambda;
     this.graphEnabledValue = options.graphEnabled === true;
     this.graphPolicy = options.graphPolicy;
     this.summarizer = options.summarizer;
@@ -479,6 +486,7 @@ export class StrataGate {
         namespace: options.namespace,
         ...(options.blockTurnSize !== undefined ? { blockTurnSize: options.blockTurnSize } : {}),
         ...(options.blockDecayLambda !== undefined ? { blockDecayLambda: options.blockDecayLambda } : {}),
+        ...(options.eventDecayLambda !== undefined ? { eventDecayLambda: options.eventDecayLambda } : {}),
         ...(options.graphEnabled !== undefined ? { graphEnabled: options.graphEnabled } : {}),
         ...(options.graphPolicy ? { graphPolicy: options.graphPolicy } : {}),
         ...(options.summarizer ? { summarizer: options.summarizer } : {}),
@@ -523,6 +531,16 @@ export class StrataGate {
           settingsChanged = true;
         }
       }
+      if (options.eventDecayLambda !== undefined) {
+        const requested = options.eventDecayLambda;
+        if (!Number.isFinite(requested) || requested < 0) {
+          throw new TypeError('eventDecayLambda must be a non-negative finite number');
+        }
+        if (requested !== loadedSnapshot.eventDecayLambda) {
+          loadedSnapshot.eventDecayLambda = requested;
+          settingsChanged = true;
+        }
+      }
       if (settingsChanged) loadedRevision = await options.storage.save(namespace, loadedSnapshot, loadedRevision);
     }
     const memoryOptions: StrataGateOptions = {};
@@ -531,6 +549,8 @@ export class StrataGate {
     else if (options.blockTurnSize !== undefined) memoryOptions.blockTurnSize = options.blockTurnSize;
     if (loadedSnapshot) memoryOptions.blockDecayLambda = loadedSnapshot.blockDecayLambda;
     else if (options.blockDecayLambda !== undefined) memoryOptions.blockDecayLambda = options.blockDecayLambda;
+    if (loadedSnapshot) memoryOptions.eventDecayLambda = loadedSnapshot.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA;
+    else if (options.eventDecayLambda !== undefined) memoryOptions.eventDecayLambda = options.eventDecayLambda;
     if (loadedSnapshot) memoryOptions.graphEnabled = loadedSnapshot.graphEnabled === true;
     else if (options.graphEnabled !== undefined) memoryOptions.graphEnabled = options.graphEnabled;
     if (options.summarizer) memoryOptions.summarizer = options.summarizer;
@@ -753,6 +773,20 @@ export class StrataGate {
     if (value === this.blockDecayLambdaValue) return;
     await this.commitMutation(() => {
       this.blockDecayLambdaValue = value;
+    });
+  }
+
+  get eventDecayLambda(): number {
+    return this.eventDecayLambdaValue;
+  }
+
+  async setEventDecayLambda(value: number): Promise<void> {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new TypeError('eventDecayLambda must be a non-negative finite number');
+    }
+    if (value === this.eventDecayLambdaValue) return;
+    await this.commitMutation(() => {
+      this.eventDecayLambdaValue = value;
     });
   }
 
@@ -1467,6 +1501,7 @@ export class StrataGate {
       currentTurn: this.currentTurn,
       blockTurnSize: this.blockTurnSize,
       blockDecayLambda: this.blockDecayLambda,
+      eventDecayLambda: this.eventDecayLambda,
       graphEnabled: this.graphEnabledValue,
       graphEpoch: this.graphEpoch,
       graphBackfillEventIds: this.graphApprovedEventIds,
@@ -2346,7 +2381,7 @@ export class StrataGate {
     const structured = (items: readonly EventCard[]): EventCard[] => [...items].sort((left, right) => {
       if (options.temporalIntent === 'first') return chronology(left).localeCompare(chronology(right));
       if (options.temporalIntent === 'latest') return chronology(right).localeCompare(chronology(left));
-      return memoryWeightAt(right, this.currentTurn) - memoryWeightAt(left, this.currentTurn)
+      return memoryWeightAt(right, this.currentTurn, this.eventDecayLambda) - memoryWeightAt(left, this.currentTurn, this.eventDecayLambda)
         || right.updatedAt.localeCompare(left.updatedAt);
     });
     const participantIds = new Set(participantMatches.map(({ id }) => id));
@@ -3542,7 +3577,7 @@ export class StrataGate {
       existingEventIds: [event.id],
       matchedEventIds: [event.id],
       confidence: 1,
-      weight: Number(memoryWeightAt(event, this.currentTurn).toFixed(3)),
+      weight: Number(memoryWeightAt(event, this.currentTurn, this.eventDecayLambda).toFixed(3)),
     };
   }
 
@@ -3649,7 +3684,7 @@ export class StrataGate {
       ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
       ...(provenance.sourceBlockId !== undefined ? { sourceBlockId: provenance.sourceBlockId } : {}),
       sourceMessageIds: provenance.messageIds,
-      weight: Number(memoryWeightAt(event, this.currentTurn).toFixed(3)),
+      weight: Number(memoryWeightAt(event, this.currentTurn, this.eventDecayLambda).toFixed(3)),
     };
   }
 
@@ -4708,6 +4743,7 @@ export class StrataGate {
     }
     const copy = cloneSnapshot(normalized);
     this.blockDecayLambdaValue = copy.blockDecayLambda;
+    this.eventDecayLambdaValue = copy.eventDecayLambda ?? DEFAULT_EVENT_DECAY_LAMBDA;
     this.graphEnabledValue = copy.graphEnabled === true;
     this.graphEpoch = copy.graphEpoch ?? 0;
     this.graphApprovedEventIds = copy.graphBackfillEventIds ?? [];

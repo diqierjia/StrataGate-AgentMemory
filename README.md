@@ -408,7 +408,9 @@ The base Event-weight function is:
 
 <p align="center"><strong>w(t,n) = max(floor, e<sup>−λ(n)t</sup>)</strong></p>
 
-<p align="center"><strong>λ(n) = 0.15 / (1 + 1.5 ln(n))</strong></p>
+<p align="center"><strong>λ(n) = λ<sub>event</sub> / (1 + 1.5 ln(n))</strong></p>
+
+The default base decay coefficient λ<sub>event</sub> is **0.015** (configurable in settings; `0` disables decay).
 
 Here:
 

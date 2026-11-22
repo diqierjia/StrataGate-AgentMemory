@@ -183,7 +183,8 @@
       const current = Number(value)
       const bump = (direction) => {
         if (!Number.isFinite(current) || disabled) return
-        const next = Math.min(max, Math.max(min, Number((current + direction * step).toFixed(2))))
+        const decimals = Math.max(2, (String(step).split('.')[1] || '').length)
+        const next = Math.min(max, Math.max(min, Number((current + direction * step).toFixed(decimals))))
         if (next !== current) onChange(next)
       }
       return h('span', { className: 'sg-stp', role: 'group', 'aria-label': label },
@@ -200,23 +201,29 @@
       const [savingKey, setSavingKey] = React.useState('')
       const [copyState, setCopyState] = React.useState('')
       React.useEffect(() => {
-        setPending({ blockTurnSize: String(selected?.blockTurnSize ?? 6), blockDecayLambda: String(selected?.blockDecayLambda ?? 0.3), agentMemoryRetrievalWeight: String(selected?.agentMemoryRetrievalWeight ?? 1) })
-      }, [selected?.blockTurnSize, selected?.blockDecayLambda, selected?.agentMemoryRetrievalWeight])
+        setPending({
+          blockTurnSize: String(selected?.blockTurnSize ?? 6),
+          blockDecayLambda: String(selected?.blockDecayLambda ?? 0.3),
+          eventDecayLambda: String(selected?.eventDecayLambda ?? 0.015),
+          agentMemoryRetrievalWeight: String(selected?.agentMemoryRetrievalWeight ?? 1),
+        })
+      }, [selected?.blockTurnSize, selected?.blockDecayLambda, selected?.eventDecayLambda, selected?.agentMemoryRetrievalWeight])
       const engine = [
         ['blockTurnSize', '每块轮数', '', 1, 30, 1],
-        ['blockDecayLambda', '衰减系数', '', 0, 0.4, 0.05],
+        ['blockDecayLambda', 'Block 衰减系数', '', 0, 0.4, 0.05],
+        ['eventDecayLambda', 'Event 衰减系数', '', 0, 0.2, 0.005],
         ['agentMemoryRetrievalWeight', '主动检索占比', '', 0, 5, 0.05],
       ]
-      const saved = (key) => Number(selected?.[key] ?? (key === 'blockTurnSize' ? 6 : key === 'blockDecayLambda' ? 0.3 : 1))
+      const saved = (key) => Number(selected?.[key] ?? (key === 'blockTurnSize' ? 6 : key === 'blockDecayLambda' ? 0.3 : key === 'eventDecayLambda' ? 0.015 : 1))
       const changedKeys = engine.map(([key]) => key).filter((key) => pending[key] !== undefined && Number(pending[key]) !== saved(key) && pending[key] !== '')
       const validEngine = engine.every(([key]) => { const raw = pending[key]; return raw !== undefined && raw !== '' && Number.isFinite(Number(raw)) })
       const saveEngine = async () => {
         if (!changedKeys.length || !validEngine || savingSettings) return
         setSettingError({ key: '', text: '' })
-        try { await updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) }) }
+        try { await updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), eventDecayLambda: Number(pending.eventDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) }) }
         catch (reason) { setSettingError({ key: 'engine', text: '未能保存引擎参数：' + String(reason?.message || reason) }) }
       }
-      const discardEngine = () => setPending({ blockTurnSize: String(saved('blockTurnSize')), blockDecayLambda: String(saved('blockDecayLambda')), agentMemoryRetrievalWeight: String(saved('agentMemoryRetrievalWeight')) })
+      const discardEngine = () => setPending({ blockTurnSize: String(saved('blockTurnSize')), blockDecayLambda: String(saved('blockDecayLambda')), eventDecayLambda: String(saved('eventDecayLambda')), agentMemoryRetrievalWeight: String(saved('agentMemoryRetrievalWeight')) })
       // Every switch writes its own setting immediately; a failure is reported on
       // the row that caused it instead of a page-level banner.
       const toggle = async (key, setter, next) => {
@@ -307,7 +314,7 @@
             group('显示', displayRows),
             group('短期记忆', dailyRows),
             group('引擎参数', engineRows, h(React.Fragment, null,
-              rowError('engine', () => updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) })),
+              rowError('engine', () => updateSettings({ blockTurnSize: Number(pending.blockTurnSize), blockDecayLambda: Number(pending.blockDecayLambda), eventDecayLambda: Number(pending.eventDecayLambda), agentMemoryRetrievalWeight: Number(pending.agentMemoryRetrievalWeight) })),
               changedKeys.length ? h('li', { className: 'sg-dirty' },
                 h('span', null, changedKeys.length + ' 项未保存'),
                 h('button', { type: 'button', className: 'sg-quiet-button', disabled: savingSettings, onClick: discardEngine }, '放弃'),

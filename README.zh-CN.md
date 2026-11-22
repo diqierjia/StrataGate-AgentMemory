@@ -408,7 +408,9 @@ Agent 选定用于最终回答的证据后，提交采用记录。程序检查�
 
 <p align="center"><strong>w(t,n) = max(floor, e<sup>−λ(n)t</sup>)</strong></p>
 
-<p align="center"><strong>λ(n) = 0.15 / (1 + 1.5 ln(n))</strong></p>
+<p align="center"><strong>λ(n) = λ<sub>event</sub> / (1 + 1.5 ln(n))</strong></p>
+
+默认基础衰减系数 λ<sub>event</sub> 为 **0.015**（可在设置中调整，`0` 表示不衰减）。
 
 其中：
 

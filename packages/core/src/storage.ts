@@ -1,5 +1,6 @@
 import { BLOCK_DECAY_LAMBDA } from './blocks.js';
 import { normalizeEventMetadata, normalizeEventTemporal, normalizeStandardEventType } from './events.js';
+import { DEFAULT_EVENT_DECAY_LAMBDA } from './weights.js';
 import type { ElementCard, EventCard, ExternalMemoryImportJob, GraphEdge, GraphNode, MemoryBlock, RawMessage } from './types.js';
 import type { MemoryTopicState } from './topics.js';
 
@@ -159,6 +160,7 @@ export interface StrataGateSnapshot {
   currentTurn: number;
   blockTurnSize: number;
   blockDecayLambda: number;
+  eventDecayLambda?: number;
   /** Durable per-namespace Graph policy. Absent in pre-toggle snapshots. */
   graphEnabled?: boolean;
   graphEpoch?: number;
@@ -501,6 +503,10 @@ export function normalizeSnapshot(value: unknown): StrataGateSnapshot {
   }
   if (!Number.isFinite(snapshot.blockDecayLambda) || snapshot.blockDecayLambda < 0) {
     throw new TypeError('Invalid StrataGate snapshot: blockDecayLambda must be a non-negative finite number');
+  }
+  if (snapshot.eventDecayLambda === undefined) snapshot.eventDecayLambda = DEFAULT_EVENT_DECAY_LAMBDA;
+  if (!Number.isFinite(snapshot.eventDecayLambda) || snapshot.eventDecayLambda < 0) {
+    throw new TypeError('Invalid StrataGate snapshot: eventDecayLambda must be a non-negative finite number');
   }
   snapshot.graphEnabled = snapshot.graphEnabled === true;
   snapshot.graphEpoch = Number.isSafeInteger(snapshot.graphEpoch) && snapshot.graphEpoch! >= 0 ? snapshot.graphEpoch! : 0;

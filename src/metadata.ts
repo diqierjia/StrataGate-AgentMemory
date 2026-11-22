@@ -180,6 +180,20 @@ export class DshMetadataStore {
     this.setSetting('blockDecayLambda', value)
   }
 
+  eventDecayLambda(): number | null {
+    const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'eventDecayLambda'")
+      .get() as { value: string } | undefined
+    const value = Number(row?.value)
+    return Number.isFinite(value) && value >= 0 ? value : null
+  }
+
+  setEventDecayLambda(value: number): void {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new TypeError('eventDecayLambda must be a non-negative finite number')
+    }
+    this.setSetting('eventDecayLambda', value)
+  }
+
   agentMemoryRetrievalWeight(): number | null {
     const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'agentMemoryRetrievalWeight'")
       .get() as { value: string } | undefined
