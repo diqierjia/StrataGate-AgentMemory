@@ -2891,4 +2891,63 @@ describe('daily notes client', () => {
     expect(JSON.stringify(tree)).toContain('新会话带入最近 3 个有笔记日期')
     expect(JSON.stringify(tree)).toContain('天数保存失败')
   })
+  it('updates carried-in day cards and cut line immediately when injection days change', async () => {
+    const dates = ['2026-10-28', '2026-10-27', '2026-10-26', '2026-10-25']
+    const index = { dates, injectedDates: dates.slice(0, 3), enabled: true, today: '2026-10-28', injectionDays: 3 }
+    const state: unknown[] = [index, false, '', '2026-10-25', { loading: false, date: '2026-10-25', markdown: '## 事项', error: '' }, 0, 0, {}, false, '', null, true]
+    let stateIndex = 0
+    let refIndex = 0
+    const refs: Array<{ current: unknown }> = []
+    const react = {
+      createContext: (value: unknown) => ({ Provider: 'provider', value }),
+      createElement: (...args: unknown[]) => args,
+      Fragment: 'fragment',
+      useState: (initial: unknown) => {
+        const at = stateIndex++
+        if (!(at in state)) state[at] = initial
+        return [state[at], (update: unknown) => {
+          state[at] = typeof update === 'function' ? (update as (value: unknown) => unknown)(state[at]) : update
+        }]
+      },
+      useEffect: () => {},
+      useRef: (initial: unknown) => refs[refIndex++] ||= { current: initial },
+    }
+    const setter = vi.fn(async () => true)
+    const render = () => {
+      stateIndex = 0
+      refIndex = 0
+      return loadSupportHelpers([], { react }).DailyNotesPage({ namespace: 'n', setDailyInjectionDays: setter })
+    }
+    const before = render()
+    const allDayProps = (tree: unknown) => deepElementProps(tree).filter(prop => typeof prop.className === 'string' && /(?:^|\s)sg-day(?:\s|$)/.test(prop.className))
+    expect(allDayProps(before).map(prop => prop.className)).toEqual(['sg-day', 'sg-day', 'sg-day', 'sg-day out selected'])
+    expect(JSON.stringify(before)).toContain('以下不带入')
+    expect(JSON.stringify(before)).toContain('不在带入范围内')
+
+    buttonProps(before, '+')!.onClick()
+    const afterPlus = render()
+    expect(allDayProps(afterPlus).map(prop => prop.className)).toEqual(['sg-day', 'sg-day', 'sg-day', 'sg-day selected'])
+    expect(JSON.stringify(afterPlus)).not.toContain('以下不带入')
+    expect(JSON.stringify(afterPlus)).toContain('会带入新会话')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(setter).toHaveBeenCalledWith(4)
+  })
+  it('omits arbitrary HH:MM timestamps extracted from note bodies in the day list', () => {
+    const index = { dates: ['2026-11-22'], injectedDates: ['2026-11-22'], enabled: true, today: '2026-11-23', injectionDays: 3 }
+    const digests = {
+      '2026-11-22': [
+        { title: '未带时间的事项', detail: '无时间文本' },
+        { title: '正文提及时间的事项', detail: '当日 16:23 讨论', time: '16:23' },
+      ],
+    }
+    const tree = loadSupportHelpers([index, false, '', '2026-11-22', { loading: false, date: '2026-11-22', markdown: '', error: '' }, 0, 0, digests, false, '', null, false]).DailyNotesPage({ namespace: 'n' })
+    const json = JSON.stringify(tree)
+    expect(json).toContain('未带时间的事项')
+    expect(json).toContain('正文提及时间的事项')
+    expect(json).not.toContain('"sg-day-t"')
+    expect(json).not.toContain('16:23')
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).not.toContain('sg-day-t{')
+    expect(source).not.toContain("'sg-day-t'")
+  })
 })
