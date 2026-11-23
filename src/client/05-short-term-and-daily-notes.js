@@ -1,88 +1,101 @@
-    function previewText(value) {
-      const text = String(value || '').replace(/\s+/g, ' ').trim() || '暂无内容'
-      return text.length > 200 ? text.slice(0, 200) + '…' : text
+    const SHORT_TERM_LEVELS = [
+      { id: 0, short: '标题', name: '仅标题', hint: '只保留一句话主题与关键词' },
+      { id: 1, short: '摘要', name: '浓缩摘要', hint: '几十到百余字的背景与结论' },
+      { id: 2, short: '要点', name: '关键要点', hint: '分条列出事实、决定和依据' },
+      { id: 3, short: '精简', name: '精简对话', hint: '保留问答骨架，删掉寒暄和重复' },
+      { id: 4, short: '较完整', name: '较完整对话', hint: '保留绝大部分细节，仅裁剪冗余' },
+      { id: 5, short: '原文', name: '完整原文', hint: '逐字逐句，包含全部细节' },
+    ]
+
+    function formatShortTokens(value) {
+      const count = Number(value)
+      if (!Number.isFinite(count) || count < 0) return '—'
+      if (count >= 1000) return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+      return String(Math.round(count))
     }
 
     function turnRangeText(range) {
       if (!Array.isArray(range) || range.length < 2 || range[1] < range[0]) return '等待新对话'
-      return 'Turn ' + range[0] + '–' + range[1]
+      return '第 ' + range[0] + '–' + range[1] + ' 轮'
     }
 
-    function LayerPreview({ layer, currentLevel, expanding, busy, pendingSelection, allowExpand, onExpand }) {
-      const itemRef = React.useRef(null)
-      const hideTimer = React.useRef(null)
-      const popoverRef = React.useRef(null)
-      const level = Number(layer.level)
-      const actionable = allowExpand && Number.isInteger(level) && (level !== currentLevel || pendingSelection)
-
-      const cancelHide = () => {
-        if (hideTimer.current) window.clearTimeout(hideTimer.current)
-        hideTimer.current = null
-      }
-      const removePopover = () => {
-        popoverRef.current?.remove()
-        popoverRef.current = null
-      }
-      const showPopover = () => {
-        cancelHide()
-        const rect = itemRef.current?.getBoundingClientRect()
-        if (!rect) return
-        const inline = window.innerWidth < 860
-        const width = Math.min(390, Math.max(240, window.innerWidth - 24))
-        const maxHeight = Math.min(520, window.innerHeight * 0.7)
-        const right = rect.right + 12
-        const left = right + width <= window.innerWidth - 12 ? right : Math.max(12, rect.left - width - 12)
-        const top = Math.min(Math.max(12, rect.top - 8), Math.max(12, window.innerHeight - maxHeight - 12))
-        if (!popoverRef.current) {
-          const popover = document.createElement('aside')
-          const title = document.createElement('strong')
-          const content = document.createElement('p')
-          const theme = window.getComputedStyle(itemRef.current)
-          const pageTheme = window.getComputedStyle(itemRef.current.closest('.sg-memory'))
-          popover.className = 'sg-layer-popover'
-          popover.setAttribute('role', 'tooltip')
-          popover.style.background = pageTheme.backgroundColor
-          popover.style.color = pageTheme.color
-          popover.style.borderColor = theme.borderColor
-          title.textContent = 'L' + level + ' 完整内容'
-          content.className = 'sg-layer-full'
-          content.textContent = String(layer.content || '暂无内容')
-          popover.append(title, content)
-          popover.addEventListener('mouseenter', cancelHide)
-          popover.addEventListener('mouseleave', scheduleHide)
-          if (inline) itemRef.current.parentElement.appendChild(popover)
-          else document.body.appendChild(popover)
-          popoverRef.current = popover
-        }
-        popoverRef.current.style.setProperty('position', inline ? 'relative' : 'fixed', 'important')
-        popoverRef.current.style.width = inline ? 'auto' : width + 'px'
-        popoverRef.current.style.left = inline ? '0' : left + 'px'
-        popoverRef.current.style.top = inline ? '0' : top + 'px'
-        popoverRef.current.style.maxHeight = inline ? '240px' : maxHeight + 'px'
-      }
-      const scheduleHide = () => {
-        cancelHide()
-        hideTimer.current = window.setTimeout(removePopover, 140)
-      }
-      React.useEffect(() => () => { cancelHide(); removePopover() }, [])
-
-      return h('div', { className: 'sg-layer-hover' },
-        h('div', { ref: itemRef, className: 'sg-layer-item ' + (level === currentLevel ? 'current' : ''), 'data-level': String(level) },
-          h('span', { className: 'sg-layer-label' }, 'L' + level),
-          h('span', { className: 'sg-layer-preview', tabIndex: 0, onMouseEnter: showPopover, onMouseLeave: scheduleHide, onFocus: showPopover, onBlur: scheduleHide }, previewText(layer.content)),
-          actionable ? h('button', { className: 'sg-layer-use', type: 'button', disabled: busy, onMouseEnter: removePopover, onFocus: removePopover, onClick: (event) => { event.stopPropagation(); void onExpand(level) } }, expanding ? '正在应用…' : '让助手参考 L' + level)
-            : h('span', { className: 'sg-layer-using' }, level === currentLevel ? '助手可见' : '仅供预览')))
+    function layerTokenCount(block, detail, level) {
+      const detailLayer = Array.isArray(detail?.layers) ? detail.layers.find((item) => Number(item.level) === level) : null
+      if (detailLayer && Number.isFinite(Number(detailLayer.tokens))) return Number(detailLayer.tokens)
+      const blockLayer = Array.isArray(block?.layerTokens) ? block.layerTokens.find((item) => Number(item.level) === level) : null
+      if (blockLayer && Number.isFinite(Number(blockLayer.tokens))) return Number(blockLayer.tokens)
+      const visible = visibleBlockLevel(block)
+      if (visible !== null && level === visible && Number.isFinite(Number(block?.currentTokens))) return Number(block.currentTokens)
+      if (level === 5 && Number.isFinite(Number(block?.l5Tokens))) return Number(block.l5Tokens)
+      return null
     }
 
-    function BlockLayerPanel({ block, detail, loading, expandingLevel, selectionBusy, onExpand }) {
-      if (loading) return h('div', { className: 'sg-layer-panel' }, h(Loading))
+    function layerPreviewText(block, detail, level) {
       const layers = Array.isArray(detail?.layers) ? detail.layers : []
-      const visibleLevel = visibleBlockLevel(block)
-      return h('div', { className: 'sg-layer-panel' },
-        h('div', { className: 'sg-layer-heading' }, h('strong', null, '分层内容预览'), h('span', null, '助手可见：' + (visibleLevel === null ? '尚未确认' : 'L' + visibleLevel))),
-        h('p', { className: 'sg-layer-hint' }, '预览不会改变助手可见的内容。悬停或聚焦可查看完整内容。'),
-        block.virtual ? h('div', { className: 'sg-virtual-note' }, '旧会话展示片段为只读内容，不会改写原始数据库。') : null,
-        layers.length ? h('div', { className: 'sg-layer-stack' }, layers.slice().sort((a, b) => a.level - b.level).map((layer) => h(LayerPreview, { key: layer.level, layer, currentLevel: visibleLevel, expanding: expandingLevel === layer.level, busy: selectionBusy || expandingLevel >= 0, pendingSelection: block.surfaceSync?.status === 'pending' || block.surfaceSync?.status === 'blocked', allowExpand: !block.virtual, onExpand }))) : h('div', { className: 'sg-muted' }, '暂时无法读取这段历史的分层内容。'))
+      const hit = layers.find((item) => Number(item.level) === level)
+      if (hit && String(hit.content || '').trim()) return String(hit.content)
+      if (level === 0 && block?.title) return String(block.title)
+      if (level === 1 && block?.summary) return String(block.summary)
+      if (level === 2 && Array.isArray(block?.keypoints) && block.keypoints.length) return block.keypoints.map((point) => '- ' + point).join('\n')
+      return layers.length ? '这一层尚未生成。' : '暂时无法读取这段历史的分层内容。'
+    }
+
+    function BlockLayerPanel({ block, detail, loading, error, previewLevel, onPreview, expandingLevel, selectionBusy, onExpand, onRetry }) {
+      const applied = visibleBlockLevel(block)
+      const fallbackLevel = applied === null ? 0 : Math.min(5, Math.max(0, applied))
+      const active = Number.isInteger(previewLevel) && previewLevel >= 0 && previewLevel <= 5 ? previewLevel : fallbackLevel
+      const pendingSelection = block.surfaceSync?.status === 'pending' || block.surfaceSync?.status === 'blocked'
+      const busy = Boolean(selectionBusy || expandingLevel >= 0)
+      const changed = applied === null || active !== applied || pendingSelection
+      const showDelta = applied !== null && active !== applied
+      const appliedTokens = applied === null ? null : layerTokenCount(block, detail, applied)
+      const activeTokens = layerTokenCount(block, detail, active)
+      const previewBody = loading && !detail
+        ? '正在读取 L0–L5 内容…'
+        : error && !detail
+          ? error
+          : layerPreviewText(block, detail, active)
+
+      return h('div', { className: 'sg-ss-inspector' },
+        h('h3', null, block.title || (block.virtual ? '旧会话片段 #' : '记忆块 #') + block.sequence),
+        h('p', { className: 'sg-ss-meta' }, turnRangeText(block.turnRange)),
+        h('div', { className: 'sg-ss-step-bars', role: 'group', 'aria-label': '详细程度刻度' },
+          SHORT_TERM_LEVELS.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            className: 'sg-ss-step-bar' + (applied !== null && item.id === applied ? ' current' : applied !== null && item.id < applied ? ' filled' : ''),
+            title: 'L' + item.id + ' ' + item.name + (applied === item.id ? '（当前在用）' : ''),
+            'aria-label': '预览 L' + item.id + ' ' + item.name,
+            onClick: () => onPreview?.(item.id),
+          }))),
+        h('div', { className: 'sg-ss-step-pills', role: 'radiogroup', 'aria-label': '详细程度' },
+          SHORT_TERM_LEVELS.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            role: 'radio',
+            'aria-checked': String(active === item.id),
+            className: 'sg-ss-step-pill' + (applied === item.id ? ' applied' : '') + (item.id === 0 ? ' tip-left' : item.id >= 4 ? ' tip-right' : ''),
+            onClick: () => onPreview?.(item.id),
+          },
+            h('span', { className: 'pn' }, 'L' + item.id + ' ' + item.short),
+            h('span', { className: 'pc' }, formatShortTokens(layerTokenCount(block, detail, item.id))),
+            h('span', { className: 'sg-ss-step-tip', role: 'tooltip' }, item.hint)))),
+        h('div', { className: 'sg-ss-preview', role: error && !detail ? 'alert' : undefined },
+          previewBody,
+          error && !detail && onRetry ? h('div', { style: { marginTop: '8px' } }, h('button', { type: 'button', className: 'sg-quiet-button', onClick: onRetry }, '重新读取')) : null),
+        block.virtual ? h('p', { className: 'sg-ss-virtual-note' }, '旧会话展示片段为只读内容，不会改写原始数据库。') : null,
+        h('div', { className: 'sg-ss-apply' },
+          h('span', null, showDelta ? h('span', { className: 'sg-ss-apply-delta' }, formatShortTokens(appliedTokens) + ' → ' + formatShortTokens(activeTokens)) : null),
+          h('span', { className: 'sg-ss-apply-right' },
+            showDelta ? h('button', { type: 'button', className: 'sg-ss-ghost', disabled: busy, onClick: () => onPreview?.(applied) }, '回到当前') : null,
+            block.virtual
+              ? h('button', { type: 'button', className: 'sg-ss-primary', disabled: true }, '只读片段')
+              : h('button', {
+                  type: 'button',
+                  className: 'sg-ss-primary',
+                  disabled: busy || !changed,
+                  onClick: () => void onExpand?.(active),
+                }, expandingLevel >= 0 ? '正在应用…' : changed ? '改用「' + SHORT_TERM_LEVELS[active].name + '」' : '正在使用'))))
     }
 
     function visibleBlockLevel(block) {
@@ -338,8 +351,8 @@
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh, blockTurnSize = 6 }) {
       const pagedBlocks = usePagedMemory({ namespace, kind: 'blocks', initialItems: blocks, initialPage: blockPage, fallbackLimit: 40, extraParams: { threadId: activeThreadId } })
       const visible = [...pagedBlocks.items].sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || String(a.createdAt).localeCompare(String(b.createdAt)))
-      const [expandedId, setExpandedId] = React.useState('')
-      const [detailBlockId, setDetailBlockId] = React.useState('')
+      const [selectedId, setSelectedId] = React.useState('')
+      const [previewState, setPreviewState] = React.useState({ blockId: '', level: null })
       const [details, setDetails] = React.useState({})
       const [loadingId, setLoadingId] = React.useState('')
       const [expanding, setExpanding] = React.useState({ blockId: '', level: -1 })
@@ -352,7 +365,7 @@
       const currentOpen = openBlock || { turnRange: null, messages: 0, status: 'open' }
 
       React.useEffect(() => {
-        setExpandedId(''); setDetailBlockId(''); setDetails({}); setLoadingId(''); setPreviewError(null); setSelectionFeedback({})
+        setSelectedId(''); setPreviewState({ blockId: '', level: null }); setDetails({}); setLoadingId(''); setPreviewError(null); setSelectionFeedback({})
       }, [scope])
 
       React.useEffect(() => {
@@ -366,17 +379,28 @@
         return () => window.clearTimeout(timer)
       }, [selectionFeedback])
 
-
-      const toggleBlock = (block) => {
-        if (expandedId === block.id) { setExpandedId(''); return }
-        setExpandedId(block.id)
+      const selectedBlock = visible.find((block) => block.id === selectedId) || visible[visible.length - 1] || null
+      const levelOf = (block) => { const level = visibleBlockLevel(block); return level === null ? 0 : Math.min(5, Math.max(0, level)) }
+      const fetchDetail = (blockId) => {
+        if (!blockId || !namespace) return
         setPreviewError(null)
-        if (details[block.id]) return
-        setLoadingId(block.id)
-        void api('sources', { namespace, blockId: block.id })
-          .then((value) => { if (activeScope.current === scope) setDetails((current) => ({ ...current, [block.id]: value })) })
-          .catch(() => { if (activeScope.current === scope) setPreviewError({ scope, blockId: block.id, message: '暂时无法读取预览，请稍后重新打开。' }) })
-          .finally(() => { if (activeScope.current === scope) setLoadingId((current) => current === block.id ? '' : current) })
+        setLoadingId(blockId)
+        void api('sources', { namespace, blockId })
+          .then((value) => { if (activeScope.current === scope) setDetails((current) => ({ ...current, [blockId]: value })) })
+          .catch(() => { if (activeScope.current === scope) setPreviewError({ scope, blockId, message: '暂时无法读取预览，请稍后重试。' }) })
+          .finally(() => { if (activeScope.current === scope) setLoadingId((current) => current === blockId ? '' : current) })
+      }
+
+      React.useEffect(() => {
+        if (!selectedBlock || details[selectedBlock.id] || loadingId === selectedBlock.id) return
+        if (previewError?.scope === scope && previewError.blockId === selectedBlock.id) return
+        fetchDetail(selectedBlock.id)
+      }, [scope, selectedBlock?.id])
+
+      const selectBlock = (block) => {
+        setSelectedId(block.id)
+        setPreviewState({ blockId: block.id, level: levelOf(block) })
+        setPreviewError(null)
       }
 
       const expandTo = async (block, level) => {
@@ -413,69 +437,90 @@
         }
       }
 
-      const selectedBlock = visible.find((block) => block.id === expandedId) || visible[visible.length - 1] || null
-      const levelOf = (block) => { const level = visibleBlockLevel(block); return level === null ? 0 : Math.min(5, Math.max(0, level)) }
       // Turns per Block can differ from the historical 6, so the open Block's dot
       // count follows the real capacity instead of a hard-coded six.
       const openCapacity = Math.max(1, Number(currentOpen.capacity || blockTurnSize || 6))
       const openUsed = Math.min(openCapacity, Math.max(0, Number(currentOpen.turns || 0)))
-      const remainingDots = Math.max(1, openCapacity - openUsed)
-      const firstTurn = visible.length ? visible[0].turnRange?.[0] : null
-      const lastTurn = visible.length ? visible[visible.length - 1].turnRange?.[1] : null
-      const turnSpan = Number.isInteger(firstTurn) && Number.isInteger(lastTurn) ? ' · 第 ' + firstTurn + '–' + lastTurn + ' 轮' : ''
-      // Narrow panels move to the real detail view instead of expanding in place.
-      const narrow = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-        ? window.matchMedia('(max-width: 680px)').matches === true
-        : false
-      const detailBlock = narrow && detailBlockId ? visible.find((block) => block.id === detailBlockId) : null
-      if (detailBlock) return h('div', { className: 'sg-ss-detail-page' },
-        h(BackBar, { label: '会话记忆', onBack: () => setDetailBlockId('') }),
-        h(ShortTermMemoryBlockDetail, { key: namespace + ':' + detailBlock.id, namespace, block: detailBlock }))
+      const openLeft = Math.max(0, openCapacity - openUsed)
+      const latestSealedTurn = visible.reduce((max, block) => Math.max(max, Number(block.turnRange?.[1] || 0)), 0)
+      const openFrom = Array.isArray(currentOpen.turnRange) && Number.isInteger(currentOpen.turnRange[0]) ? currentOpen.turnRange[0] : latestSealedTurn + 1
+      const totalTokens = visible.reduce((sum, block) => sum + (Number(layerTokenCount(block, details[block.id], levelOf(block))) || 0), 0)
+      const activePreview = selectedBlock
+        ? (previewState.blockId === selectedBlock.id && previewState.level !== null ? previewState.level : levelOf(selectedBlock))
+        : 0
+      const showPagination = pagedBlocks.page.total > pagedBlocks.page.limit || pagedBlocks.page.offset > 0
       return h(React.Fragment, null,
-        h('div', { className: 'sg-pg-head' }, h('h2', null, '会话记忆'),
-          h('span', { className: 'sg-pg-tag' }, h('i', { className: 'sg-sw water', 'aria-hidden': 'true' }), pagedBlocks.page.total + ' 块' + turnSpan),
-          conversations.length ? h('span', { className: 'sg-pg-end' }, h('label', { className: 'sg-conversation' }, h('span', null, '当前对话：'), h('select', { value: activeThreadId || '', onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))) : null),
+        h('div', { className: 'sg-pg-head' },
+          h('div', { className: 'sg-pg-title' }, h('i', { className: 'sg-sw water', 'aria-hidden': 'true' }), h('h2', null, '会话记忆')),
+          conversations.length ? h('span', { className: 'sg-pg-end' }, h('label', { className: 'sg-conversation' }, h('span', null, '当前对话'), h('select', { value: activeThreadId || '', onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))) : null),
         h('section', { className: 'sg-block-list sg-ss-list', 'aria-label': 'Block 列表' },
           h('section', { className: 'sg-visually-hidden', 'aria-labelledby': 'sg-decay-title' },
             h('h2', { id: 'sg-decay-title' }, '块衰减总览'),
             h('div', { className: 'sg-distribution', 'aria-label': 'Block 当前层级分布' }, visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: 'Block #' + block.sequence }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)), h('span', { className: 'sg-level-chip sg-open-chip' }, '开放块 · 未封存')),
             h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: '0', step: '1', value: '0', disabled: true, readOnly: true, 'aria-label': 'Block 分布滑轨' })),
-          h('div', { className: 'sg-block-header sg-visually-hidden', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
-          h('div', { className: 'sg-ss-scale' }, h('span', null, '更早'), h('span', { className: 'sg-r', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, style: { height: 5 + level * 3 + 'px', opacity: .3 + level * .14 } }))), h('span', null, '最近'), h('span', null, '越早的对话压得越薄')),
-          h('div', { className: 'sg-ss' },
-            h('div', { className: 'sg-ss-main' }, visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
-            h('button', { className: 'sg-block-toggle', type: 'button', onClick: () => narrow ? setDetailBlockId(block.id) : toggleBlock(block), 'aria-expanded': narrow ? undefined : expandedId === block.id ? 'true' : 'false', 'aria-label': '记忆块 ' + block.sequence + '，' + turnRangeText(block.turnRange) + (narrow ? '，打开详情' : '') },
-              h('span', { className: 'sg-ss-num' }, String(block.sequence)),
-              h('span', { className: 'sg-ss-bar', style: { height: 20 + levelOf(block) * 5 + 'px', background: 'color-mix(in srgb, var(--sg-water) ' + (14 + levelOf(block) * 14) + '%, var(--sg-page))' } }, h('span', null, block.title || (block.virtual ? '旧 Block #' : 'Block #') + block.sequence)),
-              // The level badge repeated what the bar height already encodes, so
-              // the row keeps only the real title.
-              h('span', { className: 'sg-ss-use' }),
-              h('span', { className: 'sg-block-turn' }, turnRangeText(block.turnRange)),
-              h('span', { className: 'sg-block-distance' }, block.distanceFromLatest === 0 ? '0（最新）' : block.distanceFromLatest + ' 个 Block'),
-              null),
-            h(BlockSelectionFeedback, { block, feedback: selectionFeedback[block.id]?.scope === scope ? selectionFeedback[block.id] : null, onRefresh: async () => {
-              try {
-                await refresh()
-                if (activeScope.current !== scope) return
-                if (pagedBlocks.page.offset > 0) await pagedBlocks.loadOffset(pagedBlocks.page.offset)
-                if (activeScope.current === scope) setSelectionFeedback((current) => ({ ...current, [block.id]: null }))
-              } catch { /* Keep the existing explanation and refresh action available. */ }
-            } }),
-            previewError?.scope === scope && previewError.blockId === block.id ? h('div', { role: 'alert', className: 'sg-selection-feedback error' }, previewError.message) : null,
-            summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
-            expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
-            h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-ss-open' },
-              h('span', { className: 'sg-ss-num' }, '·'),
-              h('div', { className: 'sg-ss-bar' }, h('span', null, '正在记录'), h('span', { className: 'sg-ss-dots', role: 'img', 'aria-label': '还差 ' + remainingDots + ' 轮封存', 'aria-hidden': undefined }, Array.from({ length: remainingDots }, (_, index) => h('i', { key: index, className: index < Math.min(remainingDots, Math.max(0, openCapacity - openUsed)) ? '' : 'o' })))),
-              h('span')))),
+          h('div', { className: 'sg-ss' + (selectedBlock ? '' : ' single') },
+            h('div', { className: 'sg-ss-col' },
+              h('div', { className: 'sg-ss-main' },
+                visible.map((block) => {
+                  const level = levelOf(block)
+                  const rowTokens = layerTokenCount(block, details[block.id], level)
+                  const isSelected = selectedBlock?.id === block.id
+                  return h('div', { key: block.id, className: 'sg-block-unit' },
+                    h('button', {
+                      className: 'sg-block-toggle',
+                      type: 'button',
+                      'aria-current': isSelected ? 'true' : 'false',
+                      style: {
+                        '--sh': (34 + level * 2) + 'px',
+                        '--tint': (7 + level * 3) + '%',
+                        '--spine': (0.32 + level * 0.13).toFixed(2),
+                      },
+                      title: SHORT_TERM_LEVELS[level].name + '（L' + level + '）· 约 ' + formatShortTokens(rowTokens) + ' token',
+                      'aria-label': turnRangeText(block.turnRange) + '，' + (block.title || '记忆块 #' + block.sequence) + '，' + SHORT_TERM_LEVELS[level].name,
+                      onClick: () => selectBlock(block),
+                    },
+                      h('span', { className: 'sg-ss-turns' }, turnRangeText(block.turnRange)),
+                      h('span', { className: 'sg-ss-title' }, block.title || (block.virtual ? '旧会话片段 #' : '记忆块 #') + block.sequence),
+                      h('span', { className: 'sg-ss-tail' },
+                        h('span', { className: 'sg-ss-meter', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((index) => h('i', { key: index, className: index <= level ? 'on' : '' }))),
+                        h('span', { className: 'sg-ss-cost' }, formatShortTokens(rowTokens)))),
+                    h(BlockSelectionFeedback, { block, feedback: selectionFeedback[block.id]?.scope === scope ? selectionFeedback[block.id] : null, onRefresh: async () => {
+                      try {
+                        await refresh()
+                        if (activeScope.current !== scope) return
+                        if (pagedBlocks.page.offset > 0) await pagedBlocks.loadOffset(pagedBlocks.page.offset)
+                        if (activeScope.current === scope) setSelectionFeedback((current) => ({ ...current, [block.id]: null }))
+                      } catch { /* Keep the existing explanation and refresh action available. */ }
+                    } }),
+                    summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null)
+                }),
+                h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-ss-open' },
+                  h('span', { className: 'sg-ss-turns' }, '第 ' + openFrom + ' 轮起'),
+                  h('span', { className: 'sg-ss-title' }, '正在记录'),
+                  h('span', { className: 'sg-ss-tail' },
+                    h('span', { className: 'sg-ss-dots', role: 'img', 'aria-label': '已记录 ' + openUsed + ' 轮，还差 ' + openLeft + ' 轮封存' },
+                      Array.from({ length: openCapacity }, (_, index) => h('i', { key: index, className: index < openUsed ? '' : 'o' }))),
+                    h('span', { className: 'sg-ss-cost' }, '还差 ' + openLeft + ' 轮'))))),
+              visible.length ? h('div', { className: 'sg-ss-foot' },
+                h('span', { className: 'sg-ss-scale', title: '默认越早的对话越简略，也可手动调高' },
+                  h('span', null, '更早'),
+                  h('span', { className: 'sg-r', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, style: { height: (4 + level * 2.5) + 'px', opacity: (0.32 + level * 0.13).toFixed(2) } }))),
+                  h('span', null, '最近')),
+                h('span', { className: 'sg-ss-total' }, '共约 ' + formatShortTokens(totalTokens) + ' token')) : null),
             selectedBlock ? h('aside', { className: 'sg-ss-side', 'aria-label': '选中记忆块详情' },
-              h('h3', null, selectedBlock.title || 'Block #' + selectedBlock.sequence),
-              h('span', { className: 'sg-k' }, '记忆块 ' + selectedBlock.sequence + ' · ' + turnRangeText(selectedBlock.turnRange)),
-              h('div', { className: 'sg-lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, className: level <= levelOf(selectedBlock) ? 'on' : '' }))),
-              h('div', { className: 'sg-lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
-              h('p', null, selectedBlock.summary || (selectedBlock.keypoints || []).join('；') || '这一块暂时没有摘要。'),
-              h('button', { type: 'button', className: 'sg-btn', onClick: () => toggleBlock(selectedBlock) }, expandedId === selectedBlock.id ? '收起详情' : '看原文')) : null)),
-        h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }))
+              h(BlockLayerPanel, {
+                block: selectedBlock,
+                detail: details[selectedBlock.id],
+                loading: loadingId === selectedBlock.id,
+                error: previewError?.scope === scope && previewError.blockId === selectedBlock.id ? previewError.message : '',
+                previewLevel: activePreview,
+                onPreview: (level) => setPreviewState({ blockId: selectedBlock.id, level }),
+                selectionBusy: expanding.scope === scope && expanding.level >= 0,
+                expandingLevel: expanding.scope === scope && expanding.blockId === selectedBlock.id ? expanding.level : -1,
+                onExpand: (level) => expandTo(selectedBlock, level),
+                onRetry: () => fetchDetail(selectedBlock.id),
+              })) : null)),
+        showPagination ? h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }) : null)
     }
 
     function SourceDetails({ item, source, kind }) {
