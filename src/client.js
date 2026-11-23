@@ -491,7 +491,7 @@ window.__ModuleLoader__.load({
         --sg-fast:140ms;
         --sg-medium:220ms;
         container:sg-memory / inline-size;position:relative;isolation:isolate;box-sizing:border-box;width:100%;max-width:1200px;min-width:0;margin:0 auto;padding:18px 20px 36px;
-        background:var(--sg-page);color:var(--sg-text);font:14px/1.55 "Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+        background:var(--sg-page);color:var(--sg-text);font:14px/1.55 var(--sg-sans,"Noto Sans SC","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",sans-serif);-webkit-font-smoothing:antialiased;
         letter-spacing:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;
       }
       .sg-memory *{box-sizing:border-box;letter-spacing:0}.sg-memory button,.sg-memory input,.sg-memory select{font:inherit;color:inherit}.sg-memory button,.sg-memory a,.sg-memory input,.sg-memory select,.sg-memory summary{transition:color var(--sg-fast) var(--sg-ease),background-color var(--sg-fast) var(--sg-ease),border-color var(--sg-fast) var(--sg-ease),box-shadow var(--sg-fast) var(--sg-ease),opacity var(--sg-fast) var(--sg-ease),transform var(--sg-fast) var(--sg-ease)}.sg-memory button:active,.sg-memory a:active{transform:scale(.985)}.sg-memory :is(button,a,input,select,summary,[tabindex]):focus-visible{outline:2px solid var(--sg-accent);outline-offset:2px;box-shadow:0 0 0 4px var(--sg-focus)}
@@ -666,10 +666,14 @@ window.__ModuleLoader__.load({
         --sg-sheet:color-mix(in srgb,var(--sg-text) 4%,var(--sg-page));
         --sg-hair:color-mix(in srgb,var(--sg-border) 70%,transparent);
         --sg-ink:var(--sg-text);
+        --sg-subtle:color-mix(in srgb,var(--sg-text) 78%,var(--sg-page));
         --sg-moss:color-mix(in srgb,var(--dsw-alias-state-success-primary,#5f7f4d) 62%,var(--sg-text));
         --sg-sand:color-mix(in srgb,var(--dsw-alias-state-warn-label,#a9822f) 74%,var(--sg-text));
         --sg-water:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3f6d9c) 68%,var(--sg-text));
-        --sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC","Microsoft YaHei UI","Microsoft YaHei","Segoe UI",serif;
+        --sg-water-deep:color-mix(in srgb,var(--sg-water) 62%,var(--sg-text));
+        --sg-water-soft:color-mix(in srgb,var(--sg-water) 14%,var(--sg-page));
+        --sg-sans:"Noto Sans SC","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+        --sg-serif:"Noto Serif SC","Source Han Serif SC","Songti SC","Microsoft YaHei UI","Microsoft YaHei","Times New Roman",serif;
         --sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,"Cascadia Mono",Consolas,monospace;
         background:var(--sg-page);
       }
@@ -699,6 +703,9 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-intro p,.sg-memory .sg-daily-head p{font-size:12.5px;max-width:60ch}
       .sg-pg-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
       .sg-pg-head h2{margin:0;font:700 22px var(--sg-serif)}
+      .sg-pg-title{display:inline-flex;align-items:center;gap:10px;min-width:0}
+      .sg-pg-end .sg-conversation{font-size:12px;gap:6px}
+      .sg-pg-end .sg-conversation select{padding:4px 24px 4px 10px;border-radius:6px;background:var(--sg-page);color:var(--sg-text);font-size:12px}
       .sg-pg-tag{display:inline-flex;align-items:center;gap:6px;color:var(--sg-muted);font-size:12px}
       .sg-pg-end{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;max-width:100%}
       .sg-sw{width:10px;height:10px;flex:none;border-radius:2px;background:var(--sg-text)}
@@ -737,8 +744,8 @@ window.__ModuleLoader__.load({
       /* Share the approved top bar across views; keep page-body styling local. */
       .sg-memory-panel{container:sg-memory-host / inline-size}
       .sg-memory.sg-unified-top{
-        --sg-top-sans:"Noto Sans SC","Microsoft YaHei","PingFang SC",sans-serif;
-        --sg-top-serif:"Noto Serif SC","Times New Roman",serif;
+        --sg-top-sans:"Noto Sans SC","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+        --sg-top-serif:"Noto Serif SC","Source Han Serif SC","Songti SC","Microsoft YaHei UI","Microsoft YaHei","Times New Roman",serif;
         --sg-overview-unit:clamp(.48px,.05733945cqi,1px);
         --sg-overview-gutter:clamp(16px,2.6087cqi,48px);
         max-width:1920px;padding:calc(30 * var(--sg-overview-unit)) var(--sg-overview-gutter) calc(32 * var(--sg-overview-unit));
@@ -1136,40 +1143,77 @@ window.__ModuleLoader__.load({
         .sg-book:before{left:14px}
       }
 
-      /* 会话记忆：一块一条横条，越早越薄；右侧是选中块的详情 */
-      .sg-ss{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:26px;align-items:start}
-      .sg-ss-scale{display:flex;align-items:center;gap:8px;margin:-4px 0 12px;color:var(--sg-muted);font-size:11.5px;flex-wrap:wrap}
-      .sg-ss-scale .sg-r{display:flex;align-items:flex-end;gap:2px}
-      .sg-ss-scale .sg-r i{width:14px;border-radius:1.5px;background:var(--sg-water)}
+      /* 会话记忆：水蓝洗色地层条 + 右侧可交互刻度详情 */
       .sg-ss-list{min-width:0;border:0;border-radius:0;background:none;overflow:visible}
       .sg-memory .sg-ss-list .sg-block-unit+.sg-block-unit{border-top:0}
       .sg-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-      .sg-memory .sg-ss-list .sg-block-toggle{display:grid;grid-template-columns:28px minmax(0,1fr) auto 24px;gap:10px;align-items:center;padding:0;border:0;background:none;cursor:pointer;margin-bottom:3px;min-height:0}
-      .sg-memory .sg-ss-list .sg-block-toggle:hover{background:none}
-      .sg-ss-num{font:11px var(--sg-mono);color:var(--sg-muted);text-align:right}
-      .sg-ss-bar{display:flex;align-items:center;padding:0 12px;border-radius:3px;min-width:0;color:var(--sg-text);font-size:12.5px;animation:sg-r6-rise .4s both}
-      .sg-ss-bar span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-      .sg-memory .sg-ss-list .sg-block-toggle[aria-expanded="true"] .sg-ss-bar{box-shadow:0 0 0 2px var(--sg-text)}
-      .sg-memory .sg-ss-list .sg-block-turn,.sg-memory .sg-ss-list .sg-block-distance{display:none}
-      .sg-memory .sg-ss-list .sg-level-cell{display:flex}
-      .sg-memory .sg-ss-list .sg-level-badge{display:inline-grid;place-items:center;min-width:26px;height:20px;padding:0 5px;border:1px solid var(--sg-border);border-radius:4px;background:var(--sg-page);font:11px var(--sg-mono);color:var(--sg-muted)}
-      .sg-memory .sg-ss-list .sg-row-chevron{display:block;color:var(--sg-muted);font-size:14px;text-align:right}
-      .sg-memory .sg-ss-list .sg-block-name{font-weight:inherit}
-      .sg-memory .sg-ss-list .sg-block-expanded{padding:6px 0 10px}
-      .sg-ss-open{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:10px;align-items:center;margin-bottom:3px}
-      .sg-ss-open .sg-ss-bar{justify-content:space-between;border:1.5px dashed var(--sg-water);background:none!important;color:var(--sg-muted)}
-      .sg-ss-dots{display:flex;gap:3px}
-      .sg-ss-dots i{width:7px;height:7px;border-radius:50%;background:var(--sg-water)}
+      .sg-ss{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,370px);gap:28px;align-items:start}
+      .sg-ss.single{grid-template-columns:minmax(0,1fr)}
+      .sg-ss-col{min-width:0}
+      .sg-ss-main{display:grid;gap:5px;min-width:0}
+      .sg-memory .sg-ss-main .sg-block-unit{min-width:0}
+      .sg-memory .sg-ss-main .sg-block-toggle{position:relative;display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:12px;align-items:center;width:100%;min-height:var(--sh,36px);padding:6px 12px 6px 14px;border:0;border-radius:4px;background:color-mix(in srgb,var(--sg-water) var(--tint,10%),var(--sg-page));text-align:left;cursor:pointer;overflow:hidden;transition:box-shadow .14s ease,background-color .14s ease;font-variant-numeric:tabular-nums}
+      .sg-memory .sg-ss-main .sg-block-toggle::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3.5px;background:var(--sg-water);opacity:var(--spine,.45)}
+      .sg-memory .sg-ss-main .sg-block-toggle:hover{background:color-mix(in srgb,var(--sg-water) calc(var(--tint,10%) + 6%),var(--sg-page))}
+      .sg-memory .sg-ss-main .sg-block-toggle[aria-current="true"]{box-shadow:inset 0 0 0 1.5px var(--sg-text);background:color-mix(in srgb,var(--sg-water) calc(var(--tint,10%) + 8%),var(--sg-page))}
+      .sg-ss-turns{color:var(--sg-subtle);font-size:12.5px;font-weight:400;white-space:nowrap;font-variant-numeric:tabular-nums}
+      .sg-ss-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px;font-weight:450;color:var(--sg-text)}
+      .sg-ss-tail{display:grid;grid-template-columns:minmax(51px,auto) 56px;gap:10px;align-items:center;justify-items:start;font-size:12px;color:var(--sg-muted);white-space:nowrap}
+      .sg-ss-cost{text-align:left;font-size:12px;font-weight:450;color:var(--sg-subtle);font-variant-numeric:tabular-nums}
+      .sg-ss-meter{display:inline-flex;gap:3px;align-items:center;justify-self:start}
+      .sg-ss-meter i{width:6px;height:10px;border-radius:1.5px;background:color-mix(in srgb,var(--sg-water) 20%,transparent)}
+      .sg-ss-meter i.on{background:var(--sg-water)}
+      .sg-ss-open{position:relative;display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:12px;align-items:center;width:100%;min-height:36px;padding:4.5px 10.5px 4.5px 12.5px;border-radius:4px;cursor:default;background:transparent;border:1.5px dashed color-mix(in srgb,var(--sg-water) 70%,transparent);font-variant-numeric:tabular-nums}
+      .sg-ss-open .sg-ss-title,.sg-ss-open .sg-ss-cost{color:var(--sg-muted);font-weight:400}
+      .sg-ss-dots{display:inline-flex;gap:3px;align-items:center;justify-self:start}
+      .sg-ss-dots i{width:6px;height:6px;border-radius:50%;background:var(--sg-water)}
       .sg-ss-dots i.o{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-water)}
-      .sg-ss-side{padding-top:10px;border-top:1px solid var(--sg-text);min-width:0}
-      .sg-ss-side h3{margin:0 0 2px;font:700 16px var(--sg-serif)}
-      .sg-ss-side .sg-k{display:block;margin-bottom:10px;font:11.5px var(--sg-mono);color:var(--sg-muted)}
-      .sg-ss-side p{margin:0 0 12px;color:var(--sg-muted);font-size:12.5px;line-height:1.7}
-      .sg-lvl{display:flex;gap:3px;margin:4px 0}
-      .sg-lvl i{flex:1;height:6px;border-radius:2px;background:var(--sg-sheet);box-shadow:inset 0 0 0 1px var(--sg-hair)}
-      .sg-lvl i.on{background:var(--sg-water);box-shadow:none}
-      .sg-lvl-l{display:flex;justify-content:space-between;margin-bottom:12px;color:var(--sg-muted);font-size:10.5px}
-      @media (max-width:680px){.sg-ss{grid-template-columns:minmax(0,1fr)}.sg-ss-side{display:none}}
+      .sg-ss-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px 0 14px;font-size:12px;color:var(--sg-muted)}
+      .sg-ss-scale{display:inline-flex;align-items:center;gap:7px;color:var(--sg-muted);font-size:11.5px;white-space:nowrap}
+      .sg-ss-scale .sg-r{display:inline-flex;align-items:flex-end;gap:2px}
+      .sg-ss-scale .sg-r i{width:11px;border-radius:1.5px;background:var(--sg-water)}
+      .sg-ss-total{color:var(--sg-subtle);font-weight:450;white-space:nowrap;font-variant-numeric:tabular-nums}
+      .sg-ss-side{min-width:0;padding-top:12px;border-top:1.5px solid var(--sg-text)}
+      .sg-ss-side h3{margin:0;font-family:var(--sg-serif);font-size:16.5px;font-weight:700;line-height:1.45;color:var(--sg-text)}
+      .sg-ss-meta{margin:3px 0 14px;color:var(--sg-muted);font-size:12px;font-variant-numeric:tabular-nums}
+      .sg-ss-step-bars{display:grid;grid-template-columns:.94fr .94fr .94fr .94fr 1.18fr .94fr;gap:4px;margin-bottom:8px}
+      .sg-memory .sg-ss-step-bar{position:relative;height:8px;border:0;padding:0;border-radius:2px;background:var(--sg-soft);box-shadow:inset 0 0 0 1px var(--sg-hair);cursor:pointer;transition:background-color .14s ease,transform .12s ease}
+      .sg-memory .sg-ss-step-bar.filled{background:color-mix(in srgb,var(--sg-water) 42%,var(--sg-page));box-shadow:none}
+      .sg-memory .sg-ss-step-bar.current{background:var(--sg-water-deep);box-shadow:none}
+      .sg-memory .sg-ss-step-bar.current::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);border:4px solid transparent;border-top-color:var(--sg-water-deep)}
+      .sg-memory .sg-ss-step-bar:hover{transform:translateY(-1px)}
+      .sg-ss-step-pills{display:grid;grid-template-columns:.94fr .94fr .94fr .94fr 1.18fr .94fr;gap:4px;margin-bottom:14px}
+      .sg-memory .sg-ss-step-pill{position:relative;border:1px solid transparent;border-radius:6px;background:var(--sg-sheet);padding:7px 2px 6px;cursor:pointer;display:grid;gap:2px;justify-items:center;min-width:0;transition:background-color .14s ease,border-color .14s ease}
+      .sg-memory .sg-ss-step-pill:hover,.sg-memory .sg-ss-step-pill:focus-visible{background:color-mix(in srgb,var(--sg-water) 8%,var(--sg-sheet));z-index:10}
+      .sg-memory .sg-ss-step-pill[aria-checked="true"]{background:var(--sg-water-soft);border-color:color-mix(in srgb,var(--sg-water) 45%,transparent);font-weight:600}
+      .sg-memory .sg-ss-step-pill.applied{box-shadow:inset 0 -2px 0 var(--sg-water-deep)}
+      .sg-ss-step-pill .pn{font-size:11px;white-space:nowrap;color:var(--sg-text)}
+      .sg-ss-step-pill .pc{font-size:11px;color:var(--sg-muted);font-variant-numeric:tabular-nums}
+      .sg-ss-step-tip{position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%) translateY(-2px);opacity:0;pointer-events:none;white-space:nowrap;padding:5px 9px;border-radius:6px;background:var(--sg-text);color:var(--sg-page);font-size:11.5px;font-weight:400;line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.18);transition:opacity .12s ease,transform .12s ease;z-index:20}
+      .sg-ss-step-tip::before{content:"";position:absolute;bottom:100%;left:50%;transform:translateX(-50%);border:4px solid transparent;border-bottom-color:var(--sg-text)}
+      .sg-ss-step-pill.tip-left .sg-ss-step-tip{left:0;transform:translateY(-2px)}
+      .sg-ss-step-pill.tip-left .sg-ss-step-tip::before{left:22px;transform:none}
+      .sg-ss-step-pill.tip-right .sg-ss-step-tip{left:auto;right:0;transform:translateY(-2px)}
+      .sg-ss-step-pill.tip-right .sg-ss-step-tip::before{left:auto;right:22px;transform:none}
+      .sg-ss-step-pill:hover .sg-ss-step-tip,.sg-ss-step-pill:focus-visible .sg-ss-step-tip{opacity:1;transform:translateX(-50%) translateY(0)}
+      .sg-ss-step-pill.tip-left:hover .sg-ss-step-tip,.sg-ss-step-pill.tip-left:focus-visible .sg-ss-step-tip,.sg-ss-step-pill.tip-right:hover .sg-ss-step-tip,.sg-ss-step-pill.tip-right:focus-visible .sg-ss-step-tip{opacity:1;transform:translateY(0)}
+      .sg-ss-preview{border:1px solid var(--sg-hair);border-radius:8px;background:var(--sg-sheet);padding:11px 13px;font-size:13px;line-height:1.72;white-space:pre-wrap;overflow-wrap:anywhere;max-height:230px;overflow:auto;color:var(--sg-text)}
+      .sg-ss-virtual-note{margin:8px 0 0;color:var(--sg-muted);font-size:11.5px}
+      .sg-ss-apply{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:12px;font-size:12px;color:var(--sg-muted)}
+      .sg-ss-apply-delta{color:var(--sg-text);font-weight:600;font-variant-numeric:tabular-nums}
+      .sg-ss-apply-right{display:flex;align-items:center;gap:10px;margin-left:auto}
+      .sg-memory .sg-ss-ghost{border:0;background:none;padding:4px 6px;color:var(--sg-muted);cursor:pointer;font-size:12px}
+      .sg-memory .sg-ss-ghost:hover{color:var(--sg-text);text-decoration:underline}
+      .sg-memory .sg-ss-primary{border:0;border-radius:7px;background:var(--sg-water);color:#fff;padding:7px 15px;cursor:pointer;font-weight:600;font-size:13px}
+      .sg-memory .sg-ss-primary:hover:not(:disabled){filter:brightness(1.06)}
+      .sg-memory .sg-ss-primary:disabled{background:var(--sg-soft);color:var(--sg-muted);cursor:default}
+      @container sg-memory (max-width:740px){.sg-ss{grid-template-columns:minmax(0,1fr);gap:18px}}
+      @container sg-memory (max-width:480px){
+        .sg-memory .sg-ss-main .sg-block-toggle,.sg-ss-open{grid-template-columns:64px minmax(0,1fr);gap:6px 10px}
+        .sg-ss-tail{grid-column:2;justify-self:start}
+        .sg-ss-step-bars{display:none}
+        .sg-ss-step-pills{grid-template-columns:repeat(3,minmax(0,1fr))}
+      }
 
       /* 短期记忆：按天排列 */
       .sg-days{display:grid}
@@ -1408,7 +1452,7 @@ window.__ModuleLoader__.load({
       .sg-memory .sg-footer-links{display:inline-flex;align-items:center;gap:2px;flex-wrap:wrap}
       .sg-memory .sg-footer-links a{color:var(--sg-muted);text-decoration:none}
       .sg-memory .sg-footer-links a:hover{color:var(--sg-text);text-decoration:underline}
-      .sg-memory .sg-ss-use,.sg-memory .sg-ss-list .sg-level-cell{display:none}
+      .sg-memory .sg-ss-use{display:none}
     `
 
     function api(path, params, options) {
@@ -3756,91 +3800,104 @@ window.__ModuleLoader__.load({
             h(Pagination, { page: pagedEvents.page, loading: pagedEvents.loading, error: pagedEvents.error, onOffset: pagedEvents.loadOffset }))))
     }
 
-    function previewText(value) {
-      const text = String(value || '').replace(/\s+/g, ' ').trim() || '暂无内容'
-      return text.length > 200 ? text.slice(0, 200) + '…' : text
+    const SHORT_TERM_LEVELS = [
+      { id: 0, short: '标题', name: '仅标题', hint: '只保留一句话主题与关键词' },
+      { id: 1, short: '摘要', name: '浓缩摘要', hint: '几十到百余字的背景与结论' },
+      { id: 2, short: '要点', name: '关键要点', hint: '分条列出事实、决定和依据' },
+      { id: 3, short: '精简', name: '精简对话', hint: '保留问答骨架，删掉寒暄和重复' },
+      { id: 4, short: '较完整', name: '较完整对话', hint: '保留绝大部分细节，仅裁剪冗余' },
+      { id: 5, short: '原文', name: '完整原文', hint: '逐字逐句，包含全部细节' },
+    ]
+
+    function formatShortTokens(value) {
+      const count = Number(value)
+      if (!Number.isFinite(count) || count < 0) return '—'
+      if (count >= 1000) return (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+      return String(Math.round(count))
     }
 
     function turnRangeText(range) {
       if (!Array.isArray(range) || range.length < 2 || range[1] < range[0]) return '等待新对话'
-      return 'Turn ' + range[0] + '–' + range[1]
+      return '第 ' + range[0] + '–' + range[1] + ' 轮'
     }
 
-    function LayerPreview({ layer, currentLevel, expanding, busy, pendingSelection, allowExpand, onExpand }) {
-      const itemRef = React.useRef(null)
-      const hideTimer = React.useRef(null)
-      const popoverRef = React.useRef(null)
-      const level = Number(layer.level)
-      const actionable = allowExpand && Number.isInteger(level) && (level !== currentLevel || pendingSelection)
-
-      const cancelHide = () => {
-        if (hideTimer.current) window.clearTimeout(hideTimer.current)
-        hideTimer.current = null
-      }
-      const removePopover = () => {
-        popoverRef.current?.remove()
-        popoverRef.current = null
-      }
-      const showPopover = () => {
-        cancelHide()
-        const rect = itemRef.current?.getBoundingClientRect()
-        if (!rect) return
-        const inline = window.innerWidth < 860
-        const width = Math.min(390, Math.max(240, window.innerWidth - 24))
-        const maxHeight = Math.min(520, window.innerHeight * 0.7)
-        const right = rect.right + 12
-        const left = right + width <= window.innerWidth - 12 ? right : Math.max(12, rect.left - width - 12)
-        const top = Math.min(Math.max(12, rect.top - 8), Math.max(12, window.innerHeight - maxHeight - 12))
-        if (!popoverRef.current) {
-          const popover = document.createElement('aside')
-          const title = document.createElement('strong')
-          const content = document.createElement('p')
-          const theme = window.getComputedStyle(itemRef.current)
-          const pageTheme = window.getComputedStyle(itemRef.current.closest('.sg-memory'))
-          popover.className = 'sg-layer-popover'
-          popover.setAttribute('role', 'tooltip')
-          popover.style.background = pageTheme.backgroundColor
-          popover.style.color = pageTheme.color
-          popover.style.borderColor = theme.borderColor
-          title.textContent = 'L' + level + ' 完整内容'
-          content.className = 'sg-layer-full'
-          content.textContent = String(layer.content || '暂无内容')
-          popover.append(title, content)
-          popover.addEventListener('mouseenter', cancelHide)
-          popover.addEventListener('mouseleave', scheduleHide)
-          if (inline) itemRef.current.parentElement.appendChild(popover)
-          else document.body.appendChild(popover)
-          popoverRef.current = popover
-        }
-        popoverRef.current.style.setProperty('position', inline ? 'relative' : 'fixed', 'important')
-        popoverRef.current.style.width = inline ? 'auto' : width + 'px'
-        popoverRef.current.style.left = inline ? '0' : left + 'px'
-        popoverRef.current.style.top = inline ? '0' : top + 'px'
-        popoverRef.current.style.maxHeight = inline ? '240px' : maxHeight + 'px'
-      }
-      const scheduleHide = () => {
-        cancelHide()
-        hideTimer.current = window.setTimeout(removePopover, 140)
-      }
-      React.useEffect(() => () => { cancelHide(); removePopover() }, [])
-
-      return h('div', { className: 'sg-layer-hover' },
-        h('div', { ref: itemRef, className: 'sg-layer-item ' + (level === currentLevel ? 'current' : ''), 'data-level': String(level) },
-          h('span', { className: 'sg-layer-label' }, 'L' + level),
-          h('span', { className: 'sg-layer-preview', tabIndex: 0, onMouseEnter: showPopover, onMouseLeave: scheduleHide, onFocus: showPopover, onBlur: scheduleHide }, previewText(layer.content)),
-          actionable ? h('button', { className: 'sg-layer-use', type: 'button', disabled: busy, onMouseEnter: removePopover, onFocus: removePopover, onClick: (event) => { event.stopPropagation(); void onExpand(level) } }, expanding ? '正在应用…' : '让助手参考 L' + level)
-            : h('span', { className: 'sg-layer-using' }, level === currentLevel ? '助手可见' : '仅供预览')))
+    function layerTokenCount(block, detail, level) {
+      const detailLayer = Array.isArray(detail?.layers) ? detail.layers.find((item) => Number(item.level) === level) : null
+      if (detailLayer && Number.isFinite(Number(detailLayer.tokens))) return Number(detailLayer.tokens)
+      const blockLayer = Array.isArray(block?.layerTokens) ? block.layerTokens.find((item) => Number(item.level) === level) : null
+      if (blockLayer && Number.isFinite(Number(blockLayer.tokens))) return Number(blockLayer.tokens)
+      const visible = visibleBlockLevel(block)
+      if (visible !== null && level === visible && Number.isFinite(Number(block?.currentTokens))) return Number(block.currentTokens)
+      if (level === 5 && Number.isFinite(Number(block?.l5Tokens))) return Number(block.l5Tokens)
+      return null
     }
 
-    function BlockLayerPanel({ block, detail, loading, expandingLevel, selectionBusy, onExpand }) {
-      if (loading) return h('div', { className: 'sg-layer-panel' }, h(Loading))
+    function layerPreviewText(block, detail, level) {
       const layers = Array.isArray(detail?.layers) ? detail.layers : []
-      const visibleLevel = visibleBlockLevel(block)
-      return h('div', { className: 'sg-layer-panel' },
-        h('div', { className: 'sg-layer-heading' }, h('strong', null, '分层内容预览'), h('span', null, '助手可见：' + (visibleLevel === null ? '尚未确认' : 'L' + visibleLevel))),
-        h('p', { className: 'sg-layer-hint' }, '预览不会改变助手可见的内容。悬停或聚焦可查看完整内容。'),
-        block.virtual ? h('div', { className: 'sg-virtual-note' }, '旧会话展示片段为只读内容，不会改写原始数据库。') : null,
-        layers.length ? h('div', { className: 'sg-layer-stack' }, layers.slice().sort((a, b) => a.level - b.level).map((layer) => h(LayerPreview, { key: layer.level, layer, currentLevel: visibleLevel, expanding: expandingLevel === layer.level, busy: selectionBusy || expandingLevel >= 0, pendingSelection: block.surfaceSync?.status === 'pending' || block.surfaceSync?.status === 'blocked', allowExpand: !block.virtual, onExpand }))) : h('div', { className: 'sg-muted' }, '暂时无法读取这段历史的分层内容。'))
+      const hit = layers.find((item) => Number(item.level) === level)
+      if (hit && String(hit.content || '').trim()) return String(hit.content)
+      if (level === 0 && block?.title) return String(block.title)
+      if (level === 1 && block?.summary) return String(block.summary)
+      if (level === 2 && Array.isArray(block?.keypoints) && block.keypoints.length) return block.keypoints.map((point) => '- ' + point).join('\n')
+      return layers.length ? '这一层尚未生成。' : '暂时无法读取这段历史的分层内容。'
+    }
+
+    function BlockLayerPanel({ block, detail, loading, error, previewLevel, onPreview, expandingLevel, selectionBusy, onExpand, onRetry }) {
+      const applied = visibleBlockLevel(block)
+      const fallbackLevel = applied === null ? 0 : Math.min(5, Math.max(0, applied))
+      const active = Number.isInteger(previewLevel) && previewLevel >= 0 && previewLevel <= 5 ? previewLevel : fallbackLevel
+      const pendingSelection = block.surfaceSync?.status === 'pending' || block.surfaceSync?.status === 'blocked'
+      const busy = Boolean(selectionBusy || expandingLevel >= 0)
+      const changed = applied === null || active !== applied || pendingSelection
+      const showDelta = applied !== null && active !== applied
+      const appliedTokens = applied === null ? null : layerTokenCount(block, detail, applied)
+      const activeTokens = layerTokenCount(block, detail, active)
+      const previewBody = loading && !detail
+        ? '正在读取 L0–L5 内容…'
+        : error && !detail
+          ? error
+          : layerPreviewText(block, detail, active)
+
+      return h('div', { className: 'sg-ss-inspector' },
+        h('h3', null, block.title || (block.virtual ? '旧会话片段 #' : '记忆块 #') + block.sequence),
+        h('p', { className: 'sg-ss-meta' }, turnRangeText(block.turnRange)),
+        h('div', { className: 'sg-ss-step-bars', role: 'group', 'aria-label': '详细程度刻度' },
+          SHORT_TERM_LEVELS.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            className: 'sg-ss-step-bar' + (applied !== null && item.id === applied ? ' current' : applied !== null && item.id < applied ? ' filled' : ''),
+            title: 'L' + item.id + ' ' + item.name + (applied === item.id ? '（当前在用）' : ''),
+            'aria-label': '预览 L' + item.id + ' ' + item.name,
+            onClick: () => onPreview?.(item.id),
+          }))),
+        h('div', { className: 'sg-ss-step-pills', role: 'radiogroup', 'aria-label': '详细程度' },
+          SHORT_TERM_LEVELS.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            role: 'radio',
+            'aria-checked': String(active === item.id),
+            className: 'sg-ss-step-pill' + (applied === item.id ? ' applied' : '') + (item.id === 0 ? ' tip-left' : item.id >= 4 ? ' tip-right' : ''),
+            onClick: () => onPreview?.(item.id),
+          },
+            h('span', { className: 'pn' }, 'L' + item.id + ' ' + item.short),
+            h('span', { className: 'pc' }, formatShortTokens(layerTokenCount(block, detail, item.id))),
+            h('span', { className: 'sg-ss-step-tip', role: 'tooltip' }, item.hint)))),
+        h('div', { className: 'sg-ss-preview', role: error && !detail ? 'alert' : undefined },
+          previewBody,
+          error && !detail && onRetry ? h('div', { style: { marginTop: '8px' } }, h('button', { type: 'button', className: 'sg-quiet-button', onClick: onRetry }, '重新读取')) : null),
+        block.virtual ? h('p', { className: 'sg-ss-virtual-note' }, '旧会话展示片段为只读内容，不会改写原始数据库。') : null,
+        h('div', { className: 'sg-ss-apply' },
+          h('span', null, showDelta ? h('span', { className: 'sg-ss-apply-delta' }, formatShortTokens(appliedTokens) + ' → ' + formatShortTokens(activeTokens)) : null),
+          h('span', { className: 'sg-ss-apply-right' },
+            showDelta ? h('button', { type: 'button', className: 'sg-ss-ghost', disabled: busy, onClick: () => onPreview?.(applied) }, '回到当前') : null,
+            block.virtual
+              ? h('button', { type: 'button', className: 'sg-ss-primary', disabled: true }, '只读片段')
+              : h('button', {
+                  type: 'button',
+                  className: 'sg-ss-primary',
+                  disabled: busy || !changed,
+                  onClick: () => void onExpand?.(active),
+                }, expandingLevel >= 0 ? '正在应用…' : changed ? '改用「' + SHORT_TERM_LEVELS[active].name + '」' : '正在使用'))))
     }
 
     function visibleBlockLevel(block) {
@@ -4096,8 +4153,8 @@ window.__ModuleLoader__.load({
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh, blockTurnSize = 6 }) {
       const pagedBlocks = usePagedMemory({ namespace, kind: 'blocks', initialItems: blocks, initialPage: blockPage, fallbackLimit: 40, extraParams: { threadId: activeThreadId } })
       const visible = [...pagedBlocks.items].sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || String(a.createdAt).localeCompare(String(b.createdAt)))
-      const [expandedId, setExpandedId] = React.useState('')
-      const [detailBlockId, setDetailBlockId] = React.useState('')
+      const [selectedId, setSelectedId] = React.useState('')
+      const [previewState, setPreviewState] = React.useState({ blockId: '', level: null })
       const [details, setDetails] = React.useState({})
       const [loadingId, setLoadingId] = React.useState('')
       const [expanding, setExpanding] = React.useState({ blockId: '', level: -1 })
@@ -4110,7 +4167,7 @@ window.__ModuleLoader__.load({
       const currentOpen = openBlock || { turnRange: null, messages: 0, status: 'open' }
 
       React.useEffect(() => {
-        setExpandedId(''); setDetailBlockId(''); setDetails({}); setLoadingId(''); setPreviewError(null); setSelectionFeedback({})
+        setSelectedId(''); setPreviewState({ blockId: '', level: null }); setDetails({}); setLoadingId(''); setPreviewError(null); setSelectionFeedback({})
       }, [scope])
 
       React.useEffect(() => {
@@ -4124,17 +4181,28 @@ window.__ModuleLoader__.load({
         return () => window.clearTimeout(timer)
       }, [selectionFeedback])
 
-
-      const toggleBlock = (block) => {
-        if (expandedId === block.id) { setExpandedId(''); return }
-        setExpandedId(block.id)
+      const selectedBlock = visible.find((block) => block.id === selectedId) || visible[visible.length - 1] || null
+      const levelOf = (block) => { const level = visibleBlockLevel(block); return level === null ? 0 : Math.min(5, Math.max(0, level)) }
+      const fetchDetail = (blockId) => {
+        if (!blockId || !namespace) return
         setPreviewError(null)
-        if (details[block.id]) return
-        setLoadingId(block.id)
-        void api('sources', { namespace, blockId: block.id })
-          .then((value) => { if (activeScope.current === scope) setDetails((current) => ({ ...current, [block.id]: value })) })
-          .catch(() => { if (activeScope.current === scope) setPreviewError({ scope, blockId: block.id, message: '暂时无法读取预览，请稍后重新打开。' }) })
-          .finally(() => { if (activeScope.current === scope) setLoadingId((current) => current === block.id ? '' : current) })
+        setLoadingId(blockId)
+        void api('sources', { namespace, blockId })
+          .then((value) => { if (activeScope.current === scope) setDetails((current) => ({ ...current, [blockId]: value })) })
+          .catch(() => { if (activeScope.current === scope) setPreviewError({ scope, blockId, message: '暂时无法读取预览，请稍后重试。' }) })
+          .finally(() => { if (activeScope.current === scope) setLoadingId((current) => current === blockId ? '' : current) })
+      }
+
+      React.useEffect(() => {
+        if (!selectedBlock || details[selectedBlock.id] || loadingId === selectedBlock.id) return
+        if (previewError?.scope === scope && previewError.blockId === selectedBlock.id) return
+        fetchDetail(selectedBlock.id)
+      }, [scope, selectedBlock?.id])
+
+      const selectBlock = (block) => {
+        setSelectedId(block.id)
+        setPreviewState({ blockId: block.id, level: levelOf(block) })
+        setPreviewError(null)
       }
 
       const expandTo = async (block, level) => {
@@ -4171,69 +4239,90 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const selectedBlock = visible.find((block) => block.id === expandedId) || visible[visible.length - 1] || null
-      const levelOf = (block) => { const level = visibleBlockLevel(block); return level === null ? 0 : Math.min(5, Math.max(0, level)) }
       // Turns per Block can differ from the historical 6, so the open Block's dot
       // count follows the real capacity instead of a hard-coded six.
       const openCapacity = Math.max(1, Number(currentOpen.capacity || blockTurnSize || 6))
       const openUsed = Math.min(openCapacity, Math.max(0, Number(currentOpen.turns || 0)))
-      const remainingDots = Math.max(1, openCapacity - openUsed)
-      const firstTurn = visible.length ? visible[0].turnRange?.[0] : null
-      const lastTurn = visible.length ? visible[visible.length - 1].turnRange?.[1] : null
-      const turnSpan = Number.isInteger(firstTurn) && Number.isInteger(lastTurn) ? ' · 第 ' + firstTurn + '–' + lastTurn + ' 轮' : ''
-      // Narrow panels move to the real detail view instead of expanding in place.
-      const narrow = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-        ? window.matchMedia('(max-width: 680px)').matches === true
-        : false
-      const detailBlock = narrow && detailBlockId ? visible.find((block) => block.id === detailBlockId) : null
-      if (detailBlock) return h('div', { className: 'sg-ss-detail-page' },
-        h(BackBar, { label: '会话记忆', onBack: () => setDetailBlockId('') }),
-        h(ShortTermMemoryBlockDetail, { key: namespace + ':' + detailBlock.id, namespace, block: detailBlock }))
+      const openLeft = Math.max(0, openCapacity - openUsed)
+      const latestSealedTurn = visible.reduce((max, block) => Math.max(max, Number(block.turnRange?.[1] || 0)), 0)
+      const openFrom = Array.isArray(currentOpen.turnRange) && Number.isInteger(currentOpen.turnRange[0]) ? currentOpen.turnRange[0] : latestSealedTurn + 1
+      const totalTokens = visible.reduce((sum, block) => sum + (Number(layerTokenCount(block, details[block.id], levelOf(block))) || 0), 0)
+      const activePreview = selectedBlock
+        ? (previewState.blockId === selectedBlock.id && previewState.level !== null ? previewState.level : levelOf(selectedBlock))
+        : 0
+      const showPagination = pagedBlocks.page.total > pagedBlocks.page.limit || pagedBlocks.page.offset > 0
       return h(React.Fragment, null,
-        h('div', { className: 'sg-pg-head' }, h('h2', null, '会话记忆'),
-          h('span', { className: 'sg-pg-tag' }, h('i', { className: 'sg-sw water', 'aria-hidden': 'true' }), pagedBlocks.page.total + ' 块' + turnSpan),
-          conversations.length ? h('span', { className: 'sg-pg-end' }, h('label', { className: 'sg-conversation' }, h('span', null, '当前对话：'), h('select', { value: activeThreadId || '', onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))) : null),
+        h('div', { className: 'sg-pg-head' },
+          h('div', { className: 'sg-pg-title' }, h('i', { className: 'sg-sw water', 'aria-hidden': 'true' }), h('h2', null, '会话记忆')),
+          conversations.length ? h('span', { className: 'sg-pg-end' }, h('label', { className: 'sg-conversation' }, h('span', null, '当前对话'), h('select', { value: activeThreadId || '', onChange: (event) => onConversationChange(event.target.value), 'aria-label': '当前对话' }, conversations.map((conversation) => h('option', { key: conversation.id, value: conversation.id }, conversation.label))))) : null),
         h('section', { className: 'sg-block-list sg-ss-list', 'aria-label': 'Block 列表' },
           h('section', { className: 'sg-visually-hidden', 'aria-labelledby': 'sg-decay-title' },
             h('h2', { id: 'sg-decay-title' }, '块衰减总览'),
             h('div', { className: 'sg-distribution', 'aria-label': 'Block 当前层级分布' }, visible.map((block) => h('span', { key: block.id, className: 'sg-level-chip', 'data-level': visibleBlockLevel(block) === null ? undefined : String(block.currentLevel), title: 'Block #' + block.sequence }, visibleBlockLevel(block) === null ? '尚未确认' : 'L' + block.currentLevel)), h('span', { className: 'sg-level-chip sg-open-chip' }, '开放块 · 未封存')),
             h('input', { className: 'sg-distribution-rail', type: 'range', min: '0', max: '0', step: '1', value: '0', disabled: true, readOnly: true, 'aria-label': 'Block 分布滑轨' })),
-          h('div', { className: 'sg-block-header sg-visually-hidden', 'aria-hidden': 'true' }, h('span', null, '助手可见层级'), h('span', null, 'Block'), h('span', null, '覆盖 Turn'), h('span', null, '距最新封存块'), h('span')),
-          h('div', { className: 'sg-ss-scale' }, h('span', null, '更早'), h('span', { className: 'sg-r', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, style: { height: 5 + level * 3 + 'px', opacity: .3 + level * .14 } }))), h('span', null, '最近'), h('span', null, '越早的对话压得越薄')),
-          h('div', { className: 'sg-ss' },
-            h('div', { className: 'sg-ss-main' }, visible.map((block) => h('div', { key: block.id, className: 'sg-block-unit' },
-            h('button', { className: 'sg-block-toggle', type: 'button', onClick: () => narrow ? setDetailBlockId(block.id) : toggleBlock(block), 'aria-expanded': narrow ? undefined : expandedId === block.id ? 'true' : 'false', 'aria-label': '记忆块 ' + block.sequence + '，' + turnRangeText(block.turnRange) + (narrow ? '，打开详情' : '') },
-              h('span', { className: 'sg-ss-num' }, String(block.sequence)),
-              h('span', { className: 'sg-ss-bar', style: { height: 20 + levelOf(block) * 5 + 'px', background: 'color-mix(in srgb, var(--sg-water) ' + (14 + levelOf(block) * 14) + '%, var(--sg-page))' } }, h('span', null, block.title || (block.virtual ? '旧 Block #' : 'Block #') + block.sequence)),
-              // The level badge repeated what the bar height already encodes, so
-              // the row keeps only the real title.
-              h('span', { className: 'sg-ss-use' }),
-              h('span', { className: 'sg-block-turn' }, turnRangeText(block.turnRange)),
-              h('span', { className: 'sg-block-distance' }, block.distanceFromLatest === 0 ? '0（最新）' : block.distanceFromLatest + ' 个 Block'),
-              null),
-            h(BlockSelectionFeedback, { block, feedback: selectionFeedback[block.id]?.scope === scope ? selectionFeedback[block.id] : null, onRefresh: async () => {
-              try {
-                await refresh()
-                if (activeScope.current !== scope) return
-                if (pagedBlocks.page.offset > 0) await pagedBlocks.loadOffset(pagedBlocks.page.offset)
-                if (activeScope.current === scope) setSelectionFeedback((current) => ({ ...current, [block.id]: null }))
-              } catch { /* Keep the existing explanation and refresh action available. */ }
-            } }),
-            previewError?.scope === scope && previewError.blockId === block.id ? h('div', { role: 'alert', className: 'sg-selection-feedback error' }, previewError.message) : null,
-            summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null,
-            expandedId === block.id ? h('div', { className: 'sg-block-expanded' }, h(BlockLayerPanel, { block, detail: details[block.id], loading: loadingId === block.id, selectionBusy: expanding.scope === scope && expanding.level >= 0, expandingLevel: expanding.scope === scope && expanding.blockId === block.id ? expanding.level : -1, onExpand: (level) => expandTo(block, level) })) : null)),
-            h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-ss-open' },
-              h('span', { className: 'sg-ss-num' }, '·'),
-              h('div', { className: 'sg-ss-bar' }, h('span', null, '正在记录'), h('span', { className: 'sg-ss-dots', role: 'img', 'aria-label': '还差 ' + remainingDots + ' 轮封存', 'aria-hidden': undefined }, Array.from({ length: remainingDots }, (_, index) => h('i', { key: index, className: index < Math.min(remainingDots, Math.max(0, openCapacity - openUsed)) ? '' : 'o' })))),
-              h('span')))),
+          h('div', { className: 'sg-ss' + (selectedBlock ? '' : ' single') },
+            h('div', { className: 'sg-ss-col' },
+              h('div', { className: 'sg-ss-main' },
+                visible.map((block) => {
+                  const level = levelOf(block)
+                  const rowTokens = layerTokenCount(block, details[block.id], level)
+                  const isSelected = selectedBlock?.id === block.id
+                  return h('div', { key: block.id, className: 'sg-block-unit' },
+                    h('button', {
+                      className: 'sg-block-toggle',
+                      type: 'button',
+                      'aria-current': isSelected ? 'true' : 'false',
+                      style: {
+                        '--sh': (34 + level * 2) + 'px',
+                        '--tint': (7 + level * 3) + '%',
+                        '--spine': (0.32 + level * 0.13).toFixed(2),
+                      },
+                      title: SHORT_TERM_LEVELS[level].name + '（L' + level + '）· 约 ' + formatShortTokens(rowTokens) + ' token',
+                      'aria-label': turnRangeText(block.turnRange) + '，' + (block.title || '记忆块 #' + block.sequence) + '，' + SHORT_TERM_LEVELS[level].name,
+                      onClick: () => selectBlock(block),
+                    },
+                      h('span', { className: 'sg-ss-turns' }, turnRangeText(block.turnRange)),
+                      h('span', { className: 'sg-ss-title' }, block.title || (block.virtual ? '旧会话片段 #' : '记忆块 #') + block.sequence),
+                      h('span', { className: 'sg-ss-tail' },
+                        h('span', { className: 'sg-ss-meter', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((index) => h('i', { key: index, className: index <= level ? 'on' : '' }))),
+                        h('span', { className: 'sg-ss-cost' }, formatShortTokens(rowTokens)))),
+                    h(BlockSelectionFeedback, { block, feedback: selectionFeedback[block.id]?.scope === scope ? selectionFeedback[block.id] : null, onRefresh: async () => {
+                      try {
+                        await refresh()
+                        if (activeScope.current !== scope) return
+                        if (pagedBlocks.page.offset > 0) await pagedBlocks.loadOffset(pagedBlocks.page.offset)
+                        if (activeScope.current === scope) setSelectionFeedback((current) => ({ ...current, [block.id]: null }))
+                      } catch { /* Keep the existing explanation and refresh action available. */ }
+                    } }),
+                    summaryUnavailable(block) ? h(SummaryUnavailable, { key: namespace + ':' + block.id, namespace, block }) : null)
+                }),
+                h('div', { className: 'sg-block-unit' }, h('div', { className: 'sg-ss-open' },
+                  h('span', { className: 'sg-ss-turns' }, '第 ' + openFrom + ' 轮起'),
+                  h('span', { className: 'sg-ss-title' }, '正在记录'),
+                  h('span', { className: 'sg-ss-tail' },
+                    h('span', { className: 'sg-ss-dots', role: 'img', 'aria-label': '已记录 ' + openUsed + ' 轮，还差 ' + openLeft + ' 轮封存' },
+                      Array.from({ length: openCapacity }, (_, index) => h('i', { key: index, className: index < openUsed ? '' : 'o' }))),
+                    h('span', { className: 'sg-ss-cost' }, '还差 ' + openLeft + ' 轮'))))),
+              visible.length ? h('div', { className: 'sg-ss-foot' },
+                h('span', { className: 'sg-ss-scale', title: '默认越早的对话越简略，也可手动调高' },
+                  h('span', null, '更早'),
+                  h('span', { className: 'sg-r', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, style: { height: (4 + level * 2.5) + 'px', opacity: (0.32 + level * 0.13).toFixed(2) } }))),
+                  h('span', null, '最近')),
+                h('span', { className: 'sg-ss-total' }, '共约 ' + formatShortTokens(totalTokens) + ' token')) : null),
             selectedBlock ? h('aside', { className: 'sg-ss-side', 'aria-label': '选中记忆块详情' },
-              h('h3', null, selectedBlock.title || 'Block #' + selectedBlock.sequence),
-              h('span', { className: 'sg-k' }, '记忆块 ' + selectedBlock.sequence + ' · ' + turnRangeText(selectedBlock.turnRange)),
-              h('div', { className: 'sg-lvl', 'aria-hidden': 'true' }, [0, 1, 2, 3, 4, 5].map((level) => h('i', { key: level, className: level <= levelOf(selectedBlock) ? 'on' : '' }))),
-              h('div', { className: 'sg-lvl-l' }, h('span', null, '只留标题'), h('span', null, '原文')),
-              h('p', null, selectedBlock.summary || (selectedBlock.keypoints || []).join('；') || '这一块暂时没有摘要。'),
-              h('button', { type: 'button', className: 'sg-btn', onClick: () => toggleBlock(selectedBlock) }, expandedId === selectedBlock.id ? '收起详情' : '看原文')) : null)),
-        h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }))
+              h(BlockLayerPanel, {
+                block: selectedBlock,
+                detail: details[selectedBlock.id],
+                loading: loadingId === selectedBlock.id,
+                error: previewError?.scope === scope && previewError.blockId === selectedBlock.id ? previewError.message : '',
+                previewLevel: activePreview,
+                onPreview: (level) => setPreviewState({ blockId: selectedBlock.id, level }),
+                selectionBusy: expanding.scope === scope && expanding.level >= 0,
+                expandingLevel: expanding.scope === scope && expanding.blockId === selectedBlock.id ? expanding.level : -1,
+                onExpand: (level) => expandTo(selectedBlock, level),
+                onRetry: () => fetchDetail(selectedBlock.id),
+              })) : null)),
+        showPagination ? h(Pagination, { page: pagedBlocks.page, loading: pagedBlocks.loading, error: pagedBlocks.error, onOffset: pagedBlocks.loadOffset }) : null)
     }
 
     function SourceDetails({ item, source, kind }) {

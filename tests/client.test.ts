@@ -11,7 +11,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderStarLink, loadStarCount, formatStarCount, GitHubMarkIcon, StrataGateMark, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, OverviewPage, ProfilePage, ProfileLimitSettings, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, overviewRuntimeState, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, LayerPreview, visibleBlockLevel, BlockSelectionFeedback,')
+  ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, overviewRuntimeState, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, visibleBlockLevel, BlockSelectionFeedback,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -128,25 +128,37 @@ describe('StrataGate Web client contract', () => {
   })
 
   it('separates preview from applying a layer and allows replacing a pending selection with the current layer', () => {
-    const { BlockLayerPanel, LayerPreview, visibleBlockLevel } = loadSupportHelpers()
+    const { BlockLayerPanel, visibleBlockLevel } = loadSupportHelpers()
     const onExpand = vi.fn()
-    const panel = BlockLayerPanel({ block: { currentLevel: 4 }, detail: { layers: [] } })
-    expect(JSON.stringify(panel)).toContain('预览不会改变助手可见的内容')
-    expect(JSON.stringify(panel)).toContain('助手可见：L4')
+    const onPreview = vi.fn()
+    const baseBlock = { id: 'b1', sequence: 1, currentLevel: 4, surfaceLevelKnown: true, layerTokens: [{ level: 0, tokens: 12 }, { level: 4, tokens: 800 }] }
+    const detail = { layers: [{ level: 0, content: 'L0 标题', tokens: 12 }, { level: 4, content: 'L4 较完整内容', tokens: 800 }] }
+    const unchanged = BlockLayerPanel({ block: baseBlock, detail, previewLevel: 4, onPreview, onExpand })
+    const unchangedProps = deepElementProps(unchanged)
+    expect(unchangedProps.filter((p) => p.className?.includes('sg-ss-step-bar') && p.className.includes('current'))).toHaveLength(1)
+    expect(unchangedProps.find((p) => p.className?.includes('sg-ss-step-pill') && p.className.includes('applied'))).toBeDefined()
+    expect(buttonProps(unchanged, '正在使用')?.disabled).toBe(true)
     expect(onExpand).not.toHaveBeenCalled()
-    const layer = LayerPreview({ layer: { level: 0 }, currentLevel: 4, allowExpand: true, onExpand })
-    buttonProps(layer, '让助手参考 L0').onClick({ stopPropagation() {} })
+    unchangedProps.filter((p) => p.className?.includes('sg-ss-step-pill') && p.role === 'radio')[0].onClick()
+    expect(onPreview).toHaveBeenCalledWith(0)
+    const previewing = BlockLayerPanel({ block: baseBlock, detail, previewLevel: 0, onPreview, onExpand })
+    const previewProps = deepElementProps(previewing)
+    const stepBars = previewProps.filter((p) => p.type === 'button' && p.className?.includes('sg-ss-step-bar'))
+    expect(stepBars[4].className).toContain('current')
+    expect(stepBars[0].className).toContain('filled')
+    expect(JSON.stringify(previewing)).toContain('L0 标题')
+    expect(JSON.stringify(previewing)).toContain('800 → 12')
+    expect(buttonProps(previewing, '回到当前')).toBeDefined()
+    buttonProps(previewing, '改用「仅标题」').onClick()
     expect(onExpand).toHaveBeenCalledWith(0)
-    const current = { layer: { level: 4 }, currentLevel: 4, allowExpand: true, onExpand }
-    expect(buttonProps(LayerPreview(current), '让助手参考 L4')).toBeUndefined()
-    expect(JSON.stringify(LayerPreview(current))).toContain('助手可见')
-    expect(buttonProps(LayerPreview({ ...current, pendingSelection: true }), '让助手参考 L4')).toBeDefined()
-    expect(buttonProps(LayerPreview({ ...current, pendingSelection: true, busy: true }), '让助手参考 L4').disabled).toBe(true)
-    expect(buttonProps(LayerPreview({ ...current, currentLevel: 0, allowExpand: false }), '让助手参考 L4')).toBeUndefined()
+    const pending = BlockLayerPanel({ block: { ...baseBlock, surfaceSync: { status: 'pending' } }, detail, previewLevel: 4, onPreview, onExpand })
+    expect(buttonProps(pending, '改用「较完整对话」').disabled).toBe(false)
+    const busyPending = BlockLayerPanel({ block: { ...baseBlock, surfaceSync: { status: 'pending' } }, detail, previewLevel: 4, onPreview, selectionBusy: true, expandingLevel: -1, onExpand })
+    expect(buttonProps(busyPending, '改用「较完整对话」').disabled).toBe(true)
+    const virtualPanel = BlockLayerPanel({ block: { ...baseBlock, virtual: true }, detail, previewLevel: 0, onPreview, onExpand })
+    expect(buttonProps(virtualPanel, '只读片段')?.disabled).toBe(true)
     expect(visibleBlockLevel({ currentLevel: 4, surfaceLevelKnown: false })).toBeNull()
     expect(visibleBlockLevel({ currentLevel: 4, surfaceLevelKnown: true })).toBe(4)
-    const waiting = BlockLayerPanel({ block: { currentLevel: 0 }, detail: { layers: [{ level: 4 }] }, expandingLevel: -1, selectionBusy: true, onExpand })
-    expect(deepElementProps(waiting).find(props => props.layer)?.busy).toBe(true)
   })
 
   it('explains waiting and failure next to the Block, retaining the actual available layer', () => {
@@ -1422,10 +1434,12 @@ describe('StrataGate Web client contract', () => {
 
   it('adds Windows font fallbacks without shipping font files', () => {
     const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
-    expect(source).toContain('--sg-serif:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC","Microsoft YaHei UI","Microsoft YaHei","Segoe UI",serif;')
+    expect(source).toContain('--sg-serif:"Noto Serif SC","Source Han Serif SC","Songti SC","Microsoft YaHei UI","Microsoft YaHei","Times New Roman",serif;')
+    expect(source).toContain('--sg-sans:"Noto Sans SC","Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;')
     expect(source).toContain('--sg-mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,"Cascadia Mono",Consolas,monospace;')
-    // Mac-first order is preserved, and no bundled font asset was added.
-    expect(source.indexOf('"Songti SC"')).toBeLessThan(source.indexOf('"Microsoft YaHei UI"'))
+    const serifLine = source.slice(source.indexOf('--sg-serif:'))
+    expect(serifLine.indexOf('"Songti SC"')).toBeLessThan(serifLine.indexOf('"Microsoft YaHei UI"'))
+    expect(source).not.toContain('"STSong"')
     expect(source).not.toMatch(/@font-face/)
   })
 
@@ -1476,19 +1490,17 @@ describe('StrataGate Web client contract', () => {
     expect(source).toContain("[['overview', '总览'], ['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']]")
     expect(source).toContain('sg-ss-list')
     expect(source).toContain('正在记录')
-    expect(source).toContain('距最新封存块')
-    expect(source).toContain('分层内容预览')
-    expect(source).toContain('让助手参考 L')
+    expect(source).toContain('sg-ss-step-bars')
+    expect(source).toContain('sg-ss-step-pills')
+    expect(source).toContain('改用「')
     expect(source).toContain("api('blocks/expand'")
-    expect(source).toContain('助手可见层级')
     expect(source).not.toContain('用户展开')
     expect(source).not.toContain('Agent 展开')
-    expect(source).toContain('当前对话：')
-    expect(source).toContain('越早的对话压得越薄')
-    expect(source).toContain('只留标题')
-    expect(source).toContain('document.body.appendChild(popover)')
+    expect(source).toContain('当前对话')
+    expect(source).toContain('默认越早的对话越简略，也可手动调高')
+    expect(source).toContain("short: '标题'")
     expect(source).toContain('BlockSelectionFeedback')
-    expect(source).toContain('完整内容')
+    expect(source).toContain('完整原文')
     expect(source).toContain("React.useState('topics')")
     expect(source).toContain('主题目录')
     expect(source).toContain('知识图谱')
