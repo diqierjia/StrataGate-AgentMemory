@@ -669,6 +669,8 @@ window.__ModuleLoader__.load({
         --sg-subtle:color-mix(in srgb,var(--sg-text) 78%,var(--sg-page));
         --sg-moss:color-mix(in srgb,var(--dsw-alias-state-success-primary,#5f7f4d) 62%,var(--sg-text));
         --sg-sand:color-mix(in srgb,var(--dsw-alias-state-warn-label,#a9822f) 74%,var(--sg-text));
+        --sg-sand-deep:color-mix(in srgb,var(--sg-sand) 64%,var(--sg-text));
+        --sg-sand-soft:color-mix(in srgb,var(--sg-sand) 13%,var(--sg-page));
         --sg-water:color-mix(in srgb,var(--dsw-alias-state-business-primary,#3f6d9c) 68%,var(--sg-text));
         --sg-water-deep:color-mix(in srgb,var(--sg-water) 62%,var(--sg-text));
         --sg-water-soft:color-mix(in srgb,var(--sg-water) 14%,var(--sg-page));
@@ -1216,38 +1218,87 @@ window.__ModuleLoader__.load({
       }
 
       /* 短期记忆：按天排列 */
-      .sg-days{display:grid}
-      .sg-day{display:grid;grid-template-columns:64px 6px minmax(0,1fr);column-gap:14px;padding:12px 0;border-top:1px solid var(--sg-hair);animation:sg-r6-rise .4s both}
-      .sg-day-d{display:block;width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:right;cursor:pointer}
-      .sg-day-d b{display:block;font:400 26px/1 var(--sg-serif)}
-      .sg-day-d span{font-size:11px;color:var(--sg-muted)}
-      .sg-day-rail{border-radius:3px;background:var(--sg-sand)}
-      .sg-day.out .sg-day-rail{background:none;box-shadow:inset 0 0 0 1.2px var(--sg-border)}
-      .sg-day.out{color:var(--sg-muted)}
-      .sg-day ul{margin:0;padding:0;list-style:none;min-width:0}
-      .sg-day li{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:baseline;gap:10px;padding:3px 0;font-size:13px}
-      .sg-memory .sg-day li .sg-day-t{font:11.5px var(--sg-mono);color:var(--sg-muted)}
-      .sg-day li .sg-day-s{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sg-text);text-align:left;font:inherit}
-      .sg-day.out li .sg-day-s{color:var(--sg-muted)}
-      .sg-day-cut{display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:14px;align-items:center;margin:2px 0;color:var(--sg-muted);font-size:11px}
-      .sg-day-cut span{grid-column:2;display:flex;align-items:center;gap:8px}
-      .sg-day-cut span:before{content:"";flex:0 0 8px;border-top:1px dashed var(--sg-border)}
-      .sg-day-cut span:after{content:"";flex:1;border-top:1px dashed var(--sg-border)}
+      .sg-daily-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,390px);gap:28px;align-items:start}
+      .sg-daily-split.single{grid-template-columns:minmax(0,1fr)}
+      .sg-days{display:grid;gap:6px;min-width:0}
+      .sg-day-month{display:flex;align-items:center;gap:8px;margin:8px 0 2px;font:11.5px/1.3 var(--sg-sans);font-variant-numeric:tabular-nums;color:var(--sg-muted)}
+      .sg-day-month:after{content:"";flex:1;border-top:1px solid var(--sg-hair)}
+      .sg-day{position:relative;display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px 10px 15px;border-radius:5px;background:color-mix(in srgb,var(--sg-sand) 9%,var(--sg-page));cursor:pointer;overflow:hidden;transition:background-color .14s ease,box-shadow .14s ease;animation:sg-r6-rise .35s both}
+      .sg-day::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3.5px;background:var(--sg-sand);opacity:.82;transition:opacity .14s ease}
+      .sg-day:hover{background:color-mix(in srgb,var(--sg-sand) 14%,var(--sg-page))}
+      .sg-day.selected{background:color-mix(in srgb,var(--sg-sand) 16%,var(--sg-page));box-shadow:inset 0 0 0 1.5px var(--sg-text)}
+      .sg-day.selected::before{opacity:1}
+      .sg-day.out{background:transparent;border:1px solid var(--sg-hair);padding:9px 11px 9px 14px}
+      .sg-day.out::before{background:var(--sg-border);opacity:.9}
+      .sg-day.out:hover{background:var(--sg-sheet)}
+      .sg-day.out.selected{border-color:transparent;background:var(--sg-sheet);box-shadow:inset 0 0 0 1.5px var(--sg-text)}
+      .sg-day-d{display:block;width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+      .sg-day-d b{display:block;font:400 22px/1.05 var(--sg-serif);color:var(--sg-text);font-variant-numeric:tabular-nums}
+      .sg-day.out .sg-day-d b{color:var(--sg-muted)}
+      .sg-day.out.selected .sg-day-d b{color:var(--sg-text)}
+      .sg-day-d span{display:block;margin-top:2px;font-size:11.5px;line-height:1.35;color:var(--sg-muted);white-space:nowrap}
+      .sg-day ul{margin:0;padding:0;list-style:none;min-width:0;display:grid;gap:4px}
+      .sg-day li{display:flex;align-items:center;gap:8px;min-width:0;font-size:13.5px;line-height:1.45}
+      .sg-memory .sg-day li .sg-day-s{min-width:0;flex:1 1 auto;padding:0;border:0;background:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sg-text);text-align:left;font:inherit;font-weight:400;cursor:pointer}
+      .sg-memory .sg-day li .sg-day-s:hover{color:var(--sg-sand-deep);text-decoration:underline;text-underline-offset:3px}
+      .sg-day.out li .sg-day-s{color:var(--sg-subtle)}
+      .sg-day-more{font-size:11.5px;color:var(--sg-muted)}
+      .sg-day-tail{display:inline-flex;align-items:center;gap:4px;align-self:center;font-family:var(--sg-sans);font-size:12.5px;line-height:1.4;font-weight:450;font-variant-numeric:tabular-nums;color:var(--sg-subtle);white-space:nowrap}
+      .sg-day.out .sg-day-tail{color:var(--sg-muted)}
+      .sg-day-chev{display:inline-flex;align-items:center;opacity:.58;transition:transform .14s ease,opacity .14s ease}
+      .sg-day-chev svg{width:14px;height:14px;display:block}
+      .sg-day:hover .sg-day-chev,.sg-day.selected .sg-day-chev{opacity:1;transform:translateX(1px)}
+      .sg-day-cut{display:flex;align-items:center;gap:8px;margin:4px 2px;color:var(--sg-muted);font-size:11px}
+      .sg-day-cut::before{content:"";flex:0 0 14px;border-top:1px dashed var(--sg-border)}
+      .sg-day-cut::after{content:"";flex:1;border-top:1px dashed var(--sg-border)}
       .sg-daily-actions{display:flex;align-items:center;gap:6px}
+      .sg-stp-label{font-size:12px;color:var(--sg-muted);white-space:nowrap}
       .sg-stp{display:inline-flex;align-items:center;overflow:hidden;border:1px solid var(--sg-border);border-radius:7px;font-size:12.5px}
-      .sg-memory .sg-stp button{width:26px;height:26px;padding:0;border:0;background:none;color:var(--sg-muted);font-size:14px;line-height:1;cursor:pointer}
+      .sg-memory .sg-stp button{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;background:none;color:var(--sg-muted);font-size:14px;line-height:1;cursor:pointer}
       .sg-memory .sg-stp button:hover:not(:disabled){background:var(--sg-soft);color:var(--sg-text)}
       .sg-memory .sg-stp button:disabled{opacity:.4;cursor:default}
       .sg-stp.sg-stp-wide{border:0;gap:0}
-      .sg-stp.sg-stp-wide .sg-number-input{width:66px;margin:0 0 0 -1px;height:28px;text-align:center;border-radius:0;font-family:var(--sg-mono);font-size:12.5px;padding:0 2px;-moz-appearance:textfield}
+      .sg-stp.sg-stp-wide .sg-number-input{width:66px;margin:0 0 0 -1px;height:28px;text-align:center;border-radius:0;font-family:var(--sg-sans);font-variant-numeric:tabular-nums;font-size:12.5px;padding:0 2px;-moz-appearance:textfield}
       .sg-stp.sg-stp-wide .sg-number-input::-webkit-outer-spin-button,.sg-stp.sg-stp-wide .sg-number-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
       .sg-stp.sg-stp-wide button{width:26px;height:28px;border:1px solid var(--sg-border)}
       .sg-stp.sg-stp-wide button:first-child{border-radius:7px 0 0 7px}
       .sg-stp.sg-stp-wide button:last-child{border-radius:0 7px 7px 0;border-left:0}
-      .sg-stp span{min-width:48px;border-inline:1px solid var(--sg-border);text-align:center;line-height:26px;font-family:var(--sg-mono)}
-      .sg-memory .sg-daily-note,.sg-memory .sg-daily-item,.sg-memory .sg-daily-note-date h3{font-family:inherit}
-      .sg-memory .sg-daily-note-date h3{font-family:var(--sg-serif);font-weight:700}
-      @media (max-width:680px){.sg-day{grid-template-columns:42px 5px minmax(0,1fr);column-gap:10px}.sg-day-d b{font-size:20px}.sg-day-cut{grid-template-columns:42px minmax(0,1fr);column-gap:10px}}
+      .sg-stp span{display:inline-flex;align-items:center;justify-content:center;min-width:48px;height:26px;padding:0 8px;border-inline:1px solid var(--sg-border);text-align:center;line-height:1;font-family:var(--sg-sans);font-variant-numeric:tabular-nums}
+      .sg-memory .sg-daily-note{position:sticky;top:14px;max-width:none;padding-top:12px;border-top:1.5px solid var(--sg-text);min-width:0;animation:sg-daily-fade .2s var(--sg-ease) both}
+      .sg-memory .sg-daily-note-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:6px}
+      .sg-memory .sg-daily-note-date{margin:0;gap:2px 10px}
+      .sg-memory .sg-daily-note-date h3{margin:0;font-family:var(--sg-serif);font-size:20px;font-weight:700;line-height:1.25}
+      .sg-memory .sg-daily-note-date span{font-size:12px;color:var(--sg-muted)}
+      .sg-memory .sg-daily-close{flex:0 0 auto;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);color:var(--sg-muted);padding:3px 9px;font-size:12px;cursor:pointer}
+      .sg-memory .sg-daily-close:hover{background:var(--sg-soft);color:var(--sg-text)}
+      .sg-memory .sg-daily-meta{margin-bottom:12px;gap:8px}
+      .sg-memory .sg-daily-pill{background:var(--sg-sand-soft);color:var(--sg-sand-deep)}
+      .sg-memory .sg-daily-pill.muted{background:var(--sg-soft);color:var(--sg-muted)}
+      .sg-memory .sg-daily-back{color:var(--sg-sand-deep)}
+      .sg-memory .sg-daily-sheet{border:1px solid var(--sg-hair);border-radius:8px;background:var(--sg-sheet);padding:14px 16px}
+      .sg-memory .sg-daily-item{padding:12px 0;border-top:1px solid var(--sg-hair);font-family:inherit}
+      .sg-memory .sg-daily-item:first-child{border-top:0;padding-top:0}
+      .sg-memory .sg-daily-item:last-child{padding-bottom:0}
+      .sg-memory .sg-daily-item h4{margin:0 0 6px;font-size:14.5px;font-weight:650;line-height:1.45;color:var(--sg-text)}
+      .sg-memory .sg-daily-status{margin:0 0 7px;font-size:13px;line-height:1.6}
+      .sg-memory .sg-daily-status b{background:var(--sg-sand-soft);color:var(--sg-sand-deep)}
+      .sg-memory .sg-daily-status.done b{background:var(--sg-good-soft);color:var(--sg-good)}
+      .sg-memory .sg-daily-item p{margin:5px 0;font-size:13px;line-height:1.68;color:var(--sg-subtle)}
+      .sg-memory .sg-daily-item ul{margin:4px 0 0;padding-left:18px;font-size:13px;line-height:1.65;color:var(--sg-subtle)}
+      .sg-memory .sg-daily-item li+li{margin-top:4px}
+      .sg-memory .sg-daily-note code{white-space:normal;overflow-wrap:break-word;word-break:break-word;font-family:var(--sg-mono),"Noto Sans SC","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",monospace;font-size:11.5px;padding:1px 5px;border-radius:4px;background:var(--sg-soft)}
+      .sg-memory .sg-daily-off{margin:0 0 14px;border:1px solid var(--sg-hair);background:var(--sg-sheet)}
+      .sg-memory .sg-daily-state{padding:28px 20px;border:1px solid var(--sg-hair);border-radius:10px;background:var(--sg-sheet)}
+      .sg-memory .sg-daily-state:not(.error) .sg-daily-icon-wrap{background:var(--sg-sand-soft);color:var(--sg-sand-deep)}
+      @container sg-daily (max-width:740px){
+        .sg-daily-split{grid-template-columns:minmax(0,1fr);gap:16px}
+        .sg-memory .sg-daily-note{position:static;order:-1}
+      }
+      @container sg-daily (max-width:480px){
+        .sg-day{grid-template-columns:58px minmax(0,1fr) auto;gap:10px;padding:9px 10px 9px 12px}
+        .sg-day.out{padding:8px 9px 8px 11px}
+        .sg-day-d b{font-size:19px}
+      }
 
       /* 更多：与画像同一套分组列表 */
       .sg-more{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px 26px;align-items:start;min-width:0}
@@ -4133,7 +4184,19 @@ window.__ModuleLoader__.load({
         (paths[name] || []).map((d, key) => h('path', { key, d })))
     }
     function dailyInline(text) {
-      return String(text).split(/(`[^`\n]+`)/g).map((part, key) =>  /^`[^`\n]+`$/.test(part) ? h('code', { key }, part.slice(1, -1)) : part)
+      const parts = []
+      let key = 0
+      for (const segment of String(text).split(/(`[^`\n]+`)/g)) {
+        if (/^`[^`\n]+`$/.test(segment)) {
+          parts.push(h('code', { key: key++ }, segment.slice(1, -1)))
+        } else if (segment) {
+          for (const piece of segment.split(/(\*\*[^*\n]+\*\*)/g)) {
+            if (/^\*\*[^*\n]+\*\*$/.test(piece)) parts.push(h('strong', { key: key++ }, piece.slice(2, -2)))
+            else if (piece) parts.push(piece)
+          }
+        }
+      }
+      return parts
     }
     function renderDailyMarkdown(markdown) {
       const output = []; let children = []; let title = null; let list = []
@@ -4158,15 +4221,13 @@ window.__ModuleLoader__.load({
       for (const raw of String(markdown || '').split(/\r?\n/)) {
         const line = raw.trim()
         if (!line || /^# \d{4}-\d{2}-\d{2}$/.test(line)) continue
-        if (line.startsWith('## ')) { current = { title: line.slice(3), detail: '', time: '' }; items.push(current); continue }
+        if (line.startsWith('## ')) { current = { title: line.slice(3), detail: '' }; items.push(current); continue }
         if (!current) continue
-        const clock = line.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/)
-        if (clock && !current.time) current.time = clock[1].padStart(2, '0') + ':' + clock[2]
         if (!current.detail) current.detail = line.replace(/^(当前|已完成)：\s*/, '').replace(/^[-*]\s+/, '')
       }
       return items
     }
-    function DailyNotesPage({ namespace, setDailyInjectionDays }) {
+    function DailyNotesPage({ namespace, usePluginSettings, setDailyInjectionDays }) {
       const [index, setIndex] = React.useState(null)
       const [indexLoading, setIndexLoading] = React.useState(true)
       const [indexError, setIndexError] = React.useState('')
@@ -4180,6 +4241,9 @@ window.__ModuleLoader__.load({
       const [daysOverride, setDaysOverride] = React.useState(null)
       // The full note is an explicit second step, not an always-open panel.
       const [openDay, setOpenDay] = React.useState(false)
+      const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
+      const liveEnabled = pluginSettings?.value?.dailyNotesEnabled
+      const liveInjectionDays = pluginSettings?.value?.dailyNotesInjectionDays
       React.useEffect(() => {
         const abort = new AbortController()
         setIndexLoading(true); setIndexError(''); setOpenDay(false)
@@ -4199,10 +4263,17 @@ window.__ModuleLoader__.load({
         }).catch(error => { if (!abort.signal.aborted) setNote({ loading: false, date: selected, markdown: '', error: String(error.message || error) }) })
         return () => abort.abort()
       }, [namespace, selected, noteRevision])
+      React.useEffect(() => {
+        if (Number.isInteger(liveInjectionDays)) setDaysOverride(null)
+      }, [liveInjectionDays])
       const choose = date => { setSelected(date); setOpenDay(true) }
-      const dates = index?.dates || []; const injected = index?.injectedDates || []; const enabled = index?.enabled !== false
-      const savedInjectionDays = index?.injectionDays ?? 3
+      const dates = index?.dates || []
+      const enabled = liveEnabled !== undefined ? liveEnabled !== false : index?.enabled !== false
+      const savedInjectionDays = Number.isInteger(liveInjectionDays) ? liveInjectionDays : (index?.injectionDays ?? 3)
       const injectionDays = daysOverride ?? savedInjectionDays
+      const injected = daysOverride !== null || Number.isInteger(liveInjectionDays)
+        ? dates.slice(0, injectionDays)
+        : (index?.injectedDates || dates.slice(0, injectionDays))
       const digests = dayDigests && typeof dayDigests === 'object' ? dayDigests : {}
       React.useEffect(() => {
         let active = true
@@ -4233,6 +4304,8 @@ window.__ModuleLoader__.load({
           if (!await setDailyInjectionDays(next)) {
             setDaysOverride(null)
             setDayError('天数未保存，请重试。')
+          } else {
+            setIndex(current => current ? { ...current, injectionDays: next, injectedDates: (current.dates || []).slice(0, next) } : current)
           }
         }
         catch (reason) {
@@ -4244,12 +4317,21 @@ window.__ModuleLoader__.load({
       const failure = error => h('div', { className: 'sg-daily-state error', role: 'alert' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'alert' })), h('h3', null, '暂时无法读取笔记'), h('p', null, '文件可能被占用或权限不足，已有笔记不会丢失。'), h('button', { type: 'button', className: 'sg-daily-retry', onClick: () => indexError ? setRevision(v => v + 1) : setNoteRevision(v => v + 1) }, h(DailyIcon, { name: 'refresh' }), '重新读取'), h('details', null, h('summary', null, '错误详情'), error))
       const date = selected ? dailyParts(selected) : null
       const days = dates.slice(0, 14)
+      const todayParts = index?.today && /^\d{4}-\d{2}-\d{2}$/.test(index.today) ? dailyParts(index.today) : null
+      const daySubLabel = (day, parts) => {
+        const rel = index?.today ? dailyRelative(day, index.today) : ''
+        if (rel === '今天' || rel === '昨天') return rel + ' · ' + parts.week
+        return parts.month + '月 · ' + parts.week
+      }
       const dayRows = () => {
         const rows = []
         let cutShown = false
+        let prevMonthKey = ''
         days.forEach((day, position) => {
           const parts = dailyParts(day)
+          const monthKey = parts.year + '-' + parts.month
           const isInjected = enabled && injected.includes(day)
+          const isSelected = openDay && selected === day
           const items = digests[day]
           // When injection is off every day is outside the window, so the cut
           // line would separate nothing and is omitted.
@@ -4257,48 +4339,69 @@ window.__ModuleLoader__.load({
             cutShown = true
             rows.push(h('div', { key: day + '-cut', className: 'sg-day-cut' }, h('span', null, '以下不带入')))
           }
-          const entries = Array.isArray(items) && items.length ? items : [{ title: '查看当天笔记', detail: '', time: '' }]
+          if (prevMonthKey && monthKey !== prevMonthKey) {
+            const monthLabel = todayParts && parts.year !== todayParts.year ? parts.year + ' 年 ' + parts.month + ' 月' : parts.month + ' 月'
+            rows.push(h('div', { key: day + '-month', className: 'sg-day-month' }, monthLabel))
+          }
+          prevMonthKey = monthKey
+          const entries = Array.isArray(items) && items.length ? items : [{ title: '查看当天笔记', detail: '' }]
           const lines = entries.slice(0, 6).map((item, key) => h('li', { key },
-            h('span', { className: 'sg-day-t' }, item.time || ''),
             h('button', {
               type: 'button',
               className: 'sg-day-s',
-              onClick: () => choose(day),
+              title: item.title,
+              onClick: (event) => { event.stopPropagation(); choose(day) },
               'aria-label': parts.month + '月' + parts.day + '日 ' + item.title + '，查看当天笔记',
-            }, item.title),
-            h('span')))
-          rows.push(h('div', { key: day, className: 'sg-day' + (isInjected ? '' : ' out'), style: { animationDelay: position * 40 + 'ms' } },
-            h('button', { type: 'button', role: 'tab', id: 'sg-day-tab-' + day, 'aria-controls': 'sg-day-note', 'data-day': day, 'aria-selected': selected === day, tabIndex: selected === day || (!days.includes(selected) && position === 0) ? 0 : -1, className: 'sg-day-d', onClick: () => choose(day), onKeyDown: event => {
+            }, item.title)))
+          if (entries.length > 6) lines.push(h('li', { key: 'more', className: 'sg-day-more' }, '+ ' + (entries.length - 6) + ' 项'))
+          rows.push(h('div', {
+            key: day,
+            className: 'sg-day' + (isInjected ? '' : ' out') + (isSelected ? ' selected' : ''),
+            style: { animationDelay: position * 30 + 'ms' },
+            onClick: (event) => { if (!event.target.closest('button')) choose(day) },
+          },
+            h('button', { type: 'button', role: 'tab', id: 'sg-day-tab-' + day, 'aria-controls': 'sg-day-note', 'data-day': day, 'aria-selected': selected === day, tabIndex: selected === day || (!days.includes(selected) && position === 0) ? 0 : -1, className: 'sg-day-d', onClick: (event) => { event.stopPropagation(); choose(day) }, onKeyDown: event => {
               const next = event.key === 'ArrowDown' ? (position + 1) % days.length : event.key === 'ArrowUp' ? (position + days.length - 1) % days.length : event.key === 'Home' ? 0 : event.key === 'End' ? days.length - 1 : -1
               if (next >= 0) { event.preventDefault(); choose(days[next]); event.currentTarget.closest('.sg-days')?.querySelector('[data-day="' + days[next] + '"]')?.focus() }
-            } }, h('b', null, parts.day), h('span', null, parts.week), h('span', { className: 'sg-visually-hidden' }, parts.month + '月 · ' + dailyRelative(day, index.today))),
-            h('div', { className: 'sg-day-rail', 'aria-hidden': 'true' }),
-            h('ul', null, lines)))
+            } }, h('b', null, parts.day), h('span', null, daySubLabel(day, parts)), h('span', { className: 'sg-visually-hidden' }, parts.month + '月 · ' + dailyRelative(day, index.today))),
+            h('ul', null, lines),
+            h('span', { className: 'sg-day-tail', 'aria-hidden': 'true' },
+              Array.isArray(items) && items.length > 1 ? h('span', null, items.length + ' 项') : null,
+              h('span', { className: 'sg-day-chev' }, h(DailyIcon, { name: 'right' })))))
         })
         return rows
       }
+      const showNotePanel = Boolean(openDay)
       return h('div', { className: 'sg-daily' },
-        h('div', { className: 'sg-pg-head' }, h('h2', null, '短期记忆'),
-          h('span', { className: 'sg-pg-tag' }, h('i', { className: 'sg-sw sand', 'aria-hidden': 'true' }), enabled ? '新会话带入最近 ' + injectionDays + ' 个有笔记日期' : '已暂停注入'),
-          h('span', { className: 'sg-pg-end' }, setDailyInjectionDays ? h('span', { className: 'sg-stp', role: 'group', 'aria-label': '带入新会话的天数' },
+        h('div', { className: 'sg-pg-head' },
+          h('div', { className: 'sg-pg-title' }, h('i', { className: 'sg-sw sand', 'aria-hidden': 'true' }), h('h2', null, '短期记忆')),
+          h('span', { className: 'sg-pg-tag' }, enabled ? '新会话带入最近 ' + injectionDays + ' 个有笔记日期' : '已暂停注入'),
+          setDailyInjectionDays ? h('span', { className: 'sg-pg-end' },
+            h('span', { className: 'sg-stp-label' }, '带入'),
+            h('span', { className: 'sg-stp', role: 'group', 'aria-label': '带入新会话的天数' },
             h('button', { type: 'button', 'aria-label': '减少一天', disabled: daySaving || injectionDays <= 1, onClick: () => void stepDays(-1) }, '\u2212'),
             h('span', { 'aria-live': 'polite' }, injectionDays + ' 天'),
-            h('button', { type: 'button', 'aria-label': '增加一天', disabled: daySaving || injectionDays >= 30, onClick: () => void stepDays(1) }, '+')) : null,
-          // The calendar and folder icons are gone; earlier dates come from the day
-          // list itself, so the header only keeps the day stepper.
-          null),
+            h('button', { type: 'button', 'aria-label': '增加一天', disabled: daySaving || injectionDays >= 30, onClick: () => void stepDays(1) }, '+'))
+          ) : null),
         dayError ? h('p', { className: 'sg-storage-feedback failed', role: 'alert' }, dayError) : null,
         indexLoading ? h(Loading) : indexError ? failure(indexError) : h(React.Fragment, null,
           !enabled ? h('div', { className: 'sg-daily-off' }, h(DailyIcon, { name: 'pause' }), '已关闭，不再写入，也不会带入新会话。') : null,
-          dates.length ? h(React.Fragment, null,
+          dates.length ? h('div', { className: 'sg-daily-split' + (showNotePanel ? '' : ' single') },
             h('div', { className: 'sg-days', role: 'tablist', 'aria-label': '带入新会话的笔记' }, dayRows()),
             // The day list only carries the point titles; the whole note opens on
             // an explicit click, so the page never stacks a full note under it.
-            !openDay ? null
-              : note.loading || note.date !== selected ? h(Loading) : note.error ? failure(note.error) : date ? h('article', { key: selected, id: 'sg-day-note', role: 'tabpanel', 'aria-labelledby': 'sg-day-tab-' + selected, className: 'sg-daily-note' },
-              h('div', { className: 'sg-daily-note-date' }, h('h3', null, date.month + ' 月 ' + date.day + ' 日'), h('span', null, date.week + ' · ' + dailyRelative(selected, index.today))),
-              h('div', { className: 'sg-daily-meta' }, h('button', { type: 'button', className: 'sg-daily-back', onClick: () => setOpenDay(false) }, '收起笔记'), h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在带入范围内'), !injected.includes(selected) && enabled ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null), renderDailyMarkdown(note.markdown)) : null)
-            : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。')))))
+            !showNotePanel ? null
+              : note.loading || note.date !== selected ? h('aside', { id: 'sg-day-note', role: 'tabpanel', 'aria-labelledby': 'sg-day-tab-' + selected, className: 'sg-daily-note' }, h(Loading))
+              : note.error ? h('aside', { id: 'sg-day-note', role: 'tabpanel', 'aria-labelledby': 'sg-day-tab-' + selected, className: 'sg-daily-note' }, failure(note.error))
+              : date ? h('aside', { key: selected, id: 'sg-day-note', role: 'tabpanel', 'aria-labelledby': 'sg-day-tab-' + selected, className: 'sg-daily-note' },
+                h('div', { className: 'sg-daily-note-head' },
+                  h('div', { className: 'sg-daily-note-date' }, h('h3', null, date.month + ' 月 ' + date.day + ' 日'), h('span', null, date.week + ' · ' + dailyRelative(selected, index.today))),
+                  h('button', { type: 'button', className: 'sg-daily-close', onClick: () => setOpenDay(false) }, '收起笔记')),
+                h('div', { className: 'sg-daily-meta' },
+                  h('span', { className: 'sg-daily-pill' + (!enabled || !injected.includes(selected) ? ' muted' : '') }, !enabled ? '已暂停注入' : injected.includes(selected) ? '会带入新会话' : '不在带入范围内'),
+                  !injected.includes(selected) && enabled && injected[0] ? h('button', { type: 'button', className: 'sg-daily-back', onClick: () => choose(injected[0]) }, '回到最近笔记') : null),
+                h('div', { className: 'sg-daily-sheet' }, renderDailyMarkdown(note.markdown))) : null)
+            : h('div', { className: 'sg-daily-state' }, h('span', { className: 'sg-daily-icon-wrap' }, h(DailyIcon, { name: 'notebook' })), h('h3', null, '还没有笔记'), h('p', null, 'Agent 推进工作时会自动记录。'))))
     }
 
     function ShortTermPage({ blocks, blockPage, openBlock, conversations, activeThreadId, namespace, onConversationChange, refresh, blockTurnSize = 6 }) {
@@ -7258,7 +7361,7 @@ window.__ModuleLoader__.load({
       else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection,
         dreaming: namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
-      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, setDailyInjectionDays })
+      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, usePluginSettings, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
       else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })
       else if (view.name === 'status') content = h(ProcessingStatus, { key: namespace, overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
