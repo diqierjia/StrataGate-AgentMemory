@@ -4,6 +4,7 @@ import { join, resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { StrataGate, estimateTokens, dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, memoryTopicEventFingerprint, eventDuplicateFingerprint,
   DREAMING_BATCH_WRITE_LIMIT, DREAMING_IDLE_TIME, type DreamingRun } from '@diqier/stratagate'
@@ -2602,5 +2603,346 @@ describe('Dreaming Agent orchestration and admin API', () => {
     } finally {
       store.close()
     }
+  })
+
+  it('disabling autoEnabled from workspace B immediately aborts workspace A automatic Dreaming and still allows manual resume', async () => {
+    const wsA = await fixture(2, '工作区 A 的待整理记忆', 'workspace-a')
+    const wsB = await StrataGate.open({
+      database: wsA.database,
+      namespace: 'workspace-b',
+      blockTurnSize: 1,
+      disableElementProjection: true,
+      summarizer: async () => ({ l0Title: 'B', l0Tags: [], l1Summary: '工作区 B', l2Keypoints: [], shouldExtract: false }),
+    })
+    cleanups.push(async () => { await wsB.close() })
+    await wsB.appendTurn({ user: '工作区 B 的消息', assistant: '已记录。' })
+
+    const runtime = runtimeFor(wsA.database, async () => { throw new Error('legacy') })
+    let requests = 0
+    let firstAborted = false
+    let enteredFirst = false
+    let releaseFirst!: () => void
+    await nativeHost(runtime, wsA.directory, async function* (options) {
+      requests += 1
+      if (requests === 1) {
+        enteredFirst = true
+        await new Promise<void>(resolve => {
+          releaseFirst = resolve
+          options.signal.addEventListener('abort', () => { firstAborted = true; resolve() }, { once: true })
+        })
+        yield { type: 'finish', reason: { kind: options.signal.aborted ? 'aborted' : 'stop' } }
+        return
+      }
+      if (requests === 2) {
+        yield* nativeCall('dreaming_finish', { summary: '手动继续完成本批' })
+        return
+      }
+      yield { type: 'text-delta', index: 0, text: '本轮已完成。' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }, true, 'memory')
+
+    const internal = runtime as unknown as { lastMainActivity: number; checkAutomaticDreaming(now: number): Promise<void> }
+    const start = Date.now()
+    internal.lastMainActivity = start
+    await internal.checkAutomaticDreaming(start + DREAMING_IDLE_TIME)
+    await vi.waitFor(() => expect(enteredFirst).toBe(true), { timeout: 3000 })
+    expect(firstAborted).toBe(false)
+
+    // Turn off autoEnabled from workspace B via HTTP admin API.
+    let body = ''
+    const res = { statusCode: 0, setHeader: () => {}, end: (chunk?: string) => { body = String(chunk ?? '') } }
+    const req = {
+      method: 'POST',
+      url: '/api/stratagate/dreaming?namespace=workspace-b&action=settings',
+      headers: { 'content-type': 'application/json' },
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from(JSON.stringify({ autoEnabled: false }))
+      },
+    }
+    await handleAdminRequest(runtime, req as never, res as never)
+    expect(res.statusCode).toBe(200)
+    expect(JSON.parse(body).settings.autoEnabled).toBe(false)
+
+    await vi.waitFor(() => expect(firstAborted).toBe(true), { timeout: 3000 })
+    await vi.waitFor(async () => {
+      const statusA = await runtime.adminDreamingStatus('workspace-a') as { run?: { id?: string; status?: string; reason?: string } }
+      expect(statusA.run?.status).toBe('paused')
+      expect(statusA.run?.reason).toContain('已关闭自动整理')
+    }, { timeout: 3000 })
+    expect(requests).toBe(1)
+    await wsA.memory.reloadFromStorage()
+    expect(wsA.memory.exportSnapshot().memoryTopicState?.dreaming?.interrupted).toBeUndefined()
+
+    // Subsequent automatic idle checks must not restart workspace A or start workspace B.
+    await internal.checkAutomaticDreaming(start + DREAMING_IDLE_TIME + 120_000)
+    expect(requests).toBe(1)
+
+    // Explicit manual resume on workspace A's paused run must be treated as manual and finish even while autoEnabled=false.
+    const pausedStatus = await runtime.adminDreamingStatus('workspace-a') as { run: { id: string } }
+    await runtime.adminDreamingControl('workspace-a', 'resume', pausedStatus.run.id)
+    await vi.waitFor(async () => {
+      const completedStatus = await runtime.adminDreamingStatus('workspace-a') as { run?: { status?: string } }
+      expect(completedStatus.run?.status).toBe('completed')
+    }, { timeout: 3000 })
+    await wsA.memory.reloadFromStorage()
+    expect(wsA.memory.exportSnapshot().memoryTopicState?.dreaming?.trigger).toBe('manual')
+    releaseFirst()
+  })
+
+  it('disabling autoEnabled from workspace B does not interrupt a manual or manually-resumed run in workspace A', async () => {
+    const wsA = await fixture(2, '工作区 A 手动整理测试', 'workspace-manual-a')
+    const wsB = await StrataGate.open({
+      database: wsA.database,
+      namespace: 'workspace-manual-b',
+      blockTurnSize: 1,
+      disableElementProjection: true,
+      summarizer: async () => ({ l0Title: 'B', l0Tags: [], l1Summary: 'B', l2Keypoints: [], shouldExtract: false }),
+    })
+    cleanups.push(async () => { await wsB.close() })
+    await wsB.appendTurn({ user: '工作区 B', assistant: '收到。' })
+
+    const runtime = runtimeFor(wsA.database, async () => { throw new Error('legacy') })
+    let requests = 0
+    let aborted = false
+    let entered = false
+    let release!: () => void
+    await nativeHost(runtime, wsA.directory, async function* (options) {
+      requests += 1
+      if (requests === 1) {
+        entered = true
+        await new Promise<void>(resolve => {
+          release = resolve
+          options.signal.addEventListener('abort', () => { aborted = true; resolve() }, { once: true })
+        })
+        if (options.signal.aborted) {
+          yield { type: 'finish', reason: { kind: 'aborted' } }
+          return
+        }
+        yield* nativeCall('dreaming_finish', { summary: '手动运行不受自动开关影响' })
+        return
+      }
+      yield { type: 'text-delta', index: 0, text: '完成。' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }, true, 'memory')
+
+    await runtime.adminDreamingControl('workspace-manual-a', 'start')
+    await vi.waitFor(() => expect(entered).toBe(true), { timeout: 3000 })
+
+    // Disable autoEnabled from workspace B while workspace A runs manually.
+    await runtime.adminUpdateDreamingSettings('workspace-manual-b', { autoEnabled: false })
+    expect(aborted).toBe(false)
+    const during = await runtime.adminDreamingStatus('workspace-manual-a') as { run?: { status?: string } }
+    expect(during.run?.status).toBe('running')
+
+    release()
+    await vi.waitFor(async () => {
+      const done = await runtime.adminDreamingStatus('workspace-manual-a') as { run?: { status?: string } }
+      expect(done.run?.status).toBe('completed')
+    }, { timeout: 3000 })
+    expect(aborted).toBe(false)
+
+    // Also verify a previously auto-started run that the user explicitly resumes is treated as manual
+    // and is not interrupted when workspace B later disables autoEnabled.
+    await runtime.adminUpdateDreamingSettings('workspace-manual-b', { autoEnabled: true })
+    await wsA.memory.reloadFromStorage()
+    await wsA.memory.appendTurn({ user: '第二批记忆，用于验证手动继续边界', assistant: '已记录。' })
+    const autoRun = await wsA.memory.startMemoryDreaming('seed-auto', 'automatic', {}, true)
+    expect(autoRun?.trigger).toBe('automatic')
+    await wsA.memory.dreaming({ kind: 'suspend', id: autoRun!.id, owner: 'seed-auto', epoch: autoRun!.epoch, reason: '手动暂停等待继续' })
+
+    let resumedEntered = false
+    let resumedAborted = false
+    let releaseResumed!: () => void
+    const runtime2 = runtimeFor(wsA.database, async () => { throw new Error('legacy') })
+    let resumedRequests = 0
+    await nativeHost(runtime2, wsA.directory, async function* (options) {
+      resumedRequests += 1
+      if (resumedRequests === 1) {
+        resumedEntered = true
+        await new Promise<void>(resolve => {
+          releaseResumed = resolve
+          options.signal.addEventListener('abort', () => { resumedAborted = true; resolve() }, { once: true })
+        })
+        if (options.signal.aborted) {
+          yield { type: 'finish', reason: { kind: 'aborted' } }
+          return
+        }
+        yield* nativeCall('dreaming_finish', { summary: '手动继续完成' })
+        return
+      }
+      yield { type: 'text-delta', index: 0, text: '完成。' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }, true, 'memory')
+
+    await runtime2.adminDreamingControl('workspace-manual-a', 'resume', autoRun!.id)
+    await vi.waitFor(() => expect(resumedEntered).toBe(true), { timeout: 3000 })
+    await runtime2.adminUpdateDreamingSettings('workspace-manual-b', { autoEnabled: false })
+    expect(resumedAborted).toBe(false)
+    releaseResumed()
+    await vi.waitFor(async () => {
+      const done = await runtime2.adminDreamingStatus('workspace-manual-a') as { run?: { status?: string } }
+      expect(done.run?.status).toBe('completed')
+    }, { timeout: 3000 })
+    expect(resumedAborted).toBe(false)
+  })
+
+  it('disabling autoEnabled from another runtime instance stops an active automatic run in workspace A', async () => {
+    const wsA = await fixture(2, '跨实例停机测试', 'workspace-cross-a')
+    const wsB = await StrataGate.open({
+      database: wsA.database,
+      namespace: 'workspace-cross-b',
+      blockTurnSize: 1,
+      disableElementProjection: true,
+      summarizer: async () => ({ l0Title: 'B', l0Tags: [], l1Summary: 'B', l2Keypoints: [], shouldExtract: false }),
+    })
+    cleanups.push(async () => { await wsB.close() })
+    await wsB.appendTurn({ user: '工作区 B', assistant: '收到。' })
+
+    const runtimeA = runtimeFor(wsA.database, async () => { throw new Error('legacy') })
+    const runtimeB = runtimeFor(wsA.database, async () => { throw new Error('legacy') })
+    cleanups.push(async () => { await runtimeB.close() })
+
+    let requests = 0
+    let firstAborted = false
+    let entered = 0
+    await nativeHost(runtimeA, wsA.directory, async function* (options) {
+      requests += 1
+      entered = requests
+      await new Promise<void>(resolve => {
+        options.signal.addEventListener('abort', () => {
+          firstAborted = true
+          resolve()
+        }, { once: true })
+      })
+      yield { type: 'finish', reason: { kind: options.signal.aborted ? 'aborted' : 'stop' } }
+    }, true, 'memory')
+
+    const internalA = runtimeA as unknown as { lastMainActivity: number; checkAutomaticDreaming(now: number): Promise<void> }
+    const t0 = Date.now()
+    internalA.lastMainActivity = t0
+    await internalA.checkAutomaticDreaming(t0 + DREAMING_IDLE_TIME)
+    await vi.waitFor(() => expect(entered).toBe(1), { timeout: 3000 })
+
+    await runtimeB.adminUpdateDreamingSettings('workspace-cross-b', { autoEnabled: false })
+    await vi.waitFor(() => expect(firstAborted).toBe(true), { timeout: 3000 })
+    await vi.waitFor(async () => {
+      const status = await runtimeA.adminDreamingStatus('workspace-cross-a') as { run?: { status?: string; reason?: string } }
+      expect(status.run?.status).toBe('paused')
+      expect(status.run?.reason).toContain('已关闭自动整理')
+    }, { timeout: 3000 })
+    expect(requests).toBe(1)
+  })
+
+  it('disabling autoEnabled via an external SQLite write stops an active automatic run in workspace A', async () => {
+    const wsA = await fixture(2, '跨进程停机测试', 'workspace-ext-a')
+    const runtimeA = runtimeFor(wsA.database, async () => { throw new Error('legacy') })
+
+    let requests = 0
+    let aborted = false
+    let entered = false
+    await nativeHost(runtimeA, wsA.directory, async function* (options) {
+      requests += 1
+      entered = true
+      await new Promise<void>(resolve => {
+        options.signal.addEventListener('abort', () => { aborted = true; resolve() }, { once: true })
+      })
+      yield { type: 'finish', reason: { kind: options.signal.aborted ? 'aborted' : 'stop' } }
+    }, true, 'memory')
+
+    const internalA = runtimeA as unknown as { lastMainActivity: number; checkAutomaticDreaming(now: number): Promise<void> }
+    const t0 = Date.now()
+    internalA.lastMainActivity = t0
+    await internalA.checkAutomaticDreaming(t0 + DREAMING_IDLE_TIME)
+    await vi.waitFor(() => expect(entered).toBe(true), { timeout: 3000 })
+    expect(aborted).toBe(false)
+
+    const externalDb = new DatabaseSync(wsA.database, { timeout: 5000 })
+    try {
+      externalDb.exec(`
+        CREATE TABLE IF NOT EXISTS stratagate_dsh_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        ) STRICT;
+      `)
+      externalDb.prepare(`
+        INSERT INTO stratagate_dsh_settings (key, value, updated_at)
+        VALUES ('dreamingSettings', ?, ?)
+        ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(JSON.stringify({ autoEnabled: false, dailyTokenBudget: 5_000_000, dailyLettersEnabled: true }), new Date().toISOString())
+    } finally {
+      externalDb.close()
+    }
+
+    await vi.waitFor(() => expect(aborted).toBe(true), { timeout: 4000 })
+    await vi.waitFor(async () => {
+      const status = await runtimeA.adminDreamingStatus('workspace-ext-a') as { run?: { status?: string; reason?: string } }
+      expect(status.run?.status).toBe('paused')
+      expect(status.run?.reason).toContain('已关闭自动整理')
+    }, { timeout: 4000 })
+    expect(requests).toBe(1)
+  })
+
+  it('disabling dailyLettersEnabled or lowering dailyTokenBudget from workspace B aborts active work in workspace A', async () => {
+    const yesterday = new Date('2026-11-23T06:00:00.000Z')
+    const wsA = await fixture(1, '昨天在工作区 A 的重要讨论', 'workspace-global-a', () => yesterday)
+    const wsB = await StrataGate.open({
+      database: wsA.database,
+      namespace: 'workspace-global-b',
+      blockTurnSize: 1,
+      disableElementProjection: true,
+      now: () => yesterday,
+      summarizer: async () => ({ l0Title: 'B', l0Tags: [], l1Summary: 'B', l2Keypoints: [], shouldExtract: false }),
+    })
+    cleanups.push(async () => { await wsB.close() })
+    await wsB.appendTurn({ user: '昨天在工作区 B 的讨论', assistant: '收到。' })
+
+    let letterStarted = false
+    let letterAborted = false
+    let letterCalls = 0
+    const writeDailyLetter = vi.fn(async () => {
+      letterCalls += 1
+      letterStarted = true
+      await new Promise<void>(() => {})
+      return { title: '不应落盘', paragraphs: ['不应落盘'], signature: 'StrataGate' }
+    })
+    const step = vi.fn(async () => {
+      await new Promise<void>(() => {})
+      return { tool: 'finish', args: {} }
+    })
+    const runtime = runtimeFor(wsA.database, step, true, writeDailyLetter)
+    const internal = runtime as unknown as {
+      dreamingScope: DreamingRun['scope']
+      writeClosedDayLetters(now: number): Promise<void>
+    }
+    internal.dreamingScope = 'memory'
+    cleanups.push(async () => { await runtime.close() })
+
+    // Part 1: Turning off dailyLettersEnabled from workspace B aborts in-flight letter generation in workspace A and releases claim.
+    const origRunDetached = (runtime as unknown as { models: { runDetached: (...args: any[]) => Promise<any> } }).models.runDetached
+    ;(runtime as unknown as { models: { runDetached: (...args: any[]) => Promise<any> } }).models.runDetached = (id: string, operation: () => Promise<unknown>, signal?: AbortSignal) => {
+      signal?.addEventListener('abort', () => { if (id.startsWith('stratagate-letter:')) letterAborted = true }, { once: true })
+      return origRunDetached(id, operation, signal)
+    }
+    const letterPromise = internal.writeClosedDayLetters(Date.parse('2026-11-24T06:00:00.000Z'))
+    await vi.waitFor(() => expect(letterStarted).toBe(true), { timeout: 3000 })
+    await runtime.adminUpdateDreamingSettings('workspace-global-b', { dailyLettersEnabled: false })
+    await letterPromise
+    expect(letterAborted).toBe(true)
+    expect(letterCalls).toBe(1)
+    expect(runtime.adminDailyLetter('workspace-global-a', '2026-11-23')).toBeNull()
+    expect(runtime.adminDailyLetter('workspace-global-b', '2026-11-23')).toBeNull()
+
+    // Part 2: Lowering dailyTokenBudget in workspace B below already-spent tokens aborts running Dreaming in workspace A.
+    await runtime.adminDreamingControl('workspace-global-a', 'start')
+    await vi.waitFor(() => expect(step).toHaveBeenCalledTimes(1), { timeout: 3000 })
+    runtime.diagnostics.record({ namespace: 'workspace-global-a', stage: 'dreamingStep' }, { modelCalls: 1, totalTokens: 200_000, totalTokenCalls: 1 })
+    await runtime.adminUpdateDreamingSettings('workspace-global-b', { dailyTokenBudget: 100_000 })
+    await vi.waitFor(async () => {
+      const status = await runtime.adminDreamingStatus('workspace-global-a') as { run?: { status?: string; reason?: string } }
+      expect(status.run?.status).toBe('paused')
+      expect(status.run?.reason).toContain('今日 Dreaming Token 已达上限')
+    }, { timeout: 3000 })
+    expect(step).toHaveBeenCalledTimes(1)
   })
 })

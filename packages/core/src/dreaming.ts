@@ -87,8 +87,8 @@ export type DreamingDirectoryOperation =
   | { kind: 'rewrite-overview'; titles: string[]; entries: Array<MemoryTopicOverview & { title: string }> };
 export type DreamingCommand =
   | { kind: 'start'; owner: string; allowedEventIds?: string[]; discovery?: DreamingDiscovery; trigger?: 'manual' | 'automatic' }
-  | { kind: 'resume'; id: string; owner: string }
-  | { kind: 'pause'; id: string }
+  | { kind: 'resume'; id: string; owner: string; trigger?: 'manual' | 'automatic' }
+  | { kind: 'pause'; id: string; reason?: string }
   | { kind: 'terminate'; id: string }
   | { kind: 'heartbeat' | 'prepare' | 'finish-unit'; id: string; owner: string; epoch: number }
   | { kind: 'checkpoint'; id: string; owner: string; epoch: number; trace: DreamingTrace; evidenceIds?: string[]; estimatedTokens: number }
@@ -180,7 +180,12 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     return structuredClone(run);
   }
   if (command.kind === 'pause') {
-    if (run.status === 'running') { run.status = 'pausing'; run.activity = '正在暂停，等待当前步骤结束'; run.updatedAt = now; }
+    if (run.status === 'running' || (run.status === 'pausing' && command.reason !== undefined)) {
+      run.status = 'pausing';
+      run.activity = '正在暂停，等待当前步骤结束';
+      if (command.reason !== undefined) run.reason = command.reason;
+      run.updatedAt = now;
+    }
     return structuredClone(run);
   }
   if (command.kind === 'resume') {
@@ -199,6 +204,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     }
     run.tokenLimit = null;
     run.status = 'running'; run.owner = command.owner; run.epoch++; run.reason = null;
+    if (command.trigger) run.trigger = command.trigger;
     delete run.interrupted;
     if (run.scope === 'memory') run.waitingForProjection = state.jobs.some(job => job.status === 'running' && Date.parse(job.leaseUntil ?? job.updatedAt) > Date.parse(now));
     run.idleCalls = 0; run.idleModelSteps = 0;
@@ -228,7 +234,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
   }
   if (command.kind === 'suspend' || (run.status === 'pausing' && command.kind !== 'checkpoint')) {
     run.status = 'paused'; run.leaseUntil = null; run.activity = '已暂停';
-    run.reason = command.kind === 'suspend' ? command.reason : null;
+    run.reason = command.kind === 'suspend' ? command.reason : (run.reason ?? null);
     if (command.kind === 'suspend' && command.replanRequired) run.replanRequired = true;
     if (command.kind === 'suspend' && command.interrupted) run.interrupted = true;
     return structuredClone(run);

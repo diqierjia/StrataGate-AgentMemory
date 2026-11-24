@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 export interface GraphSettings {
   enabled: boolean
@@ -18,6 +19,14 @@ export interface DreamingSettings {
   autoEnabled: boolean
   dailyTokenBudget: number
   dailyLettersEnabled: boolean
+}
+
+type DreamingSettingsListener = (settings: DreamingSettings) => void
+const dreamingSettingsListeners = new Map<string, Set<DreamingSettingsListener>>()
+
+function dreamingSettingsKey(filename: string): string {
+  const resolved = resolve(filename)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
 export function normalizeDreamingSettings(raw?: Partial<DreamingSettings> | null): DreamingSettings {
@@ -103,8 +112,10 @@ export function dropLegacyAgentMemoriesTable(filename: string): void {
 
 export class DshMetadataStore {
   private readonly database: DatabaseSync
+  private readonly filename: string
 
   constructor(filename: string) {
+    this.filename = filename
     this.database = new DatabaseSync(filename, { timeout: 5000 })
     this.database.exec('PRAGMA busy_timeout = 5000')
     this.database.exec(METADATA_SCHEMA)
@@ -256,6 +267,19 @@ export class DshMetadataStore {
     this.setSettingValue('lastFeedbackPromptAt', value)
   }
 
+  /** Process-local hint only; SQLite remains the cross-process source of truth. */
+  static onDreamingSettingsChanged(filename: string, listener: DreamingSettingsListener): () => void {
+    if (filename === ':memory:') return () => {}
+    const key = dreamingSettingsKey(filename)
+    const listeners = dreamingSettingsListeners.get(key) ?? new Set<DreamingSettingsListener>()
+    listeners.add(listener)
+    dreamingSettingsListeners.set(key, listeners)
+    return () => {
+      listeners.delete(listener)
+      if (!listeners.size) dreamingSettingsListeners.delete(key)
+    }
+  }
+
   dreamingSettings(): DreamingSettings {
     const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'dreamingSettings'")
       .get() as { value: string } | undefined
@@ -270,6 +294,14 @@ export class DshMetadataStore {
   setDreamingSettings(patch: Partial<DreamingSettings>): DreamingSettings {
     const merged = normalizeDreamingSettings({ ...this.dreamingSettings(), ...patch })
     this.setSettingValue('dreamingSettings', JSON.stringify(merged))
+    if (this.filename !== ':memory:') {
+      const listeners = dreamingSettingsListeners.get(dreamingSettingsKey(this.filename))
+      if (listeners) {
+        for (const listener of [...listeners]) {
+          try { listener(merged) } catch {}
+        }
+      }
+    }
     return merged
   }
 

@@ -120,6 +120,8 @@ function formatTokenWan(tokens: number): string {
   return `${tokens}`
 }
 const DREAMING_REPLAN_REASON = '目录或来源在整理期间发生变化，请终止本轮后重新开始；已保存的修改会保留，继续本轮无法解除冲突'
+const DREAMING_AUTO_DISABLED_REASON = '已关闭自动整理，已暂停并保留断点'
+const DREAMING_AUTO_WATCH_MS = 1_000
 
 export { estimateTokens }
 
@@ -472,6 +474,7 @@ export class StrataGateRuntime {
   private readonly externalImportRuns = new Map<string, Promise<void>>()
   private readonly dreamingRuns = new Map<string, Promise<void>>()
   private readonly dreamingControllers = new Map<string, AbortController>()
+  private readonly dreamingRunTriggers = new Map<string, 'manual' | 'automatic'>()
   private readonly dreamingOwner = randomUUID()
   private dreamingHost: DreamingHost | undefined
   private dreamingScope: DreamingRun['scope'] = 'directory'
@@ -479,6 +482,7 @@ export class StrataGateRuntime {
   private dailyLetters?: DailyLetters
   private memoryDreamingSettings?: DreamingSettings
   private dailyLetterRun: Promise<void> | undefined
+  private dailyLetterController: AbortController | undefined
   private lastLetterCheck = 0
   private readonly dailyLetterStop = new AbortController()
   private lastMainActivity = Date.now()
@@ -497,6 +501,7 @@ export class StrataGateRuntime {
   private profileMaintenanceRun: Promise<boolean> | undefined
   private readonly disposeAdaptersUpdated: () => void
   private readonly disposeWorkChanged: () => void
+  private readonly disposeDreamingSettingsChanged: () => void
   private settingsTail: Promise<void> = Promise.resolve()
   private batchSequence = 0
   private closed = false
@@ -602,6 +607,10 @@ export class StrataGateRuntime {
     this.embedding = new EmbeddingBridge(config)
     this.disposeAdaptersUpdated = this.models.onAdaptersUpdated(() => this.wakeModelWorkers())
     this.disposeWorkChanged = SqliteStorage.onBackgroundWorkChanged(config.database, () => this.wakeBackgroundWorker())
+    this.disposeDreamingSettingsChanged = DshMetadataStore.onDreamingSettingsChanged(
+      config.database,
+      settings => this.onDreamingSettingsChanged(settings),
+    )
     this.scheduleBackgroundWorker(BACKGROUND_WORKER_INITIAL_DELAY_MS)
   }
 
@@ -2458,9 +2467,11 @@ export class StrataGateRuntime {
     if (this.closed) return
     this.closed = true
     this.dailyLetterStop.abort()
+    this.dailyLetterController?.abort(new Error('宿主已关闭'))
     for (const controller of this.dreamingControllers.values()) controller.abort(new Error('宿主已关闭，任务保留为暂停'))
     this.disposeAdaptersUpdated()
     this.disposeWorkChanged()
+    this.disposeDreamingSettingsChanged()
     for (const state of this.surfaceMaintenance.values()) if (state.timer) clearTimeout(state.timer)
     if (this.backgroundWorkerTimer) clearTimeout(this.backgroundWorkerTimer)
     this.backgroundWorkerTimer = undefined
@@ -3030,6 +3041,81 @@ export class StrataGateRuntime {
     return `今日 Dreaming Token 已达上限（已用约 ${formatTokenWan(effectiveTokens)} / 上限 ${formatTokenWan(budget)}），已暂停并保留断点`
   }
 
+  dreamingAutoStopReason(run: Pick<DreamingRun, 'trigger'>): string | null {
+    if (run.trigger === 'automatic' && !this.dreamingSettings().autoEnabled) {
+      return DREAMING_AUTO_DISABLED_REASON
+    }
+    return null
+  }
+
+  private abortLocalDreamingRuns(filter: 'automatic' | 'all', reason: string): Promise<void>[] {
+    const stopped: Promise<void>[] = []
+    for (const [runNamespace, controller] of this.dreamingControllers.entries()) {
+      if (filter === 'automatic' && this.dreamingRunTriggers.get(runNamespace) !== 'automatic') continue
+      if (!controller.signal.aborted) controller.abort(new Error(reason))
+      const running = this.dreamingRuns.get(runNamespace)
+      if (running) stopped.push(running)
+    }
+    return stopped
+  }
+
+  private onDreamingSettingsChanged(settings: DreamingSettings): void {
+    if (this.closed) return
+    if (!settings.autoEnabled) {
+      this.abortLocalDreamingRuns('automatic', DREAMING_AUTO_DISABLED_REASON)
+    }
+    if (!settings.dailyLettersEnabled) {
+      this.dailyLetterController?.abort(new Error('已关闭每日自动来信'))
+    }
+    if (settings.dailyTokenBudget > 0) {
+      const budget = this.dreamingDailyUsage()
+      if (budget.budgetExceeded) {
+        this.abortLocalDreamingRuns('all', this.formatDreamingBudgetReason(budget.effectiveTokens, budget.budget))
+      }
+    }
+  }
+
+  private async pauseActiveDreamingNamespaces(options: {
+    filter: 'automatic' | 'all'
+    reason: string
+    includeNamespace?: string
+  }): Promise<void> {
+    const stoppedTasks = this.abortLocalDreamingRuns(options.filter, options.reason)
+    const namespaces = new Set<string>([
+      ...(options.includeNamespace ? [options.includeNamespace] : []),
+      ...(await this.adminNamespaces()),
+      ...this.spaces.keys(),
+      ...this.dreamingRuns.keys(),
+      ...this.dreamingControllers.keys(),
+    ])
+    for (const targetNamespace of namespaces) {
+      const current = (await this.adminSnapshot(targetNamespace))?.memoryTopicState?.dreaming
+      if (!current || !['running', 'pausing'].includes(current.status)) continue
+      if (options.filter === 'automatic' && current.trigger !== 'automatic') continue
+      await this.retryExternalImportWrite(
+        targetNamespace,
+        memory => memory.dreaming({ kind: 'pause', id: current.id, reason: options.reason }),
+      ).catch(() => {})
+      const controller = this.dreamingControllers.get(targetNamespace)
+      if (controller && !controller.signal.aborted) {
+        controller.abort(new Error(options.reason))
+        const running = this.dreamingRuns.get(targetNamespace)
+        if (running && !stoppedTasks.includes(running)) stoppedTasks.push(running)
+      }
+    }
+    if (stoppedTasks.length > 0) {
+      let waitTimer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        Promise.allSettled(stoppedTasks),
+        new Promise<void>(resolve => {
+          waitTimer = setTimeout(resolve, 250)
+          waitTimer.unref?.()
+        }),
+      ])
+      if (waitTimer) clearTimeout(waitTimer)
+    }
+  }
+
   async adminUpdateDreamingSettings(namespace: string, patch: Partial<DreamingSettings>): Promise<unknown> {
     if (this.closed) throw new Error('Runtime is closed')
     const snapshot = await this.adminSnapshot(namespace)
@@ -3058,10 +3144,24 @@ export class StrataGateRuntime {
       try { saved = store.setDreamingSettings(sanitized) }
       finally { store.close() }
     }
+    if (!saved.dailyLettersEnabled) {
+      this.dailyLetterController?.abort(new Error('已关闭每日自动来信'))
+    }
     if (!saved.autoEnabled) {
-      const run = snapshot.memoryTopicState?.dreaming
-      if (run && run.status === 'running' && run.trigger === 'automatic') {
-        await this.retryExternalImportWrite(namespace, memory => memory.dreaming({ kind: 'pause', id: run.id }))
+      await this.pauseActiveDreamingNamespaces({
+        filter: 'automatic',
+        reason: DREAMING_AUTO_DISABLED_REASON,
+        includeNamespace: namespace,
+      })
+    }
+    if (sanitized.dailyTokenBudget !== undefined && saved.dailyTokenBudget > 0) {
+      const budget = this.dreamingDailyUsage()
+      if (budget.budgetExceeded) {
+        await this.pauseActiveDreamingNamespaces({
+          filter: 'all',
+          reason: this.formatDreamingBudgetReason(budget.effectiveTokens, budget.budget),
+          includeNamespace: namespace,
+        })
       }
     }
     return this.adminDreamingStatus(namespace)
@@ -3087,49 +3187,67 @@ export class StrataGateRuntime {
   private async writeClosedDayLetters(now: number): Promise<void> {
     const store = this.letterStore()
     if (!store) return
-    const { signal } = this.dailyLetterStop
+    const controller = new AbortController()
+    this.dailyLetterController = controller
+    const onClose = () => controller.abort(this.dailyLetterStop.signal.reason ?? new Error('宿主已关闭'))
+    if (this.dailyLetterStop.signal.aborted) onClose()
+    else this.dailyLetterStop.signal.addEventListener('abort', onClose, { once: true })
+    const { signal } = controller
     const timeZone = this.dailyNotes.timeZone
     const today = dailyDate(new Date(now), timeZone)
     const yesterday = shiftLetterDate(today, -1)
-    for (const namespace of await this.adminNamespaces()) {
-      if (signal.aborted) return
-      let date = store.nextDate(namespace, yesterday)
-      for (let checked = 0; date < today && checked < 32 && !signal.aborted; checked++, date = shiftLetterDate(date, 1)) {
-        const claim = store.claim(namespace, date, now)
-        if (!claim) break
-        try {
-          const messages = store.material(namespace, date, timeZone)
-          if (!messages.some(message => message.role === 'user')) {
-            store.finish(namespace, date, claim, null, now)
-            continue
+    try {
+      for (const namespace of await this.adminNamespaces()) {
+        if (signal.aborted || !this.dreamingSettings().dailyLettersEnabled) return
+        let date = store.nextDate(namespace, yesterday)
+        for (let checked = 0; date < today && checked < 32 && !signal.aborted && this.dreamingSettings().dailyLettersEnabled; checked++, date = shiftLetterDate(date, 1)) {
+          const claim = store.claim(namespace, date, now)
+          if (!claim) break
+          try {
+            if (signal.aborted || !this.dreamingSettings().dailyLettersEnabled) {
+              store.release(namespace, date, claim, now)
+              return
+            }
+            const messages = store.material(namespace, date, timeZone)
+            if (!messages.some(message => message.role === 'user')) {
+              store.finish(namespace, date, claim, null, now)
+              continue
+            }
+            const profile = this.getPersistentProfile()
+            const profileContext = this.renderProfileContext()
+            const draft = await this.models.runDetached(`stratagate-letter:${date}`, () =>
+              this.models.writeDailyLetter({ date, messages }, profileContext ?? ''), signal, namespace)
+            signal.throwIfAborted()
+            if (!this.dreamingSettings().dailyLettersEnabled) {
+              store.release(namespace, date, claim, now)
+              return
+            }
+            const paragraphs = draft.paragraphs.map(text => text.trim().slice(0, 650)).filter(Boolean).slice(0, 3)
+            const title = draft.title.trim().slice(0, 160) || '一封来信'
+            const signature = draft.signature.trim().slice(0, 80) || profile.assistantPreferredName || 'StrataGate'
+            const letter = paragraphs.length ? {
+              date, title, paragraphs, signature, createdAt: new Date().toISOString(),
+              profileStyled: Boolean(profileContext),
+              reports: store.reports(namespace, date, timeZone),
+            } : null
+            if (letter && containsCredentials([title, signature, ...paragraphs].join('\n'))) {
+              store.finish(namespace, date, claim, null, now)
+            } else store.finish(namespace, date, claim, letter, now)
+          } catch (error) {
+            if (signal.aborted || !this.dreamingSettings().dailyLettersEnabled) store.release(namespace, date, claim, now)
+            else {
+              const message = error instanceof Error ? error.message : String(error)
+              const terminal = /exceeds model context window/i.test(message)
+              store.recordFailure(namespace, date, claim, error, now, { terminal })
+              this.onIngestError(error)
+            }
           }
-          const profile = this.getPersistentProfile()
-          const profileContext = this.renderProfileContext()
-          const draft = await this.models.runDetached(`stratagate-letter:${date}`, () =>
-            this.models.writeDailyLetter({ date, messages }, profileContext ?? ''), signal, namespace)
-          signal.throwIfAborted()
-          const paragraphs = draft.paragraphs.map(text => text.trim().slice(0, 650)).filter(Boolean).slice(0, 3)
-          const title = draft.title.trim().slice(0, 160) || '一封来信'
-          const signature = draft.signature.trim().slice(0, 80) || profile.assistantPreferredName || 'StrataGate'
-          const letter = paragraphs.length ? {
-            date, title, paragraphs, signature, createdAt: new Date().toISOString(),
-            profileStyled: Boolean(profileContext),
-            reports: store.reports(namespace, date, timeZone),
-          } : null
-          if (letter && containsCredentials([title, signature, ...paragraphs].join('\n'))) {
-            store.finish(namespace, date, claim, null, now)
-          } else store.finish(namespace, date, claim, letter, now)
-        } catch (error) {
-          if (signal.aborted) store.release(namespace, date, claim, now)
-          else {
-            const message = error instanceof Error ? error.message : String(error)
-            const terminal = /exceeds model context window/i.test(message)
-            store.recordFailure(namespace, date, claim, error, now, { terminal })
-            this.onIngestError(error)
-          }
+          break
         }
-        break
       }
+    } finally {
+      this.dailyLetterStop.signal.removeEventListener('abort', onClose)
+      if (this.dailyLetterController === controller) this.dailyLetterController = undefined
     }
   }
 
@@ -3152,6 +3270,7 @@ export class StrataGateRuntime {
     if (!settings.autoEnabled) return
     if (this.dreamingDailyUsage(0, now).budgetExceeded) return
     const idle = () => !this.closed && now - this.lastMainActivity >= DREAMING_IDLE_TIME
+      && this.dreamingSettings().autoEnabled
       && ![...this.knownSessions.values()].some(reference => {
         const session = reference.deref()
         return session && !this.isDreamingSession(session) && session.header.origin !== 'subagent'
@@ -3164,7 +3283,13 @@ export class StrataGateRuntime {
       const existing = (await this.adminSnapshot(namespace))?.memoryTopicState?.dreaming
       if (existing?.scope === 'memory' && (existing.status === 'paused' && existing.interrupted
         || existing.status === 'running' && existing.leaseUntil && Date.parse(existing.leaseUntil) <= now)) {
-        const resumed = await this.retryExternalImportWrite(namespace, memory => memory.dreaming({ kind: 'resume', id: existing.id, owner: this.dreamingOwner }))
+        const resumed = await this.retryExternalImportWrite(namespace, memory => memory.dreaming({
+          kind: 'resume', id: existing.id, owner: this.dreamingOwner, trigger: 'automatic',
+        }))
+        if (!this.dreamingSettings().autoEnabled) {
+          await this.dreamingMutate(namespace, resumed, { kind: 'suspend', reason: DREAMING_AUTO_DISABLED_REASON }).catch(() => {})
+          return
+        }
         this.startDreaming(namespace, resumed)
         return
       }
@@ -3173,7 +3298,14 @@ export class StrataGateRuntime {
       const run = await this.retryExternalImportWrite(namespace, memory => idle()
         ? memory.startMemoryDreaming(this.dreamingOwner, 'automatic', dates, this.agentMemoryRetrievalWeight > 0)
         : Promise.resolve(null))
-      if (run) { this.startDreaming(namespace, run); return }
+      if (run) {
+        if (!this.dreamingSettings().autoEnabled) {
+          await this.dreamingMutate(namespace, run, { kind: 'suspend', reason: DREAMING_AUTO_DISABLED_REASON }).catch(() => {})
+          return
+        }
+        this.startDreaming(namespace, run)
+        return
+      }
     }
   }
 
@@ -3201,6 +3333,11 @@ export class StrataGateRuntime {
     const run = await this.dreamingRun(namespace, id)
     if (expectedCursor !== undefined && expectedCursor !== run.cursor) return { error: '本批已完成。请根据最新任务继续。' }
     if (!['running', 'pausing'].includes(run.status) || (expectedEpoch !== undefined && expectedEpoch !== run.epoch)) throw new Error('Dreaming claim changed')
+    const autoStopReason = this.dreamingAutoStopReason(run)
+    if (autoStopReason) {
+      await this.dreamingMutate(namespace, run, { kind: 'suspend', reason: autoStopReason }).catch(() => {})
+      throw new Error(autoStopReason)
+    }
     let result: unknown
     let evidenceIds: string[] = []
     try {
@@ -3231,6 +3368,8 @@ export class StrataGateRuntime {
           expectedVersion: action.args.version ?? null,
           beforePublish: async () => {
             const current = await this.dreamingRun(namespace, id)
+            const currentStop = this.dreamingAutoStopReason(current)
+            if (currentStop) throw new Error(currentStop)
             if (current.owner !== this.dreamingOwner || current.epoch !== run.epoch || current.status !== 'running'
               || !current.leaseUntil || Date.parse(current.leaseUntil) <= Date.now()) throw new Error('本轮已暂停或终止，笔记未写入。')
           },
@@ -3268,7 +3407,7 @@ export class StrataGateRuntime {
     }
     let command: DreamingCommand
     if (action === 'start') command = { kind: 'start', owner: this.dreamingOwner }
-    else if (action === 'resume' && id) command = { kind: 'resume', id, owner: this.dreamingOwner }
+    else if (action === 'resume' && id) command = { kind: 'resume', id, owner: this.dreamingOwner, trigger: 'manual' }
     else if ((action === 'pause' || action === 'terminate') && id) command = { kind: action, id }
     else throw new Error('Invalid Dreaming control')
     const dates = action === 'start' && this.dreamingScope === 'memory' && this.dailyNotesEnabled ? await this.dailyNotes.versions(namespace) : {}
@@ -3285,29 +3424,78 @@ export class StrataGateRuntime {
 
   private startDreaming(namespace: string, initial: DreamingRun): void {
     const previous = this.dreamingRuns.get(namespace)
-    if (previous) { void previous.then(() => { if (!this.closed) this.startDreaming(namespace, initial) }); return }
+    if (previous) {
+      void previous.then(() => {
+        if (!this.closed && !this.dreamingAutoStopReason(initial)) this.startDreaming(namespace, initial)
+      })
+      return
+    }
     const controller = new AbortController()
     this.dreamingControllers.set(namespace, controller)
+    this.dreamingRunTriggers.set(namespace, initial.trigger === 'automatic' ? 'automatic' : 'manual')
     const claim = { id: initial.id, owner: this.dreamingOwner, epoch: initial.epoch }
     const mutate = (command: DreamingCommand) => this.retryExternalImportWrite(namespace, memory => memory.dreaming(command))
+    const abortReasonText = (): string | undefined => {
+      if (!controller.signal.aborted) return undefined
+      const reason = controller.signal.reason
+      if (reason instanceof Error && reason.message) return reason.message
+      if (typeof reason === 'string' && reason) return reason
+      return undefined
+    }
+    const suspendIfActive = async (reason: string, interrupted = false): Promise<void> => {
+      const latest = await this.dreamingRun(namespace, initial.id).catch(() => undefined)
+      if (!latest || latest.epoch !== claim.epoch || !['running', 'pausing'].includes(latest.status)) return
+      await mutate({ kind: 'suspend', ...claim, reason, ...(interrupted ? { interrupted: true } : {}) }).catch(() => {})
+    }
     let renewing = false
     const heartbeat = setInterval(() => {
       if (renewing || controller.signal.aborted) return
       renewing = true
       void mutate({ kind: 'heartbeat', ...claim }).then(run => {
         if (run.status === 'completed') clearInterval(heartbeat)
+        else {
+          const stopReason = this.dreamingAutoStopReason(run)
+          if (stopReason) controller.abort(new Error(stopReason))
+        }
       }).catch(() => controller.abort(new Error('Dreaming 任务认领已变化'))).finally(() => { renewing = false })
     }, 20_000)
     heartbeat.unref?.()
+    const autoWatch = initial.trigger === 'automatic' && this.config.database !== ':memory:'
+      ? setInterval(() => {
+          if (controller.signal.aborted) return
+          try {
+            if (!this.dreamingSettings().autoEnabled) {
+              controller.abort(new Error(DREAMING_AUTO_DISABLED_REASON))
+            }
+          } catch {}
+        }, DREAMING_AUTO_WATCH_MS)
+      : undefined
+    autoWatch?.unref?.()
     const task = (async () => {
       try {
+        const initialStop = this.dreamingAutoStopReason(initial)
+        if (initialStop) {
+          await suspendIfActive(initialStop)
+          return
+        }
         let ready = initial
         while (ready.waitingForProjection && !controller.signal.aborted) {
           ready = await mutate({ kind: 'prepare', ...claim })
           if (ready.status !== 'running') return
+          const waitingStop = this.dreamingAutoStopReason(ready)
+          if (waitingStop) {
+            await suspendIfActive(waitingStop)
+            return
+          }
           if (ready.waitingForProjection) await delay(200, undefined, { signal: controller.signal })
         }
-        if (controller.signal.aborted || this.closed) return
+        if (controller.signal.aborted || this.closed) {
+          await suspendIfActive(
+            this.closed ? '宿主已关闭，进度已保存' : (abortReasonText() ?? '任务已暂停，进度已保存'),
+            this.closed && initial.scope === 'memory',
+          )
+          return
+        }
         if (this.dreamingHost) {
           await this.dreamingHost.run(namespace, ready, controller.signal)
           return
@@ -3315,10 +3503,20 @@ export class StrataGateRuntime {
         while (!this.closed && !controller.signal.aborted) {
           const run = await mutate({ kind: 'prepare', ...claim })
           if (run.status !== 'running') return
+          const prePayloadStop = this.dreamingAutoStopReason(run)
+          if (prePayloadStop) {
+            await mutate({ kind: 'suspend', ...claim, reason: prePayloadStop })
+            return
+          }
           const { memory, owned } = await this.openAdminMemory(namespace)
           let payload: unknown
           try { await this.refreshExternalImportMemory(namespace, memory); payload = dreamingPayload(memory, run) }
           finally { if (owned) await memory.close() }
+          const preCallStop = this.dreamingAutoStopReason(run)
+          if (preCallStop) {
+            await mutate({ kind: 'suspend', ...claim, reason: preCallStop })
+            return
+          }
           const estimatedInput = estimateTokens(JSON.stringify(payload))
           const budgetStatus = this.dreamingDailyUsage(estimatedInput)
           if (budgetStatus.budgetExceeded) {
@@ -3326,7 +3524,14 @@ export class StrataGateRuntime {
             return
           }
           const action = await this.models.runDetached(`dreaming:${run.id}`, () => this.models.dreamingStep(payload), controller.signal, namespace)
-          if (controller.signal.aborted) return
+          const postCallStop = this.dreamingAutoStopReason(run)
+          if (controller.signal.aborted || postCallStop) {
+            await suspendIfActive(
+              this.closed ? '宿主已关闭，进度已保存' : (postCallStop ?? abortReasonText() ?? '任务已暂停，进度已保存'),
+              this.closed && initial.scope === 'memory',
+            )
+            return
+          }
           const repeated = run.trace.filter(entry => entry.tool === action.tool && JSON.stringify(entry.args) === JSON.stringify(action.args)).length
           if (repeated >= 3) {
             await mutate({ kind: 'suspend', ...claim, reason: '重复调用未带来有效进展，已暂停并保留断点' })
@@ -3362,17 +3567,34 @@ export class StrataGateRuntime {
             if (saved.status !== 'running') return
           }
           // Yield between paid calls and allow normal foreground activity to run.
-          await new Promise<void>(resolve => setTimeout(resolve, 100))
+          await delay(100, undefined, { signal: controller.signal })
+        }
+        if (controller.signal.aborted || this.closed) {
+          await suspendIfActive(
+            this.closed ? '宿主已关闭，进度已保存' : (abortReasonText() ?? '任务已暂停，进度已保存'),
+            this.closed && initial.scope === 'memory',
+          )
         }
       } catch (error) {
         await mutate({ kind: 'suspend', ...claim,
-          reason: this.closed ? '宿主已关闭，进度已保存' : dreamingConflict(error) ? DREAMING_REPLAN_REASON : error instanceof Error ? error.message.slice(0, 300) : '运行失败，进度已保存',
+          reason: this.closed
+            ? '宿主已关闭，进度已保存'
+            : dreamingConflict(error)
+              ? DREAMING_REPLAN_REASON
+              : (abortReasonText() ?? (error instanceof Error ? error.message.slice(0, 300) : '运行失败，进度已保存')),
           ...(this.closed && initial.scope === 'memory' ? { interrupted: true } : {}),
           ...(dreamingConflict(error) ? { replanRequired: true } : {}) }).catch(() => {})
-      } finally { clearInterval(heartbeat); this.wakeBackgroundWorker() }
+      } finally {
+        clearInterval(heartbeat)
+        if (autoWatch) clearInterval(autoWatch)
+        this.wakeBackgroundWorker()
+      }
     })().finally(() => {
       if (this.dreamingRuns.get(namespace) === task) this.dreamingRuns.delete(namespace)
-      if (this.dreamingControllers.get(namespace) === controller) this.dreamingControllers.delete(namespace)
+      if (this.dreamingControllers.get(namespace) === controller) {
+        this.dreamingControllers.delete(namespace)
+        this.dreamingRunTriggers.delete(namespace)
+      }
     })
     this.dreamingRuns.set(namespace, task)
   }
