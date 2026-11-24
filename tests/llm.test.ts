@@ -1990,4 +1990,80 @@ describe('structured memory operation accounting', () => {
       expect(recorder.snapshot('@shared').totals).toEqual({})
     } finally { recorder.close() }
   })
+
+  it('Issue #190: normalizes harmless topicProjector null fields, accepts otherExistingTopics, and includes sanitized schema hints on retry', async () => {
+    const ctx: TopicProjectionContext = {
+      jobId: 'tproj_norm',
+      events: [{
+        id: 'evt_1', title: '测试事件', summary: '测试摘要', tags: ['test'],
+        quotes: [], sourceMessageIds: [],
+        weight: { mentionCount: 1, lastAdoptedTurn: 1, lastRetrievedAt: null, pinned: false, floorWeight: 0, forcedCap: null },
+        scope: 'project', criticality: 'routine', status: 'active', supersededBy: null,
+        temporal: { status: 'occurred', eventType: 'fact' },
+        createdAt: '2026-11-20T00:00:00.000Z', updatedAt: '2026-11-20T00:00:00.000Z',
+      }],
+      existingTopics: [],
+      otherExistingTopics: [{ id: 'topic_other_1', title: '历史旧章' }],
+    }
+    const { bridge, session, calls } = modelBridge([
+      // First response has a real schema error (missing description) to trigger structural retry feedback.
+      { tool: { topics: [{ topicId: null, title: '新章', sourceEventIds: ['evt_1'], sections: [{ title: '进展', sourceEventIds: ['evt_1'] }], overview: null }] } },
+      // Second response reuses topicId from otherExistingTopics with null overview.title.
+      { tool: { topics: [{ topicId: 'topic_other_1', title: '历史旧章', description: '范围', sourceEventIds: ['evt_1'], sections: [{ title: '进展', sourceEventIds: ['evt_1'] }], overview: [{ kind: 'history', title: null, text: '补充了一条进展。', sourceEventIds: ['evt_1'] }] }] } },
+    ])
+    const result = await bridge.run(session, () => bridge.topicProjector(ctx))
+    expect(calls).toHaveBeenCalledTimes(2)
+    expect(calls.mock.calls[1]![0].system).toContain('Structural schema mismatches:')
+    expect(result.topics[0]!.topicId).toBe('topic_other_1')
+    expect(result.topics[0]!.overview[0]!.title).toBeUndefined()
+  })
+
+  it('Issue #190: trims oversized dailyLetter input, uses 4096 output budget, and breaks immediately on max-tokens', async () => {
+    const hugeMessages = Array.from({ length: 40 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' : 'assistant',
+      text: `第 ${index} 条长消息：` + '这是一段重复的长文本用于触发每日来信上下文裁剪。'.repeat(30),
+    }))
+    const { bridge, session, calls } = modelBridge(
+      [{ text: '{"title":"截断', finish: 'max-tokens' }, { tool: { title: '不应重试', paragraphs: ['x'], signature: 's' } }],
+      { resolveModelInfo: async () => ({ context: { contextWindow: 8_000 } }) },
+    )
+    const recorder = new DiagnosticsRecorder(':memory:')
+    bridge.setDiagnostics(recorder, () => 'test:letter')
+    try {
+      await expect(bridge.run(session, () => bridge.writeDailyLetter({ date: '2026-11-23', messages: hugeMessages }, '')))
+        .rejects.toThrow()
+      // Must break on first max-tokens instead of retrying 2-3 times.
+      expect(calls).toHaveBeenCalledTimes(1)
+      const sentPayload = JSON.parse(calls.mock.calls[0]![0].messages[0].content[0].text)
+      expect(sentPayload.messages.length).toBeLessThan(40)
+      expect(calls.mock.calls[0]![0].maxTokens).toBeGreaterThanOrEqual(1024)
+      expect(calls.mock.calls[0]![0].maxTokens).toBeLessThanOrEqual(4096)
+      // Failed call with missing adapter usage must still record estimated tokens for accounting.
+      const diag = recorder.snapshot('test:letter').stages.dailyLetter!
+      expect(diag.estimatedUsageCalls).toBe(1)
+      expect(diag.estimatedInputTokens).toBeGreaterThan(0)
+    } finally { recorder.close() }
+  })
+
+  it('Issue #190: compacts oversized summarizer messages to fit context window and uses 4096 output budget for default config', async () => {
+    const { bridge, session, calls } = modelBridge(
+      [{ tool: { l0Title: '长对话摘要', l0Tags: ['长对话'], l1Summary: '已压缩处理。', l2Keypoints: ['要点'], shouldExtract: false } }],
+      {
+        resolveModelInfo: async () => ({ context: { contextWindow: 10_000 } }),
+        config: { maxOutputTokens: 2_048 },
+      },
+    )
+    const giantMessages = Array.from({ length: 6 }, (_, index) => ({
+      id: `m_${index}`,
+      role: (index % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: `HEAD_${index}_` + '中段超长日志正文内容。'.repeat(1_500) + `_TAIL_${index}`,
+      createdAt: '2026-11-23T00:00:00.000Z',
+    }))
+    const summary = await bridge.run(session, () => bridge.summarizer(giantMessages))
+    expect(summary.l0Title).toBe('长对话摘要')
+    expect(calls).toHaveBeenCalledTimes(1)
+    const sentText = calls.mock.calls[0]![0].messages[0].content[0].text as string
+    expect(sentText).toContain('…[omitted]…')
+    expect(calls.mock.calls[0]![0].maxTokens).toBe(4_096)
+  })
 })

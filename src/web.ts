@@ -2140,6 +2140,15 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
           sendJson(res, 200, await runtime.adminDreamingSession(namespace, id))
           return
         }
+        if (action === 'settings') {
+          const body = await jsonBody(req, 'Dreaming settings')
+          sendJson(res, 200, await runtime.adminUpdateDreamingSettings(namespace, body as {
+            autoEnabled?: boolean
+            dailyTokenBudget?: number
+            dailyLettersEnabled?: boolean
+          }))
+          return
+        }
         if (!['start', 'pause', 'resume', 'terminate'].includes(action) || (action !== 'start' && !id)) throw new AdminHttpError(400, 'Invalid Dreaming control')
         sendJson(res, 200, await runtime.adminDreamingControl(namespace, action, id))
       } else throw new AdminHttpError(405, 'Dreaming requires GET or POST')

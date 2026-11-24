@@ -2,10 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import type { DreamingDiaryLetter, DreamingReport } from '@diqier/stratagate'
 import { dailyDate } from './daily-notes.js'
-import { containsCredentials } from './diagnostics.js'
+import { containsCredentials, diagnosticText } from './diagnostics.js'
 
 const DAY_MS = 86_400_000
 const LEASE_MS = 300_000
+export const DAILY_LETTER_MAX_ATTEMPTS = 3
+export const DAILY_LETTER_BACKOFF_MS = [15 * 60_000, 60 * 60_000] as const
+export const DAILY_LETTER_CIRCUIT_COOLDOWN_MS = DAY_MS
+const DAILY_LETTER_CONSECUTIVE_FAILURE_LIMIT = 3
 
 export interface ArchivedLetter extends DreamingDiaryLetter {
   reports: DreamingReport[]
@@ -44,13 +48,50 @@ export class DailyLetters {
         lease_until INTEGER NOT NULL DEFAULT 0,
         finished INTEGER NOT NULL DEFAULT 0,
         letter_json TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_retry_at INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        updated_at INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (namespace, date),
         FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
       ) STRICT;
     `)
+    const columns = new Set(
+      (this.database.prepare('PRAGMA table_info(stratagate_dsh_letters)').all() as Array<{ name: string }>)
+        .map((column) => column.name),
+    )
+    if (!columns.has('attempts')) this.database.exec('ALTER TABLE stratagate_dsh_letters ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0')
+    if (!columns.has('next_retry_at')) this.database.exec('ALTER TABLE stratagate_dsh_letters ADD COLUMN next_retry_at INTEGER NOT NULL DEFAULT 0')
+    if (!columns.has('last_error')) this.database.exec('ALTER TABLE stratagate_dsh_letters ADD COLUMN last_error TEXT')
+    if (!columns.has('status')) this.database.exec("ALTER TABLE stratagate_dsh_letters ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+    if (!columns.has('updated_at')) this.database.exec('ALTER TABLE stratagate_dsh_letters ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0')
   }
 
   close(): void { this.database.close() }
+
+  isCircuitOpen(namespace: string, now = Date.now()): boolean {
+    const completed = this.database.prepare(
+      "SELECT COUNT(*) AS count FROM stratagate_dsh_letters WHERE namespace = ? AND finished = 1 AND (status = 'completed' OR letter_json IS NOT NULL)",
+    ).get(namespace) as { count: number }
+    if (completed.count === 0) {
+      const failed = this.database.prepare(
+        "SELECT MAX(updated_at) AS latest FROM stratagate_dsh_letters WHERE namespace = ? AND finished = 1 AND status = 'failed'",
+      ).get(namespace) as { latest: number | null }
+      if (failed.latest && now - failed.latest < DAILY_LETTER_CIRCUIT_COOLDOWN_MS) return true
+    }
+    const recent = this.database.prepare(`
+      SELECT status, letter_json, updated_at FROM stratagate_dsh_letters
+      WHERE namespace = ? AND finished = 1 AND (status IN ('completed', 'failed') OR letter_json IS NOT NULL)
+      ORDER BY date DESC LIMIT ?
+    `).all(namespace, DAILY_LETTER_CONSECUTIVE_FAILURE_LIMIT) as Array<{ status: string; letter_json: string | null; updated_at: number }>
+    if (recent.length >= DAILY_LETTER_CONSECUTIVE_FAILURE_LIMIT
+      && recent.every((row) => row.status === 'failed' && !row.letter_json)) {
+      const latest = Math.max(...recent.map((row) => row.updated_at || 0))
+      if (latest > 0 && now - latest < DAILY_LETTER_CIRCUIT_COOLDOWN_MS) return true
+    }
+    return false
+  }
 
   nextDate(namespace: string, firstDate: string): string {
     const latest = this.database.prepare('SELECT date, finished FROM stratagate_dsh_letters WHERE namespace = ? ORDER BY date DESC LIMIT 1')
@@ -59,25 +100,61 @@ export class DailyLetters {
   }
 
   claim(namespace: string, date: string, now: number): string | null {
+    if (this.isCircuitOpen(namespace, now)) return null
     const claim = randomUUID()
     const result = this.database.prepare(`
-      INSERT INTO stratagate_dsh_letters (namespace, date, claim, lease_until) VALUES (?, ?, ?, ?)
-      ON CONFLICT(namespace, date) DO UPDATE SET claim = excluded.claim, lease_until = excluded.lease_until
-      WHERE finished = 0 AND lease_until <= ?
-    `).run(namespace, date, claim, now + LEASE_MS, now)
+      INSERT INTO stratagate_dsh_letters (namespace, date, claim, lease_until, status, updated_at) VALUES (?, ?, ?, ?, 'running', ?)
+      ON CONFLICT(namespace, date) DO UPDATE SET claim = excluded.claim, lease_until = excluded.lease_until, status = 'running', updated_at = excluded.updated_at
+      WHERE finished = 0 AND lease_until <= ? AND next_retry_at <= ? AND attempts < ?
+    `).run(namespace, date, claim, now + LEASE_MS, now, now, now, DAILY_LETTER_MAX_ATTEMPTS)
     return result.changes ? claim : null
   }
 
-  finish(namespace: string, date: string, claim: string, letter: ArchivedLetter | null): void {
+  finish(namespace: string, date: string, claim: string, letter: ArchivedLetter | null, now = Date.now()): void {
     this.database.prepare(`
-      UPDATE stratagate_dsh_letters SET letter_json = ?, finished = 1, claim = NULL, lease_until = 0
+      UPDATE stratagate_dsh_letters
+      SET letter_json = ?, finished = 1, status = ?, claim = NULL, lease_until = 0, next_retry_at = 0, last_error = NULL, updated_at = ?
       WHERE namespace = ? AND date = ? AND claim = ?
-    `).run(letter ? JSON.stringify(letter) : null, namespace, date, claim)
+    `).run(letter ? JSON.stringify(letter) : null, letter ? 'completed' : 'skipped', now, namespace, date, claim)
   }
 
-  release(namespace: string, date: string, claim: string): void {
-    this.database.prepare('UPDATE stratagate_dsh_letters SET lease_until = 0 WHERE namespace = ? AND date = ? AND claim = ?')
-      .run(namespace, date, claim)
+  recordFailure(
+    namespace: string,
+    date: string,
+    claim: string,
+    error: unknown,
+    now = Date.now(),
+    options: { terminal?: boolean } = {},
+  ): { attempts: number; exhausted: boolean; nextRetryAt: number } {
+    const row = this.database.prepare(
+      'SELECT attempts FROM stratagate_dsh_letters WHERE namespace = ? AND date = ? AND claim = ?',
+    ).get(namespace, date, claim) as { attempts: number } | undefined
+    if (!row) return { attempts: 0, exhausted: false, nextRetryAt: 0 }
+    const attempts = row.attempts + 1
+    const exhausted = Boolean(options.terminal) || attempts >= DAILY_LETTER_MAX_ATTEMPTS
+    const backoff = DAILY_LETTER_BACKOFF_MS[attempts - 1] ?? DAILY_LETTER_BACKOFF_MS[DAILY_LETTER_BACKOFF_MS.length - 1]!
+    const nextRetryAt = exhausted ? 0 : now + backoff
+    this.database.prepare(`
+      UPDATE stratagate_dsh_letters
+      SET attempts = ?, finished = ?, status = ?, claim = NULL, lease_until = 0, next_retry_at = ?, last_error = ?, updated_at = ?
+      WHERE namespace = ? AND date = ? AND claim = ?
+    `).run(
+      attempts,
+      exhausted ? 1 : 0,
+      exhausted ? 'failed' : 'retrying',
+      nextRetryAt,
+      diagnosticText(error, 300),
+      now,
+      namespace,
+      date,
+      claim,
+    )
+    return { attempts, exhausted, nextRetryAt }
+  }
+
+  release(namespace: string, date: string, claim: string, now = Date.now()): void {
+    this.database.prepare("UPDATE stratagate_dsh_letters SET lease_until = 0, status = 'pending', updated_at = ? WHERE namespace = ? AND date = ? AND claim = ?")
+      .run(now, namespace, date, claim)
   }
 
   dates(namespace: string): string[] {

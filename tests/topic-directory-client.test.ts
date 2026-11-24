@@ -88,10 +88,16 @@ function clientRenderer(runEffects = false, fetchOverride?: any) {
     return { ok: true, status: 200, json: async () => ({ namespace: params.get('namespace'), topicId, sectionKey: sectionKey || null, revision: backendDirectory.revision, items, total: ids.length, offset, limit, nextOffset: offset + items.length < ids.length ? offset + items.length : null }) }
   }))
   let definition: any
+  const timers: Array<{ fn: () => void; delay: number; cleared: boolean }> = []
   runInNewContext(source, {
     URL, URLSearchParams, AbortController, localStorage, fetch: fetchMock,
     document: { body: { style: {} }, hidden: true, querySelector: () => null, addEventListener: () => {}, removeEventListener: () => {} },
-    window: { __ModuleLoader__: { load: (value: any) => { definition = value } }, setTimeout: () => 0, clearTimeout: () => {}, addEventListener: () => {}, removeEventListener: () => {}, localStorage },
+    window: {
+      __ModuleLoader__: { load: (value: any) => { definition = value } },
+      setTimeout: (fn: () => void, delay = 0) => { timers.push({ fn, delay, cleared: false }); return timers.length },
+      clearTimeout: (id: number) => { if (timers[id - 1]) timers[id - 1]!.cleared = true },
+      addEventListener: () => {}, removeEventListener: () => {}, localStorage,
+    },
   })
   const components = definition.factory(() => React).__topicTest
   // Raw relations belong to the mock server; actual UI components receive the
@@ -145,6 +151,11 @@ function clientRenderer(runEffects = false, fetchOverride?: any) {
       pendingEffects = []
       effects.forEach((effect) => effect())
       return tree
+    },
+    flushTimers: (maxDelay = 0) => {
+      for (const timer of timers.splice(0)) {
+        if (!timer.cleared && timer.delay <= maxDelay) timer.fn()
+      }
     },
     flush: async () => { for (let step = 0; step < 50; step += 1) await Promise.resolve() },
   }
@@ -212,7 +223,8 @@ describe('Dreaming directory controls', () => {
     expect(tree.text).toContain('✦2提取经验')
     expect(cardText).not.toMatch(/\d+%|批次/)
     expect(cardText).not.toMatch(/消耗边界|token 上限|估算消耗|17769/)
-    expect(find(tree, node => node.type === 'input')).toHaveLength(0)
+    expect(find(card[0]!, node => node.type === 'input')).toHaveLength(0)
+    expect(find(tree, node => node.type === 'input' && node.props['aria-label'] === '每日 Token 上限（万）')).toHaveLength(1)
     await buttons(tree, '继续')[0]!.props.onClick()
     expect(client.fetch.mock.calls[0]![0]).toContain('id=dream-paused')
     expect(client.fetch.mock.calls[0]![0]).toContain('action=resume')
@@ -222,6 +234,42 @@ describe('Dreaming directory controls', () => {
     expect(confirmTree.text).toContain('终止这次整理？')
     expect(confirmTree.text).toContain('已修改的事件与经验会保留')
     expect(confirmTree.text).not.toContain('批。')
+  })
+
+  it('persists Dreaming auto-run, daily letters, and daily token budget settings', async () => {
+    let state = { autoEnabled: true, dailyTokenBudget: 5_000_000, dailyLettersEnabled: true }
+    const client = clientRenderer(true, async (url: string, init?: { method?: string; body?: string }) => {
+      if (url.includes('action=settings') && init?.method === 'POST') {
+        state = { ...state, ...JSON.parse(init.body || '{}') }
+        return { ok: true, status: 200, json: async () => ({ settings: state, usage: { date: '2026-11-24', effectiveTokens: 1_250_000, calls: 6, budget: state.dailyTokenBudget, budgetExceeded: false } }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ run: null, available: true, settings: state, usage: { date: '2026-11-24', effectiveTokens: 1_250_000, calls: 6, budget: state.dailyTokenBudget, budgetExceeded: false } }) }
+    })
+    const props = { namespace: 'test', active: true, available: true, settings: true }
+    client.render(client.DreamingPanel, props)
+    client.flushTimers(0)
+    await client.flush()
+    let tree = client.render(client.DreamingPanel, props)
+    expect(tree.text).toContain('已用 125 万 / 500 万（6 次调用）')
+    const autoSwitch = find(tree, node => node.props['aria-label'] === '允许空闲时自动整理（Dreaming）')[0]!
+    expect(autoSwitch.props['aria-checked']).toBe(true)
+    await autoSwitch.props.onClick()
+    await client.flush()
+    tree = client.render(client.DreamingPanel, props)
+    expect(find(tree, node => node.props['aria-label'] === '允许空闲时自动整理（Dreaming）')[0]!.props['aria-checked']).toBe(false)
+    const lettersSwitch = find(tree, node => node.props['aria-label'] === '每日自动来信')[0]!
+    await lettersSwitch.props.onClick()
+    await client.flush()
+    tree = client.render(client.DreamingPanel, props)
+    expect(find(tree, node => node.props['aria-label'] === '每日自动来信')[0]!.props['aria-checked']).toBe(false)
+    const budgetInput = find(tree, node => node.props['aria-label'] === '每日 Token 上限（万）')[0]!
+    budgetInput.props.onChange({ target: { value: '800' } })
+    tree = client.render(client.DreamingPanel, props)
+    await buttons(tree, '保存')[0]!.props.onClick()
+    await client.flush()
+    tree = client.render(client.DreamingPanel, props)
+    expect(tree.text).toContain('已用 125 万 / 800 万（6 次调用）')
+    expect(state).toEqual({ autoEnabled: false, dailyTokenBudget: 8_000_000, dailyLettersEnabled: false })
   })
 
   it('opens archived letters on request during an independent Dreaming run', async () => {

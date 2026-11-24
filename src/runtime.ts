@@ -78,7 +78,14 @@ import { EmbeddingBridge } from './embedding.js'
 import { renderBlocks, TurnFolder, type FoldedTurn } from './fold.js'
 import { dshMessageSource, dshReplaceSurfaceOp, isStrataGateMessageSource } from './dsh-compatibility.js'
 import { DshModelBridge } from './llm.js'
-import { DshMetadataStore, readGraphSettings, type GraphSettings } from './metadata.js'
+import {
+  DshMetadataStore,
+  normalizeDreamingSettings,
+  readDreamingSettings,
+  readGraphSettings,
+  type DreamingSettings,
+  type GraphSettings,
+} from './metadata.js'
 import { EventDuplicateMaintenance, sourceContext } from './event-duplicate-maintenance.js'
 import { eventDuplicateMergeCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, validEventMergeDraft, type EventDuplicatePair, type EventMergeDraft } from '@diqier/stratagate'
 import { containsCredentials, DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
@@ -103,6 +110,14 @@ export type DreamingOperation = ClaimedDreamingCommand extends infer T ? T exten
 
 function dreamingConflict(error: unknown): boolean {
   return error instanceof Error && /^(Directory changed during Dreaming|Dreaming sources changed|Dreaming evidence changed)/.test(error.message)
+}
+
+function formatTokenWan(tokens: number): string {
+  if (tokens >= 10_000) {
+    const wan = tokens / 10_000
+    return `${Number.isInteger(wan) ? wan : wan.toFixed(1)} 万`
+  }
+  return `${tokens}`
 }
 const DREAMING_REPLAN_REASON = '目录或来源在整理期间发生变化，请终止本轮后重新开始；已保存的修改会保留，继续本轮无法解除冲突'
 
@@ -462,6 +477,7 @@ export class StrataGateRuntime {
   private dreamingScope: DreamingRun['scope'] = 'directory'
   private lastDreamingIdleCheck = 0
   private dailyLetters?: DailyLetters
+  private memoryDreamingSettings?: DreamingSettings
   private dailyLetterRun: Promise<void> | undefined
   private lastLetterCheck = 0
   private readonly dailyLetterStop = new AbortController()
@@ -2982,7 +2998,73 @@ export class StrataGateRuntime {
     const snapshot = await this.adminSnapshot(namespace)
     if (!snapshot) throw new Error('Unknown memory namespace')
     const run = snapshot.memoryTopicState?.dreaming
-    return { namespace, run: dreamingStatus(run), letterDates: this.letterStore()?.dates(namespace) ?? [] }
+    return {
+      namespace,
+      run: dreamingStatus(run),
+      letterDates: this.letterStore()?.dates(namespace) ?? [],
+      settings: this.dreamingSettings(),
+      usage: this.dreamingDailyUsage(),
+    }
+  }
+
+  dreamingSettings(): DreamingSettings {
+    if (this.config.database === ':memory:') {
+      return this.memoryDreamingSettings ?? normalizeDreamingSettings()
+    }
+    return readDreamingSettings(this.config.database)
+  }
+
+  dreamingDailyUsage(additionalEstimatedTokens = 0, now = Date.now()) {
+    const settings = this.dreamingSettings()
+    const usage = this.diagnostics.todayStageUsage('dreamingStep', { now })
+    const budgetExceeded = settings.dailyTokenBudget > 0
+      && (usage.effectiveTokens + Math.max(0, additionalEstimatedTokens)) > settings.dailyTokenBudget
+    return {
+      ...usage,
+      budget: settings.dailyTokenBudget,
+      budgetExceeded,
+    }
+  }
+
+  formatDreamingBudgetReason(effectiveTokens: number, budget: number): string {
+    return `今日 Dreaming Token 已达上限（已用约 ${formatTokenWan(effectiveTokens)} / 上限 ${formatTokenWan(budget)}），已暂停并保留断点`
+  }
+
+  async adminUpdateDreamingSettings(namespace: string, patch: Partial<DreamingSettings>): Promise<unknown> {
+    if (this.closed) throw new Error('Runtime is closed')
+    const snapshot = await this.adminSnapshot(namespace)
+    if (!snapshot) throw new Error('Unknown memory namespace')
+    const sanitized: Partial<DreamingSettings> = {}
+    if (patch.autoEnabled !== undefined) {
+      if (typeof patch.autoEnabled !== 'boolean') throw new Error('autoEnabled 必须是布尔值')
+      sanitized.autoEnabled = patch.autoEnabled
+    }
+    if (patch.dailyLettersEnabled !== undefined) {
+      if (typeof patch.dailyLettersEnabled !== 'boolean') throw new Error('dailyLettersEnabled 必须是布尔值')
+      sanitized.dailyLettersEnabled = patch.dailyLettersEnabled
+    }
+    if (patch.dailyTokenBudget !== undefined) {
+      if (typeof patch.dailyTokenBudget !== 'number' || !Number.isFinite(patch.dailyTokenBudget) || patch.dailyTokenBudget < 0) {
+        throw new Error('dailyTokenBudget 必须是非负数字')
+      }
+      sanitized.dailyTokenBudget = Math.floor(patch.dailyTokenBudget)
+    }
+    let saved: DreamingSettings
+    if (this.config.database === ':memory:') {
+      saved = normalizeDreamingSettings({ ...this.dreamingSettings(), ...sanitized })
+      this.memoryDreamingSettings = saved
+    } else {
+      const store = new DshMetadataStore(this.config.database)
+      try { saved = store.setDreamingSettings(sanitized) }
+      finally { store.close() }
+    }
+    if (!saved.autoEnabled) {
+      const run = snapshot.memoryTopicState?.dreaming
+      if (run && run.status === 'running' && run.trigger === 'automatic') {
+        await this.retryExternalImportWrite(namespace, memory => memory.dreaming({ kind: 'pause', id: run.id }))
+      }
+    }
+    return this.adminDreamingStatus(namespace)
   }
 
   adminDailyLetter(namespace: string, date: string): ArchivedLetter | null {
@@ -2996,6 +3078,7 @@ export class StrataGateRuntime {
 
   private checkDailyLetters(now = Date.now()): void {
     if (this.dreamingScope !== 'memory' || this.dailyLetterRun || this.closed || now - this.lastLetterCheck < 60_000) return
+    if (!this.dreamingSettings().dailyLettersEnabled) return
     this.lastLetterCheck = now
     this.dailyLetterRun = this.writeClosedDayLetters(now).catch(error => this.onIngestError(error))
       .finally(() => { this.dailyLetterRun = undefined })
@@ -3017,7 +3100,7 @@ export class StrataGateRuntime {
         try {
           const messages = store.material(namespace, date, timeZone)
           if (!messages.some(message => message.role === 'user')) {
-            store.finish(namespace, date, claim, null)
+            store.finish(namespace, date, claim, null, now)
             continue
           }
           const profile = this.getPersistentProfile()
@@ -3034,11 +3117,16 @@ export class StrataGateRuntime {
             reports: store.reports(namespace, date, timeZone),
           } : null
           if (letter && containsCredentials([title, signature, ...paragraphs].join('\n'))) {
-            store.finish(namespace, date, claim, null)
-          } else store.finish(namespace, date, claim, letter)
+            store.finish(namespace, date, claim, null, now)
+          } else store.finish(namespace, date, claim, letter, now)
         } catch (error) {
-          if (signal.aborted) store.release(namespace, date, claim)
-          else this.onIngestError(error)
+          if (signal.aborted) store.release(namespace, date, claim, now)
+          else {
+            const message = error instanceof Error ? error.message : String(error)
+            const terminal = /exceeds model context window/i.test(message)
+            store.recordFailure(namespace, date, claim, error, now, { terminal })
+            this.onIngestError(error)
+          }
         }
         break
       }
@@ -3060,6 +3148,9 @@ export class StrataGateRuntime {
   private async checkAutomaticDreaming(now = Date.now()): Promise<void> {
     if (this.dreamingScope !== 'memory' || this.closed || this.dreamingRuns.size
       || now - this.lastMainActivity < DREAMING_IDLE_TIME || now - this.lastDreamingIdleCheck < 60_000) return
+    const settings = this.dreamingSettings()
+    if (!settings.autoEnabled) return
+    if (this.dreamingDailyUsage(0, now).budgetExceeded) return
     const idle = () => !this.closed && now - this.lastMainActivity >= DREAMING_IDLE_TIME
       && ![...this.knownSessions.values()].some(reference => {
         const session = reference.deref()
@@ -3228,6 +3319,12 @@ export class StrataGateRuntime {
           let payload: unknown
           try { await this.refreshExternalImportMemory(namespace, memory); payload = dreamingPayload(memory, run) }
           finally { if (owned) await memory.close() }
+          const estimatedInput = estimateTokens(JSON.stringify(payload))
+          const budgetStatus = this.dreamingDailyUsage(estimatedInput)
+          if (budgetStatus.budgetExceeded) {
+            await mutate({ kind: 'suspend', ...claim, reason: this.formatDreamingBudgetReason(budgetStatus.effectiveTokens, budgetStatus.budget) })
+            return
+          }
           const action = await this.models.runDetached(`dreaming:${run.id}`, () => this.models.dreamingStep(payload), controller.signal, namespace)
           if (controller.signal.aborted) return
           const repeated = run.trace.filter(entry => entry.tool === action.tool && JSON.stringify(entry.args) === JSON.stringify(action.args)).length
@@ -4265,8 +4362,8 @@ export class StrataGateRuntime {
     ])
   }
 
-  private noteNewCoreJobFailures(session: Session, before: ReadonlySet<string>, memory: StrataGate): void {
-    if ([...this.failedCoreJobs(memory)].some((failure) => !before.has(failure))) this.notePluginError(session)
+  private noteNewCoreJobFailures(_session: Session, _before: ReadonlySet<string>, _memory: StrataGate): void {
+    // Summary, extraction, and graph failures are already recorded under their own diagnostic stages.
   }
 
   private async openAdminMemory(

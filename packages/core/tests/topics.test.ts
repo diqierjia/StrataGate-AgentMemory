@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { StrataGate, MemoryTopicDirectory, MEMORY_TOPIC_PROJECTOR_VERSION, TOPIC_LEASE_MS, normalizeSnapshot, memoryTopicEventFingerprint, TopicProjectionError, type TopicProjectionContext, type TopicProjectionResult } from '../src/index.js';
+import { legacyMemoryTopicEventFingerprint } from '../src/topics.js';
 import { SqliteStorage } from '../src/sqlite.js';
 
 const summarizer = async () => ({ l0Title: '对话', l0Tags: [], l1Summary: '对话', l2Keypoints: [], shouldExtract: false });
@@ -1330,5 +1331,120 @@ describe('Topic failure diagnostics and bounded recovery (#119)', () => {
     expect(memory.listTopicProjectionJobs()[0]!.diagnostics).toMatchObject({ category: 'validation-failed',
       reason: 'every supplied batch Event must be assigned to a topic' });
     expect(JSON.stringify(memory.listTopicProjectionJobs())).not.toContain('部署项目');
+  });
+
+  it('Issue #190: migrates legacy and pre-quote-backfill fingerprints without invalidating topics or rescanning Dreaming', async () => {
+    const memory = StrataGate.inMemory(options);
+    const [event] = await seed(memory, 1);
+    const oldPreBackfill = { ...structuredClone(event!), quotes: [] as string[] };
+    delete oldPreBackfill.quotesOrigin;
+    const legacyHash = legacyMemoryTopicEventFingerprint(oldPreBackfill);
+    const now = new Date().toISOString();
+    const directory = new MemoryTopicDirectory();
+    directory.initializeBootstrap([], now);
+    directory.restore({
+      ...directory.snapshot(),
+      projectedVersions: { [event!.id]: legacyHash },
+      dreamingWatermark: { [`event:${event!.id}`]: legacyHash },
+      topics: [{
+        id: 'topic_legacy', title: '长期项目', description: '项目记录。',
+        sourceEventIds: [event!.id],
+        sections: [{ title: '进展', sourceEventIds: [event!.id] }],
+        overview: [{ kind: 'history', title: '进展', text: '已有历史概要。', sourceEventIds: [event!.id] }],
+        sourceVersions: { [event!.id]: legacyHash },
+        dependencyVersions: { [event!.id]: legacyHash },
+        createdAt: now, updatedAt: now, projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION, invalidated: false,
+      }],
+    });
+    const upgraded = {
+      ...structuredClone(event!),
+      quotes: ['自动补齐引文'],
+      quotesOrigin: 'auto_extracted' as const,
+    };
+    // Read-only view before synchronize must already recognize legacy fingerprint.
+    expect(directory.list([upgraded])).toHaveLength(1);
+    expect(directory.list([upgraded])[0]!.isFallback).toBeUndefined();
+    expect(directory.hasPending([upgraded], Date.parse(now))).toBe(false);
+    // Synchronize migrates fingerprints in place without invalidation.
+    directory.synchronize([upgraded], now);
+    const migrated = directory.snapshot();
+    const expectedNew = memoryTopicEventFingerprint(upgraded);
+    expect(migrated.topics[0]!.invalidated).toBe(false);
+    expect(migrated.topics[0]!.title).toBe('长期项目');
+    expect(migrated.projectedVersions[event!.id]).toBe(expectedNew);
+    expect(migrated.dreamingWatermark?.[`event:${event!.id}`]).toBe(expectedNew);
+    expect(directory.hasPending([upgraded], Date.parse(now))).toBe(false);
+    // Once migrated to the new fingerprint, non-semantic metadata updates never invalidate topics.
+    const futureMetadataUpdate = {
+      ...structuredClone(upgraded),
+      quotes: ['另一段引文'],
+      sourceMessageIds: ['m1', 'm2'],
+      extractorVersion: 99,
+    };
+    expect(memoryTopicEventFingerprint(futureMetadataUpdate)).toBe(expectedNew);
+    directory.synchronize([futureMetadataUpdate], now);
+    expect(directory.snapshot().topics[0]!.invalidated).toBe(false);
+    expect(directory.hasPending([futureMetadataUpdate], Date.parse(now))).toBe(false);
+  });
+
+  it('Issue #190: exposes otherExistingTopics beyond 12 chapters and promotes unexposed colliding labels on retry', async () => {
+    const memory = StrataGate.inMemory(options);
+    const events = await seed(memory, 15);
+    const directory = new MemoryTopicDirectory();
+    const now = new Date().toISOString();
+    directory.initializeBootstrap([], now);
+    const storedTopics = events.slice(0, 14).map((event, index) => {
+      const version = memoryTopicEventFingerprint(event);
+      return {
+        id: `topic_${index}`, title: `独立主题 ${index}`, description: `主题 ${index} 范围`,
+        sourceEventIds: [event.id],
+        sections: [{ title: '默认小节', sourceEventIds: [event.id] }],
+        overview: [{ kind: 'history' as const, title: '默认小节', text: `记录 ${index}`, sourceEventIds: [event.id] }],
+        sourceVersions: { [event.id]: version },
+        dependencyVersions: { [event.id]: version },
+        createdAt: `2026-10-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+        updatedAt: `2026-10-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+        projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
+        invalidated: false,
+      };
+    });
+    directory.restore({
+      ...directory.snapshot(),
+      projectedVersions: Object.fromEntries(events.slice(0, 14).map((event) => [event.id, memoryTopicEventFingerprint(event)])),
+      topics: storedTopics,
+    });
+    const firstClaim = directory.claim(events, now)!;
+    expect(firstClaim.existingTopics).toHaveLength(12);
+    expect(firstClaim.otherExistingTopics?.length).toBe(2);
+    const unexposed = firstClaim.otherExistingTopics![0]!;
+    // Colliding without topicId still rejects, AND records hintTopicIds for retry promotion.
+    let caught: unknown;
+    try {
+      directory.complete(firstClaim.jobId, {
+        topics: [{ title: unexposed.title, description: '新描述', sourceEventIds: [events[14]!.id], overview: [] }],
+      }, events, now);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(TopicProjectionError);
+    expect((caught as Error).message).toMatch(/unexposed/);
+    directory.fail(firstClaim.jobId, caught, now);
+    const retryNow = new Date(Date.parse(now) + 10 * 60_000).toISOString();
+    const retryClaim = directory.claim(events, retryNow)!;
+    expect(retryClaim.existingTopics.some((topic) => topic.id === unexposed.id)).toBe(true);
+    // Reusing an id directly from otherExistingTopics on a fresh batch succeeds and preserves chapter header.
+    const secondEvent = (await seed(memory, 1))[0]!;
+    const allEvents = [...events, secondEvent];
+    directory.complete(retryClaim.jobId, {
+      topics: [{ topicId: unexposed.id, title: unexposed.title, description: '保留原章', sourceEventIds: [events[14]!.id], overview: [] }],
+    }, allEvents, retryNow);
+    const nextClaim = directory.claim(allEvents, retryNow)!;
+    const catalogEntry = nextClaim.otherExistingTopics![0]!;
+    directory.complete(nextClaim.jobId, {
+      topics: [{ topicId: catalogEntry.id, title: '被忽略的改名', description: '被忽略的改述', sourceEventIds: [secondEvent.id], sections: [{ title: '新增事项', sourceEventIds: [secondEvent.id] }], overview: [] }],
+    }, allEvents, retryNow);
+    const updated = directory.snapshot().topics.find((topic) => topic.id === catalogEntry.id)!;
+    expect(updated.title).toBe(catalogEntry.title);
+    expect(updated.sourceEventIds).toContain(secondEvent.id);
   });
 });

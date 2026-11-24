@@ -120,12 +120,14 @@ export function safeTopicDiagnostics(value: unknown): TopicProjectionDiagnostics
 
 export class TopicProjectionError extends Error {
   readonly diagnostics: TopicProjectionDiagnostics;
+  readonly hintTopicIds?: string[];
   constructor(category: TopicFailureCategory, reason: string,
-    metadata: Partial<TopicProjectionDiagnostics> = {}) {
+    metadata: Partial<TopicProjectionDiagnostics> = {}, hintTopicIds?: string[]) {
     const diagnostics = safeTopicDiagnostics({ ...metadata, category, reason })!;
     super(`${diagnostics.category}: ${diagnostics.reason}`);
     this.name = 'TopicProjectionError';
     this.diagnostics = diagnostics;
+    if (hintTopicIds?.length) this.hintTopicIds = [...new Set(hintTopicIds)];
   }
 }
 

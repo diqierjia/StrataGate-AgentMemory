@@ -1,5 +1,5 @@
 import { dreamingTopicVersion, type DreamingChangeItem, type DreamingCommand, type DreamingRun, type DreamingUnit } from './dreaming.js';
-import { memoryTopicEventFingerprint, type MemoryTopicState } from './topics.js';
+import { legacyMemoryTopicEventFingerprints, memoryTopicEventFingerprint, type MemoryTopicState } from './topics.js';
 import type { EventCard, EventTemporal, MemoryBlock, MemoryScope, RawMessage } from './types.js';
 
 export interface DreamingEventEdit {
@@ -73,7 +73,9 @@ export function discoverDreaming(blocks: readonly MemoryBlock[], tail: readonly 
     const key = `event:${event.id}`;
     // No weight/lastRetrievedAt fields: reading must not schedule another round.
     versions[key] = dreamingEventVersion(event);
-    if (versions[key] !== previous[key]) changes.push({ topicId: '', eventIds: [event.id] });
+    const prev = previous[key];
+    const unchanged = prev === versions[key] || (prev !== undefined && legacyMemoryTopicEventFingerprints(event).includes(prev));
+    if (!unchanged) changes.push({ topicId: '', eventIds: [event.id] });
   }
   for (const [date, version] of Object.entries(notes)) {
     versions[`note:${date}`] = version;

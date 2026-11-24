@@ -2,13 +2,29 @@ import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
 import type { GenerateOptions, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
+import { estimateTokens } from '@diqier/stratagate'
 
 const DAY = 86_400_000
 const VERSION = (() => { try { return String(createRequire(import.meta.url)('../package.json').version) } catch { return 'unknown' } })()
 export const DIAGNOSTIC_STAGES = ['summarizer', 'extractor', 'projector', 'graphProjector', 'topicProjector', 'externalMemoryExtractor', 'externalMemoryDecider', 'profileMaintenance', 'dreamingStep', 'dailyLetter', 'eventDuplicateDecider', 'chat', 'ingestion', 'autoContext', 'directory', 'tools', 'frontend', 'retrieval'] as const
 export type DiagnosticStage = typeof DIAGNOSTIC_STAGES[number]
 type Counters = Record<string, number>
-export interface DiagnosticScope { namespace: string; stage: DiagnosticStage; taskId?: string; calls?: number; memoryInputEstimate?: number }
+export interface DiagnosticScope {
+  namespace: string
+  stage: DiagnosticStage
+  taskId?: string
+  calls?: number
+  memoryInputEstimate?: number
+  estimatedInputTokens?: number
+}
+
+export interface StageDailyUsage {
+  day: string
+  reportedTokens: number
+  estimatedTokens: number
+  effectiveTokens: number
+  calls: number
+}
 interface Observation {
   id: string; at: string; namespace: string; stage: DiagnosticStage; model: string; version: string
   counters: Counters; category?: string; detail?: string; taskId?: string
@@ -226,6 +242,47 @@ export class DiagnosticsRecorder {
     }
   }
 
+  todayStageUsage(stage: DiagnosticStage, options: { namespace?: string; now?: number } = {}): StageDailyUsage {
+    const day = new Date(options.now ?? Date.now()).toISOString().slice(0, 10)
+    let reportedTokens = 0
+    let estimatedTokens = 0
+    let calls = 0
+    const accumulate = (counters: Counters): void => {
+      const reported = counters.totalTokens !== undefined
+        ? counters.totalTokens
+        : (counters.inputTokens ?? 0) + (counters.outputTokens ?? 0)
+      reportedTokens += reported
+      estimatedTokens += counters.estimatedTotalTokens ?? 0
+      calls += counters.modelCalls ?? 0
+    }
+    try {
+      const db = this.open()
+      const rows = options.namespace
+        ? db.prepare('SELECT counters_json FROM stratagate_dsh_diagnostic_daily WHERE day = ? AND stage = ? AND namespace = ?')
+            .all(day, stage, options.namespace) as Array<{ counters_json: string }>
+        : db.prepare('SELECT counters_json FROM stratagate_dsh_diagnostic_daily WHERE day = ? AND stage = ?')
+            .all(day, stage) as Array<{ counters_json: string }>
+      for (const row of rows) {
+        try {
+          const parsed: unknown = JSON.parse(row.counters_json)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) accumulate(parsed as Counters)
+        } catch { /* Ignore corrupt rollup rows. */ }
+      }
+    } catch { /* Best effort when diagnostics storage is unavailable. */ }
+    for (const item of this.pending) {
+      if (item.stage !== stage || item.at.slice(0, 10) !== day) continue
+      if (options.namespace && item.namespace !== options.namespace) continue
+      accumulate(item.counters)
+    }
+    return {
+      day,
+      reportedTokens,
+      estimatedTokens,
+      effectiveTokens: reportedTokens + estimatedTokens,
+      calls,
+    }
+  }
+
   close(): void {
     if (this.closed) return
     if (this.timer) clearTimeout(this.timer)
@@ -245,10 +302,19 @@ export async function* observeModelStream(recorder: DiagnosticsRecorder, scope: 
   let finished = false
   let failure: unknown
   let cancelled = false
+  let streamedOutput = ''
+  let overflowOutputChars = 0
   scope.calls = (scope.calls ?? 0) + 1
   try {
     for await (const chunk of next()) {
       if (chunk.type === 'usage') usage = chunk.usage
+      else if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' || chunk.type === 'tool-call-delta') {
+        const delta = chunk.type === 'tool-call-delta' ? chunk.argumentsDelta ?? '' : chunk.text
+        if (delta) {
+          if (streamedOutput.length < 400_000) streamedOutput += delta
+          else overflowOutputChars += delta.length
+        }
+      }
       if (chunk.type === 'finish') {
         finished = true
         if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
@@ -280,6 +346,23 @@ export async function* observeModelStream(recorder: DiagnosticsRecorder, scope: 
         counters.totalTokens = valid(usage.totalTokens) ? usage.totalTokens
           : counters.inputTokens! + counters.outputTokens! + counters.cacheReadTokens! + counters.cacheWriteTokens!
         counters.totalTokenCalls = 1
+      }
+    } else {
+      const streamedOutputTokens = (streamedOutput ? estimateTokens(streamedOutput) : 0) + Math.ceil(overflowOutputChars / 2)
+      const estimatedInput = usage && valid(usage.inputTokens)
+        ? usage.inputTokens
+        : valid(scope.estimatedInputTokens) ? scope.estimatedInputTokens : 0
+      const estimatedOutput = usage && valid(usage.outputTokens)
+        ? usage.outputTokens
+        : streamedOutputTokens
+      const estimatedTotal = usage && valid(usage.totalTokens)
+        ? usage.totalTokens
+        : estimatedInput + estimatedOutput
+      if (estimatedTotal > 0 || valid(scope.estimatedInputTokens) || streamedOutputTokens > 0) {
+        counters.estimatedInputTokens = estimatedInput
+        counters.estimatedOutputTokens = estimatedOutput
+        counters.estimatedTotalTokens = estimatedTotal
+        counters.estimatedUsageCalls = 1
       }
     }
     recorder.record(scope, counters, { model: `${options.provider}/${options.model}`, ...(failure !== undefined ? { error: failure } : {}) })

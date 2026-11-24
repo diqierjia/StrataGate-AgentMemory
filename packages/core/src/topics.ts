@@ -58,11 +58,18 @@ export interface TopicProjectionCandidate {
   totalSourceEvents: number;
 }
 
+export interface TopicProjectionCatalogEntry {
+  id: string;
+  title: string;
+}
+
 export interface TopicProjectionContext {
   jobId: string;
   overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   events: EventCard[];
   existingTopics: TopicProjectionCandidate[];
+  /** Lightweight catalog of remaining chapters outside the detailed shortlist so the model can reuse ids instead of colliding on titles. */
+  otherExistingTopics?: TopicProjectionCatalogEntry[];
   /** Extremely large sources are navigation-only until read in full. */
   truncatedEventIds?: string[];
   /** Upgrade repair: assign this batch within its existing chapter only. */
@@ -114,6 +121,8 @@ export interface TopicProjectionJob {
   overviewRepairRequirements?: TopicOverviewRepairRequirement[] | undefined;
   /** Bounded binary split ancestry; manual retry starts a fresh cycle. */
   splitDepth?: number;
+  /** Chapter ids promoted into the next retry shortlist after an unexposed-label collision. */
+  hintTopicIds?: string[];
   /** One explicit user retry attempt, consumed atomically when claimed. */
   manualAttemptPending?: boolean;
 }
@@ -161,9 +170,30 @@ function digest(value: unknown): string {
 }
 
 /** Adoption and retrieval bookkeeping never change semantic identity. */
-export function memoryTopicEventFingerprint(event: EventCard): string {
+export function legacyMemoryTopicEventFingerprint(event: EventCard): string {
   const { weight: _weight, updatedAt: _updated, formedTurn: _formed, ...semantic } = event;
   return digest({ ...semantic, temporal: topicTemporal(event) });
+}
+
+/** Only fields consumed by topic projection/organization participate in the fingerprint. */
+export function memoryTopicEventFingerprint(event: EventCard): string {
+  const {
+    weight: _weight, updatedAt: _updated, formedTurn: _formed,
+    quotes: _quotes, quotesOrigin: _quotesOrigin, sourceMessageIds: _sourceMessageIds,
+    extractorVersion: _extractorVersion, ...semantic
+  } = event;
+  return digest({ ...semantic, temporal: topicTemporal(event) });
+}
+
+/** Legacy fingerprint equivalents accepted during seamless upgrade migration without rescanning history. */
+export function legacyMemoryTopicEventFingerprints(event: EventCard): string[] {
+  const legacy = legacyMemoryTopicEventFingerprint(event);
+  const candidates = [legacy];
+  if (event.quotes.length > 0 || event.quotesOrigin !== undefined) {
+    const { quotesOrigin: _origin, ...withoutOrigin } = event;
+    candidates.push(legacyMemoryTopicEventFingerprint({ ...withoutOrigin, quotes: [] }));
+  }
+  return unique(candidates);
 }
 
 function topicTemporal(event: EventCard): EventCard['temporal'] {
@@ -220,6 +250,12 @@ function sourceVersions(sources: ReadonlyMap<string, EventCard>): ReadonlyMap<st
   return new Map([...sources].map(([id, event]) => [id, memoryTopicEventFingerprint(event)]));
 }
 
+function versionMatches(stored: string | undefined, current: string | undefined, event: EventCard | undefined): boolean {
+  if (!stored || !current) return false;
+  if (stored === current) return true;
+  return event ? legacyMemoryTopicEventFingerprints(event).includes(stored) : false;
+}
+
 function jobInputsCurrent(job: TopicProjectionJob, versions: ReadonlyMap<string, string>): boolean {
   return job.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION
     && Object.entries({ ...job.sourceVersions, ...job.dependencyVersions }).every(([id, version]) =>
@@ -241,7 +277,9 @@ function topicView(topic: StoredMemoryTopic, events: ReadonlyMap<string, EventCa
   if (ids.length === 0) return null;
   const valid = !topic.invalidated && topic.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION
     && ids.length === topic.sourceEventIds.length
-    && Object.entries(topic.dependencyVersions ?? topic.sourceVersions).every(([id, version]) => versions.get(id) === version);
+    && Object.entries(topic.sourceVersions).every(([id, version]) => versionMatches(version, versions.get(id), events.get(id)))
+    && Object.entries(topic.dependencyVersions ?? topic.sourceVersions).every(([id, version]) =>
+      versionMatches(version, versions.get(id), events.get(id)));
   const { sections, overview } = valid ? memoryTopicSectionContent(topic) : { sections: [], overview: [] };
   const summarized = new Set(overview.flatMap((part) => part.sourceEventIds));
   return {
@@ -442,6 +480,40 @@ export class MemoryTopicDirectory {
   synchronize(events: readonly EventCard[], now: string): void {
     const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
     const versions = sourceVersions(sources);
+    const legacyLookup = new Map<string, Set<string>>();
+    for (const [id, event] of sources) {
+      legacyLookup.set(id, new Set(legacyMemoryTopicEventFingerprints(event)));
+    }
+    const migrateVersionMap = (map: Record<string, string> | undefined): void => {
+      if (!map) return;
+      for (const [id, stored] of Object.entries(map)) {
+        const current = versions.get(id);
+        if (current && stored !== current && legacyLookup.get(id)?.has(stored)) {
+          map[id] = current;
+        }
+      }
+    };
+    migrateVersionMap(this.state.projectedVersions);
+    migrateVersionMap(this.state.rebuildVersions);
+    migrateVersionMap(this.state.bootstrap?.sourceVersions);
+    for (const pending of Object.values(this.state.sectionBackfill ?? {})) migrateVersionMap(pending);
+    if (this.state.dreamingWatermark) {
+      for (const [id, current] of versions) {
+        const key = `event:${id}`;
+        const stored = this.state.dreamingWatermark[key];
+        if (stored && stored !== current && legacyLookup.get(id)?.has(stored)) {
+          this.state.dreamingWatermark[key] = current;
+        }
+      }
+    }
+    for (const topic of this.state.topics) {
+      migrateVersionMap(topic.sourceVersions);
+      migrateVersionMap(topic.dependencyVersions);
+    }
+    for (const job of this.state.jobs) {
+      migrateVersionMap(job.sourceVersions);
+      migrateVersionMap(job.dependencyVersions);
+    }
     if ((this.state.bootstrap && this.state.bootstrap.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION)
       || this.state.topics.some((topic) => topic.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION)
       || this.state.jobs.some((job) => job.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION)) {
@@ -552,9 +624,13 @@ export class MemoryTopicDirectory {
   }
 
   private pendingWork(events: readonly EventCard[], versions = sourceVersions(new Map(events.filter(visible).map((event) => [event.id, event])))): Array<{ event: EventCard; sectionBackfillTopicId?: string }> {
-    const dirtyIds = new Set(this.state.topics.filter((topic) => topic.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION
-      || Object.entries(topic.dependencyVersions ?? topic.sourceVersions).some(([id, version]) => versions.get(id) !== version))
-      .flatMap((topic) => topic.sourceEventIds));
+    const sources = new Map(events.filter(visible).map((event) => [event.id, event]));
+    const dirtyIds = new Set(this.state.topics.filter((topic) => {
+      return topic.projectorVersion !== MEMORY_TOPIC_PROJECTOR_VERSION
+        || Object.entries(topic.sourceVersions).some(([id, version]) => !versionMatches(version, versions.get(id), sources.get(id)))
+        || Object.entries(topic.dependencyVersions ?? topic.sourceVersions).some(([id, version]) =>
+          !versionMatches(version, versions.get(id), sources.get(id)));
+    }).flatMap((topic) => topic.sourceEventIds));
     const blocked = (id: string, version: string, topicId?: string): boolean => this.state.jobs.some((job) =>
       !job.superseded && job.projectorVersion === MEMORY_TOPIC_PROJECTOR_VERSION
       && job.sectionBackfillTopicId === topicId && job.sourceVersions[id] === version
@@ -564,7 +640,7 @@ export class MemoryTopicDirectory {
     return events.filter(visible).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).flatMap((event) => {
       const version = versions.get(event.id)!;
       const work: Array<{ event: EventCard; sectionBackfillTopicId?: string }> = [];
-      if ((this.state.projectedVersions[event.id] !== version || dirtyIds.has(event.id)) && !blocked(event.id, version)) {
+      if ((!versionMatches(this.state.projectedVersions[event.id], version, event) || dirtyIds.has(event.id)) && !blocked(event.id, version)) {
         work.push({ event });
       }
       // A retry ledger settles one chapter relation, never the entire Event.
@@ -712,8 +788,10 @@ export class MemoryTopicDirectory {
         .flatMap((id) => { const event = sources.get(id); return event ? [bounded(event.title, 120), ...event.tags.slice(0, 4).map((tag) => bounded(tag, 40))] : []; }).join(' '), 4],
     ])).map(({ item, score }) => [item.id, score]));
     const overlap = (topic: MemoryTopic): number => topic.sourceEventIds.filter((id) => batchIds.has(id)).length;
+    const hinted = new Set(job.hintTopicIds ?? []);
     const candidates = eligibleTopics.filter((topic) => !job.sectionBackfillTopicId || topic.id === job.sectionBackfillTopicId)
-      .sort((a, b) => overlap(b) - overlap(a)
+      .sort((a, b) => Number(hinted.has(b.id)) - Number(hinted.has(a.id))
+      || overlap(b) - overlap(a)
       || (lexicalScores.get(b.id) ?? 0) - (lexicalScores.get(a.id) ?? 0)
       || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)).slice(0, TOPIC_CANDIDATE_LIMIT);
     const existingTopics: TopicProjectionCandidate[] = [];
@@ -738,6 +816,21 @@ export class MemoryTopicDirectory {
       if (cost > remaining) continue;
       remaining -= cost; existingTopics.push(candidate);
     }
+    const shownIds = new Set(existingTopics.map((topic) => topic.id));
+    const otherExistingTopics: TopicProjectionCatalogEntry[] = [];
+    if (!job.sectionBackfillTopicId) {
+      let catalogBudget = 6_000;
+      for (const topic of eligibleTopics
+        .filter((item) => !shownIds.has(item.id) && !item.isFallback)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id))) {
+        if (otherExistingTopics.length >= 200) break;
+        const entry: TopicProjectionCatalogEntry = { id: topic.id, title: topic.title };
+        const cost = JSON.stringify(entry).length + 1;
+        if (cost > catalogBudget) break;
+        catalogBudget -= cost;
+        otherExistingTopics.push(entry);
+      }
+    }
     const truncatedEventIds = batch.filter((event) => {
       const compact = compactEvent(event);
       return compact.title !== event.title || compact.summary !== event.summary
@@ -749,15 +842,13 @@ export class MemoryTopicDirectory {
     }
     job.context = { jobId: job.id,
       events: batch.map(compactEvent), existingTopics, truncatedEventIds,
+      ...(otherExistingTopics.length > 0 ? { otherExistingTopics } : {}),
       ...(job.sectionBackfillTopicId ? { sectionBackfillTopicId: job.sectionBackfillTopicId } : {}) };
     const storedById = new Map(this.state.topics.map((topic) => [topic.id, topic]));
     job.candidateVersions = Object.fromEntries(existingTopics.map((topic) => [topic.id, digest(storedById.get(topic.id))]));
+    // Record only inputs actually exposed in this job's prompt so unrelated topics never cascade-invalidate each other.
     const dependencyIds = unique([...job.sourceEventIds, ...existingTopics.flatMap((topic) =>
-      [
-        ...storedById.get(topic.id)!.sourceEventIds.filter((id) => sources.has(id)),
-        ...(!storedById.get(topic.id)!.invalidated
-          ? Object.keys(storedById.get(topic.id)!.dependencyVersions ?? {}).filter((id) => sources.has(id)) : []),
-      ])]);
+      topic.sourceEventIds.filter((id) => sources.has(id)))]);
     job.dependencyVersions = Object.fromEntries(dependencyIds.map((id) => [id, versions.get(id)!]));
     job.diagnostics = undefined;
     delete job.manualAttemptPending;
@@ -790,6 +881,7 @@ export class MemoryTopicDirectory {
       throw new TopicProjectionError('validation-failed', 'Invalid section backfill: explicit sections must cover the existing chapter.');
     }
     const candidates = new Map(job.context.existingTopics.map((topic) => [topic.id, topic]));
+    const otherCandidates = new Map((job.context.otherExistingTopics ?? []).map((topic) => [topic.id, topic]));
     const allowed = new Set([...job.sourceEventIds, ...job.context.existingTopics.flatMap((topic) => topic.sourceEventIds)]);
     const batchIds = new Set(job.sourceEventIds);
     const covered = new Set<string>();
@@ -802,6 +894,7 @@ export class MemoryTopicDirectory {
       return ids;
     };
     for (const [topicIndex, proposal] of result.topics.entries()) {
+      const isOtherCatalogTopic = Boolean(proposal.topicId && otherCandidates.has(proposal.topicId));
       const ids = checkIds(proposal.sourceEventIds, 'membership');
       // An unambiguous membership continuation keeps its storage identity even
       // when the model omits topicId. Ambiguous regrouping is not inferred.
@@ -815,8 +908,10 @@ export class MemoryTopicDirectory {
         !topic.invalidated && label(topic.title) === label(proposal.title)) : [];
       // A bounded shortlist is not the global chapter namespace. Never create
       // a duplicate just because the matching chapter was not exposed.
-      if (sameLabel.some((topic) => !candidates.has(topic.id))) {
-        throw new TopicProjectionError('validation-failed', 'Invalid duplicate chapter label matches an unexposed existing topic.');
+      const unexposedSameLabel = sameLabel.filter((topic) => !candidates.has(topic.id) && !(isOtherCatalogTopic && topic.id === proposal.topicId));
+      if (unexposedSameLabel.length > 0) {
+        throw new TopicProjectionError('validation-failed', 'Invalid duplicate chapter label matches an unexposed existing topic.',
+          {}, unexposedSameLabel.map((topic) => topic.id));
       }
       const existing = proposal.topicId ? this.state.topics.find((topic) => topic.id === proposal.topicId)
         : inferred ?? (sameLabel.length === 1 ? sameLabel[0] : undefined);
@@ -828,7 +923,10 @@ export class MemoryTopicDirectory {
         if (labels.has(key)) throw new TopicProjectionError('validation-failed', 'Invalid duplicate chapter label in one projection.');
         labels.add(key);
       }
-      if (proposal.topicId && (!existing || !candidates.has(proposal.topicId))) throw new TopicProjectionError('validation-failed', 'Unknown or unexposed topic id.');
+      if (proposal.topicId && (!existing || (!candidates.has(proposal.topicId) && !otherCandidates.has(proposal.topicId)))) throw new TopicProjectionError('validation-failed', 'Unknown or unexposed topic id.');
+      if (isOtherCatalogTopic && ids.some((eventId) => !batchIds.has(eventId))) {
+        throw new TopicProjectionError('validation-failed', 'Invalid topic membership source events.');
+      }
       const topicId = existing?.id ?? `topic_${randomUUID()}`;
       if (touched.has(topicId)) throw new TopicProjectionError('validation-failed', 'A topic may be updated only once per projection.');
       touched.add(topicId);
@@ -884,14 +982,16 @@ export class MemoryTopicDirectory {
       }
       const inherited = existing && !existing.invalidated ? existing.overview : [];
       const content = memoryTopicSectionContent({ sourceEventIds: membership, sections, overview: [...proposal.overview, ...inherited] });
-      proposals.push({ id: topicId, title: job.sectionBackfillTopicId || existing?.dreamingManaged ? existing!.title : proposal.title.trim(),
+      const preserveChapterHeader = Boolean(job.sectionBackfillTopicId || existing?.dreamingManaged || isOtherCatalogTopic);
+      const memberVersions = Object.fromEntries(membership.map((eventId) => [eventId, versions.get(eventId)!]));
+      proposals.push({ id: topicId, title: preserveChapterHeader ? existing!.title : proposal.title.trim(),
         ...(existing?.dreamingManaged ? { dreamingManaged: true } : {}),
         ...(existing?.sectionAliases ? { sectionAliases: structuredClone(existing.sectionAliases) } : {}),
-        description: job.sectionBackfillTopicId || existing?.dreamingManaged ? existing!.description : proposal.description.trim(),
+        description: preserveChapterHeader ? existing!.description : proposal.description.trim(),
         sourceEventIds: membership, sections: content.sections,
         overview: structuredClone(uniqueTopicOverviewEntries(content.overview)),
-        sourceVersions: Object.fromEntries(membership.map((eventId) => [eventId, versions.get(eventId)!])),
-        dependencyVersions: { ...(!existing?.invalidated ? existing?.dependencyVersions ?? {} : {}), ...job.dependencyVersions },
+        sourceVersions: memberVersions,
+        dependencyVersions: { ...(!existing?.invalidated ? existing?.dependencyVersions ?? {} : {}), ...memberVersions, ...job.dependencyVersions },
         projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION, invalidated: false,
         createdAt: existing?.createdAt ?? now, updatedAt: now });
     }
@@ -925,6 +1025,9 @@ export class MemoryTopicDirectory {
     const job = this.state.jobs.find((candidate) => candidate.id === id);
     if (!job || job.status !== 'running') return;
     const diagnostic = error instanceof TopicProjectionError ? safeTopicDiagnostics(error.diagnostics) : undefined;
+    if (error instanceof TopicProjectionError && error.hintTopicIds?.length) {
+      job.hintTopicIds = unique([...(job.hintTopicIds ?? []), ...error.hintTopicIds]).slice(-TOPIC_CANDIDATE_LIMIT);
+    }
     job.overviewRepairRequirements = undefined;
     const message = error instanceof Error ? error.message : String(error);
     const category = diagnostic?.category ?? (/timeout|timed out/i.test(message) ? 'timeout'
