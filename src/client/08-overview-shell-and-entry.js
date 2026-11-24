@@ -390,7 +390,7 @@
       else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection,
         dreaming: namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
-      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, setDailyInjectionDays })
+      else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, usePluginSettings, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
       else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })
       else if (view.name === 'status') content = h(ProcessingStatus, { key: namespace, overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })

@@ -314,7 +314,19 @@ try {
   await page.setViewportSize({ width: 360, height: 840 })
   await page.goto(`http://127.0.0.1:${port}/?theme=dark`)
   await page.locator('.sg-tabs button').first().waitFor({ timeout: 15000 })
+  if (await workspaceSelect.count() > 0 && primaryNamespace) {
+    const options = await workspaceSelect.locator('option').evaluateAll((els) => els.map((e) => e.value))
+    if (options.includes(primaryNamespace)) {
+      await workspaceSelect.selectOption(primaryNamespace)
+    }
+  }
   await inspectAndCapture('07-overview-dark-narrow', '总览')
+  await inspectAndCapture('08-daily-notes-dark-narrow', '短期记忆')
+  const darkDayTab = page.locator('.sg-day-d').first()
+  if (await darkDayTab.count() > 0) {
+    await darkDayTab.click()
+    await inspectAndCapture('08b-daily-note-open-dark-narrow', null)
+  }
   await inspectAndCapture('09-more-dark-narrow', '更多')
   const darkAdvancedBtn = page.locator('button.sg-more-go', { hasText: '高级设置' }).first()
   if (await darkAdvancedBtn.count() > 0) {
