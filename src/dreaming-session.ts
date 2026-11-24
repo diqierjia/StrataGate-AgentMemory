@@ -255,6 +255,10 @@ export class DshDreamingSessions implements DreamingHost {
       let run = await this.runtime.dreamingRun(binding.namespace, binding.id)
       if (run.status === 'completed' && binding.finalStep) {
         binding.finalStep = false
+        if (this.runtime.dreamingAutoStopReason(run)) {
+          this.keepDirections(binding, _payload.messages)
+          return { kind: 'reject' }
+        }
         const decision = await next()
         if (decision.kind !== 'enter') return decision
         binding.reporting = true
@@ -265,6 +269,13 @@ export class DshDreamingSessions implements DreamingHost {
       }
       if (!['running', 'pausing'].includes(run.status)) { this.keepDirections(binding, _payload.messages); return { kind: 'reject' } }
       if (binding.epoch !== undefined && run.epoch !== binding.epoch) { this.keepDirections(binding, _payload.messages); return { kind: 'reject' } }
+      const autoStopReason = this.runtime.dreamingAutoStopReason(run)
+      if (autoStopReason) {
+        binding.error = autoStopReason
+        await this.runtime.dreamingMutate(binding.namespace, run, { kind: 'suspend', reason: autoStopReason })
+        this.keepDirections(binding, _payload.messages)
+        return { kind: 'reject' }
+      }
       if (run.scope === 'memory' && run.status === 'running' && binding.taskKey === `${run.epoch}:${run.cursor}`) return next()
       const prepared = await this.runtime.dreamingContext(binding.namespace, binding.id)
       run = prepared.run
@@ -297,9 +308,30 @@ export class DshDreamingSessions implements DreamingHost {
     })
     const runtime = this.runtime
     scoped.on('llm/stream', async function* (options, next) {
-      if (String(options.sessionId) !== String(binding.agent.id) || options.purpose === 'compaction') { yield* next(); return }
+      if (String(options.sessionId) !== String(binding.agent.id)) { yield* next(); return }
+      if (options.purpose === 'compaction') {
+        const current = await runtime.dreamingRun(binding.namespace, binding.id)
+        const compactionStop = runtime.dreamingAutoStopReason(current)
+        if (compactionStop) {
+          binding.error = compactionStop
+          if (current.status === 'running' || current.status === 'pausing') {
+            await runtime.dreamingMutate(binding.namespace, current, { kind: 'suspend', reason: compactionStop })
+          }
+          throw new Error(compactionStop)
+        }
+        yield* next()
+        return
+      }
       await binding.accounting
       const run = await runtime.dreamingRun(binding.namespace, binding.id)
+      const autoStopReason = runtime.dreamingAutoStopReason(run)
+      if (autoStopReason) {
+        binding.error = autoStopReason
+        if (run.status === 'running' || run.status === 'pausing') {
+          await runtime.dreamingMutate(binding.namespace, run, { kind: 'suspend', reason: autoStopReason })
+        }
+        throw new Error(autoStopReason)
+      }
       // This is the actual loop-built request, after task messages, system
       // prompt projection and the model-facing JSON schemas have been admitted.
       const input = estimateTokens(JSON.stringify({ messages: options.messages, tools: options.tools ?? [] }))
@@ -342,6 +374,16 @@ export class DshDreamingSessions implements DreamingHost {
     scoped.on('agent/request-error', async (payload, next) => {
       if (String(payload.agent.id) !== String(binding.agent.id)) return next()
       await binding.accounting
+      const current = await this.runtime.dreamingRun(binding.namespace, binding.id)
+      const autoStopReason = this.runtime.dreamingAutoStopReason(current)
+      if (autoStopReason) {
+        binding.error = autoStopReason
+        if (current.status === 'running' || current.status === 'pausing') {
+          await this.runtime.dreamingMutate(binding.namespace, current, { kind: 'suspend', reason: autoStopReason })
+        }
+        return undefined
+      }
+      if (!['running', 'pausing'].includes(current.status)) return undefined
       // Native compaction and retry policies get the first recovery attempt.
       // Suspend only after the host declines recovery or exhausts its budget.
       const recovery = await next()
@@ -356,6 +398,12 @@ export class DshDreamingSessions implements DreamingHost {
       signal.throwIfAborted()
       const run = await this.runtime.dreamingRun(binding.namespace, binding.id)
       if (run.status !== 'running' || run.epoch !== binding.epoch) return
+      const autoStopReason = this.runtime.dreamingAutoStopReason(run)
+      if (autoStopReason) {
+        binding.error = autoStopReason
+        await this.runtime.dreamingMutate(binding.namespace, run, { kind: 'suspend', reason: autoStopReason })
+        return
+      }
       if (!binding.error && (run.idleModelSteps ?? 0) < TOOLLESS_STEP_LIMIT) {
         // Continue in the existing Agent loop, never a detached retry/timer.
         // The persisted counter resets on tool action or batch completion.
@@ -375,18 +423,40 @@ export class DshDreamingSessions implements DreamingHost {
     binding.epoch = initial.epoch
     delete binding.taskKey
     if (!binding.agent.session.header.cwd) throw new Error('此旧 Dreaming 会话缺少工作区路径，请终止本轮后重新开始；已保存的目录修改会保留')
-    const abort = () => binding.agent.cancel({ kind: 'hook', reason: 'Dreaming 运行已暂停或终止' }, { keepInbox: true })
-    if (signal.aborted) { abort(); return }
+    const abortReasonText = (): string | undefined => {
+      if (!signal.aborted) return undefined
+      const reason = signal.reason
+      if (reason instanceof Error && reason.message) return reason.message
+      if (typeof reason === 'string' && reason) return reason
+      return undefined
+    }
+    const abort = () => {
+      const reason = abortReasonText() ?? 'Dreaming 运行已暂停或终止'
+      binding.error ??= reason
+      binding.agent.cancel({ kind: 'hook', reason }, { keepInbox: true })
+    }
+    delete binding.error
+    if (signal.aborted) {
+      abort()
+      const current = await this.runtime.dreamingRun(namespace, initial.id).catch(() => undefined)
+      if (current && current.epoch === initial.epoch && (current.status === 'running' || current.status === 'pausing')) {
+        await this.runtime.dreamingMutate(namespace, current, {
+          kind: 'suspend',
+          reason: abortReasonText() ?? current.reason ?? '会话已停止，进度保留；可以继续',
+          ...(current.scope === 'memory' && current.status === 'running' && /宿主已关闭/.test(String(signal.reason)) ? { interrupted: true } : {}),
+        })
+      }
+      return
+    }
     signal.addEventListener('abort', abort, { once: true })
     try {
-      delete binding.error
       binding.agent.followup(createUserMessage({ source: dshMessageSource(), content: [{ type: 'text',
         text: '开始或继续本轮 Dreaming。沿用已保存的进度，并考虑本会话中用户补充的整理方向。' }] }))
       try { await binding.agent.whenIdle() } catch { binding.error ??= '模型或工具执行失败，进度已保存' }
       await binding.accounting
       let run = await this.runtime.dreamingRun(namespace, initial.id)
       if (run.epoch === initial.epoch && (run.status === 'running' || run.status === 'pausing')) run = await this.runtime.dreamingMutate(namespace, run,
-        { kind: 'suspend', reason: binding.error ?? run.reason ?? '会话已停止，进度保留；可以继续',
+        { kind: 'suspend', reason: binding.error ?? abortReasonText() ?? run.reason ?? '会话已停止，进度保留；可以继续',
           ...(run.scope === 'memory' && run.status === 'running' && signal.aborted && /宿主已关闭/.test(String(signal.reason)) ? { interrupted: true } : {}) })
       if (run.epoch === initial.epoch && run.status === 'paused') binding.agent.session.append('user/message', createUserMessage({ source: dshMessageSource('notice'),
         content: [{ type: 'text', text: `Dreaming 已暂停：${run.reason ?? '已到达安全暂停点'}。已检查 ${run.cursor}/${run.units.length} 批，已保存 ${run.changedBatches} 次目录修改。${run.replanRequired ? '请从目录页终止本轮后重新开始。' : '可以从目录页继续或终止。'}` }] }), { surfaceOp: 'append' })
