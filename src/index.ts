@@ -240,7 +240,15 @@ export async function apply(ctx: Context, config: StrataGateConfig): Promise<() 
     if (!namespace || options.purpose) { yield* next(); return }
     const stage = String(options.sessionId).startsWith('stratagate-dreaming:') ? 'dreamingStep' : 'chat'
     const memoryInputEstimate = runtime.diagnosticMemoryEstimate(String(options.sessionId))
-    yield* observeModelStream(runtime.diagnostics, { namespace, stage, ...(memoryInputEstimate !== undefined ? { memoryInputEstimate } : {}) }, options, next)
+    const estimatedInputTokens = stage === 'dreamingStep'
+      ? estimateTokens(JSON.stringify({ system: options.system, tools: options.tools ?? [], messages: options.messages }))
+      : undefined
+    yield* observeModelStream(runtime.diagnostics, {
+      namespace,
+      stage,
+      ...(memoryInputEstimate !== undefined ? { memoryInputEstimate } : {}),
+      ...(estimatedInputTokens !== undefined ? { estimatedInputTokens } : {}),
+    }, options, next)
   })
   ctx.on('tools/result', (exec, result) => {
     if (!exec.agent || !(exec.name === 'feedback_prepare' || exec.name === 'stratagate_diagnostics' || exec.name.startsWith('memory_'))) return

@@ -342,6 +342,12 @@
       const [toast, setToast] = React.useState('')
       const [letterDates, setLetterDates] = React.useState([])
       const [letterDate, setLetterDate] = React.useState('')
+      const [prefs, setPrefs] = React.useState({ autoEnabled: true, dailyTokenBudget: 5_000_000, dailyLettersEnabled: true })
+      const [usage, setUsage] = React.useState({ reportedTokens: 0, estimatedTokens: 0, effectiveTokens: 0, calls: 0, budget: 5_000_000, budgetExceeded: false })
+      const [budgetDraft, setBudgetDraft] = React.useState('500')
+      const [budgetDirty, setBudgetDirty] = React.useState(false)
+      const [prefBusy, setPrefBusy] = React.useState('')
+      const [prefStatus, setPrefStatus] = React.useState({ kind: '', text: '' })
       React.useEffect(() => {
         if (initialRun && (!run || initialRun.updatedAt > run.updatedAt)) {
           if (initialRun.status === 'completed' && previousStatus.current && previousStatus.current !== 'completed') {
@@ -365,8 +371,27 @@
         previousRunId.current = next?.id
         previousStatus.current = next?.status
         setLetterDates(Array.isArray(value?.letterDates) ? value.letterDates : [])
+        if (value?.settings && typeof value.settings === 'object') {
+          const nextPrefs = {
+            autoEnabled: value.settings.autoEnabled !== false,
+            dailyTokenBudget: Number.isFinite(Number(value.settings.dailyTokenBudget)) ? Number(value.settings.dailyTokenBudget) : 5_000_000,
+            dailyLettersEnabled: value.settings.dailyLettersEnabled !== false,
+          }
+          setPrefs(nextPrefs)
+          if (!budgetDirty) setBudgetDraft(String(Math.round(nextPrefs.dailyTokenBudget / 10_000)))
+        }
+        if (value?.usage && typeof value.usage === 'object') {
+          setUsage({
+            reportedTokens: Number(value.usage.reportedTokens || 0),
+            estimatedTokens: Number(value.usage.estimatedTokens || 0),
+            effectiveTokens: Number(value.usage.effectiveTokens || 0),
+            calls: Number(value.usage.calls || 0),
+            budget: Number(value.usage.budget ?? 5_000_000),
+            budgetExceeded: Boolean(value.usage.budgetExceeded),
+          })
+        }
         setRun(next); setStatusReady(true); setError('')
-      }, [settings, onDirectoryChanged])
+      }, [settings, onDirectoryChanged, budgetDirty])
       React.useEffect(() => {
         if (!active || !namespace || busy) return
         const pollingDelay = ['running', 'pausing'].includes(run?.status) ? 2000 : 45_000
@@ -414,6 +439,109 @@
         finally { setBusy(false) }
       }
       const changes = dreamingChangesOf(run)
+      const formatWan = (tokens) => {
+        const num = Number(tokens || 0)
+        if (num >= 10_000) {
+          const wan = num / 10_000
+          return (Number.isInteger(wan) ? String(wan) : wan.toFixed(1)) + ' 万'
+        }
+        return num.toLocaleString('zh-CN')
+      }
+      const savePrefs = async (key, patch, successText) => {
+        if (prefBusy) return
+        setPrefBusy(key); setPrefStatus({ kind: '', text: '' })
+        try {
+          const updated = await api('dreaming', { namespace, action: 'settings' }, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch),
+          })
+          setBudgetDirty(false)
+          accept(updated, false)
+          setPrefStatus({ kind: 'saved', text: successText })
+        } catch (reason) {
+          setPrefStatus({ kind: 'failed', text: '保存失败：' + String(reason?.message || reason) })
+        } finally { setPrefBusy('') }
+      }
+      const saveBudget = () => {
+        const wan = Number(budgetDraft)
+        if (!Number.isFinite(wan) || wan < 0 || wan > 20_000) {
+          setPrefStatus({ kind: 'failed', text: '请输入 0 到 20000 之间的数字（单位：万 Token，0 表示不限）。' })
+          return
+        }
+        const tokens = Math.round(wan * 10_000)
+        void savePrefs('budget', { dailyTokenBudget: tokens }, tokens === 0 ? '已关闭每日 Token 上限' : '每日上限已保存为 ' + Math.round(tokens / 10_000) + ' 万 Token')
+      }
+      const renderPrefsSection = () => {
+        const budget = Number(prefs.dailyTokenBudget || 0)
+        const ratio = budget > 0 ? Math.min(100, Math.round((usage.effectiveTokens / budget) * 100)) : 0
+        const barTone = usage.budgetExceeded ? 'over' : ratio >= 80 ? 'warn' : ''
+        const savedBudgetWan = String(Math.round(budget / 10_000))
+        return h('div', { className: 'sg-dreaming-prefs', 'data-testid': 'stratagate-dreaming-settings' },
+          h('div', { className: 'sg-dreaming-pref-row' },
+            h('div', { className: 'sg-dreaming-pref-copy' },
+              h('span', { className: 'sg-dreaming-pref-label' }, '允许空闲时自动整理（Dreaming）'),
+              h('span', { className: 'sg-dreaming-pref-desc' }, '关闭后永久不再自动启动或重启后自动恢复；仍可随时手动点「立即整理」。')),
+            h('button', {
+              type: 'button',
+              className: 'sg-setting-switch',
+              role: 'switch',
+              'aria-label': '允许空闲时自动整理（Dreaming）',
+              'aria-checked': prefs.autoEnabled,
+              disabled: !statusReady || Boolean(prefBusy),
+              onClick: () => void savePrefs('auto', { autoEnabled: !prefs.autoEnabled }, !prefs.autoEnabled ? '已开启空闲时自动整理' : '已永久关闭自动整理'),
+            })),
+          h('div', { className: 'sg-dreaming-pref-row' },
+            h('div', { className: 'sg-dreaming-pref-copy' },
+              h('span', { className: 'sg-dreaming-pref-label' }, '每日自动来信'),
+              h('span', { className: 'sg-dreaming-pref-desc' }, '关闭后不再在次日自动生成手写来信，已有来信与记录保留。')),
+            h('button', {
+              type: 'button',
+              className: 'sg-setting-switch',
+              role: 'switch',
+              'aria-label': '每日自动来信',
+              'aria-checked': prefs.dailyLettersEnabled,
+              disabled: !statusReady || Boolean(prefBusy),
+              onClick: () => void savePrefs('letters', { dailyLettersEnabled: !prefs.dailyLettersEnabled }, !prefs.dailyLettersEnabled ? '已开启每日自动来信' : '已关闭每日自动来信'),
+            })),
+          h('div', { className: 'sg-dreaming-pref-row' },
+            h('div', { className: 'sg-dreaming-pref-copy' },
+              h('span', { className: 'sg-dreaming-pref-label' }, '每日 Token 上限'),
+              h('span', { className: 'sg-dreaming-pref-desc' }, '默认 500 万/天（够每天 1～2 轮增量整理，0 表示不限）；达到上限自动暂停并保留断点。')),
+            h('div', { className: 'sg-dreaming-budget-ctrl' },
+              h('input', {
+                type: 'number',
+                className: 'sg-dreaming-budget-input',
+                'aria-label': '每日 Token 上限（万）',
+                min: 0,
+                max: 20000,
+                step: 50,
+                value: budgetDraft,
+                disabled: !statusReady || Boolean(prefBusy),
+                onChange: (event) => { setBudgetDraft(event.target.value); setBudgetDirty(true) },
+                onKeyDown: (event) => { if (event.key === 'Enter') saveBudget() },
+              }),
+              h('span', { className: 'sg-dreaming-budget-unit' }, '万'),
+              h('button', {
+                type: 'button',
+                className: 'sg-dreaming-budget-save',
+                disabled: !statusReady || Boolean(prefBusy) || (!budgetDirty && budgetDraft === savedBudgetWan),
+                onClick: saveBudget,
+              }, prefBusy === 'budget' ? '保存中…' : '保存'))),
+          h('div', { className: 'sg-dreaming-usage', 'data-testid': 'stratagate-dreaming-usage' },
+            h('div', { className: 'sg-dreaming-usage-head' },
+              h('span', { className: 'sg-dreaming-pref-label' }, '今日 Dreaming 消耗'),
+              h('span', { className: 'sg-dreaming-usage-nums' },
+                '已用 ' + formatWan(usage.effectiveTokens) + ' / ' + (budget > 0 ? formatWan(budget) : '不限') + '（' + usage.calls + ' 次调用）')),
+            budget > 0 ? h('div', { className: 'sg-dreaming-usage-bar', 'aria-hidden': 'true' },
+              h('div', { className: 'sg-dreaming-usage-fill' + (barTone ? ' ' + barTone : ''), style: { width: ratio + '%' } })) : null,
+            usage.budgetExceeded
+              ? h('span', { className: 'sg-dreaming-pref-desc' }, '今日已达上限，自动整理已暂停；次日自动恢复或可调高上限。')
+              : usage.estimatedTokens > 0
+                ? h('span', { className: 'sg-dreaming-pref-desc' }, '其中含未返回账单的估算用量约 ' + formatWan(usage.estimatedTokens) + '。')
+                : null),
+          prefStatus.text ? h('p', { className: 'sg-dreaming-pref-status ' + prefStatus.kind, role: prefStatus.kind === 'failed' ? 'alert' : 'status', 'aria-live': 'polite' }, prefStatus.text) : null)
+      }
       const renderChangesNums = (compact = false) => h('div', { className: 'sg-dreaming-nums', 'aria-label': '本次整理改动' },
         h('span', { className: 'sg-dreaming-num edit', title: '修改 Event' }, h('span', { className: 'sg-dreaming-ico', 'aria-hidden': 'true' }, '✎'), h('b', null, changes.editedEvents), compact ? null : h('small', null, '修改 Event')),
         h('span', { className: 'sg-dreaming-num del', title: '删除 Event' }, h('span', { className: 'sg-dreaming-ico', 'aria-hidden': 'true' }, '✕'), h('b', null, changes.deletedEvents), compact ? null : h('small', null, '删除 Event')),
@@ -422,7 +550,8 @@
         h('div', { className: 'sg-dreaming-setting-head' },
           h('span', { className: 'sg-dreaming-setting-icon', 'aria-hidden': 'true' }, '☾'),
           h('h3', { className: 'sg-dreaming-setting-title' }, 'Dreaming 记忆整理'), action),
-        content)
+        content,
+        renderPrefsSection())
       const feedback = error ? h('p', { className: 'sg-dreaming-failure', role: 'alert' }, error,
         h('button', { type: 'button', className: 'sg-dreaming-retry', disabled: !!busy, onClick: () => control('refresh') }, settings ? '刷新状态' : '重试')) : null
       const toastMessage = toast ? h('p', { className: 'sg-dreaming-toast', role: 'status', 'aria-live': 'polite' }, toast) : null

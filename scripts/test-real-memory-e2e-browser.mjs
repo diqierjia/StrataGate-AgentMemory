@@ -303,11 +303,26 @@ try {
     return { sharedTitleTested: sharedIndices.length >= 2, checkedIndices: sharedIndices }
   })()
   await inspectAndCapture('06-more', '更多')
+  const advancedSettingsBtn = page.locator('button.sg-more-go', { hasText: '高级设置' }).first()
+  if (await advancedSettingsBtn.count() > 0) {
+    await advancedSettingsBtn.click()
+    await page.locator('.sg-dreaming-setting').waitFor({ timeout: 10000 })
+    await page.waitForTimeout(300)
+    await inspectAndCapture('06b-advanced-settings', null)
+  }
 
   await page.setViewportSize({ width: 360, height: 840 })
   await page.goto(`http://127.0.0.1:${port}/?theme=dark`)
   await page.locator('.sg-tabs button').first().waitFor({ timeout: 15000 })
   await inspectAndCapture('07-overview-dark-narrow', '总览')
+  await inspectAndCapture('09-more-dark-narrow', '更多')
+  const darkAdvancedBtn = page.locator('button.sg-more-go', { hasText: '高级设置' }).first()
+  if (await darkAdvancedBtn.count() > 0) {
+    await darkAdvancedBtn.click()
+    await page.locator('.sg-dreaming-setting').waitFor({ timeout: 10000 })
+    await page.waitForTimeout(300)
+    await inspectAndCapture('09b-advanced-settings-dark-narrow', null)
+  }
 
   await context.close()
 

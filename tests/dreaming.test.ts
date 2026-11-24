@@ -2517,4 +2517,90 @@ describe('Dreaming Agent orchestration and admin API', () => {
       sourceMessageIds: [updateMessageId],
     })
   }, 30_000)
+
+  it('Issue #190: persists permanent Dreaming auto-disable & daily budget across restarts and suspends when daily budget is exceeded', async () => {
+    const f = await fixture(2)
+    const step = vi.fn(async () => ({ tool: 'finish', args: {} }))
+    const runtime1 = runtimeFor(f.database, step, true)
+    try {
+      // Save settings via admin API (POST action=settings).
+      let body = ''
+      const res = { statusCode: 0, setHeader: () => {}, end: (chunk?: string) => { body = String(chunk ?? '') } }
+      const req = {
+        method: 'POST',
+        url: `/api/stratagate/dreaming?namespace=${encodeURIComponent(f.namespace)}&action=settings`,
+        headers: { 'content-type': 'application/json' },
+        async *[Symbol.asyncIterator]() {
+          yield Buffer.from(JSON.stringify({ autoEnabled: false, dailyTokenBudget: 100_000, dailyLettersEnabled: false }))
+        },
+      }
+      await handleAdminRequest(runtime1, req as never, res as never)
+      expect(res.statusCode).toBe(200)
+      const parsed = JSON.parse(body)
+      expect(parsed.settings).toEqual({ autoEnabled: false, dailyTokenBudget: 100_000, dailyLettersEnabled: false })
+    } finally {
+      await runtime1.close()
+    }
+
+    // Reopen runtime: settings survive restart and block automatic Dreaming + enforce daily budget on detached run.
+    const runtime2 = runtimeFor(f.database, step, true)
+    try {
+      const status = await runtime2.adminDreamingStatus(f.namespace) as {
+        settings: { autoEnabled: boolean; dailyTokenBudget: number; dailyLettersEnabled: boolean }
+        usage: { effectiveTokens: number; budget: number; budgetExceeded: boolean }
+      }
+      expect(status.settings).toEqual({ autoEnabled: false, dailyTokenBudget: 100_000, dailyLettersEnabled: false })
+      expect(status.usage.budget).toBe(100_000)
+      expect(status.usage.budgetExceeded).toBe(false)
+
+      // Simulate already-spent today's Dreaming tokens above budget -> run suspends before issuing model step.
+      runtime2.diagnostics.record({ namespace: f.namespace, stage: 'dreamingStep' }, { modelCalls: 1, totalTokens: 120_000, totalTokenCalls: 1 })
+      expect(runtime2.dreamingDailyUsage().budgetExceeded).toBe(true)
+      await runtime2.adminDreamingControl(f.namespace, 'start')
+      await vi.waitFor(async () => {
+        const after = await runtime2.adminDreamingStatus(f.namespace) as { run?: { status?: string; reason?: string } }
+        expect(after.run?.status).toBe('paused')
+        expect(after.run?.reason).toContain('今日 Dreaming Token 已达上限')
+      }, { timeout: 3000 })
+      expect(step).not.toHaveBeenCalled()
+    } finally {
+      await runtime2.close()
+    }
+  })
+
+  it('Issue #190: DailyLetters applies exponential backoff, caps at 3 attempts, and opens 24h circuit when never succeeded', async () => {
+    const f = await fixture(1)
+    const store = new DailyLetters(f.database)
+    try {
+      const t0 = Date.parse('2026-11-24T01:00:00.000Z')
+      const claim1 = store.claim(f.namespace, '2026-11-23', t0)
+      expect(claim1).toBeTruthy()
+      const fail1 = store.recordFailure(f.namespace, '2026-11-23', claim1!, new Error('token-limit'), t0)
+      expect(fail1.attempts).toBe(1)
+      expect(fail1.exhausted).toBe(false)
+      // Immediate re-claim within 15m backoff must be rejected.
+      expect(store.claim(f.namespace, '2026-11-23', t0 + 5 * 60_000)).toBeNull()
+      // After 15m backoff, second attempt is allowed.
+      const claim2 = store.claim(f.namespace, '2026-11-23', t0 + 16 * 60_000)
+      expect(claim2).toBeTruthy()
+      const fail2 = store.recordFailure(f.namespace, '2026-11-23', claim2!, new Error('token-limit'), t0 + 16 * 60_000)
+      expect(fail2.attempts).toBe(2)
+      expect(fail2.exhausted).toBe(false)
+      // Within 60m backoff, rejected.
+      expect(store.claim(f.namespace, '2026-11-23', t0 + 40 * 60_000)).toBeNull()
+      // After 60m backoff, 3rd attempt exhausts and trips circuit breaker (0 historical successes).
+      const t3 = t0 + 80 * 60_000
+      const claim3 = store.claim(f.namespace, '2026-11-23', t3)
+      expect(claim3).toBeTruthy()
+      const fail3 = store.recordFailure(f.namespace, '2026-11-23', claim3!, new Error('token-limit'), t3)
+      expect(fail3.attempts).toBe(3)
+      expect(fail3.exhausted).toBe(true)
+      expect(store.isCircuitOpen(f.namespace, t3 + 60_000)).toBe(true)
+      expect(store.claim(f.namespace, '2026-11-22', t3 + 60_000)).toBeNull()
+      // After 24h cooldown, circuit closes again.
+      expect(store.isCircuitOpen(f.namespace, t3 + 24 * 60 * 60_000 + 1)).toBe(false)
+    } finally {
+      store.close()
+    }
+  })
 })

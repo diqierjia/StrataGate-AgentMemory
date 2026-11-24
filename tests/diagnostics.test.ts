@@ -153,4 +153,41 @@ describe('local operational diagnostics', () => {
       db.close()
     } finally { recorder.close(); await rm(directory, { recursive: true, force: true }) }
   })
+
+  it('records estimated usage fallback on failed or missing-usage calls and exposes real-time todayStageUsage', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-diagnostics-estimate-'))
+    const filename = join(directory, 'memory.db')
+    const recorder = new DiagnosticsRecorder(filename)
+    try {
+      const failScope = { namespace: 'proj:a', stage: 'dailyLetter' as const, estimatedInputTokens: 3200 }
+      for await (const _chunk of observeModelStream(recorder, failScope, route, async function* () {
+        yield { type: 'text-delta', index: 0, text: '这是一段在超限截断前已经生成的来信草稿内容。' }
+        yield { type: 'finish', reason: { kind: 'max-tokens' } }
+      })) { /* consume stream */ }
+      const snap = recorder.snapshot('proj:a')
+      expect(snap.stages.dailyLetter).toMatchObject({
+        modelCalls: 1,
+        modelFailed: 1,
+        missingUsageCalls: 1,
+        estimatedUsageCalls: 1,
+        estimatedInputTokens: 3200,
+      })
+      expect(snap.stages.dailyLetter!.estimatedOutputTokens).toBeGreaterThan(0)
+      expect(snap.stages.dailyLetter!.estimatedTotalTokens).toBeGreaterThan(3200)
+      expect(snap.stages.dailyLetter!.totalTokens).toBeUndefined()
+
+      // Mix flushed reported usage and unflushed pending estimated usage in todayStageUsage().
+      recorder.record({ namespace: 'proj:a', stage: 'dreamingStep' }, { modelCalls: 1, totalTokens: 100_000, totalTokenCalls: 1 })
+      recorder.flush()
+      recorder.record({ namespace: 'proj:b', stage: 'dreamingStep' }, { modelCalls: 1, missingUsageCalls: 1, estimatedTotalTokens: 25_000, estimatedUsageCalls: 1 })
+      const usage = recorder.todayStageUsage('dreamingStep')
+      expect(usage.reportedTokens).toBe(100_000)
+      expect(usage.estimatedTokens).toBe(25_000)
+      expect(usage.effectiveTokens).toBe(125_000)
+      expect(usage.calls).toBe(2)
+    } finally {
+      recorder.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 })

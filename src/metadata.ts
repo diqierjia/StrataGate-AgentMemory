@@ -11,6 +11,44 @@ export interface GraphSettings {
   approved: Record<string, string[]>
 }
 
+export const DEFAULT_DREAMING_DAILY_TOKEN_BUDGET = 5_000_000
+export const MAX_DREAMING_DAILY_TOKEN_BUDGET = 200_000_000
+
+export interface DreamingSettings {
+  autoEnabled: boolean
+  dailyTokenBudget: number
+  dailyLettersEnabled: boolean
+}
+
+export function normalizeDreamingSettings(raw?: Partial<DreamingSettings> | null): DreamingSettings {
+  const autoEnabled = typeof raw?.autoEnabled === 'boolean' ? raw.autoEnabled : true
+  const dailyLettersEnabled = typeof raw?.dailyLettersEnabled === 'boolean' ? raw.dailyLettersEnabled : true
+  const budget = raw?.dailyTokenBudget
+  const dailyTokenBudget = typeof budget === 'number' && Number.isFinite(budget)
+    ? Math.max(0, Math.min(MAX_DREAMING_DAILY_TOKEN_BUDGET, Math.floor(budget)))
+    : DEFAULT_DREAMING_DAILY_TOKEN_BUDGET
+  return { autoEnabled, dailyTokenBudget, dailyLettersEnabled }
+}
+
+/** Read Dreaming automation & daily budget settings without migrating a read-only database. */
+export function readDreamingSettings(filename: string): DreamingSettings {
+  const defaults = normalizeDreamingSettings()
+  if (filename === ':memory:' || !existsSync(filename)) return defaults
+  const db = new DatabaseSync(filename, { readOnly: true, timeout: 5000 })
+  try {
+    const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map(row => row.name))
+    if (!tables.has('stratagate_dsh_settings')) return defaults
+    const row = db.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'dreamingSettings'")
+      .get() as { value: string } | undefined
+    if (!row?.value) return defaults
+    try {
+      return normalizeDreamingSettings(JSON.parse(row.value) as Partial<DreamingSettings>)
+    } catch {
+      return defaults
+    }
+  } finally { db.close() }
+}
+
 /** Browsing and tool discovery must not migrate an otherwise read-only database. */
 export function readGraphSettings(filename: string): GraphSettings {
   const defaults: GraphSettings = { enabled: false, paused: false, epoch: 0, legacy: false, noticeSeen: false, everEnabled: false, approved: {} }
@@ -216,6 +254,23 @@ export class DshMetadataStore {
 
   setLastFeedbackPromptAt(value: string): void {
     this.setSettingValue('lastFeedbackPromptAt', value)
+  }
+
+  dreamingSettings(): DreamingSettings {
+    const row = this.database.prepare("SELECT value FROM stratagate_dsh_settings WHERE key = 'dreamingSettings'")
+      .get() as { value: string } | undefined
+    if (!row?.value) return normalizeDreamingSettings()
+    try {
+      return normalizeDreamingSettings(JSON.parse(row.value) as Partial<DreamingSettings>)
+    } catch {
+      return normalizeDreamingSettings()
+    }
+  }
+
+  setDreamingSettings(patch: Partial<DreamingSettings>): DreamingSettings {
+    const merged = normalizeDreamingSettings({ ...this.dreamingSettings(), ...patch })
+    this.setSettingValue('dreamingSettings', JSON.stringify(merged))
+    return merged
   }
 
   private setSetting(key: string, value: number): void {
