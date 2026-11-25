@@ -1226,4 +1226,40 @@ describe('Topic Directory client interactions', () => {
     expect(rule).toContain('overflow:auto')
     expect(rule).not.toContain('overscroll-behavior:contain')
   })
+
+  it('falls back to a readable title when a chapter title is empty', () => {
+    const client = clientRenderer()
+    const directory = fixture()
+    directory.topics[0]!.title = '   '
+    const tree = client.render(client.TopicDirectory, { directory, namespace: 'dsh:project:test', openEvent: vi.fn() })
+    const chapterToggle = find(tree, (node) => node.props.className === 'sg-topic-chapter-toggle')[0]!
+    expect(chapterToggle.text).toContain('未命名主题')
+    expect(chapterToggle.props.title).toBe('未命名主题')
+    expect(chapterToggle.props['aria-label']).toBe('第一章 未命名主题')
+  })
+
+  it('renders the initial section preview without prefetching and opens events on CTA click', async () => {
+    const client = clientRenderer(true)
+    const directory = fixture()
+    const props = { directory, namespace: 'dsh:project:test', openEvent: vi.fn() }
+    let tree = client.render(client.TopicDirectory, props)
+    expect(client.fetch).not.toHaveBeenCalled()
+    const preview = find(tree, (node) => node.props.className === 'sg-book-preview')
+    expect(preview).toHaveLength(1)
+    const openBtn = find(tree, (node) => node.props.className === 'sg-reader-open-btn')[0]!
+    expect(openBtn.text).toContain('翻看本节 8 条事件')
+    openBtn.props.onClick()
+    tree = client.render(client.TopicDirectory, props)
+    await client.flush()
+    tree = client.render(client.TopicDirectory, props)
+    expect(find(tree, (node) => node.props.className === 'sg-book-preview')).toHaveLength(0)
+    expect(buttons(tree).filter((node) => node.props['data-topic-event-id'])).toHaveLength(8)
+    expect(client.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('defines moss design tokens for the long-term memory cards', () => {
+    const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+    expect(source).toContain('--sg-moss-deep:')
+    expect(source).toContain('--sg-moss-soft:')
+  })
 })

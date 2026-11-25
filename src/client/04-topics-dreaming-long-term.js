@@ -11,6 +11,11 @@
       return (topic.sections || []).map((section) => ({ ...section, uiKey: section.key, uiTitle: section.title }))
     }
 
+    function chapterTitle(topic) {
+      const title = typeof topic?.title === 'string' ? topic.title.trim() : ''
+      return title || '未命名主题'
+    }
+
     function directoryScrollAction(saved, section, namespace, viewName) {
       if (!saved) return 'none'
       if (section !== 'long' || namespace !== saved.namespace) return 'clear'
@@ -109,7 +114,7 @@
         page.total > 9 ? h('button', { type: 'button', className: 'sg-topic-show-all', disabled: !showAll && (page.loading || Boolean(page.error)), 'aria-expanded': showAll, onClick: () => setShowAll((value) => !value) }, showAll ? collapseLabel : '还有 ' + (page.total - 9) + ' 条事件 · ' + (expandLabel || '展开全部')) : null)
     }
 
-    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged, open = false, onToggle }) {
+    function TopicSection({ part, chapter, chapterName = '', index, topicId, namespace, revision, active, openEvent, onDirectoryChanged, open = false, onToggle }) {
       const [overviewOpen, setOverviewOpen] = React.useState(true)
       const sectionNumber = chapter + '.' + index
       const regionId = 'sg-topic-' + encodeURIComponent(topicId) + '-' + encodeURIComponent(part.uiKey)
@@ -119,7 +124,10 @@
         h('h3', { className: 'sg-topic-section-heading' }, h('button', { type: 'button', className: 'sg-topic-section-toggle' + (open ? ' cur' : ''), title: part.uiTitle, 'data-count': String(sourceCount), 'aria-expanded': open, 'aria-controls': regionId, onClick: () => onToggle?.(part.uiKey) },
           h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', { className: 'sg-toc-sec-title' }, part.uiTitle), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', title: sourceCount + ' 条事件'}, String(sourceCount)), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '\u203a'))),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-section-body' },
-          h('div', { className: 'sg-leaf-head' }, h('span', { className: 'sg-leaf-k' }, sectionNumber), h('h3', null, part.uiTitle), h('p', { className: 'sg-leaf-sum' }, paragraphs.join('\n\n') || '这一节暂时没有概要。')),
+          h('div', { className: 'sg-leaf-head' },
+            h('span', { className: 'sg-leaf-k', title: chapterName || undefined }, sectionNumber + ' · ' + sourceCount + ' 条事件'),
+            h('h3', null, part.uiTitle),
+            !paragraphs.length ? h('p', { className: 'sg-leaf-sum' }, '这一节暂时没有概要。') : null),
           // Keep the .0 control for focus, overview state and pagination; CSS
           // hides the "总览" label so the right page reads as prose + dated rows.
           (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((current) => !current) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
@@ -134,19 +142,20 @@
       React.useEffect(() => { if (expandRequest > 0) setOpen(true) }, [expandRequest])
       const regionId = 'sg-topic-chapter-' + encodeURIComponent(topic.id)
       const chapterLabel = '第' + chapterOrdinal(number) + '章'
+      const displayTitle = chapterTitle(topic)
       const chapterEvents = topicSections(topic).reduce((sum, part) => sum + Number(part.sourceEventCount || 0), 0)
       return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
         h('header', { className: 'sg-topic-chapter-header' },
           h('span', { className: 'sg-topic-chapter-number', 'aria-hidden': 'true' }, String(number).padStart(2, '0')),
-          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'data-count': String(chapterEvents), 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', title: chapterEvents + ' 条事件'}, String(chapterEvents)), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
+          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: displayTitle, 'data-count': String(chapterEvents), 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + displayTitle, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, displayTitle), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', title: chapterEvents + ' 条事件'}, String(chapterEvents)), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
-          topicSections(topic).map((part, index) => { const selectionKey = topic.id + ':' + part.uiKey; return h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, open: openSection === selectionKey, onToggle: () => onSectionToggle?.(selectionKey, part), active: active && open, openEvent, onDirectoryChanged }) }),
+          topicSections(topic).map((part, index) => { const selectionKey = topic.id + ':' + part.uiKey; return h(TopicSection, { key: part.uiKey, part, chapter: number, chapterName: chapterLabel + ' · ' + displayTitle, index: index + 1, topicId: topic.id, namespace, revision, open: openSection === selectionKey, onToggle: () => onSectionToggle?.(selectionKey, part), active: active && open, openEvent, onDirectoryChanged }) }),
           !(topic.sections || []).length ? h('p', { className: 'sg-topic-no-overview' }, '这个主题还没有小节。') : null,
           // Keep the unassigned-event disclosure for pagination and aria; CSS
           // hides its old "待归类事件" wording in the book view.
           (() => {
             const remaining = Number(topic.coverage?.unassignedEvents ?? topic.coverage?.omittedEvents ?? 0)
-            return remaining ? h('details', { className: 'sg-topic-other-events', open: otherOpen, onToggle: (event) => setOtherOpen(event.currentTarget.open) }, h('summary', null, '待归类事件 · ' + remaining), h(TopicEventList, { namespace, revision, topicId: topic.id, sectionKey: 'uncovered', total: remaining, active: active && open && otherOpen, openEvent, onDirectoryChanged })) : null
+            return remaining ? h('details', { className: 'sg-topic-other-events', open: otherOpen, onToggle: (event) => setOtherOpen(event.currentTarget.open) }, h('summary', { 'data-count': String(remaining) }, '待归类事件 · ' + remaining), h(TopicEventList, { namespace, revision, topicId: topic.id, sectionKey: 'uncovered', total: remaining, active: active && open && otherOpen, openEvent, onDirectoryChanged })) : null
           })())))
     }
 
@@ -616,6 +625,9 @@
       const [expandRequest, setExpandRequest] = React.useState(0)
       const [selectedSection, setSelectedSection] = React.useState('')
       const chaptersRef = React.useRef(null)
+      const leafRef = React.useRef(null)
+      const readerTrackRef = React.useRef(null)
+      const stickyAnchorRef = React.useRef(null)
       const revision = directory?.revision || ''
       const blocked = invalidatedRevision === revision
       // A successful dashboard read is a fresh snapshot even if content changed
@@ -631,28 +643,103 @@
       const unassignedTotal = pendingTotal
       const firstSection = topics.flatMap((topic) => topicSections(topic).map((part) => ({ topic, part })))[0]
       const openSection = selectedSection
+      React.useEffect(() => {
+        if (typeof window === 'undefined' || typeof ResizeObserver !== 'function') return undefined
+        const leaf = leafRef.current
+        const track = readerTrackRef.current
+        const anchor = stickyAnchorRef.current
+        if (!leaf || !track || !anchor) return undefined
+        let frame = 0
+        const sync = () => {
+          frame = 0
+          const wide = track.offsetWidth > 0 && getComputedStyle(track).display !== 'none'
+          if (!wide) {
+            leaf.style.removeProperty('--sg-reader-top')
+            leaf.style.removeProperty('--sg-reader-left')
+            leaf.style.removeProperty('--sg-reader-width')
+            leaf.style.removeProperty('--sg-reader-max-height')
+            track.style.removeProperty('min-height')
+            return
+          }
+          const left = track.offsetLeft
+          const width = track.offsetWidth
+          const trackStyle = getComputedStyle(track)
+          const padLeft = parseFloat(trackStyle.paddingLeft) || 0
+          const padRight = parseFloat(trackStyle.paddingRight) || 0
+          const openBody = leaf.querySelector('.sg-directory-fold.open > .sg-directory-fold-inner > .sg-topic-section-body')
+          const bodyHeight = openBody ? openBody.offsetHeight : 0
+          const anchorTop = anchor.offsetTop
+          const foot = leaf.querySelector('.sg-toc-foot')
+          const footBottom = foot ? (foot.offsetTop + foot.offsetHeight) : ((chaptersRef.current?.offsetTop || 0) + (chaptersRef.current?.offsetHeight || 0))
+          const leftTrackSpan = Math.max(0, footBottom - track.offsetTop)
+          const maxOffset = Math.max(0, leftTrackSpan - bodyHeight)
+          const offset = openBody ? Math.max(0, Math.min(anchorTop, maxOffset)) : 0
+          const readerTopInViewport = Math.max(14, Math.round(track.getBoundingClientRect().top + offset))
+          const readerMaxHeight = Math.max(320, Math.floor(window.innerHeight - readerTopInViewport - 24))
+          leaf.style.setProperty('--sg-reader-left', (left + padLeft) + 'px')
+          leaf.style.setProperty('--sg-reader-width', Math.max(0, width - padLeft - padRight) + 'px')
+          leaf.style.setProperty('--sg-reader-top', (track.offsetTop + offset) + 'px')
+          leaf.style.setProperty('--sg-reader-max-height', readerMaxHeight + 'px')
+          if (openBody && bodyHeight > 0) track.style.minHeight = (offset + bodyHeight) + 'px'
+          else track.style.removeProperty('min-height')
+        }
+        const schedule = () => { if (!frame) frame = window.requestAnimationFrame(sync) }
+        const onScroll = (event) => {
+          const target = event?.target
+          if (target instanceof Element && target.closest('.sg-topic-section-body, .sg-book-preview')) return
+          schedule()
+        }
+        sync()
+        const ro = new ResizeObserver(schedule)
+        ro.observe(leaf)
+        ro.observe(track)
+        const openBody = leaf.querySelector('.sg-directory-fold.open > .sg-directory-fold-inner > .sg-topic-section-body')
+        if (openBody) ro.observe(openBody)
+        window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+        window.addEventListener('resize', schedule, { passive: true })
+        return () => {
+          if (frame) window.cancelAnimationFrame(frame)
+          ro.disconnect()
+          window.removeEventListener('scroll', onScroll, { capture: true })
+          window.removeEventListener('resize', schedule)
+        }
+      }, [selectedSection, topics.length, pendingOpen, blocked])
       return h('section', { className: 'sg-topic-directory', 'data-testid': 'stratagate-topic-directory', 'aria-label': '主题目录' },
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
           topics.length || pendingTotal ? h('div', { className: 'sg-how' }, h('i', { className: 'sg-sw moss', 'aria-hidden': 'true' }), '目录一直带着', h('span', { 'aria-hidden': 'true' }, '→'), h('i', { className: 'sg-sw lib', 'aria-hidden': 'true' }), '需要时翻到具体事件') : null,
-          h('div', { className: 'sg-book' }, h('div', { className: 'sg-leaf' },
+          h('div', { className: 'sg-book' },
+            topics.length || pendingTotal ? h('span', { className: 'sg-book-ribbon', 'aria-hidden': 'true' },
+              h('svg', { viewBox: '0 0 18 36', width: 17, height: 34, focusable: 'false' },
+                h('path', { d: 'M0 0h18v35l-9-7-9 7z', fill: 'currentColor' }))) : null,
+            h('div', { className: 'sg-leaf', ref: leafRef },
             h('h3', { className: 'sg-toc-title' }, '目录'),
             h('div', { className: 'sg-toc-col' }, '事件'),
-            h('div', { ref: chaptersRef }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, openSection, onSectionToggle: (key, part) => setSelectedSection(key) }))),
+            h('div', { ref: chaptersRef, className: 'sg-topic-chapters' }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, openSection, onSectionToggle: (key, part) => setSelectedSection((current) => current === key ? '' : key) }))),
             // The right page shows the first section's title and prose until a
             // section is clicked; this avoids a blank page without prefetching
             // event rows before the user asks for them.
-            !selectedSection && firstSection ? h('div', { className: 'sg-book-preview', 'aria-label': '默认打开的章节' },
-              h('span', { className: 'sg-leaf-k' }, '1.1'), h('h3', null, firstSection.part.uiTitle),
-              h('p', { className: 'sg-leaf-sum' }, (firstSection.part.paragraphs || []).map((paragraph) => paragraph.text || '').filter(Boolean).join('\n\n') || '点左侧小节，翻开具体事件。')) : null,
+            h('div', { className: 'sg-reader-track', ref: readerTrackRef },
+              h('div', { className: 'sg-reader-sticky-anchor', ref: stickyAnchorRef, 'aria-hidden': 'true' }),
+              !selectedSection && firstSection ? h('div', { className: 'sg-book-preview', 'aria-label': '默认打开的章节' },
+                h('div', { className: 'sg-leaf-head' },
+                  h('span', { className: 'sg-leaf-k' }, '1.1 · ' + Number(firstSection.part.sourceEventCount || 0) + ' 条事件'),
+                  h('h3', null, firstSection.part.uiTitle)),
+                h('p', { className: 'sg-leaf-sum' }, (firstSection.part.paragraphs || []).map((paragraph) => paragraph.text || '').filter(Boolean).join('\n\n') || '这一节暂时没有概要，点下方按钮或左侧任意小节可翻看原事件。'),
+                h('div', { className: 'sg-reader-cta-row' },
+                  h('button', { type: 'button', className: 'sg-reader-open-btn', onClick: () => setSelectedSection(firstSection.topic.id + ':' + firstSection.part.uiKey) },
+                    Number(firstSection.part.sourceEventCount || 0) > 0 ? '翻看本节 ' + Number(firstSection.part.sourceEventCount) + ' 条事件 →' : '打开本节 →')),
+                h('div', { className: 'sg-leaf-folio', 'aria-hidden': 'true' }, '— 第一章 · 1.1 —')) : null),
             // Pending events stay reachable through the existing lightweight
             // disclosure; CSS hides the old "待整理 N 条" label in the book.
             unassignedTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' },
               h('div', { className: 'sg-topic-pending-heading' },
                 h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', { className: 'sg-topic-pending-label' }, '待整理'), h('span', null, unassignedTotal + ' 条'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
               h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null,
-            h('div', { className: 'sg-toc-foot sg-leaf-foot' }, h('style', null, DIRECTORY_PREVIEW_STYLES), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
+            h('div', { className: 'sg-toc-foot sg-leaf-foot' },
+              topics.length ? h('span', { className: 'sg-toc-foot-meta' }, directory?.dreaming?.status === 'completed' && directory?.dreaming?.updatedAt ? '最近整理 ' + eventDayKey(directory.dreaming.updatedAt) : '共 ' + topics.length + ' 章') : null,
+              h('style', null, DIRECTORY_PREVIEW_STYLES), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
     }
 
     function LongTermPage({ events, eventPage, graph, graphSettings = {}, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, extractionGap = false, active = true, refresh }) {
@@ -752,7 +839,10 @@
       const graphMenu = h('div', { ref: graphMenuRef, className: 'sg-graph-menu' }, h('button', { type: 'button', className: 'sg-graph-menu-trigger', 'aria-label': '知识图谱设置', 'aria-expanded': graphMenuOpen, onClick: () => setGraphMenuOpen((value) => !value) }, h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' }, h('path', { d: 'M12 5v14M5 12h14', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' }))), graphMenuOpen ? h('div', { className: 'sg-graph-menu-popover' }, h(GraphControlPanel, { state: graphSettings, refresh, page: true, onOpenGraph: () => { setGraphMenuOpen(false); setMode('graph') }, onGraphHidden: () => { setGraphMenuOpen(false); setMode('topics') } })) : null)
       const tabChildren = [...longTabs.map(tabButton), graphMenu]
       return h('section', { className: 'sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
-        h('div', { className: 'sg-pg-head' }, h('h2', null, '长期记忆'),
+        h('div', { className: 'sg-pg-head' },
+          h('div', { className: 'sg-pg-title' },
+            h('h2', null, '长期记忆'),
+            mode === 'topics' && (topicDirectory?.topics?.length || 0) > 0 ? h('span', { className: 'sg-pg-tag' }, topicDirectory.topics.length + ' 个主题' + (Number(topicDirectory?.pending?.total || 0) > 0 ? ' · ' + Number(topicDirectory.pending.total) + ' 条待整理' : '')) : null),
           h('span', { className: 'sg-pg-end' }, h('nav', { className: 'sg-long-tabs sg-seg', 'aria-label': '长期记忆视角' }, tabChildren))),
         h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged })),
         mode === 'topics' ? null : h(React.Fragment, null,

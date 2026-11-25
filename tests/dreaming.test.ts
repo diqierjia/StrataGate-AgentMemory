@@ -2945,4 +2945,335 @@ describe('Dreaming Agent orchestration and admin API', () => {
     }, { timeout: 3000 })
     expect(step).toHaveBeenCalledTimes(1)
   })
+
+  it('surfaces unassignedEvents in memory tools, supports merge-chapters, and assigns scattered events into sections', async () => {
+    const f = await fixture(2, 'StrataGate Dreaming 目录整理与碎片合并。', 'dreaming-merge-chapters')
+    const extra = await f.memory.addEvent({
+      title: 'StrataGate Dreaming 提示词优化',
+      summary: '同项目碎片章节待并入主章。',
+      sourceBlockId: f.block.id,
+      sourceMessageIds: [f.block.l5Raw[0]!.id],
+    })
+    const snapshot = f.memory.exportSnapshot()
+    const primary = snapshot.memoryTopicState!.topics.find(topic => !topic.invalidated)!
+    primary.title = 'StrataGate 开发'
+    primary.sections = [{ id: 'sec-main', title: '核心机制', sourceEventIds: [f.events[0]!.id] }]
+    primary.sourceEventIds = [f.events[0]!.id, f.events[1]!.id]
+    snapshot.memoryTopicState!.topics.push({
+      ...structuredClone(primary),
+      id: 'topic_fragment_sg',
+      title: 'StrataGate 与 Dreaming 专题',
+      description: '碎片分支章',
+      sourceEventIds: [extra.id],
+      sections: [{ id: 'sec-frag', title: '提示词实验', sourceEventIds: [extra.id] }],
+      overview: [],
+    })
+    await f.memory.close()
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const storage = new SqliteStorage({ filename: f.database })
+    try {
+      const loaded = await storage.load(f.namespace)
+      await storage.save(f.namespace, snapshot, loaded?.revision ?? 0)
+    } finally {
+      await storage.close()
+    }
+    const memory = await f.reopen()
+
+    let run = (await memory.startMemoryDreaming('owner', 'manual', {}))!
+    const listed = await dreamingTool(memory, run, { tool: 'memory_list_topics', args: {} })
+    expect((listed.result as any).topics.find((t: any) => t.id === primary.id)?.unassignedEventCount).toBe(1)
+    const expanded = await dreamingTool(memory, run, { tool: 'memory_expand_topic', args: { id: primary.id } })
+    expect((expanded.result as any).unassignedEvents).toEqual([
+      expect.objectContaining({ id: f.events[1]!.id }),
+    ])
+
+    run = await memory.dreaming({
+      ...claim(run),
+      kind: 'apply',
+      topicId: primary.id,
+      operations: [
+        { kind: 'merge-chapters', fromTopicIds: ['topic_fragment_sg'] },
+        { kind: 'move-events', eventIds: [f.events[1]!.id], title: '其他与杂项' },
+      ],
+    })
+    const reopened = await f.reopen()
+    const chapters = reopened.listMemoryTopics().filter(topic => !topic.isFallback)
+    expect(chapters.map(topic => topic.id)).toEqual([primary.id])
+    const merged = reopened.getMemoryTopic(primary.id)!
+    expect(merged.sourceEventIds).toEqual(expect.arrayContaining([f.events[0]!.id, f.events[1]!.id, extra.id]))
+    expect(merged.sections?.map(sec => sec.title)).toEqual(expect.arrayContaining(['核心机制', '提示词实验', '其他与杂项']))
+  })
+
+  it('creates chapters with initial sections in memory scope and requires raw reads before deleting an Event', async () => {
+    let tick = Date.parse('2026-11-21T08:00:00Z')
+    const f = await fixture(0, '原始聊天：项目确认使用 SQLite 存储。', 'dreaming-delete-raw-check', () => new Date(tick += 1000))
+    const rawMsgId = f.block.l5Raw[0]!.id
+    const eventA = await f.memory.addEvent({
+      title: '存储选型确认',
+      summary: '确认使用 SQLite 存储。',
+      sourceBlockId: f.block.id,
+      sourceMessageIds: [rawMsgId],
+      scope: 'project',
+      temporal: { happenedStart: '2026-11-21T08:00:00Z' },
+    })
+    const eventB = await f.memory.addEvent({
+      title: 'SQLite 存储补充',
+      summary: '同日不同 scope 的重复记录。',
+      sourceBlockId: f.block.id,
+      sourceMessageIds: [rawMsgId],
+      scope: 'user',
+      temporal: { happenedStart: '2026-11-21T10:30:00Z' },
+    })
+    const eventC = await f.memory.addEvent({
+      title: '错误提取的废卡',
+      summary: '疑似提取有误。',
+      sourceBlockId: f.block.id,
+      sourceMessageIds: [rawMsgId],
+    })
+
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const readSource = async (kind: string, id: string) => {
+      const action = { tool: 'dreaming_read', args: { kind, id } }
+      const { result, evidenceIds } = await dreamingTool(f.memory, run, action)
+      run = await f.memory.dreaming({ ...claim(run), kind: 'checkpoint', trace: { ...action, result }, evidenceIds, estimatedTokens: 0 })
+    }
+    await readSource('event', eventA.id)
+    await readSource('event', eventB.id)
+    await readSource('event', eventC.id)
+
+    // Merge across scopes on the same day succeeds without raw message reads.
+    await f.memory.editDreamingEvent(claim(run), {
+      kind: 'merge',
+      id: eventA.id,
+      otherIds: [eventB.id],
+      title: 'SQLite 存储选型',
+      summary: '确认使用 SQLite 存储并整合同日补充记录。',
+    })
+    // Deleting an Event without reading its raw sourceMessageIds is rejected.
+    await expect(f.memory.editDreamingEvent(claim(run), {
+      kind: 'delete',
+      id: eventC.id,
+      reason: '尚未读原文尝试删除',
+    })).rejects.toThrow('Read the original sources')
+
+    // After reading raw sourceMessageIds, delete succeeds; create-chapter with initial sections works too.
+    await readSource('message', rawMsgId)
+    await f.memory.editDreamingEvent(claim(run), {
+      kind: 'delete',
+      id: eventC.id,
+      reason: '已读原始消息核实为重复冗余提取',
+    })
+    run = await f.memory.dreaming({
+      ...claim(run),
+      kind: 'apply',
+      operations: [{
+        kind: 'create-chapter',
+        title: '新建专题章',
+        description: '验证建章直接带小节',
+        eventIds: [eventA.id],
+        sections: [{ title: '存储架构', sourceEventIds: [eventA.id] }],
+      }],
+    })
+    const created = f.memory.listMemoryTopics().find(t => t.title === '新建专题章')!
+    expect(created.sections).toEqual([expect.objectContaining({ title: '存储架构', sourceEventIds: [eventA.id] })])
+  })
+
+  it('auto-injects directoryOverview into memory payload and returns section-grouped memory_expand_topic with full section overviews', async () => {
+    const f = await fixture(2, 'StrataGate 版本演进与目录整理。', 'dreaming-directory-overview')
+    const snapshot = f.memory.exportSnapshot()
+    const primary = snapshot.memoryTopicState!.topics.find(topic => !topic.invalidated)!
+    primary.title = 'StrataGate 开发'
+    primary.sections = [{ id: 'sec-rel', title: '版本发布与安装', sourceEventIds: [f.events[0]!.id] }]
+    primary.sourceEventIds = [f.events[0]!.id, f.events[1]!.id]
+    primary.overview = Array.from({ length: 14 }, (_, idx) => ({
+      kind: 'history' as const,
+      title: '版本发布与安装',
+      text: `第 ${idx + 1} 段版本流水记录，长度测试内容。`,
+      sourceEventIds: [f.events[0]!.id],
+    }))
+    await f.memory.close()
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const storage = new SqliteStorage({ filename: f.database })
+    try {
+      const loaded = await storage.load(f.namespace)
+      await storage.save(f.namespace, snapshot, loaded?.revision ?? 0)
+    } finally {
+      await storage.close()
+    }
+    const memory = await f.reopen()
+    let run = (await memory.startMemoryDreaming('owner', 'manual', {}))!
+
+    const payload = dreamingPayload(memory, run) as any
+    expect(payload.directoryOverview.totalChapters).toBe(1)
+    expect(payload.directoryOverview.chapters[0]).toMatchObject({
+      id: primary.id,
+      title: 'StrataGate 开发',
+      eventCount: 2,
+      unassignedCount: 1,
+      sections: [expect.objectContaining({
+        title: '版本发布与安装',
+        eventCount: 1,
+        overviewCount: 14,
+        needsOverviewCondense: true,
+      })],
+    })
+    expect(payload.directoryOverview.chapters[0].sections[0].overviewChars).toBeGreaterThan(200)
+
+    const listed = await dreamingTool(memory, run, { tool: 'memory_list_topics', args: {} })
+    expect((listed.result as any).topics[0].sections).toEqual([
+      expect.objectContaining({ title: '版本发布与安装', eventCount: 1, overviewCount: 14, needsOverviewCondense: true }),
+    ])
+
+    const action = { tool: 'memory_expand_topic', args: { id: primary.id, section: '版本发布与安装' } }
+    const expanded = await dreamingTool(memory, run, action)
+    const expandedResult = expanded.result as any
+    expect(expandedResult.chapterEvents).toBeUndefined()
+    expect(expandedResult.sections.items).toHaveLength(1)
+    expect(expandedResult.sections.items[0].overview).toHaveLength(14)
+    expect(expandedResult.sections.items[0].needsOverviewCondense).toBe(true)
+    expect(expandedResult.sections.items[0].events).toEqual([
+      expect.objectContaining({ id: f.events[0]!.id }),
+    ])
+    expect(expandedResult.unassignedEvents).toEqual([
+      expect.objectContaining({ id: f.events[1]!.id }),
+    ])
+
+    run = await memory.dreaming({ ...claim(run), kind: 'checkpoint', trace: { ...action, result: expandedResult }, evidenceIds: expanded.evidenceIds, estimatedTokens: 0 })
+    expect(run.idleCalls).toBe(0)
+
+    run = await memory.dreaming({
+      ...claim(run),
+      kind: 'apply',
+      topicId: primary.id,
+      operations: [{
+        kind: 'set-overview',
+        title: '版本发布与安装',
+        entries: [{ kind: 'history', text: '已完成多轮版本打包与桌面端验证。', sourceEventIds: [f.events[0]!.id] }],
+      }],
+    })
+    const condensedPayload = dreamingPayload(memory, run) as any
+    expect(condensedPayload.directoryOverview.chapters[0].sections[0].needsOverviewCondense).toBeUndefined()
+    expect(condensedPayload.directoryOverview.chapters[0].sections[0].overviewCount).toBe(1)
+  })
+
+  it('supports unique short event id prefixes, exposes event status/supersededBy, prevents merge-chapters section.id collisions, and emits lossless raw search JSON', async () => {
+    const f = await fixture(2, 'StrataGate 架构机制与版本整理。', 'dreaming-four-fixes')
+    const rawMsgId = f.block.l5Raw[0]!.id
+    const supersededCard = f.events[0]!
+    const activeCard = f.events[1]!
+    const extraCard = await f.memory.addEvent({
+      title: '第二章架构决策',
+      summary: '来自另一章的架构与配置决策。',
+      sourceBlockId: f.block.id,
+      sourceMessageIds: [rawMsgId],
+    })
+    const snapshot = f.memory.exportSnapshot()
+    // Mark event[0] superseded by event[1] and null out threadId + add emoji right on the 1500-char boundary on a raw message.
+    const storedSuperseded = snapshot.events.find(e => e.id === supersededCard.id)!
+    storedSuperseded.status = 'superseded'
+    storedSuperseded.supersededBy = activeCard.id
+    const { memoryTopicEventFingerprint } = await import('@diqier/stratagate')
+    const supersededFp = memoryTopicEventFingerprint(storedSuperseded)
+    const activeFp = memoryTopicEventFingerprint(snapshot.events.find(e => e.id === activeCard.id)!)
+    const extraFp = memoryTopicEventFingerprint(snapshot.events.find(e => e.id === extraCard.id)!)
+    const rawMessage = snapshot.blocks[0]!.l5Raw[0]!
+    delete rawMessage.threadId
+    rawMessage.content = `${'a'.repeat(1499)}🚀尾段关键词`
+    const primary = snapshot.memoryTopicState!.topics.find(topic => !topic.invalidated)!
+    const sharedSectionId = 'section:colliding-id-test'
+    primary.title = 'StrataGate 主章'
+    primary.sourceEventIds = [supersededCard.id, activeCard.id]
+    primary.sourceVersions = { [supersededCard.id]: supersededFp, [activeCard.id]: activeFp }
+    primary.dependencyVersions = { [supersededCard.id]: supersededFp, [activeCard.id]: activeFp }
+    primary.sections = [
+      { id: sharedSectionId, title: '架构、机制与设计基调', sourceEventIds: [supersededCard.id] },
+    ]
+    primary.overview = []
+    snapshot.memoryTopicState!.topics.push({
+      id: 'topic_secondary_merge',
+      title: 'StrataGate 碎片章',
+      description: '待合并章节',
+      sourceEventIds: [extraCard.id],
+      sourceVersions: { [extraCard.id]: extraFp },
+      dependencyVersions: { [extraCard.id]: extraFp },
+      sections: [
+        { id: sharedSectionId, title: '架构与配置决策', sourceEventIds: [extraCard.id] },
+      ],
+      overview: [],
+      projectorVersion: primary.projectorVersion,
+      invalidated: false,
+      dreamingManaged: true,
+      createdAt: primary.createdAt,
+      updatedAt: primary.updatedAt,
+    })
+    snapshot.memoryTopicState!.projectedVersions[supersededCard.id] = supersededFp
+    snapshot.memoryTopicState!.projectedVersions[activeCard.id] = activeFp
+    snapshot.memoryTopicState!.projectedVersions[extraCard.id] = extraFp
+    await f.memory.close()
+    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
+    const storage = new SqliteStorage({ filename: f.database })
+    try {
+      const loaded = await storage.load(f.namespace)
+      await storage.save(f.namespace, snapshot, loaded?.revision ?? 0)
+    } finally {
+      await storage.close()
+    }
+    const memory = await f.reopen()
+    let run = (await memory.startMemoryDreaming('owner', 'manual', {}))!
+
+    // 1. dreaming_read(kind="event") resolves unique 12-char short prefix and advances checkpoint.
+    const shortPrefix = activeCard.id.slice(0, 12)
+    const readAction = { tool: 'dreaming_read', args: { kind: 'event', id: shortPrefix } }
+    const readOut = await dreamingTool(memory, run, readAction)
+    expect((readOut.result as any).id).toBe(activeCard.id)
+    run = await memory.dreaming({ ...claim(run), kind: 'checkpoint', trace: { ...readAction, result: readOut.result }, evidenceIds: readOut.evidenceIds, estimatedTokens: 0 })
+    expect(run.idleCalls).toBe(0)
+
+    // 2. memory_expand_topic & dreaming_search(kind="events") expose status and supersededBy.
+    const expandedBefore = (await dreamingTool(memory, run, { tool: 'memory_expand_topic', args: { id: primary.id } })).result as any
+    expect(expandedBefore.sections.items[0].events[0]).toMatchObject({
+      id: supersededCard.id,
+      status: 'superseded',
+      supersededBy: activeCard.id,
+    })
+    expect(expandedBefore.unassignedEvents[0]).toMatchObject({
+      id: activeCard.id,
+      status: 'active',
+    })
+    const searchedEvents = (await dreamingTool(memory, run, { tool: 'dreaming_search', args: { kind: 'events', query: supersededCard.title } })).result as any
+    const hitSuperseded = searchedEvents.items.find((item: any) => item.id === supersededCard.id)
+    expect(hitSuperseded).toMatchObject({ status: 'superseded', supersededBy: activeCard.id })
+
+    // 3. merge-chapters mints distinct section.id when source section.id collides with a differently titled section.
+    run = await memory.dreaming({
+      ...claim(run),
+      kind: 'apply',
+      topicId: primary.id,
+      operations: [{ kind: 'merge-chapters', fromTopicIds: ['topic_secondary_merge'] }],
+    })
+    const mergedTopic = memory.listMemoryTopics().find(t => t.id === primary.id)!
+    const sectionIds = (mergedTopic.sections ?? []).map(sec => sec.id)
+    expect(new Set(sectionIds).size).toBe(2)
+    const expandedMerged = (await dreamingTool(memory, run, { tool: 'memory_expand_topic', args: { id: primary.id } })).result as any
+    expect(expandedMerged.sections.items.map((s: any) => s.title).sort()).toEqual(['架构、机制与设计基调', '架构与配置决策'])
+
+    // Pre-existing colliding section.ids (from older merges) still render as distinct sections via memoryTopicSections.
+    const { memoryTopicSections } = await import('../src/topics.js')
+    const defensive = memoryTopicSections({
+      sourceEventIds: [supersededCard.id, extraCard.id],
+      sections: [
+        { id: sharedSectionId, title: '架构、机制与设计基调', sourceEventIds: [supersededCard.id] },
+        { id: sharedSectionId, title: '架构与配置决策', sourceEventIds: [extraCard.id] },
+      ],
+      overview: [],
+    })
+    expect(defensive.map(s => s.title).sort()).toEqual(['架构、机制与设计基调', '架构与配置决策'])
+
+    // 4. dreaming_search(kind="raw") produces lossless JSON (null threadId, no lone surrogate split).
+    const rawSearch = (await dreamingTool(memory, run, { tool: 'dreaming_search', args: { kind: 'raw', query: '尾段关键词' } })).result as any
+    expect(rawSearch.items).toHaveLength(1)
+    expect(rawSearch.items[0].threadId).toBeNull()
+    expect(rawSearch.items[0].text.length).toBe(1499)
+    expect(rawSearch).toEqual(JSON.parse(JSON.stringify(rawSearch)))
+  })
 })

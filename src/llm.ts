@@ -286,7 +286,7 @@ const TOPIC_OVERVIEW: ValueSchemaSpec = {
   properties: {
     kind: { type: 'string', enum: TOPIC_OVERVIEW_KINDS, required: true },
     title: { type: 'string', description: 'Lasting category inside the chapter. Must match a declared or inherited section title; if omitted, the kind default must match one. Never a single Event, bug, version, date or task title; at most 80 characters.' },
-    text: { type: 'string', description: `Nonempty source-grounded overview; at most ${TOPIC_OVERVIEW_MAX_CHARACTERS} Unicode characters, usually 300-600. Preserve facts, time, uncertainty, plans, cancellation, and disputes without padding.`, required: true },
+    text: { type: 'string', description: `Concise source-grounded section guide (at most ${TOPIC_OVERVIEW_MAX_CHARACTERS} Unicode characters). Summarize the arc, key decisions, outcomes, and open questions without copying low-level event logs, line numbers, URLs, or per-version details.`, required: true },
     sourceEventIds: { ...STRING_ARRAY, required: true },
   },
 }
@@ -306,7 +306,7 @@ const TOPIC_PROJECTOR_PARAMETERS: ParameterSchemaSpec = {
             sourceEventIds: { ...STRING_ARRAY, description: 'Batch Event ids routed to this section, regardless of overview citations.', required: true },
           },
         } },
-        overview: { type: 'array', items: TOPIC_OVERVIEW, description: 'Optional new summaries, usually 0-2 entries. Return [] when unnecessary; stored valid summaries are inherited.', required: true },
+        overview: { type: 'array', items: TOPIC_OVERVIEW, description: 'Optional concise section-guide entries (usually 0-1 per section, or [] when existing section overview already covers the direction and this batch is routine incremental progress). Stored valid summaries are inherited.', required: true },
       },
     },
   },
@@ -326,14 +326,14 @@ Topic 是长期的大章节，按项目、生活领域或长期关系组织，�
 导航层级是章 → 节 → Event。Event 保持具体、独立；节必须能持续容纳同类事件。单个 bug、版本号、某天进展、一次安装或一个修复方案不能单独成节，也不要照抄 Event 标题作为节标题。例如“0.2.4 提取根因暴露过程”“0.2.6 提取仍 0 产出”“0.2.7 修复方案”“封块异常待排查”都进入“缺陷排查与修复”；“今日版本迭代 0.2.1→0.2.7”“0.2.8 安装与验证”进入“版本发布与安装”。具体版本、时间、根因、处置过程和状态放在节内概要及原 Event 中。“计划修复”“修复中”“已修复”属于同一类别的不同状态，不另起节。同一类别可以有多个有来源的段落，不要为段落另起标题。
 先找本章已有类别；它能容纳时必须复用。新章先归纳少量长期类别，不把每个 Event 各建一节；后续批次沿用这些类别，每批通常只新增 0-2 个节。类别数量由真实内容决定，不设硬节数上限，也不要把无关类别硬塞进“其他”。以上是项目章的例子，不是全局固定分类表；求职章可用“投递与面试”“职业选择”“入职与适应”，生活章使用其自身适合的长期类别。竞品分析、实验评测、安全与隐私等内容需要时各归入相应类别，不统一塞进修 bug。
 
-title 是可识别的主题名称；description 用一句话说明这里存有哪些资料，例如“包含部署选型、迁移经过和遗留问题”，不要把历史结论写成当前事实。新概要按需生成，通常 0～2 段；没有必要时允许 overview: []。尚未保存的不合格草稿可以舍弃，但必须完整保留本批 Event 的归类，不能伪造来源或删除已持久化的有效记忆。
+title 是可识别的主题名称；description 用一句话说明这里存有哪些资料，例如“包含部署选型、迁移经过和遗留问题”，不要把历史结论写成当前事实。overview 是书本小节导读，帮读者把握阶段脉络、关键结论与未决事项，不要把底下事件卡里的代码行号、端口地址、逐版流水日志原样抄进概述；如果已有小节概要已经覆盖该节方向且本批只是常规增量明细，直接把事件归入 sections 并返回 overview: [] 即可，不必每次硬追加新段。尚未保存的不合格草稿可以舍弃，但必须完整保留本批 Event 的归类，不能伪造来源或删除已持久化的有效记忆。
 overview 的 kind 仅允许 scope（背景或覆盖范围）、history（历史进展）、decision（当时的决定）、change（有依据的变化）、open-question（待确认事项）。保留明确时点、过去式、计划、取消、争议和不确定性；没有新的支持不能把旧事实升格为当前结论，不能把计划写成已完成、建议写成已决定、推测写成原因。决定曾经成立不等于现在仍有效。相关事件矛盾时保留矛盾和待确认状态。
 
 sections 保存事件的小节归属。每个归入本章的本批事件必须至少分配到一个 sections 小节。sections 只写本批事件编号，旧归属由存储层继承。优先逐字复用 existingTopics.sectionTitles 中适合的标题。新增 overview 优先使用本轮 sections.title；存储层只保留能挂在最终非空小节上的概要。overview.title 只决定文字显示在哪一节。无需为每条事件写概要。
 若输入含 sectionBackfillTopicId，这是升级后的旧事件补归类：只返回该 topicId 的一个章节，保留原章名和描述，为全部本批事件写入适当的小节；不得换章或新建章。已有小节标题可能只展示前 120 个，优先复用适合的已有标题。此任务无需重写总览，overview 可以为空，存储层保留有效旧总览。
 
 outputTokenBudget 是整个响应的输出预算。优先完整分配本批所有事件到章节和小节，再写必要的简短名称、范围说明和新增段。存储层会在最终小节仍存在时自动继承有效旧概要，无需输出复述；通常只需 0-2 段新增概要，预算不足时 overview 可为空，sections 仍必须完整归类本批事件，不截断 JSON 或遗漏事件。
-每批最多 12 个主题；title 最多 120 个字符，description 最多 400 个字符，但尽量用短名称和一句范围说明；每个主题在本次响应最多 8 段概要；这不是累计章节的段数或节数上限，有效旧段由存储层保留。每段硬上限为 ${TOPIC_OVERVIEW_MAX_CHARACTERS} 个 Unicode 字符，通常写 300～600 字符、最多 12 个来源；准确简洁，不为凑长度牺牲事实完整性。不要重复标题、目录说明、已有概要或无关背景。不要生成经验层或另写新的事件。`
+每批最多 12 个主题；title 最多 120 个字符，description 最多 400 个字符，但尽量用短名称和一句范围说明；每个主题在本次响应最多 8 段概要；这不是累计章节的段数或节数上限，有效旧段由存储层保留。每段硬上限为 ${TOPIC_OVERVIEW_MAX_CHARACTERS} 个 Unicode 字符、最多 12 个来源，作为小节导读以简明概括为准（无需刻意写长，一两句话能说清就一两句话），不要把事件卡细节流水账搬进概要，也不要重复标题、目录说明、已有概要或无关背景。不要生成经验层或另写新的事件。`
 const MAX_TOPIC_INPUT_TOKENS = 20_000
 const DAILY_LETTER_OUTPUT_TOKENS = 4_096
 const SUMMARIZER_OUTPUT_TOKENS = 4_096

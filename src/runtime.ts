@@ -3345,7 +3345,11 @@ export class StrataGateRuntime {
         const next = await this.dreamingMutate(namespace, run, { kind: 'apply', operations: action.args.operations as DreamingDirectoryOperation[],
           ...(typeof action.args.topicId === 'string' ? { topicId: action.args.topicId } : {}),
           ...(typeof action.args.version === 'string' ? { topicVersion: action.args.version } : {}) })
-        result = { saved: next.changedBatches > run.changedBatches, changedBatches: next.changedBatches }
+        result = {
+          saved: next.changedBatches > run.changedBatches,
+          changedBatches: next.changedBatches,
+          ...(run.scope === 'memory' && next.topicVersion ? { version: next.topicVersion } : {}),
+        }
       } else if (action.tool === 'dreaming_finish') {
         const next = await this.dreamingMutate(namespace, run, { kind: 'finish-unit' })
         return { status: next.status, completed: next.cursor, total: next.units.length, changedBatches: next.changedBatches }
@@ -3360,12 +3364,8 @@ export class StrataGateRuntime {
         if (typeof action.args.date !== 'string' || !(action.args.version === undefined || typeof action.args.version === 'string')) {
           throw new Error('请指定日期及读取的版本；仅创建不存在的日期时使用空版本。')
         }
-        const key = JSON.stringify(['daily', action.args.date, null])
-        if (typeof action.args.version === 'string' && (run.navigationReads?.[key]?.contentVersion !== action.args.version || run.navigationReads[key].nextOffset !== -1)) {
-          throw new Error('请先完整读取该日期的当前笔记。')
-        }
         result = await this.dailyNotes.write(namespace, action.args as unknown as DailyWrite, {
-          expectedVersion: action.args.version ?? null,
+          ...(typeof action.args.version === 'string' ? { expectedVersion: action.args.version } : {}),
           beforePublish: async () => {
             const current = await this.dreamingRun(namespace, id)
             const currentStop = this.dreamingAutoStopReason(current)

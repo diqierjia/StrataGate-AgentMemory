@@ -246,6 +246,53 @@ export function memoryTopicSectionContent(topic: Pick<MemoryTopic, 'sourceEventI
   return { sections, overview };
 }
 
+export function pruneGhostTopicMemberships(state: MemoryTopicState): boolean {
+  if (state.sectionMembershipVersion !== 1) return false;
+  const activeTopics = state.topics.filter((topic) => !topic.invalidated);
+  const sectionOwners = new Map<string, Set<string>>();
+  for (const topic of activeTopics) {
+    for (const section of memoryTopicMembershipSections(topic)) {
+      for (const eventId of section.sourceEventIds) {
+        let owners = sectionOwners.get(eventId);
+        if (!owners) { owners = new Set(); sectionOwners.set(eventId, owners); }
+        owners.add(topic.id);
+      }
+    }
+  }
+  let changed = false;
+  const emptyTopicIds = new Set<string>();
+  for (const topic of activeTopics) {
+    const localAssigned = new Set(memoryTopicMembershipSections(topic).flatMap((section) => section.sourceEventIds));
+    const localCited = new Set(topic.overview.flatMap((part) => part.sourceEventIds));
+    const pendingBackfill = state.sectionBackfill?.[topic.id];
+    const removed: string[] = [];
+    const kept = topic.sourceEventIds.filter((eventId) => {
+      if (localAssigned.has(eventId) || localCited.has(eventId) || pendingBackfill?.[eventId] !== undefined) return true;
+      const owners = sectionOwners.get(eventId);
+      const ownedElsewhere = Boolean(owners && [...owners].some((ownerId) => ownerId !== topic.id));
+      if (ownedElsewhere) { removed.push(eventId); return false; }
+      return true;
+    });
+    if (!removed.length) continue;
+    changed = true;
+    topic.sourceEventIds = kept;
+    for (const eventId of removed) {
+      delete topic.sourceVersions[eventId];
+      if (topic.dependencyVersions) delete topic.dependencyVersions[eventId];
+      if (state.sectionBackfill?.[topic.id]) delete state.sectionBackfill[topic.id]![eventId];
+    }
+    if (state.sectionBackfill?.[topic.id] && !Object.keys(state.sectionBackfill[topic.id]!).length) delete state.sectionBackfill[topic.id];
+    if (kept.length === 0) emptyTopicIds.add(topic.id);
+  }
+  if (emptyTopicIds.size) {
+    state.topics = state.topics.filter((topic) => !emptyTopicIds.has(topic.id));
+    if (state.sectionBackfill) {
+      for (const topicId of emptyTopicIds) delete state.sectionBackfill[topicId];
+    }
+  }
+  return changed;
+}
+
 function sourceVersions(sources: ReadonlyMap<string, EventCard>): ReadonlyMap<string, string> {
   return new Map([...sources].map(([id, event]) => [id, memoryTopicEventFingerprint(event)]));
 }
@@ -348,6 +395,7 @@ export class MemoryTopicDirectory {
     // A dropped paragraph may also have surviving citations that were not
     // edited. Requeue those sources without invalidating the whole chapter.
     for (const id of needsOverview) delete this.state.projectedVersions[id];
+    pruneGhostTopicMemberships(this.state);
     this.state.topics = this.state.topics.filter(topic => topic.sourceEventIds.length > 0);
   }
 
@@ -364,6 +412,7 @@ export class MemoryTopicDirectory {
         .flatMap((topic) => Object.entries(topic.sourceVersions)
           .filter(([id, version]) => state.projectedVersions[id] !== version)));
     }
+    pruneGhostTopicMemberships(this.state);
   }
 
   snapshot(events?: readonly EventCard[]): MemoryTopicState {
@@ -538,6 +587,7 @@ export class MemoryTopicDirectory {
         || Object.entries(topic.dependencyVersions ?? topic.sourceVersions).some(([id, version]) => versions.get(id) !== version)) {
         // Clear cached language itself, not only its evidence pointers.
         topic.invalidated = true;
+        delete topic.dreamingManaged;
         topic.title = '';
         topic.description = '';
         topic.overview = [];
@@ -560,6 +610,7 @@ export class MemoryTopicDirectory {
         topic.projectorVersion = MEMORY_TOPIC_PROJECTOR_VERSION;
       }
     }
+    pruneGhostTopicMemberships(this.state);
     for (const job of this.state.jobs) if (job.status !== 'completed' && !job.superseded
       && !jobInputsCurrent(job, versions)) {
       job.status = 'failed'; job.context = null; job.nextRetryAt = null; job.leaseUntil = null;
@@ -808,7 +859,9 @@ export class MemoryTopicDirectory {
         if (index >= 120 || cost > titleBudget) return false;
         titleBudget -= cost; return true;
       }) : allTitles;
-      const candidate = { id: topic.id, title: topic.title, description: topic.description,
+      const candidate = { id: topic.id,
+        title: topic.isFallback ? '' : topic.title,
+        description: topic.isFallback ? '' : topic.description,
         overview, sectionTitles: shownTitles,
         ...(shownTitles.length < allTitles.length ? { sectionTitlesOmitted: allTitles.length - shownTitles.length } : {}),
         sourceEventIds: exposed, totalSourceEvents: topic.sourceEventIds.length };
@@ -982,10 +1035,11 @@ export class MemoryTopicDirectory {
       }
       const inherited = existing && !existing.invalidated ? existing.overview : [];
       const content = memoryTopicSectionContent({ sourceEventIds: membership, sections, overview: [...proposal.overview, ...inherited] });
-      const preserveChapterHeader = Boolean(job.sectionBackfillTopicId || existing?.dreamingManaged || isOtherCatalogTopic);
+      const preserveChapterHeader = Boolean(job.sectionBackfillTopicId)
+        || Boolean((existing?.dreamingManaged || isOtherCatalogTopic) && existing && !existing.invalidated && existing.title.trim() && existing.description.trim());
       const memberVersions = Object.fromEntries(membership.map((eventId) => [eventId, versions.get(eventId)!]));
       proposals.push({ id: topicId, title: preserveChapterHeader ? existing!.title : proposal.title.trim(),
-        ...(existing?.dreamingManaged ? { dreamingManaged: true } : {}),
+        ...(existing?.dreamingManaged && !existing.invalidated ? { dreamingManaged: true } : {}),
         ...(existing?.sectionAliases ? { sectionAliases: structuredClone(existing.sectionAliases) } : {}),
         description: preserveChapterHeader ? existing!.description : proposal.description.trim(),
         sourceEventIds: membership, sections: content.sections,
@@ -1005,6 +1059,7 @@ export class MemoryTopicDirectory {
         if (!Object.keys(pending).length) delete this.state.sectionBackfill![topic.id];
       }
     }
+    pruneGhostTopicMemberships(this.state);
     Object.assign(this.state.projectedVersions, job.sourceVersions);
     for (const [eventId, version] of Object.entries(job.sourceVersions)) {
       if (this.state.rebuildVersions?.[eventId] === version) delete this.state.rebuildVersions[eventId];

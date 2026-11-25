@@ -79,7 +79,7 @@ export class DailyNotes {
   private load(namespace: string, date: string): Promise<string> {
     return readFile(join(this.directory(namespace), `${validDate(date)}.md`), 'utf8')
   }
-  async write(namespace: string, args: DailyWrite, checkpoint?: { expectedVersion: string | null; beforePublish: () => Promise<void> }) {
+  async write(namespace: string, args: DailyWrite, checkpoint?: { expectedVersion?: string | null; beforePublish: () => Promise<void> }) {
     const date = validDate(args.date ?? dailyDate(new Date(), this.timeZone))
     if (typeof args.title !== 'string' || !args.title.trim() || /[\r\n]/.test(args.title)) throw new TypeError('title 必须是非空单行事项名称')
     if (typeof args.content !== 'string' || (args.old_text !== undefined && (typeof args.old_text !== 'string' || !args.old_text))) throw new TypeError('content 必须为字符串，old_text 必须为非空原文')
@@ -88,7 +88,7 @@ export class DailyNotes {
     const run = (queues.get(path) ?? Promise.resolve()).catch(() => {}).then(async () => {
       let previous: string | undefined
       try { previous = await this.load(namespace, date) } catch (error) { if (!missing(error)) throw error }
-      if (checkpoint && (previous === undefined ? null : dailyVersion(previous)) !== checkpoint.expectedVersion) {
+      if (checkpoint && checkpoint.expectedVersion !== undefined && (previous === undefined ? null : dailyVersion(previous)) !== checkpoint.expectedVersion) {
         throw new Error('笔记已变化，请重新读取后再修改。')
       }
       const original = previous ?? `# ${date}\n`

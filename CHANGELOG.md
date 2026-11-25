@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.70
+
+- 优化并重构「长期记忆」页面前端为书本式双栏目录与右侧阅读栏版式：左侧呈现清晰章节/小节目录，右侧展开小节导读与关联事件卡并修复滚轮遮挡及桌面窗口动态最大高度，确保长导读与事件列表独立顺滑滚动。
+- 修复章节作废后出现空标题「未命名主题」的根因：章节失效时同步清除 `dreamingManaged` 标记，并在保留既有标题/描述前校验非失效且非空；同时自动清理跨章幽灵成员引用并避免相同小节 ID 误合并不同标题小节。
+- 增强 Dreaming 记忆目录整理与小节导读精炼：在 `currentMemoryTask.directoryOverview` 提供章节/小节健康指标（`unassignedCount`、`overviewCount`、`overviewChars`、`needsOverviewCondense`）与跨批未变化去重，新增 `merge-chapters` 合并同项目碎片章节、支持散落事件归节与基于既有概述直接 `set-overview` 提炼精简导读，并补充对应单测与真实记忆库 E2E 校验。
+
 ## 0.3.69
 
 - 修复关闭自动 Dreaming 开关未停掉其他工作区在跑任务的问题：新增跨工作区/跨实例全局设置同步与外部 SQLite 状态轮询，任一工作区关闭 `autoEnabled`、`dailyLettersEnabled` 或下调 `dailyTokenBudget` 达到上限时，立即中止其他工作区正在运行中的自动 Dreaming 任务与在途模型请求，并在执行循环与 `llm/stream` 发起前兜底拦截。

@@ -692,12 +692,39 @@ describe('rebuildable Event-backed topic directory', () => {
     const rebuild = (await memory.claimNextTopicProjection())!;
     expect(rebuild.events.map(({ id }) => id)).toEqual([survivor!.id]);
     expect(rebuild.existingTopics[0]?.id).toBe(topicIds[0]);
+    expect(rebuild.existingTopics[0]?.title).toBe('');
     await memory.completeTopicProjection(rebuild.jobId, projection(rebuild, topicIds[0]));
     expect(memory.getMemoryTopic(topicIds[0]!)?.isFallback).toBeUndefined();
     expect(memory.hasPendingTopicWork()).toBe(false);
     await memory.forgetEvent(survivor!.id);
     expect(memory.getMemoryTopic(topicIds[0]!)).toBeNull();
     expect(memory.hasPendingTopicWork()).toBe(false);
+  });
+
+  it('does not preserve empty invalidated titles from dreamingManaged chapters during rebuild', async () => {
+    const memory = StrataGate.inMemory(options);
+    const [removed] = await seed(memory, 2);
+    const context = (await memory.claimNextTopicProjection())!;
+    const { topicIds } = await memory.completeTopicProjection(context.jobId, projection(context));
+    const dir = new MemoryTopicDirectory();
+    dir.restore(memory.exportSnapshot().memoryTopicState);
+    const seededState = dir.snapshot();
+    seededState.topics[0]!.dreamingManaged = true;
+    dir.restore(seededState);
+    const events = memory.listEvents();
+    events.find((event) => event.id === removed!.id)!.status = 'forgotten';
+    dir.synchronize(events, '2026-01-01T01:00:00.000Z');
+    expect(dir.snapshot().topics[0]?.dreamingManaged).toBeUndefined();
+    const rebuild = dir.claim(events, '2026-01-01T01:01:00.000Z')!;
+    expect(rebuild.existingTopics[0]?.title).toBe('');
+    const result = projection(rebuild, topicIds[0]);
+    result.topics[0]!.title = '重建后的正常章名';
+    result.topics[0]!.description = '重建后的章节简介';
+    dir.complete(rebuild.jobId, result, events, '2026-01-01T01:02:00.000Z');
+    const rebuilt = dir.snapshot().topics[0]!;
+    expect(rebuilt.title).toBe('重建后的正常章名');
+    expect(rebuilt.description).toBe('重建后的章节简介');
+    expect(rebuilt.invalidated).toBe(false);
   });
 
   it('rejects stale model results when any non-displayed candidate source changes', async () => {
@@ -1446,5 +1473,71 @@ describe('Topic failure diagnostics and bounded recovery (#119)', () => {
     const updated = directory.snapshot().topics.find((topic) => topic.id === catalogEntry.id)!;
     expect(updated.title).toBe(catalogEntry.title);
     expect(updated.sourceEventIds).toContain(secondEvent.id);
+  });
+
+  it('prunes cross-chapter ghost memberships while preserving cited and genuinely unassigned events', async () => {
+    const { memory } = await start(3);
+    const events = memory.listAllEvents();
+    const [e1, e2, e3] = events;
+    const directory = new MemoryTopicDirectory();
+    const now = '2026-11-24T00:00:00Z';
+    const v = (event: typeof e1) => `${event!.id}:v1`;
+    directory.restore({
+      topics: [
+        {
+          id: 'topic_a',
+          title: '主章节 A',
+          description: '已分好节的主章',
+          sourceEventIds: [e1!.id, e2!.id],
+          sections: [{ id: 'sec_a', title: '主线小节', sourceEventIds: [e1!.id, e2!.id] }],
+          overview: [{ kind: 'history', title: '主线小节', text: 'A 章记录。', sourceEventIds: [e1!.id, e2!.id] }],
+          sourceVersions: { [e1!.id]: v(e1!), [e2!.id]: v(e2!) },
+          dependencyVersions: { [e1!.id]: v(e1!), [e2!.id]: v(e2!) },
+          projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
+          invalidated: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'topic_b',
+          title: '老章节 B',
+          description: '含幽灵事件、概述引用事件和真正未归节事件',
+          sourceEventIds: [e1!.id, e2!.id, e3!.id],
+          sections: [{ id: 'sec_b', title: '保留小节', sourceEventIds: [e2!.id] }],
+          overview: [{ kind: 'history', title: '保留小节', text: 'B 章仍引用 e2。', sourceEventIds: [e2!.id] }],
+          sourceVersions: { [e1!.id]: v(e1!), [e2!.id]: v(e2!), [e3!.id]: v(e3!) },
+          dependencyVersions: { [e1!.id]: v(e1!), [e2!.id]: v(e2!), [e3!.id]: v(e3!) },
+          projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
+          invalidated: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: 'topic_ghost_only',
+          title: '纯幽灵老章 C',
+          description: '仅剩已搬去 A 章小节的幽灵事件',
+          sourceEventIds: [e1!.id],
+          sections: [],
+          overview: [],
+          sourceVersions: { [e1!.id]: v(e1!) },
+          dependencyVersions: { [e1!.id]: v(e1!) },
+          projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
+          invalidated: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      jobs: [],
+      projectedVersions: {},
+      sectionMembershipVersion: 1,
+      sectionBackfill: { topic_b: { [e3!.id]: v(e3!) } },
+    });
+    const snap = directory.snapshot();
+    expect(snap.topics.map(t => t.id)).toEqual(['topic_a', 'topic_b']);
+    const topicB = snap.topics.find(t => t.id === 'topic_b')!;
+    expect(topicB.sourceEventIds).toEqual([e2!.id, e3!.id]);
+    expect(topicB.sourceVersions[e1!.id]).toBeUndefined();
+    expect(topicB.dependencyVersions?.[e1!.id]).toBeUndefined();
+    expect(snap.sectionBackfill?.topic_b).toEqual({ [e3!.id]: v(e3!) });
   });
 });

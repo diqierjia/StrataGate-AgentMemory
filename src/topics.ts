@@ -13,12 +13,18 @@ export function memoryTopicSections(topic: Pick<MemoryTopic, 'overview' | 'sourc
   const sections = new Map<string, { key: string; title: string; paragraphs: MemoryTopic['overview']; sourceEventIds: string[] }>()
   const keyByLabel = new Map<string, string>()
   for (const membership of content.sections) {
-    const key = membership.id ?? memoryTopicSectionKey(membership.title)
+    const label = normalizeMemoryTopicLabel(membership.title)
+    const existingKey = keyByLabel.get(label)
+    let key = existingKey ?? membership.id ?? memoryTopicSectionKey(membership.title)
+    if (!existingKey && sections.has(key)) {
+      // Distinct section titles must not silently collapse onto a colliding membership.id.
+      key = memoryTopicSectionKey(membership.title)
+      if (sections.has(key)) key = `${key}:${sections.size}`
+    }
     const section = sections.get(key) ?? { key, title: membership.title, paragraphs: [], sourceEventIds: [] }
     section.sourceEventIds.push(...membership.sourceEventIds)
     sections.set(key, section)
-    const label = normalizeMemoryTopicLabel(membership.title)
-    if (!keyByLabel.has(label)) keyByLabel.set(label, key)
+    if (!existingKey) keyByLabel.set(label, key)
   }
   for (const part of content.overview) {
     const label = normalizeMemoryTopicLabel(memoryTopicSectionTitle(part))
