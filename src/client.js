@@ -668,6 +668,8 @@ window.__ModuleLoader__.load({
         --sg-ink:var(--sg-text);
         --sg-subtle:color-mix(in srgb,var(--sg-text) 78%,var(--sg-page));
         --sg-moss:color-mix(in srgb,var(--dsw-alias-state-success-primary,#5f7f4d) 62%,var(--sg-text));
+        --sg-moss-deep:color-mix(in srgb,var(--sg-moss) 68%,var(--sg-text));
+        --sg-moss-soft:color-mix(in srgb,var(--sg-moss) 11%,var(--sg-page));
         --sg-sand:color-mix(in srgb,var(--dsw-alias-state-warn-label,#a9822f) 74%,var(--sg-text));
         --sg-sand-deep:color-mix(in srgb,var(--sg-sand) 64%,var(--sg-text));
         --sg-sand-soft:color-mix(in srgb,var(--sg-sand) 13%,var(--sg-page));
@@ -1098,7 +1100,7 @@ window.__ModuleLoader__.load({
         .sg-topic-directory .sg-book-preview .sg-leaf-sum{display:block}
         .sg-topic-directory .sg-book>.sg-leaf{padding-right:calc(50% + 28px);min-height:320px}
         .sg-topic-directory .sg-book>.sg-leaf:after{content:"";position:absolute;left:50%;top:18px;bottom:18px;border-left:1px solid var(--sg-border);box-shadow:-1px 0 0 color-mix(in srgb,var(--sg-page) 70%,transparent);pointer-events:none}
-        .sg-topic-directory .sg-directory-fold.open>.sg-directory-fold-inner>.sg-topic-section-body{position:absolute;top:18px;right:22px;bottom:18px;width:calc(50% - 46px);padding:0 0 0 26px;overflow:auto}
+        .sg-topic-directory .sg-directory-fold.open>.sg-directory-fold-inner>.sg-topic-section-body{position:absolute;top:var(--sg-reader-top,28px);left:var(--sg-reader-left,calc(50% + 28px));width:var(--sg-reader-width,calc(50% - 58px));max-height:calc(100vh - 56px);padding:0;border-top:0;overflow:auto;animation:sg-daily-fade .2s var(--sg-ease) both}
         .sg-topic-directory .sg-topic-section>.sg-directory-fold.open>.sg-directory-fold-inner{overflow:visible}
         .sg-topic-directory .sg-topic-section>.sg-directory-fold.open{grid-template-rows:1fr;display:block}
         .sg-topic-directory .sg-topic-section>.sg-directory-fold.open>.sg-directory-fold-inner{display:block;height:auto;overflow:visible}
@@ -1502,6 +1504,112 @@ window.__ModuleLoader__.load({
       .sg-pg-end .sg-long-tabs.sg-seg>button{padding:3px 12px;border:0;border-radius:5px;background:none;color:var(--sg-muted);font-size:12px;cursor:pointer}
       .sg-pg-end .sg-long-tabs.sg-seg>button[aria-current=page]{background:var(--sg-sheet);color:var(--sg-text);font-weight:600;box-shadow:0 0 0 1px var(--sg-border)}
       .sg-pg-end .sg-long-tabs.sg-seg .sg-graph-menu-trigger{width:26px;height:26px;min-width:26px;min-height:26px;font-size:16px}
+
+      /* 长期记忆：摊开的书籍目录（左页目录 + 右页正文与书签丝带） */
+      .sg-memory .sg-topic-directory{max-width:none;padding:0 0 16px}
+      .sg-memory .sg-how{margin:-4px 0 14px;gap:7px;font-size:12px;color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-book{position:relative;border:1px solid var(--sg-border);border-radius:4px;background:var(--sg-sheet);box-shadow:0 1px 0 var(--sg-border),0 3px 0 -1px var(--sg-sheet),0 3px 0 0 var(--sg-border),0 8px 24px color-mix(in srgb,var(--sg-text) 5%,transparent)}
+      .sg-memory .sg-topic-directory .sg-book:before,.sg-memory .sg-topic-directory .sg-book>.sg-leaf:after{content:none;display:none}
+      .sg-memory .sg-topic-directory .sg-book-ribbon{position:absolute;top:-1px;right:26px;z-index:3;display:block;width:17px;height:34px;color:color-mix(in srgb,var(--sg-moss) 28%,var(--sg-text));pointer-events:none;line-height:0}
+      .sg-memory .sg-topic-directory .sg-leaf{--sg-reader-top:28px;--sg-reader-left:calc(50% + 28px);--sg-reader-width:calc(50% - 58px);--sg-reader-max-height:max(320px,calc(100vh - 136px));padding:28px 30px 22px 34px}
+      .sg-memory .sg-topic-directory .sg-toc-title{display:block;margin:0 0 12px;padding-left:.6em;text-align:center;font:500 16px var(--sg-serif);letter-spacing:.6em;color:var(--sg-text)}
+      .sg-memory .sg-topic-directory .sg-toc-col{display:flex;justify-content:flex-end;margin-bottom:4px;font-size:10.5px;color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-chapters{display:grid;gap:12px;min-width:0}
+      .sg-memory .sg-topic-directory .sg-topic-chapter{padding:0;border:0;border-radius:0;background:none}
+      .sg-memory .sg-topic-directory .sg-topic-chapter-header{display:block}
+      .sg-memory .sg-topic-directory .sg-topic-chapter-toggle{position:relative;display:grid;grid-template-columns:3.3em minmax(0,1fr) auto;align-items:baseline;gap:8px;width:100%;padding:2px 0;border:0;border-radius:4px;background:none;text-align:left;cursor:pointer;transition:color .14s ease}
+      .sg-memory .sg-topic-directory .sg-topic-chapter-toggle:hover .sg-topic-chapter-title{color:var(--sg-moss-deep)}
+      .sg-memory .sg-topic-directory .sg-topic-chapter-toggle>.sg-topic-chapter-label{min-width:0;font:400 12px var(--sg-serif);color:var(--sg-muted);white-space:nowrap}
+      .sg-memory .sg-topic-directory .sg-topic-chapter-toggle>.sg-topic-chapter-title{display:block;flex:none;width:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 14px/1.45 var(--sg-serif);color:var(--sg-text)}
+      .sg-memory .sg-topic-directory .sg-topic-chapter-toggle>.sg-toc-lead,.sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-toc-lead{display:none}
+      .sg-memory .sg-topic-directory .sg-topic-chapter-toggle>.sg-toc-cnt{min-width:1.8em;margin:0;padding:0;background:none;text-align:right;font:12px var(--sg-mono);color:var(--sg-muted);font-variant-numeric:tabular-nums}
+      .sg-memory .sg-topic-directory .sg-topic-sections{display:grid;gap:1px;padding:4px 0 0}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle{position:relative;display:flex;align-items:baseline;gap:7px;width:calc(100% - 3.3em);min-height:28px;margin:0 0 0 3.3em;padding:4px 4px 4px 6px;border-radius:4px;font-size:13px;color:var(--sg-muted);transition:background-color .14s ease,color .14s ease}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle:before{content:none;flex:none}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle:hover{background:color-mix(in srgb,var(--sg-text) 4.5%,transparent);color:var(--sg-text)}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-directory-number{flex:0 0 auto;min-width:2.4em;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-toc-sec-title{display:block;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-toc-lead{display:block;flex:1 0 12px;min-width:12px;border-bottom:1px dotted color-mix(in srgb,var(--sg-muted) 42%,transparent);transform:translateY(-4px)}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-toc-cnt{flex:0 0 auto;min-width:1.8em;margin:0;text-align:right;font:12px var(--sg-mono);color:var(--sg-muted);font-variant-numeric:tabular-nums}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle.cur{background:var(--sg-moss-soft);color:var(--sg-text);font-weight:600}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle.cur:before{content:"";position:absolute;left:-9px;top:5px;bottom:5px;width:2.5px;border-radius:2px;background:var(--sg-text)}
+      .sg-memory .sg-topic-directory .sg-topic-section-toggle.cur>.sg-directory-number,.sg-memory .sg-topic-directory .sg-topic-section-toggle.cur>.sg-toc-cnt{color:var(--sg-text);font-weight:600}
+      .sg-memory .sg-topic-directory .sg-topic-other-events{margin:4px 0 0 3.3em;padding:2px 4px 2px 6px;border-top:0;font-size:12px;color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-other-events>summary{display:flex;align-items:center;gap:6px;padding:3px 0;list-style:none;font-size:0;cursor:pointer}
+      .sg-memory .sg-topic-directory .sg-topic-other-events>summary::-webkit-details-marker{display:none}
+      .sg-memory .sg-topic-directory .sg-topic-other-events>summary:before{content:'其他事件';font-size:12px;color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-other-events>summary:after{content:attr(data-count) ' 条 ▸';margin-left:auto;font:11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-other-events[open]>summary:after{content:attr(data-count) ' 条 ▾'}
+      .sg-memory .sg-topic-directory .sg-topic-pending{margin-top:12px;padding:10px 0 0;border:0;border-top:1px dashed var(--sg-border);border-radius:0;background:none}
+      .sg-memory .sg-topic-directory .sg-topic-pending-heading{margin:0;gap:10px}
+      .sg-memory .sg-topic-directory .sg-topic-pending-toggle{display:flex;align-items:center;gap:8px;width:100%;padding:2px 0}
+      .sg-memory .sg-topic-directory .sg-topic-pending-label{font:700 13.5px var(--sg-serif);color:var(--sg-text)}
+      .sg-memory .sg-topic-directory .sg-topic-pending-toggle>span:nth-child(2){margin-left:auto;font:12px var(--sg-mono);color:var(--sg-muted);font-variant-numeric:tabular-nums}
+      .sg-memory .sg-topic-directory .sg-topic-pending-toggle>span:nth-child(2):before{content:none}
+      .sg-memory .sg-topic-directory .sg-toc-foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--sg-border)}
+      .sg-memory .sg-toc-foot-meta{color:var(--sg-muted);font-size:11.5px}
+      .sg-memory .sg-topic-directory .sg-leaf-head{padding-right:26px}
+      .sg-memory .sg-topic-directory .sg-leaf-k{color:var(--sg-muted);font:11.5px var(--sg-mono)}
+      .sg-memory .sg-topic-directory .sg-leaf-head h3{margin:2px 0 8px;font:700 19px/1.35 var(--sg-serif);color:var(--sg-text)}
+      .sg-memory .sg-topic-directory .sg-book-preview .sg-leaf-sum{margin:0 0 14px;max-height:min(360px,45vh);padding-right:6px;overflow:auto;color:var(--sg-subtle);font-size:13px;line-height:1.75}
+      .sg-memory .sg-reader-cta-row{margin-top:4px;display:flex;justify-content:flex-start}
+      .sg-memory .sg-reader-open-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);color:var(--sg-text);font-size:12.5px;font-weight:550;cursor:pointer;transition:border-color .14s ease,background-color .14s ease,color .14s ease}
+      .sg-memory .sg-reader-open-btn:hover{border-color:var(--sg-moss);background:var(--sg-moss-soft);color:var(--sg-moss-deep)}
+      .sg-memory .sg-topic-directory .sg-topic-overview{margin:0 0 10px}
+      .sg-memory .sg-topic-directory .sg-topic-overview-toggle{display:inline-flex;align-items:center;gap:5px;width:auto;padding:1px 0;font-size:11px;color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-overview-toggle>.sg-directory-number,.sg-memory .sg-topic-directory .sg-topic-overview-toggle>span:nth-child(2){font-size:0}
+      .sg-memory .sg-topic-directory .sg-topic-overview-toggle>.sg-directory-number{min-width:0}
+      .sg-memory .sg-topic-directory .sg-topic-overview-toggle>.sg-directory-number:before{content:'概要';font:11px var(--sg-sans);color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-overview-text{margin:4px 0 8px;padding:0;font-size:13px;line-height:1.75;color:var(--sg-subtle)}
+      .sg-memory .sg-topic-directory .sg-topic-event-list{border-top:1px solid var(--sg-border)}
+      .sg-memory .sg-topic-directory .sg-topic-event{display:grid;grid-template-columns:minmax(3.2em,auto) minmax(0,1fr) auto auto;align-items:baseline;gap:10px;padding:8px 4px;border:0;border-bottom:1px solid var(--sg-hair);border-radius:0;transition:background-color .14s ease}
+      .sg-memory .sg-topic-directory .sg-topic-event:hover{background:var(--sg-moss-soft)}
+      .sg-memory .sg-topic-directory .sg-topic-event>.sg-directory-number{min-width:0;font:500 11.5px var(--sg-mono);color:var(--sg-muted)}
+      .sg-memory .sg-topic-directory .sg-topic-event-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500;color:var(--sg-text)}
+      .sg-memory .sg-topic-directory .sg-topic-event:hover .sg-topic-event-title{color:var(--sg-moss-deep)}
+      .sg-memory .sg-topic-directory .sg-topic-event-arrow{display:inline-block;opacity:0;color:var(--sg-moss-deep);font-size:12px;transition:opacity .12s ease}
+      .sg-memory .sg-topic-directory .sg-topic-event:hover .sg-topic-event-arrow,.sg-memory .sg-topic-directory .sg-topic-event:focus-visible .sg-topic-event-arrow{opacity:1}
+      .sg-memory .sg-topic-directory .sg-topic-show-all{width:100%;margin:0;padding:8px 4px;border-radius:0;text-align:left;font-size:12px!important;font-weight:600;color:var(--sg-moss-deep)!important}
+      .sg-memory .sg-topic-directory .sg-topic-show-all:hover{background:var(--sg-moss-soft)}
+      .sg-memory .sg-topic-directory .sg-topic-section-body .sg-leaf-sum{display:block;margin:0 0 10px;color:var(--sg-muted);font-size:12.5px}
+      .sg-memory .sg-topic-directory .sg-leaf-folio{position:static;margin-top:auto;padding-top:18px;background:transparent;text-align:center;font:11px var(--sg-serif);color:var(--sg-muted)}
+      @container sg-memory (min-width:761px){
+        .sg-memory .sg-topic-directory .sg-book>.sg-leaf{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(0,.98fr);column-gap:28px;row-gap:0;align-items:start;padding:28px 30px 22px 34px;min-height:460px}
+        .sg-memory .sg-topic-directory .sg-toc-title,.sg-memory .sg-topic-directory .sg-toc-col,.sg-memory .sg-topic-directory .sg-topic-chapters,.sg-memory .sg-topic-directory .sg-topic-pending,.sg-memory .sg-topic-directory .sg-toc-foot{grid-column:1;min-width:0}
+        .sg-memory .sg-topic-directory .sg-reader-track{grid-column:2;grid-row:1 / span 7;align-self:stretch;position:relative;z-index:1;min-width:0;padding-left:28px;border-left:1px solid var(--sg-border);pointer-events:none}
+        .sg-memory .sg-topic-directory .sg-reader-sticky-anchor{position:sticky;top:14px;height:0;pointer-events:none}
+        .sg-memory .sg-topic-directory .sg-book-preview{display:flex;flex-direction:column;position:sticky;top:14px;left:auto;right:auto;width:auto;min-height:min(440px,calc(100vh - 240px));max-height:calc(100vh - 70px);padding:0 6px 0 0;border:0;overflow:auto;pointer-events:auto;animation:sg-daily-fade .2s var(--sg-ease) both}
+        .sg-memory .sg-topic-directory .sg-directory-fold.open>.sg-directory-fold-inner>.sg-topic-section-body{display:flex;flex-direction:column;z-index:2;min-height:min(440px,calc(100vh - 240px));max-height:var(--sg-reader-max-height,max(320px,calc(100vh - 136px)));padding-right:6px;pointer-events:auto}
+      }
+      @container sg-memory (max-width:760px){
+        .sg-memory .sg-topic-directory .sg-book-ribbon,.sg-memory .sg-topic-directory .sg-reader-track{display:none}
+        .sg-memory .sg-topic-directory .sg-book>.sg-leaf{display:block;padding:20px 16px 16px;min-height:0}
+        .sg-memory .sg-topic-directory .sg-toc-title{margin-bottom:8px;font-size:15px}
+        .sg-memory .sg-topic-directory .sg-topic-chapter-toggle{padding:4px 0}
+        .sg-memory .sg-topic-directory .sg-topic-chapter-toggle>.sg-topic-chapter-title{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+        .sg-memory .sg-topic-directory .sg-topic-sections{padding:4px 0 2px}
+        .sg-memory .sg-topic-directory .sg-topic-section-toggle{display:grid;grid-template-columns:auto minmax(0,1fr) auto;width:100%;margin-left:0;padding:6px 4px 6px 16px}
+        .sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-toc-lead{display:none}
+        .sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-toc-sec-title{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+        .sg-memory .sg-topic-directory .sg-topic-section-toggle>.sg-toc-cnt{margin:0}
+        .sg-memory .sg-topic-directory .sg-topic-section-toggle.cur:before{left:6px}
+        .sg-memory .sg-topic-directory .sg-topic-other-events{margin:4px 0 0 16px;padding:2px 4px}
+        .sg-memory .sg-topic-directory .sg-directory-fold.open>.sg-directory-fold-inner>.sg-topic-section-body{position:static;top:auto;left:auto;z-index:auto;width:auto;min-height:0;max-height:none;margin:6px 0 10px 12px;padding:12px 12px 10px 14px;border:1px solid var(--sg-hair);border-left:2.5px solid var(--sg-moss);border-radius:0 6px 6px 0;background:var(--sg-page)}
+        .sg-memory .sg-topic-directory .sg-leaf-head{padding-right:0}
+        .sg-memory .sg-topic-directory .sg-topic-event-title{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+      }
+      .sg-pg-end .sg-long-tabs.sg-seg{border-radius:8px;padding:3px;background:var(--sg-sheet)}
+      .sg-pg-end .sg-long-tabs.sg-seg>button[aria-current=page]{background:var(--sg-page);color:var(--sg-text);box-shadow:0 1px 3px color-mix(in srgb,#000 10%,transparent),0 0 0 1px var(--sg-hair)}
+      .sg-memory .sg-long-toolbar .sg-search input{min-height:34px;border-radius:8px}
+      .sg-memory .sg-toolbar-button{min-height:34px;border-radius:8px;font-size:12.5px;background:var(--sg-page)}
+      .sg-memory .sg-long-layout{border-radius:10px;border-color:var(--sg-hair);background:var(--sg-page);box-shadow:none}
+      .sg-memory .sg-timeline{padding:14px 18px 18px}
+      .sg-memory .sg-ev{padding:7px 8px;border-radius:6px;transition:background-color .14s ease}
+      .sg-memory .sg-ev:hover{background:var(--sg-moss-soft)}
+      .sg-memory .sg-ev.selected{background:var(--sg-moss-soft);box-shadow:inset 2.5px 0 0 var(--sg-moss)}
+      .sg-memory .sg-ev .sg-nd{left:-26.5px}
+      .sg-memory .sg-ev .sg-tp{padding:1px 7px;border-radius:999px;background:var(--sg-soft);font-size:11px;color:var(--sg-muted)}
+      .sg-memory .sg-dream{border-left-color:var(--sg-moss);background:var(--sg-moss-soft);border-radius:0 7px 7px 0;padding:7px 12px}
       .sg-more .sg-more-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px 10px 14px;border-top:1px solid var(--sg-hair);list-style:none}
       .sg-more .sg-more-row:first-child{border-top:0}
       .sg-more .sg-more-row>div{min-width:0;flex:1 1 auto}
@@ -3237,6 +3345,11 @@ window.__ModuleLoader__.load({
       return (topic.sections || []).map((section) => ({ ...section, uiKey: section.key, uiTitle: section.title }))
     }
 
+    function chapterTitle(topic) {
+      const title = typeof topic?.title === 'string' ? topic.title.trim() : ''
+      return title || '未命名主题'
+    }
+
     function directoryScrollAction(saved, section, namespace, viewName) {
       if (!saved) return 'none'
       if (section !== 'long' || namespace !== saved.namespace) return 'clear'
@@ -3335,7 +3448,7 @@ window.__ModuleLoader__.load({
         page.total > 9 ? h('button', { type: 'button', className: 'sg-topic-show-all', disabled: !showAll && (page.loading || Boolean(page.error)), 'aria-expanded': showAll, onClick: () => setShowAll((value) => !value) }, showAll ? collapseLabel : '还有 ' + (page.total - 9) + ' 条事件 · ' + (expandLabel || '展开全部')) : null)
     }
 
-    function TopicSection({ part, chapter, index, topicId, namespace, revision, active, openEvent, onDirectoryChanged, open = false, onToggle }) {
+    function TopicSection({ part, chapter, chapterName = '', index, topicId, namespace, revision, active, openEvent, onDirectoryChanged, open = false, onToggle }) {
       const [overviewOpen, setOverviewOpen] = React.useState(true)
       const sectionNumber = chapter + '.' + index
       const regionId = 'sg-topic-' + encodeURIComponent(topicId) + '-' + encodeURIComponent(part.uiKey)
@@ -3345,7 +3458,10 @@ window.__ModuleLoader__.load({
         h('h3', { className: 'sg-topic-section-heading' }, h('button', { type: 'button', className: 'sg-topic-section-toggle' + (open ? ' cur' : ''), title: part.uiTitle, 'data-count': String(sourceCount), 'aria-expanded': open, 'aria-controls': regionId, onClick: () => onToggle?.(part.uiKey) },
           h('span', { className: 'sg-directory-number' }, sectionNumber), h('span', { className: 'sg-toc-sec-title' }, part.uiTitle), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', title: sourceCount + ' 条事件'}, String(sourceCount)), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '\u203a'))),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-section-body' },
-          h('div', { className: 'sg-leaf-head' }, h('span', { className: 'sg-leaf-k' }, sectionNumber), h('h3', null, part.uiTitle), h('p', { className: 'sg-leaf-sum' }, paragraphs.join('\n\n') || '这一节暂时没有概要。')),
+          h('div', { className: 'sg-leaf-head' },
+            h('span', { className: 'sg-leaf-k', title: chapterName || undefined }, sectionNumber + ' · ' + sourceCount + ' 条事件'),
+            h('h3', null, part.uiTitle),
+            !paragraphs.length ? h('p', { className: 'sg-leaf-sum' }, '这一节暂时没有概要。') : null),
           // Keep the .0 control for focus, overview state and pagination; CSS
           // hides the "总览" label so the right page reads as prose + dated rows.
           (part.paragraphs || []).length ? h('div', { className: 'sg-topic-overview' }, h('h4', { className: 'sg-topic-overview-heading' }, h('button', { type: 'button', className: 'sg-topic-overview-toggle', 'aria-expanded': overviewOpen, 'aria-controls': regionId + '-overview', onClick: () => setOverviewOpen((current) => !current) }, h('span', { className: 'sg-directory-number' }, sectionNumber + '.0'), h('span', null, '总览'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
@@ -3360,19 +3476,20 @@ window.__ModuleLoader__.load({
       React.useEffect(() => { if (expandRequest > 0) setOpen(true) }, [expandRequest])
       const regionId = 'sg-topic-chapter-' + encodeURIComponent(topic.id)
       const chapterLabel = '第' + chapterOrdinal(number) + '章'
+      const displayTitle = chapterTitle(topic)
       const chapterEvents = topicSections(topic).reduce((sum, part) => sum + Number(part.sourceEventCount || 0), 0)
       return h('article', { className: 'sg-topic-chapter', 'data-topic-id': topic.id },
         h('header', { className: 'sg-topic-chapter-header' },
           h('span', { className: 'sg-topic-chapter-number', 'aria-hidden': 'true' }, String(number).padStart(2, '0')),
-          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: topic.title, 'data-count': String(chapterEvents), 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + topic.title, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, topic.title), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', title: chapterEvents + ' 条事件'}, String(chapterEvents)), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
+          h('div', { className: 'sg-topic-chapter-copy' }, h('h2', null, h('button', { type: 'button', className: 'sg-topic-chapter-toggle', title: displayTitle, 'data-count': String(chapterEvents), 'aria-expanded': open, 'aria-controls': regionId, 'aria-label': chapterLabel + ' ' + displayTitle, onClick: () => setOpen((current) => !current) }, h('span', { className: 'sg-topic-chapter-label' }, chapterLabel), h('span', { className: 'sg-topic-chapter-title' }, displayTitle), h('span', { className: 'sg-toc-lead', 'aria-hidden': 'true' }), h('span', { className: 'sg-toc-cnt', title: chapterEvents + ' 条事件'}, String(chapterEvents)), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))), topic.description ? h('p', { className: 'sg-topic-description' }, topic.description) : null)),
         h(DirectoryFold, { open, id: regionId }, h('div', { className: 'sg-topic-sections' },
-          topicSections(topic).map((part, index) => { const selectionKey = topic.id + ':' + part.uiKey; return h(TopicSection, { key: part.uiKey, part, chapter: number, index: index + 1, topicId: topic.id, namespace, revision, open: openSection === selectionKey, onToggle: () => onSectionToggle?.(selectionKey, part), active: active && open, openEvent, onDirectoryChanged }) }),
+          topicSections(topic).map((part, index) => { const selectionKey = topic.id + ':' + part.uiKey; return h(TopicSection, { key: part.uiKey, part, chapter: number, chapterName: chapterLabel + ' · ' + displayTitle, index: index + 1, topicId: topic.id, namespace, revision, open: openSection === selectionKey, onToggle: () => onSectionToggle?.(selectionKey, part), active: active && open, openEvent, onDirectoryChanged }) }),
           !(topic.sections || []).length ? h('p', { className: 'sg-topic-no-overview' }, '这个主题还没有小节。') : null,
           // Keep the unassigned-event disclosure for pagination and aria; CSS
           // hides its old "待归类事件" wording in the book view.
           (() => {
             const remaining = Number(topic.coverage?.unassignedEvents ?? topic.coverage?.omittedEvents ?? 0)
-            return remaining ? h('details', { className: 'sg-topic-other-events', open: otherOpen, onToggle: (event) => setOtherOpen(event.currentTarget.open) }, h('summary', null, '待归类事件 · ' + remaining), h(TopicEventList, { namespace, revision, topicId: topic.id, sectionKey: 'uncovered', total: remaining, active: active && open && otherOpen, openEvent, onDirectoryChanged })) : null
+            return remaining ? h('details', { className: 'sg-topic-other-events', open: otherOpen, onToggle: (event) => setOtherOpen(event.currentTarget.open) }, h('summary', { 'data-count': String(remaining) }, '待归类事件 · ' + remaining), h(TopicEventList, { namespace, revision, topicId: topic.id, sectionKey: 'uncovered', total: remaining, active: active && open && otherOpen, openEvent, onDirectoryChanged })) : null
           })())))
     }
 
@@ -3842,6 +3959,9 @@ window.__ModuleLoader__.load({
       const [expandRequest, setExpandRequest] = React.useState(0)
       const [selectedSection, setSelectedSection] = React.useState('')
       const chaptersRef = React.useRef(null)
+      const leafRef = React.useRef(null)
+      const readerTrackRef = React.useRef(null)
+      const stickyAnchorRef = React.useRef(null)
       const revision = directory?.revision || ''
       const blocked = invalidatedRevision === revision
       // A successful dashboard read is a fresh snapshot even if content changed
@@ -3857,28 +3977,103 @@ window.__ModuleLoader__.load({
       const unassignedTotal = pendingTotal
       const firstSection = topics.flatMap((topic) => topicSections(topic).map((part) => ({ topic, part })))[0]
       const openSection = selectedSection
+      React.useEffect(() => {
+        if (typeof window === 'undefined' || typeof ResizeObserver !== 'function') return undefined
+        const leaf = leafRef.current
+        const track = readerTrackRef.current
+        const anchor = stickyAnchorRef.current
+        if (!leaf || !track || !anchor) return undefined
+        let frame = 0
+        const sync = () => {
+          frame = 0
+          const wide = track.offsetWidth > 0 && getComputedStyle(track).display !== 'none'
+          if (!wide) {
+            leaf.style.removeProperty('--sg-reader-top')
+            leaf.style.removeProperty('--sg-reader-left')
+            leaf.style.removeProperty('--sg-reader-width')
+            leaf.style.removeProperty('--sg-reader-max-height')
+            track.style.removeProperty('min-height')
+            return
+          }
+          const left = track.offsetLeft
+          const width = track.offsetWidth
+          const trackStyle = getComputedStyle(track)
+          const padLeft = parseFloat(trackStyle.paddingLeft) || 0
+          const padRight = parseFloat(trackStyle.paddingRight) || 0
+          const openBody = leaf.querySelector('.sg-directory-fold.open > .sg-directory-fold-inner > .sg-topic-section-body')
+          const bodyHeight = openBody ? openBody.offsetHeight : 0
+          const anchorTop = anchor.offsetTop
+          const foot = leaf.querySelector('.sg-toc-foot')
+          const footBottom = foot ? (foot.offsetTop + foot.offsetHeight) : ((chaptersRef.current?.offsetTop || 0) + (chaptersRef.current?.offsetHeight || 0))
+          const leftTrackSpan = Math.max(0, footBottom - track.offsetTop)
+          const maxOffset = Math.max(0, leftTrackSpan - bodyHeight)
+          const offset = openBody ? Math.max(0, Math.min(anchorTop, maxOffset)) : 0
+          const readerTopInViewport = Math.max(14, Math.round(track.getBoundingClientRect().top + offset))
+          const readerMaxHeight = Math.max(320, Math.floor(window.innerHeight - readerTopInViewport - 24))
+          leaf.style.setProperty('--sg-reader-left', (left + padLeft) + 'px')
+          leaf.style.setProperty('--sg-reader-width', Math.max(0, width - padLeft - padRight) + 'px')
+          leaf.style.setProperty('--sg-reader-top', (track.offsetTop + offset) + 'px')
+          leaf.style.setProperty('--sg-reader-max-height', readerMaxHeight + 'px')
+          if (openBody && bodyHeight > 0) track.style.minHeight = (offset + bodyHeight) + 'px'
+          else track.style.removeProperty('min-height')
+        }
+        const schedule = () => { if (!frame) frame = window.requestAnimationFrame(sync) }
+        const onScroll = (event) => {
+          const target = event?.target
+          if (target instanceof Element && target.closest('.sg-topic-section-body, .sg-book-preview')) return
+          schedule()
+        }
+        sync()
+        const ro = new ResizeObserver(schedule)
+        ro.observe(leaf)
+        ro.observe(track)
+        const openBody = leaf.querySelector('.sg-directory-fold.open > .sg-directory-fold-inner > .sg-topic-section-body')
+        if (openBody) ro.observe(openBody)
+        window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+        window.addEventListener('resize', schedule, { passive: true })
+        return () => {
+          if (frame) window.cancelAnimationFrame(frame)
+          ro.disconnect()
+          window.removeEventListener('scroll', onScroll, { capture: true })
+          window.removeEventListener('resize', schedule)
+        }
+      }, [selectedSection, topics.length, pendingOpen, blocked])
       return h('section', { className: 'sg-topic-directory', 'data-testid': 'stratagate-topic-directory', 'aria-label': '主题目录' },
         blocked ? h('p', { className: 'sg-topic-read-error', role: 'status' }, '目录已有更新，正在重新读取。', h('button', { type: 'button', onClick: onDirectoryChanged }, '重新读取目录')) : null,
         h('div', { hidden: blocked }, h(TopicBootstrapNotice, { directory }),
           !directory ? h('p', { className: 'sg-topic-empty', role: 'status' }, '暂时无法读取主题目录，请稍后重新打开。') : !topics.length && !pendingTotal ? h('div', { className: 'sg-topic-empty' }, h('h3', null, '还没有长期记忆'), h('p', null, '产生长期事件后，主题会在这里逐步整理成目录。')) : null,
           topics.length || pendingTotal ? h('div', { className: 'sg-how' }, h('i', { className: 'sg-sw moss', 'aria-hidden': 'true' }), '目录一直带着', h('span', { 'aria-hidden': 'true' }, '→'), h('i', { className: 'sg-sw lib', 'aria-hidden': 'true' }), '需要时翻到具体事件') : null,
-          h('div', { className: 'sg-book' }, h('div', { className: 'sg-leaf' },
+          h('div', { className: 'sg-book' },
+            topics.length || pendingTotal ? h('span', { className: 'sg-book-ribbon', 'aria-hidden': 'true' },
+              h('svg', { viewBox: '0 0 18 36', width: 17, height: 34, focusable: 'false' },
+                h('path', { d: 'M0 0h18v35l-9-7-9 7z', fill: 'currentColor' }))) : null,
+            h('div', { className: 'sg-leaf', ref: leafRef },
             h('h3', { className: 'sg-toc-title' }, '目录'),
             h('div', { className: 'sg-toc-col' }, '事件'),
-            h('div', { ref: chaptersRef }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, openSection, onSectionToggle: (key, part) => setSelectedSection(key) }))),
+            h('div', { ref: chaptersRef, className: 'sg-topic-chapters' }, topics.map((topic, index) => h(TopicChapter, { key: topic.id, topic, number: index + 1, namespace, revision: pageRevision, active: active && !blocked, openEvent, onDirectoryChanged: invalidate, expandRequest, openSection, onSectionToggle: (key, part) => setSelectedSection((current) => current === key ? '' : key) }))),
             // The right page shows the first section's title and prose until a
             // section is clicked; this avoids a blank page without prefetching
             // event rows before the user asks for them.
-            !selectedSection && firstSection ? h('div', { className: 'sg-book-preview', 'aria-label': '默认打开的章节' },
-              h('span', { className: 'sg-leaf-k' }, '1.1'), h('h3', null, firstSection.part.uiTitle),
-              h('p', { className: 'sg-leaf-sum' }, (firstSection.part.paragraphs || []).map((paragraph) => paragraph.text || '').filter(Boolean).join('\n\n') || '点左侧小节，翻开具体事件。')) : null,
+            h('div', { className: 'sg-reader-track', ref: readerTrackRef },
+              h('div', { className: 'sg-reader-sticky-anchor', ref: stickyAnchorRef, 'aria-hidden': 'true' }),
+              !selectedSection && firstSection ? h('div', { className: 'sg-book-preview', 'aria-label': '默认打开的章节' },
+                h('div', { className: 'sg-leaf-head' },
+                  h('span', { className: 'sg-leaf-k' }, '1.1 · ' + Number(firstSection.part.sourceEventCount || 0) + ' 条事件'),
+                  h('h3', null, firstSection.part.uiTitle)),
+                h('p', { className: 'sg-leaf-sum' }, (firstSection.part.paragraphs || []).map((paragraph) => paragraph.text || '').filter(Boolean).join('\n\n') || '这一节暂时没有概要，点下方按钮或左侧任意小节可翻看原事件。'),
+                h('div', { className: 'sg-reader-cta-row' },
+                  h('button', { type: 'button', className: 'sg-reader-open-btn', onClick: () => setSelectedSection(firstSection.topic.id + ':' + firstSection.part.uiKey) },
+                    Number(firstSection.part.sourceEventCount || 0) > 0 ? '翻看本节 ' + Number(firstSection.part.sourceEventCount) + ' 条事件 →' : '打开本节 →')),
+                h('div', { className: 'sg-leaf-folio', 'aria-hidden': 'true' }, '— 第一章 · 1.1 —')) : null),
             // Pending events stay reachable through the existing lightweight
             // disclosure; CSS hides the old "待整理 N 条" label in the book.
             unassignedTotal ? h('section', { className: 'sg-topic-pending', 'aria-label': '待整理事件' },
               h('div', { className: 'sg-topic-pending-heading' },
                 h('button', { type: 'button', className: 'sg-topic-pending-toggle', 'aria-expanded': pendingOpen, 'aria-controls': 'sg-topic-pending-events', onClick: () => setPendingOpen((value) => !value) }, h('span', { className: 'sg-topic-pending-label' }, '待整理'), h('span', null, unassignedTotal + ' 条'), h('span', { className: 'sg-directory-chevron', 'aria-hidden': 'true' }, '›'))),
               h(DirectoryFold, { open: pendingOpen, id: 'sg-topic-pending-events' }, h('p', null, '这些记忆尚未形成稳定主题，仍可直接查看原事件。'), h(TopicEventList, { namespace, revision: pageRevision, topicId: 'pending', total: pendingTotal, active: active && !blocked && pendingOpen, openEvent, onDirectoryChanged: invalidate, expandLabel: '查看全部待整理', collapseLabel: '收起待整理事件' }))) : null,
-            h('div', { className: 'sg-toc-foot sg-leaf-foot' }, h('style', null, DIRECTORY_PREVIEW_STYLES), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
+            h('div', { className: 'sg-toc-foot sg-leaf-foot' },
+              topics.length ? h('span', { className: 'sg-toc-foot-meta' }, directory?.dreaming?.status === 'completed' && directory?.dreaming?.updatedAt ? '最近整理 ' + eventDayKey(directory.dreaming.updatedAt) : '共 ' + topics.length + ' 章') : null,
+              h('style', null, DIRECTORY_PREVIEW_STYLES), h(DirectoryContextPreview, { context: blocked ? '' : directory?.context, active }))))))
     }
 
     function LongTermPage({ events, eventPage, graph, graphSettings = {}, project, query, setQuery, openEvent, namespace, focusNodeId, onFocusHandled, topicDirectory, onDirectoryChanged, extractionGap = false, active = true, refresh }) {
@@ -3978,7 +4173,10 @@ window.__ModuleLoader__.load({
       const graphMenu = h('div', { ref: graphMenuRef, className: 'sg-graph-menu' }, h('button', { type: 'button', className: 'sg-graph-menu-trigger', 'aria-label': '知识图谱设置', 'aria-expanded': graphMenuOpen, onClick: () => setGraphMenuOpen((value) => !value) }, h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' }, h('path', { d: 'M12 5v14M5 12h14', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' }))), graphMenuOpen ? h('div', { className: 'sg-graph-menu-popover' }, h(GraphControlPanel, { state: graphSettings, refresh, page: true, onOpenGraph: () => { setGraphMenuOpen(false); setMode('graph') }, onGraphHidden: () => { setGraphMenuOpen(false); setMode('topics') } })) : null)
       const tabChildren = [...longTabs.map(tabButton), graphMenu]
       return h('section', { className: 'sg-long-explorer ' + (fullScreen ? 'fullscreen' : ''), 'aria-label': fullScreen ? '长期记忆全屏探索' : '长期记忆浏览' },
-        h('div', { className: 'sg-pg-head' }, h('h2', null, '长期记忆'),
+        h('div', { className: 'sg-pg-head' },
+          h('div', { className: 'sg-pg-title' },
+            h('h2', null, '长期记忆'),
+            mode === 'topics' && (topicDirectory?.topics?.length || 0) > 0 ? h('span', { className: 'sg-pg-tag' }, topicDirectory.topics.length + ' 个主题' + (Number(topicDirectory?.pending?.total || 0) > 0 ? ' · ' + Number(topicDirectory.pending.total) + ' 条待整理' : '')) : null),
           h('span', { className: 'sg-pg-end' }, h('nav', { className: 'sg-long-tabs sg-seg', 'aria-label': '长期记忆视角' }, tabChildren))),
         h('div', { hidden: mode !== 'topics' }, h(TopicDirectory, { directory: topicDirectory, namespace, active: active && mode === 'topics', openEvent, onDirectoryChanged })),
         mode === 'topics' ? null : h(React.Fragment, null,

@@ -286,6 +286,37 @@ try {
       return geo
     }
     await checkBookGeometry('desktop-wide-first-section')
+    const readerScroll = await (async () => {
+      const box = await page.evaluate(() => {
+        const body = document.querySelector('.sg-topic-directory .sg-directory-fold.open > .sg-directory-fold-inner > .sg-topic-section-body')
+        if (!body) return null
+        const rect = body.getBoundingClientRect()
+        const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 120))
+        return {
+          left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height,
+          innerHeight: window.innerHeight,
+          scrollHeight: body.scrollHeight, clientHeight: body.clientHeight,
+          scrollTopBefore: body.scrollTop,
+          hitInsideBody: Boolean(hit && body.contains(hit)),
+          hitClass: hit ? hit.className : null,
+        }
+      })
+      assert.ok(box && box.hitInsideBody, `Right reader pane is covered by ${box?.hitClass}`)
+      assert.ok(box.bottom <= box.innerHeight + 1, `Right reader pane overflows bottom of viewport: bottom=${box.bottom}, innerHeight=${box.innerHeight}`)
+      if (box.scrollHeight > box.clientHeight + 4) {
+        await page.mouse.move(box.left + box.width / 2, box.top + Math.min(box.height / 2, 120))
+        await page.mouse.wheel(0, 300)
+        await page.waitForTimeout(150)
+        const after = await page.evaluate(() => {
+          const body = document.querySelector('.sg-topic-directory .sg-directory-fold.open > .sg-directory-fold-inner > .sg-topic-section-body')
+          return body ? body.scrollTop : 0
+        })
+        assert.ok(after > box.scrollTopBefore, `Expected mouse wheel to scroll right reader pane, got before=${box.scrollTopBefore}, after=${after}`)
+        return { scrollable: true, scrollTopAfter: after }
+      }
+      return { scrollable: false, scrollTopAfter: 0 }
+    })()
+    await inspectAndCapture('05c-long-term-section-open', null)
     await toggles.nth(sharedIndices[1]).click()
     await page.waitForTimeout(200)
     await checkBookGeometry('desktop-wide-shared-title-second-section')
@@ -300,7 +331,7 @@ try {
       const rootEl = document.getElementById('root')
       if (rootEl) rootEl.style.width = '100%'
     })
-    return { sharedTitleTested: sharedIndices.length >= 2, checkedIndices: sharedIndices }
+    return { sharedTitleTested: sharedIndices.length >= 2, checkedIndices: sharedIndices, readerScroll }
   })()
   await inspectAndCapture('06-more', '更多')
   const advancedSettingsBtn = page.locator('button.sg-more-go', { hasText: '高级设置' }).first()

@@ -1,8 +1,9 @@
 import { effectiveGraphNodeView, estimateTokens, dreamingEventVersion, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
   dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, DREAMING_SOURCE_PAGE_CHARACTERS,
   toUtc8Iso,
-  type BlockLevel, type DreamingRun, type EventCard, type StrataGate } from '@diqier/stratagate'
-import { topicPage } from './topics.js'
+  normalizeMemoryTopicLabel,
+  type BlockLevel, type DreamingRun, type EventCard, type MemoryTopic, type StrataGate } from '@diqier/stratagate'
+import { memoryTopicSections, sortMemoryTopics, topicPage } from './topics.js'
 import type { DailyNotes } from './daily-notes.js'
 
 export interface DreamingAction { tool: string; args: Record<string, unknown> }
@@ -22,6 +23,100 @@ function page<T>(items: T[], args: Record<string, unknown>): unknown {
   return { items: items.slice(offset, offset + limit), total: items.length, offset, nextOffset: offset + limit < items.length ? offset + limit : null,
     contentVersion: dreamingTopicVersion(items) }
 }
+
+const DREAMING_DIRECTORY_OVERVIEW_MAX_CHAPTERS = 25
+const DREAMING_DIRECTORY_OVERVIEW_MAX_CHARS = 4500
+const DREAMING_SECTION_EVENTS_PREVIEW_LIMIT = 40
+const DREAMING_BLOATED_OVERVIEW_COUNT = 5
+const DREAMING_BLOATED_OVERVIEW_CHARS = 1500
+
+function isBloatedSectionOverview(overviewCount: number, overviewChars: number): boolean {
+  return overviewCount >= DREAMING_BLOATED_OVERVIEW_COUNT || overviewChars >= DREAMING_BLOATED_OVERVIEW_CHARS
+}
+
+function safeSlice(value: string, maxUnits: number): string {
+  const maybeWellFormed = (value as string & { toWellFormed?: () => string }).toWellFormed
+  const wellFormed = typeof maybeWellFormed === 'function' ? maybeWellFormed.call(value) : value
+  if (wellFormed.length <= maxUnits) return wellFormed
+  let end = maxUnits
+  const last = wellFormed.charCodeAt(end - 1)
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1
+  return wellFormed.slice(0, end)
+}
+
+function resolveEventByIdOrPrefix(events: readonly EventCard[], rawId: string): EventCard | undefined {
+  const trimmed = rawId.trim()
+  if (!trimmed) return undefined
+  const exact = events.find(event => event.id === trimmed)
+  if (exact) return exact
+  if (trimmed.length < 8) return undefined
+  const matches = events.filter(event => event.id.startsWith(trimmed))
+  if (matches.length === 1) return matches[0]
+  if (matches.length > 1) throw new Error(`Ambiguous event id prefix ${JSON.stringify(trimmed)} (${matches.length} matches); use the full event id`)
+  return undefined
+}
+
+function topicSectionHealth(topic: MemoryTopic) {
+  const sections = memoryTopicSections(topic)
+  const assigned = new Set(sections.flatMap(section => section.sourceEventIds))
+  const unassignedCount = topic.sourceEventIds.filter(id => !assigned.has(id)).length
+  return {
+    unassignedCount,
+    sections: sections.map(section => {
+      const overviewCount = section.paragraphs.length
+      const overviewChars = section.paragraphs.reduce((sum, part) => sum + Array.from(part.text).length, 0)
+      return {
+        title: section.title,
+        eventCount: section.sourceEventIds.length,
+        overviewCount,
+        overviewChars,
+        ...(isBloatedSectionOverview(overviewCount, overviewChars) ? { needsOverviewCondense: true } : {}),
+      }
+    }),
+  }
+}
+
+export function buildDreamingDirectoryOverview(topics: readonly MemoryTopic[]) {
+  const ordered = sortMemoryTopics(topics).map(topic => {
+    const health = topicSectionHealth(topic)
+    return {
+      id: topic.id,
+      title: topic.title,
+      eventCount: topic.sourceEventIds.length,
+      ...(health.unassignedCount > 0 ? { unassignedCount: health.unassignedCount } : {}),
+      sections: health.sections,
+    }
+  })
+  const version = dreamingTopicVersion(ordered)
+  if (ordered.length <= DREAMING_DIRECTORY_OVERVIEW_MAX_CHAPTERS
+    && JSON.stringify(ordered).length <= DREAMING_DIRECTORY_OVERVIEW_MAX_CHARS) {
+    return { version, totalChapters: ordered.length, chapters: ordered }
+  }
+  const needsAttention = (entry: typeof ordered[number]) =>
+    (entry.unassignedCount ?? 0) > 0
+    || entry.sections.some(sec => sec.needsOverviewCondense === true)
+  const prioritized = [
+    ...ordered.filter(needsAttention),
+    ...ordered.filter(entry => !needsAttention(entry)),
+  ]
+  const selected: typeof ordered = []
+  let usedChars = 2
+  for (const entry of prioritized) {
+    if (selected.length >= DREAMING_DIRECTORY_OVERVIEW_MAX_CHAPTERS) break
+    const size = JSON.stringify(entry).length + (selected.length ? 1 : 0)
+    if (selected.length > 0 && usedChars + size > DREAMING_DIRECTORY_OVERVIEW_MAX_CHARS) break
+    selected.push(entry)
+    usedChars += size
+  }
+  const omittedChapters = ordered.length - selected.length
+  return {
+    version,
+    totalChapters: ordered.length,
+    chapters: selected,
+    ...(omittedChapters > 0 ? { omittedChapters, hint: '部分章节未展示，可用 memory_list_topics(offset) 翻看其余章节。' } : {}),
+  }
+}
+
 function textPage(value: unknown, args: Record<string, unknown>): { content: string; contentVersion: string; offset: number; totalCharacters: number; nextOffset: number | null } {
   const content = typeof value === 'string' ? value : JSON.stringify(value)
   const offset = integer(args.offset, 0, Number.MAX_SAFE_INTEGER)
@@ -43,17 +138,99 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
   const topics = memory.listMemoryTopics([...allowed]).filter(topic => !topic.isFallback)
   const evidenceIds: string[] = []
   if (tool === 'memory_list_topics') {
-    return { result: topicPage(topics, events, {
+    const listed = topicPage(topics, events, {
       ...(typeof args.query === 'string' ? { query: args.query } : {}),
       offset: integer(args.offset, 0, Number.MAX_SAFE_INTEGER), limit: Math.max(1, integer(args.limit, 12, 20)),
-    }), evidenceIds }
+    })
+    if (run.scope === 'memory') {
+      const byId = new Map(topics.map(t => [t.id, t]))
+      return {
+        result: {
+          ...listed,
+          topics: listed.topics.map(entry => {
+            const full = byId.get(entry.id)
+            if (!full) return entry
+            const health = topicSectionHealth(full)
+            return {
+              ...entry,
+              ...(health.unassignedCount > 0 ? { unassignedEventCount: health.unassignedCount } : {}),
+              sections: health.sections,
+            }
+          }),
+        },
+        evidenceIds,
+      }
+    }
+    return { result: listed, evidenceIds }
   }
   if (tool === 'memory_expand_topic') {
     const topic = topics.find(t => t.id === args.id)
     if (!topic) throw new Error('Unknown topic')
+    const membershipSections = memoryTopicMembershipSections(topic)
+    if (run.scope === 'memory') {
+      const eventMap = new Map(events.map(e => [e.id, e]))
+      const groupedSections = memoryTopicSections(topic)
+      const assigned = new Set(groupedSections.flatMap(sec => sec.sourceEventIds))
+      const unassignedEvents = topic.sourceEventIds
+        .filter(id => !assigned.has(id))
+        .map(id => {
+          const card = eventMap.get(id)
+          return card
+            ? { id: card.id, title: card.title, status: card.status, ...(card.supersededBy ? { supersededBy: card.supersededBy } : {}), summary: safeSlice(card.summary, 260) }
+            : { id }
+        })
+      const requestedSection = typeof args.section === 'string' && args.section.trim() ? args.section.trim() : null
+      const filteredSections = requestedSection
+        ? groupedSections.filter(sec => normalizeMemoryTopicLabel(sec.title) === normalizeMemoryTopicLabel(requestedSection))
+        : groupedSections
+      if (requestedSection && !filteredSections.length) {
+        throw new Error(`Unknown section ${JSON.stringify(requestedSection)}; available sections: ${groupedSections.map(s => s.title).join(', ') || '(none)'}`)
+      }
+      const offset = integer(args.offset, 0, Number.MAX_SAFE_INTEGER)
+      const limit = Math.max(1, integer(args.limit, 8, 20))
+      const pageSlice = filteredSections.slice(offset, offset + limit).map(sec => {
+        const overviewCount = sec.paragraphs.length
+        const overviewChars = sec.paragraphs.reduce((sum, part) => sum + Array.from(part.text).length, 0)
+        return {
+          title: sec.title,
+          eventCount: sec.sourceEventIds.length,
+          overviewCount,
+          overviewChars,
+          ...(isBloatedSectionOverview(overviewCount, overviewChars) ? { needsOverviewCondense: true } : {}),
+          overview: sec.paragraphs.map(part => ({ kind: part.kind, text: part.text, sourceEventIds: part.sourceEventIds })),
+          events: sec.sourceEventIds.slice(0, DREAMING_SECTION_EVENTS_PREVIEW_LIMIT).map(id => {
+            const card = eventMap.get(id)
+            return card
+              ? { id: card.id, title: card.title, status: card.status, ...(card.supersededBy ? { supersededBy: card.supersededBy } : {}), summary: safeSlice(card.summary, 220) }
+              : { id }
+          }),
+          ...(sec.sourceEventIds.length > DREAMING_SECTION_EVENTS_PREVIEW_LIMIT
+            ? { omittedEvents: sec.sourceEventIds.length - DREAMING_SECTION_EVENTS_PREVIEW_LIMIT }
+            : {}),
+        }
+      })
+      return {
+        result: {
+          id: topic.id,
+          title: topic.title,
+          description: topic.description,
+          version: memory.getDreamingTopicVersion(topic.id),
+          totalEvents: topic.sourceEventIds.length,
+          totalSections: groupedSections.length,
+          sections: {
+            items: pageSlice,
+            total: filteredSections.length,
+            offset,
+            nextOffset: offset + pageSlice.length < filteredSections.length ? offset + pageSlice.length : null,
+            contentVersion: dreamingTopicVersion(groupedSections),
+          },
+          ...(unassignedEvents.length ? { unassignedEvents } : {}),
+        },
+        evidenceIds,
+      }
+    }
     return { result: { id: topic.id, title: topic.title, description: topic.description,
-      ...(run.scope === 'memory' ? { version: memory.getDreamingTopicVersion(topic.id) } : {}),
-      sections: page(memoryTopicMembershipSections(topic), args), overview: page(topic.overview, args), totalEvents: topic.sourceEventIds.length }, evidenceIds }
+      sections: page(membershipSections, args), overview: page(topic.overview, args), totalEvents: topic.sourceEventIds.length }, evidenceIds }
   }
   if (tool === 'dreaming_search') {
     if (typeof args.query !== 'string') throw new Error('query is required')
@@ -64,8 +241,11 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
       if (args.topicId !== undefined && !topic) throw new Error('Unknown topic')
       const ids = topic ? topic.sourceEventIds : [...allowed]
       const results = await memory.searchEvents(args.query, { eventIds: ids, offset, limit, trackRetrieval: false })
-      const items = results.map(({ event }) => ({ id: event.id, title: event.title, summary: event.summary.slice(0, 1500),
-        scope: event.scope, temporal: event.temporal, needsFullRead: event.summary.length > 1500 }))
+      const items = results.map(({ event }) => ({
+        id: event.id, title: event.title, status: event.status,
+        ...(event.supersededBy ? { supersededBy: event.supersededBy } : {}),
+        summary: safeSlice(event.summary, 1500), scope: event.scope, temporal: event.temporal, needsFullRead: event.summary.length > 1500,
+      }))
       // Search hits are navigation; source details are either in the initial batch or read explicitly.
       return { result: { items, offset, nextOffset: items.length === limit ? offset + items.length : null }, evidenceIds }
     }
@@ -74,9 +254,9 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
       const hits = run.scope === 'memory'
         ? memory.searchDreamingMessages(args.query, limit + 1, offset, typeof args.threadId === 'string' ? args.threadId : undefined)
         : memory.searchRawMemory(args.query, limit + 1, { messageIds: [...new Set(events.flatMap(event => event.sourceMessageIds))], offset })
-      return { result: { items: hits.slice(0, limit).map(hit => ({ blockId: hit.blockId, messageId: hit.message.id,
-        threadId: hit.message.threadId, createdAt: hit.message.createdAt,
-        text: hit.message.content.slice(0, 1500), needsFullRead: hit.message.content.length > 1500 })), offset,
+      return { result: { items: hits.slice(0, limit).map(hit => ({ blockId: hit.blockId ?? null, messageId: hit.message.id,
+        threadId: hit.message.threadId ?? null, createdAt: hit.message.createdAt,
+        text: safeSlice(hit.message.content, 1500), needsFullRead: hit.message.content.length > 1500 })), offset,
         nextOffset: hits.length > limit ? offset + limit : null }, evidenceIds }
     }
     if (args.kind === 'graph') {
@@ -89,7 +269,7 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
     }
     if (run.scope === 'memory' && args.kind === 'experiences') {
       const items = memory.searchExperiences(args.query, limit + 1, offset, true)
-      return { result: { items: items.slice(0, limit).map(item => ({ id: item.id, title: item.title, scope: item.scope, status: item.status, preview: item.content.slice(0, 500) })),
+      return { result: { items: items.slice(0, limit).map(item => ({ id: item.id, title: item.title, scope: item.scope, status: item.status, preview: safeSlice(item.content, 500) })),
         nextOffset: items.length > limit ? offset + limit : null }, evidenceIds }
     }
     if (run.scope === 'memory' && args.kind === 'daily') {
@@ -101,7 +281,7 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
   if (tool === 'dreaming_read') {
     if (typeof args.id !== 'string') throw new Error('id is required')
     if (args.kind === 'event') {
-      const event = events.find(event => event.id === args.id)
+      const event = resolveEventByIdOrPrefix(events, args.id)
       if (!event) throw new Error('Event unavailable or changed')
       if (run.scope === 'memory') return { result: { id: event.id, ...textPage(dreamingEventContent(event), args),
         sourceRefs: { [`event:${event.id}`]: dreamingEventVersion(event) } }, evidenceIds }
@@ -228,6 +408,8 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       ...(otherOpenMessages.length ? { openMessages: otherOpenMessages } : {}),
       ...(otherNoteDates.length ? { noteDates: otherNoteDates } : {}),
     }
+    const visibleTopics = memory.listMemoryTopics(visibleEvents.map(event => event.id)).filter(topic => !topic.isFallback)
+    const directoryOverview = visibleTopics.length ? buildDreamingDirectoryOverview(visibleTopics) : null
     return {
       scope: 'memory', completedBatches: run.cursor, totalBatches: run.units.length, trigger: run.trigger,
       blocks: memory.listBlocks().filter(block => unit.blockIds?.includes(block.id) && block.l5Raw.some(message => visible.has(message.id))).map(block => ({
@@ -240,6 +422,7 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       experiencesToReview: unit.experienceIds?.length ? memory.listExperiences(true)
         .filter(item => item.status === 'needs-review' && unit.experienceIds?.includes(item.id)).map(({ id, title }) => ({ id, title })) : [],
       noteDates: unit.noteDates ?? [], graphEnabled: memory.graphEnabled,
+      ...(directoryOverview ? { directoryOverview } : {}),
       ...(Object.keys(todayAndChanged).length ? { todayAndChanged } : {}),
       lastWriteFailure: run.lastWriteFailure ? { error: run.lastWriteFailure.error } : null,
       savedChanges: run.changedBatches,

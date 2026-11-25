@@ -1652,11 +1652,11 @@ describe('memory topic model projection', () => {
     expect(calls).toHaveBeenCalledTimes(1);
     const request = calls.mock.calls[0]![0];
     expect(request.system).toContain(String(TOPIC_OVERVIEW_MAX_CHARACTERS));
-    expect(request.system).toContain('300～600');
+    expect(request.system).toContain('小节导读');
     expect(request.system).toContain('首要任务是将本批所有 Event 准确归入章节和小节');
     const schema = request.tools[0].parameters.properties.topics.items.properties.overview.items.properties.text;
     expect(schema.description).toContain(String(TOPIC_OVERVIEW_MAX_CHARACTERS));
-    expect(schema.description).toContain('300-600');
+    expect(schema.description).toContain('Concise source-grounded section guide');
     expect(schema).not.toHaveProperty('maxLength'); // DSH DSL does not support it.
   });
 

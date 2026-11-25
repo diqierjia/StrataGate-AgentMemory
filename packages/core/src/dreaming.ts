@@ -1,6 +1,6 @@
 import { dreamingEventVersion, updateDreamingMemory, type DreamingDiscovery } from './dreaming-v2.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { MEMORY_TOPIC_PROJECTOR_VERSION, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, memoryTopicSectionContent, normalizeMemoryTopicLabel, type MemoryTopicState, type MemoryTopicOverview } from './topics.js';
+import { MEMORY_TOPIC_PROJECTOR_VERSION, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, memoryTopicSectionContent, normalizeMemoryTopicLabel, pruneGhostTopicMemberships, type MemoryTopicState, type MemoryTopicOverview } from './topics.js';
 import { validateTopicOverviewText } from './topic-diagnostics.js';
 import type { EventCard } from './types.js';
 import { estimateTokens } from './blocks.js';
@@ -79,7 +79,8 @@ export interface DreamingRun {
   createdAt: string; updatedAt: string;
 }
 export type DreamingDirectoryOperation =
-  | { kind: 'rename-chapter' | 'create-chapter'; title: string; description?: string; eventIds?: string[] }
+  | { kind: 'rename-chapter' | 'create-chapter'; title: string; description?: string; eventIds?: string[]; sections?: Array<{ title: string; sourceEventIds: string[] }> }
+  | { kind: 'merge-chapters'; fromTopicIds?: string[]; from?: string[] }
   | { kind: 'rename-section'; from: string; title: string }
   | { kind: 'merge-sections'; from: string[]; title: string }
   | { kind: 'move-events'; eventIds: string[]; title: string }
@@ -278,25 +279,38 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     const saved = updateDreamingMemory(state, run, command, events);
     if (saved) return saved;
   }
-  const unit = run.scope === 'memory' && command.kind === 'apply' ? { topicId: command.topicId, eventIds: [...sources.keys()] } : run.units[run.cursor];
-  if (!unit) throw new Error('No remaining Dreaming unit');
-  if (run.scope === 'memory' && command.kind === 'apply' && command.operations?.[0]?.kind === 'create-chapter') {
-    const op = command.operations[0];
-    if (command.operations.length !== 1 || !op.eventIds?.length || op.eventIds.some(id => !sources.has(id))) {
+  let effectiveOperations = command.kind === 'apply' ? command.operations : undefined;
+  let targetTopicId = run.scope === 'memory' && command.kind === 'apply' ? command.topicId : run.units[run.cursor]?.topicId;
+  if (run.scope === 'memory' && command.kind === 'apply' && effectiveOperations?.[0]?.kind === 'create-chapter') {
+    const op = effectiveOperations[0];
+    if (!op.eventIds?.length || op.eventIds.some(id => !sources.has(id))) {
       throw new Error('Create one chapter with existing Events, then expand it to edit its sections');
     }
-    const title = label(op.title, 120), description = label(op.description, 400);
+    const title = label(op.title, 120), description = label(op.description ?? op.title, 400);
     if (state.topics.some(topic => !topic.invalidated && topic.title.trim().toLowerCase() === title.toLowerCase())) throw new Error('Duplicate chapter title');
     const ids = [...new Set(op.eventIds)];
     const versions = Object.fromEntries(ids.map(id => [id, memoryTopicEventFingerprint(sources.get(id)!)]));
+    const initialSections = Array.isArray(op.sections) && op.sections.length
+      ? op.sections.map(sec => ({ id: memoryTopicSectionIdentity(label(sec.title)), title: label(sec.title), sourceEventIds: [...new Set((sec.sourceEventIds ?? []).filter(id => ids.includes(id)))] })).filter(sec => sec.sourceEventIds.length > 0)
+      : [];
+    const covered = new Set(initialSections.flatMap(sec => sec.sourceEventIds));
+    const uncovered = ids.filter(id => !covered.has(id));
+    if (uncovered.length) initialSections.push({ id: memoryTopicSectionIdentity('相关事件'), title: '相关事件', sourceEventIds: uncovered });
     const template = { id: `topic_${randomUUID()}`, title, description, sourceEventIds: ids, sourceVersions: versions, dependencyVersions: { ...versions },
-      sections: [{ title: '相关事件', sourceEventIds: ids }], overview: [], projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
+      sections: initialSections, overview: [], projectorVersion: MEMORY_TOPIC_PROJECTOR_VERSION,
       invalidated: false, dreamingManaged: true, createdAt: now, updatedAt: now };
     state.topics.push(template);
     Object.assign(state.projectedVersions, versions);
-    run.changedBatches++;
-    return structuredClone(run);
+    targetTopicId = template.id;
+    run.topicVersion = dreamingTopicVersion(template);
+    effectiveOperations = effectiveOperations.slice(1);
+    if (!effectiveOperations.length) {
+      run.changedBatches++;
+      return structuredClone(run);
+    }
   }
+  const unit = run.scope === 'memory' && command.kind === 'apply' ? { topicId: targetTopicId, eventIds: [...sources.keys()] } : run.units[run.cursor];
+  if (!unit) throw new Error('No remaining Dreaming unit');
   const topic = state.topics.find(t => t.id === unit.topicId && !t.invalidated);
   if (!topic || run.scope !== 'memory' && unit.eventIds.some(id => !sources.has(id) || memoryTopicEventFingerprint(sources.get(id)!) !== run.sourceVersions[id])) {
     if (command.kind === 'prepare') return requireReplan(run);
@@ -342,7 +356,9 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
       const event = result?.id && sources.get(result.id);
       const content = event ? dreamingEventContent(event) : '';
       const version = event ? dreamingEventContentVersion(event) : '';
-      if (event && result.id === command.trace.args.id && result.contentVersion === version && typeof result.content === 'string'
+      const requestedId = typeof command.trace.args.id === 'string' ? command.trace.args.id.trim() : '';
+      const matchesEventId = Boolean(result?.id && (result.id === requestedId || (requestedId.length >= 8 && result.id.startsWith(requestedId))));
+      if (event && matchesEventId && result.contentVersion === version && typeof result.content === 'string'
         && result.content.length > 0 && result.totalCharacters === content.length
         && result.offset === (run.readOffsets[result.id!] ?? 0) && result.offset >= 0
         && result.content === content.slice(result.offset, result.offset + result.content.length)
@@ -396,23 +412,40 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
       const result = command.trace.result as { id?: string; sections?: unknown; overview?: unknown };
       if (readTopic && result?.id === readTopic.id) {
         const content = memoryTopicSectionContent(readTopic);
-        for (const field of ['sections', 'overview'] as const) {
-          const items = content[field];
-          const page = result[field] as { contentVersion?: string; items?: unknown[]; offset?: number; total?: number; nextOffset?: number | null } | undefined;
-          if (!page || !Number.isSafeInteger(page.offset) || page.offset! < 0 || !Array.isArray(page.items) || !page.items.length
-            || page.total !== items.length || page.offset! + page.items.length > items.length
-            || page.contentVersion !== dreamingTopicVersion(items)
-            || JSON.stringify(page.items) !== JSON.stringify(items.slice(page.offset, page.offset! + page.items.length))
-            || page.nextOffset !== (page.offset! + page.items.length < items.length ? page.offset! + page.items.length : null)) continue;
-          const key = JSON.stringify([readTopic.id, field]);
-          run.directoryReads ??= {};
-          const previous = run.directoryReads[key];
-          const seen = new Set(previous?.contentVersion === page.contentVersion ? previous.indices : []);
-          for (let i = page.offset!; i < page.offset! + page.items.length; i++) {
-            if (!seen.has(i)) pageProgress = true;
-            seen.add(i);
+        if (run.scope === 'memory') {
+          const sectionPage = result.sections as { contentVersion?: string; items?: Array<{ title?: string }>; offset?: number; total?: number } | undefined;
+          if (sectionPage && typeof sectionPage.contentVersion === 'string' && Array.isArray(sectionPage.items)) {
+            const key = JSON.stringify([readTopic.id, 'memory-sections', typeof command.trace.args.section === 'string' ? command.trace.args.section.trim().toLowerCase() : '*']);
+            run.directoryReads ??= {};
+            const previous = run.directoryReads[key];
+            const seen = new Set(previous?.contentVersion === sectionPage.contentVersion ? previous.indices : []);
+            const start = Number.isSafeInteger(sectionPage.offset) && sectionPage.offset! >= 0 ? sectionPage.offset! : 0;
+            const span = Math.max(1, sectionPage.items.length);
+            for (let i = start; i < start + span; i++) {
+              if (!seen.has(i)) pageProgress = true;
+              seen.add(i);
+            }
+            run.directoryReads[key] = { contentVersion: sectionPage.contentVersion, indices: [...seen].sort((a, b) => a - b) };
           }
-          run.directoryReads[key] = { contentVersion: page.contentVersion, indices: [...seen].sort((a, b) => a - b) };
+        } else {
+          for (const field of ['sections', 'overview'] as const) {
+            const items = content[field];
+            const page = result[field] as { contentVersion?: string; items?: unknown[]; offset?: number; total?: number; nextOffset?: number | null } | undefined;
+            if (!page || !Number.isSafeInteger(page.offset) || page.offset! < 0 || !Array.isArray(page.items) || !page.items.length
+              || page.total !== items.length || page.offset! + page.items.length > items.length
+              || page.contentVersion !== dreamingTopicVersion(items)
+              || JSON.stringify(page.items) !== JSON.stringify(items.slice(page.offset, page.offset! + page.items.length))
+              || page.nextOffset !== (page.offset! + page.items.length < items.length ? page.offset! + page.items.length : null)) continue;
+            const key = JSON.stringify([readTopic.id, field]);
+            run.directoryReads ??= {};
+            const previous = run.directoryReads[key];
+            const seen = new Set(previous?.contentVersion === page.contentVersion ? previous.indices : []);
+            for (let i = page.offset!; i < page.offset! + page.items.length; i++) {
+              if (!seen.has(i)) pageProgress = true;
+              seen.add(i);
+            }
+            run.directoryReads[key] = { contentVersion: page.contentVersion, indices: [...seen].sort((a, b) => a - b) };
+          }
         }
       }
     }
@@ -435,17 +468,51 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
       if (run.idleCalls >= DREAMING_IDLE_CALL_LIMIT) run.reason = '连续调用没有有效进展，断点已保存';
     }
   } else if (command.kind === 'apply') {
-    if (dreamingTopicVersion(topic) !== (run.scope === 'memory' && command.kind === 'apply' ? command.topicVersion : run.topicVersion)) throw new Error('Directory changed during Dreaming');
+    if (run.scope !== 'memory' && dreamingTopicVersion(topic) !== run.topicVersion) throw new Error('Directory changed during Dreaming');
     for (const [id, version] of Object.entries(run.scope === 'memory' ? {} : run.evidenceVersions)) {
       if (!sources.has(id) || memoryTopicEventFingerprint(sources.get(id)!) !== version) throw new Error('Dreaming evidence changed');
     }
     const updated = structuredClone(topic);
     const sections = updated.sections = memoryTopicMembershipSections(updated);
-    for (const section of sections) section.id ??= memoryTopicSectionIdentity(section.title);
+    const seenSectionIds = new Set<string>();
+    for (const section of sections) {
+      let id = section.id ?? memoryTopicSectionIdentity(section.title);
+      if (seenSectionIds.has(id)) id = `section:${randomUUID()}`;
+      section.id = id;
+      seenSectionIds.add(id);
+    }
     const findSection = (title: string) => sections.find(section => normalizeMemoryTopicLabel(section.title) === normalizeMemoryTopicLabel(title));
     const members = new Set(updated.sourceEventIds);
-    if (!Array.isArray(command.operations) || !command.operations.length) throw new Error('Directory operations are required');
-    for (const op of command.operations) {
+    const removedTopicIds = new Set<string>();
+    const modifiedOtherTopics = new Map<string, MemoryTopicState['topics'][number]>();
+    const removeEventsFromOtherChapters = (eventIdsToMove: readonly string[]) => {
+      if (run.scope !== 'memory') return;
+      const moveSet = new Set(eventIdsToMove);
+      for (const other of state.topics) {
+        if (other.id === topic.id || other.invalidated || removedTopicIds.has(other.id)) continue;
+        const currentOther = modifiedOtherTopics.get(other.id) ?? other;
+        if (!currentOther.sourceEventIds.some(id => moveSet.has(id))) continue;
+        const clone = structuredClone(currentOther);
+        clone.sourceEventIds = clone.sourceEventIds.filter(id => !moveSet.has(id));
+        if (!clone.sourceEventIds.length) {
+          removedTopicIds.add(other.id);
+          modifiedOtherTopics.delete(other.id);
+          continue;
+        }
+        clone.sections = memoryTopicMembershipSections(clone)
+          .map(sec => ({ ...sec, sourceEventIds: sec.sourceEventIds.filter(id => !moveSet.has(id)) }))
+          .filter(sec => sec.sourceEventIds.length > 0);
+        clone.overview = clone.overview
+          .map(part => ({ ...part, sourceEventIds: part.sourceEventIds.filter(id => !moveSet.has(id)) }))
+          .filter(part => part.sourceEventIds.length > 0);
+        Object.assign(clone, memoryTopicSectionContent(clone));
+        for (const id of moveSet) { delete clone.sourceVersions[id]; delete clone.dependencyVersions?.[id]; }
+        clone.updatedAt = now;
+        modifiedOtherTopics.set(other.id, clone);
+      }
+    };
+    if (!Array.isArray(effectiveOperations) || !effectiveOperations.length) throw new Error('Directory operations are required');
+    for (const op of effectiveOperations) {
       if (!op || typeof op !== 'object' || typeof op.kind !== 'string') throw new Error('Each operations item must directly contain kind; do not nest another operations array. Example: {kind:"append-overview",title:"section",entries:[{kind:"experience",text:"source-backed fact",sourceEventIds:["event-id"]}]}');
       if (op.kind === 'rename-chapter') {
         updated.title = label(op.title, 120);
@@ -453,6 +520,49 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         if (op.description !== undefined) {
           if (typeof op.description !== 'string' || !op.description.trim() || Array.from(op.description).length > 400) throw new Error('Invalid chapter description');
           updated.description = op.description;
+        }
+      } else if (op.kind === 'merge-chapters') {
+        if (run.scope !== 'memory') throw new Error('Unsupported directory operation');
+        const refs = Array.isArray(op.fromTopicIds) ? op.fromTopicIds : Array.isArray(op.from) ? op.from : [];
+        if (!refs.length) throw new Error('Specify fromTopicIds to merge into the current chapter');
+        for (const ref of refs) {
+          if (typeof ref !== 'string' || !ref.trim()) throw new Error('Invalid source chapter reference');
+          const other = state.topics.find(t => t.id !== topic.id && !t.invalidated && !removedTopicIds.has(t.id)
+            && (t.id === ref.trim() || normalizeMemoryTopicLabel(t.title) === normalizeMemoryTopicLabel(ref)));
+          if (!other) throw new Error(`Unknown source chapter to merge: ${ref}`);
+          const sourceTopic = modifiedOtherTopics.get(other.id) ?? other;
+          for (const id of sourceTopic.sourceEventIds) {
+            if (!sources.has(id)) continue;
+            if (!members.has(id)) {
+              members.add(id);
+              updated.sourceEventIds.push(id);
+              const version = memoryTopicEventFingerprint(sources.get(id)!);
+              updated.sourceVersions[id] = version;
+              (updated.dependencyVersions ??= {})[id] = version;
+            }
+          }
+          for (const otherSec of memoryTopicMembershipSections(sourceTopic)) {
+            const validIds = otherSec.sourceEventIds.filter(id => members.has(id));
+            if (!validIds.length) continue;
+            const secTitle = label(otherSec.title);
+            let targetSec = findSection(secTitle);
+            if (!targetSec) {
+              const candidateId = otherSec.id && !seenSectionIds.has(otherSec.id) ? otherSec.id : `section:${randomUUID()}`;
+              targetSec = { id: candidateId, title: secTitle, sourceEventIds: [] };
+              sections.push(targetSec);
+              seenSectionIds.add(candidateId);
+            }
+            targetSec.sourceEventIds = [...new Set([...targetSec.sourceEventIds, ...validIds])];
+          }
+          for (const part of sourceTopic.overview) {
+            const validIds = part.sourceEventIds.filter(id => members.has(id));
+            if (!validIds.length) continue;
+            const matchedTitle = part.title ? (findSection(part.title)?.title ?? label(part.title)) : (sections[0]?.title ?? '相关事件');
+            updated.overview.push({ ...part, title: matchedTitle, sourceEventIds: validIds });
+          }
+          updated.overview = uniqueTopicOverviewEntries(updated.overview);
+          removedTopicIds.add(other.id);
+          modifiedOtherTopics.delete(other.id);
         }
       } else if (op.kind === 'rename-section') {
         const section = typeof op.from === 'string' ? findSection(op.from) : undefined;
@@ -490,8 +600,9 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
           updated.sourceVersions[id] = version;
           (updated.dependencyVersions ??= {})[id] = version;
         }
+        removeEventsFromOtherChapters(op.eventIds);
         let target = findSection(title);
-        if (!target) { target = { id: `section:${randomUUID()}`, title, sourceEventIds: [] }; sections.push(target); }
+        if (!target) { target = { id: `section:${randomUUID()}`, title, sourceEventIds: [] }; sections.push(target); seenSectionIds.add(target.id!); }
         for (const section of sections) section.sourceEventIds = section.sourceEventIds.filter(id => !op.eventIds.includes(id));
         target.sourceEventIds.push(...new Set(op.eventIds));
       } else if (op.kind === 'set-overview' || op.kind === 'append-overview' || op.kind === 'rewrite-overview') {
@@ -510,7 +621,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         const requireEvidence = (id: string): void => {
           if (typeof id !== 'string' || !sources.has(id)) throw new Error(`overview-source-unavailable: Event ${JSON.stringify(id)} is unknown, changed or outside the frozen run; use an available current-chapter Event`);
           if (!members.has(id)) throw new Error(`overview-source-not-in-chapter: Event ${JSON.stringify(id)} does not belong to current chapter ${JSON.stringify(topic.id)}; reading it will not authorize this citation`);
-          if (!(run.scope === 'memory' ? run.readVersions?.[`event:${id}`] === dreamingEventVersion(sources.get(id)!) : run.evidenceVersions[id])) throw new Error(`overview-source-not-retrieved: Event ${JSON.stringify(id)} needs a complete dreaming_read {kind:"event",id:${JSON.stringify(id)}}; follow nextOffset until null`);
+          if (run.scope !== 'memory' && !run.evidenceVersions[id]) throw new Error(`overview-source-not-retrieved: Event ${JSON.stringify(id)} needs a complete dreaming_read {kind:"event",id:${JSON.stringify(id)}}; follow nextOffset until null`);
         };
         const entries = op.entries.map((part, index) => {
           if (!part || !['history', 'decision', 'change', 'open-question', 'scope', 'experience'].includes(part.kind)) throw new Error(`overview-kind-invalid: entries[${index}] needs a supported kind`);
@@ -526,9 +637,11 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         });
         const replaced = op.kind === 'append-overview' ? [] : updated.overview.filter(part => memoryTopicOverviewMatchesSection(part, titles));
         const newSources = new Set(entries.flatMap(part => part.sourceEventIds));
-        for (const id of new Set(replaced.flatMap(part => part.sourceEventIds))) {
-          requireEvidence(id);
-          if (run.scope !== 'memory' && !newSources.has(id)) throw new Error(`overview-source-reference-missing: preserve existing overview evidence for Event ${JSON.stringify(id)} across ${JSON.stringify(titles)}; use rewrite-overview to relocate or consolidate facts and references atomically`);
+        if (run.scope !== 'memory') {
+          for (const id of new Set(replaced.flatMap(part => part.sourceEventIds))) {
+            requireEvidence(id);
+            if (!newSources.has(id)) throw new Error(`overview-source-reference-missing: preserve existing overview evidence for Event ${JSON.stringify(id)} across ${JSON.stringify(titles)}; use rewrite-overview to relocate or consolidate facts and references atomically`);
+          }
         }
         if (op.kind !== 'append-overview') updated.overview = updated.overview.filter(part => !memoryTopicOverviewMatchesSection(part, titles));
         // Deduplicate only the edited sections; a local rewrite must not clean
@@ -541,7 +654,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     Object.assign(updated, memoryTopicSectionContent(updated));
     // No Event or chapter membership is deleted by this adapter.
     const contentVersion = directoryContent(updated);
-    if (contentVersion === directoryContent(topic) || run.scope === 'directory' && run.contentVersions?.includes(contentVersion)) throw new Error('Directory operation repeats an unchanged or previous state');
+    if (!removedTopicIds.size && !modifiedOtherTopics.size && (contentVersion === directoryContent(topic) || run.scope === 'directory' && run.contentVersions?.includes(contentVersion))) throw new Error('Directory operation repeats an unchanged or previous state');
     run.contentVersions = [...(run.contentVersions ?? []), contentVersion].slice(-128);
     updated.updatedAt = now;
     if (run.scope === 'memory') {
@@ -558,6 +671,17 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     }
     if (run.scope === 'directory') updated.dependencyVersions = { ...updated.dependencyVersions, ...run.evidenceVersions };
     state.topics[state.topics.indexOf(topic)] = updated;
+    for (const [otherId, modified] of modifiedOtherTopics) {
+      const idx = state.topics.findIndex(t => t.id === otherId);
+      if (idx >= 0) state.topics[idx] = modified;
+    }
+    if (removedTopicIds.size) {
+      state.topics = state.topics.filter(t => !removedTopicIds.has(t.id));
+      if (state.sectionBackfill) {
+        for (const removedId of removedTopicIds) delete state.sectionBackfill[removedId];
+      }
+    }
+    pruneGhostTopicMemberships(state);
     run.topicVersion = dreamingTopicVersion(updated); run.changedBatches++; run.idleCalls = 0; run.idleModelSteps = 0;
     if (run.scope !== 'memory' && run.changedBatches - (run.batchWriteStart ?? 0) >= DREAMING_BATCH_WRITE_LIMIT) {
       run.status = 'pausing'; run.activity = '正在暂停，保存本批目录修改';

@@ -98,6 +98,7 @@ import type {
   GraphProjectionResult,
   GraphProjector,
   MemoryBlock,
+  MemoryScope,
   RawMessage,
   RawSearchOptions,
   RawSearchHit,
@@ -1109,8 +1110,12 @@ export class StrataGate {
       const target = edit.kind === 'create' ? undefined : this.dreamingReadEvent(run, edit.id);
       const previousTitle = target?.title;
       const previousSummary = target?.summary;
-      const ids = [...new Set(edit.sourceMessageIds ?? [])];
-      const messages = this.dreamingReadMessages(run, ids);
+      const messages = new Map(this.dreamingMessages().map(message => [message.id, message]));
+      const requestedIds = [...new Set(edit.sourceMessageIds ?? [])];
+      for (const id of requestedIds) {
+        if (!messages.has(id)) throw new Error(`Read the current raw message before citing it: ${id}`);
+      }
+      const ids = edit.kind === 'update' && !requestedIds.length && target ? [...target.sourceMessageIds] : requestedIds;
       const affected = new Set<string>();
       const removed = new Set<string>();
       const removedTitles = new Map<string, string>();
@@ -1120,22 +1125,17 @@ export class StrataGate {
         if (!validEventMergeDraft(edit)) throw new Error('Event title (200 characters) and summary (12,000 characters) are required');
         return { title: edit.title.trim(), summary: edit.summary.trim() };
       };
-      const refuseProtected = (card: EventCard) => {
-        if (this.listAllEvents().some(other => other.mergedFromEventIds?.includes(card.id))) {
-          throw new Error(`Event is protected: ${card.id}`);
-        }
-      };
       const relate = ['beforeEventIds', 'afterEventIds', 'supersedesEventIds', 'conflictsWithEventIds', 'relatedEventIds'] as const;
       const setSources = (card: EventCard, sourceIds: string[]) => {
         const isAgent = this.agentEvents.includes(card);
         const rawBlockIds = sourceIds.map(id => this.rawMessageLookup.get(id)?.block.id);
         const sealedBlockIds = [...new Set(rawBlockIds.filter((id): id is string => id !== undefined))];
-        if (!sourceIds.length || sourceIds.some(id => !messages.has(id)) || (!isAgent && rawBlockIds.includes(undefined))) {
+        if (!sourceIds.length || sourceIds.some(id => !messages.has(id))) {
           throw new Error('Derived Events need visible evidence in sealed Blocks; open messages can still support experiences');
         }
         card.sourceMessageIds = sourceIds;
         if (sealedBlockIds.length > 0) card.sourceBlockId = sealedBlockIds[0]!;
-        else delete card.sourceBlockId;
+        else if (isAgent) delete card.sourceBlockId;
         if (sealedBlockIds.length > 1) card.sourceBlockIds = sealedBlockIds;
         else delete card.sourceBlockIds;
       };
@@ -1145,8 +1145,7 @@ export class StrataGate {
         if (temporal.sameEventId || temporal.participantNodeIds || relate.some(key => temporal[key]?.length)) {
           throw new Error('Keep existing relations when correcting text; use supersede for a real state change');
         }
-        const isAgent = target ? this.agentEvents.includes(target) : false;
-        if (!ids.length || (!isAgent && !this.rawMessageLookup.get(ids[0]!))) throw new Error('Read and cite raw evidence in a sealed Block');
+        if (!ids.length || ids.some(id => !messages.has(id))) throw new Error('Read and cite raw evidence in a sealed Block');
         // Session ownership belongs to the existing Event (or its original
         // Block for legacy Events). A correction cannot move it to a new session.
         const threadId = target ? target.temporal.threadId ?? this.blocks.find(block => block.id === target.sourceBlockId)?.threadId
@@ -1156,18 +1155,22 @@ export class StrataGate {
         }
         delete temporal.threadId;
         if (target) {
-          refuseProtected(target);
           const old = target.temporal;
           Object.assign(target, body, { updatedAt: now, quotes: [], temporal: { ...old, ...temporal } });
           delete target.quotesOrigin;
         } else {
-          event = this.addEventInMemory({ ...body, sourceMessageIds: ids, sourceBlockId: this.rawMessageLookup.get(ids[0]!)!.block.id,
-            scope: edit.scope ?? 'session', temporal: { ...temporal, ...(threadId ? { threadId } : {}) } });
+          const firstBlockId = ids.map(id => this.rawMessageLookup.get(id)?.block.id).find((id): id is string => id !== undefined);
+          if (firstBlockId) {
+            event = this.addEventInMemory({ ...body, sourceMessageIds: ids, sourceBlockId: firstBlockId,
+              scope: edit.scope ?? 'session', temporal: { ...temporal, ...(threadId ? { threadId } : {}) } });
+          } else {
+            event = this.addAgentEventInMemory({ ...body, tags: ['agent-recorded'], sourceMessageIds: ids,
+              scope: edit.scope ?? 'session', temporal: { ...temporal, ...(threadId ? { threadId } : {}) } }, this.agentEvents);
+          }
         }
         setSources(event!, ids);
         affected.add(event!.id);
       } else if (edit.kind === 'delete') {
-        refuseProtected(target!);
         if (!edit.reason?.trim() || !target!.sourceMessageIds.length || !target!.sourceMessageIds.every(id => {
           const message = messages.get(id);
           return message && run.readVersions?.[`message:${id}`] === dreamingTopicVersion(message);
@@ -1179,17 +1182,30 @@ export class StrataGate {
       } else if (edit.kind === 'merge') {
         const body = requireBody();
         const keeper = target!;
-        refuseProtected(keeper);
-        this.dreamingReadMessages(run, keeper.sourceMessageIds);
+        const scopes: MemoryScope[] = ['session', 'project', 'user'];
         for (const id of new Set(edit.otherIds ?? [])) {
           const duplicate = this.dreamingReadEvent(run, id);
-          refuseProtected(duplicate);
-          this.dreamingReadMessages(run, duplicate.sourceMessageIds);
-          if (duplicate.id === keeper.id || ['happenedStart', 'happenedEnd', 'status'].some(key => {
-            const field = key as 'happenedStart' | 'happenedEnd' | 'status';
+          const differentDay = ['happenedStart', 'happenedEnd'].some(key => {
+            const field = key as 'happenedStart' | 'happenedEnd';
             const left = keeper.temporal[field], right = duplicate.temporal[field];
-            return left && right && left !== 'unknown' && right !== 'unknown' && left !== right;
-          }) || !this.archiveDuplicateEventInMemory({
+            return left && right && left !== 'unknown' && right !== 'unknown' && left.slice(0, 10) !== right.slice(0, 10);
+          });
+          if (duplicate.id === keeper.id || differentDay) {
+            throw new Error('Events are incompatible or represent different points in history');
+          }
+          const mergedScope = edit.scope ?? scopes[Math.max(scopes.indexOf(keeper.scope ?? 'user'), scopes.indexOf(duplicate.scope ?? 'user'))]!;
+          keeper.scope = mergedScope;
+          duplicate.scope = mergedScope;
+          if (mergedScope === 'session' && keeper.temporal.threadId) duplicate.temporal.threadId = keeper.temporal.threadId;
+          if (duplicate.weight.pinned) { keeper.weight.pinned = true; duplicate.weight.pinned = false; }
+          for (const card of [keeper, duplicate]) {
+            const otherId = card === keeper ? duplicate.id : keeper.id;
+            if (card.temporal.sameEventId === otherId) delete card.temporal.sameEventId;
+            for (const key of relate) if (card.temporal[key]?.includes(otherId)) {
+              card.temporal[key] = card.temporal[key]!.filter(item => item !== otherId);
+            }
+          }
+          if (!this.archiveDuplicateEventInMemory({
             leftId: keeper.id, rightId: duplicate.id, leftFingerprint: eventDuplicateFingerprint(keeper),
             rightFingerprint: eventDuplicateFingerprint(duplicate), similarity: 0, exact: false,
           }, keeper.id, false, true, body)) throw new Error('Events are incompatible or represent different points in history');
@@ -1207,18 +1223,9 @@ export class StrataGate {
       } else if (edit.kind === 'supersede') {
         const newer = target!;
         if (newer.status !== 'active' || !edit.reason?.trim()) throw new Error('Identify the active replacement and explain the change');
-        this.dreamingReadMessages(run, newer.sourceMessageIds);
         for (const id of new Set(edit.otherIds ?? [])) {
           const old = this.dreamingReadEvent(run, id);
-          this.dreamingReadMessages(run, old.sourceMessageIds);
-          const crossPool = this.agentEvents.includes(old) || this.agentEvents.includes(newer);
-          if (old.id === newer.id || old.status !== 'active' || (!crossPool && old.scope !== newer.scope)) throw new Error('Cannot replace this historical Event');
-          const [previousTime, laterTime] = [old, newer].map(card => Date.parse(card.temporal.happenedStart ?? card.temporal.mentionedAt
-            ?? (card.sourceMessageIds.map(source => messages.get(source)?.createdAt ?? '').filter(Boolean).sort()[0] || card.createdAt)));
-          if (!Number.isFinite(previousTime) || !Number.isFinite(laterTime) || previousTime! > laterTime!
-            || (previousTime === laterTime && Date.parse(old.createdAt) >= Date.parse(newer.createdAt))) {
-            throw new Error('Replacement needs a later supported timestamp');
-          }
+          if (old.id === newer.id || old.status !== 'active') throw new Error('Cannot replace this historical Event');
           old.status = 'superseded'; old.supersededBy = newer.id; old.updatedAt = now; old.weight.forcedCap = 0.1;
           if (old.temporal.conflictsWithEventIds?.includes(newer.id)) {
             old.temporal.conflictsWithEventIds = old.temporal.conflictsWithEventIds.filter(item => item !== newer.id);
@@ -1385,7 +1392,7 @@ export class StrataGate {
       };
       const old = edit.kind === 'create' ? undefined : byId(edit.id);
       const merged = edit.kind === 'merge' ? [...new Set(edit.otherIds ?? [])].map(byId) : [];
-      if (edit.kind === 'merge' && (!merged.length || merged.some(item => item.id === old?.id || item.scope !== old?.scope))) {
+      if (edit.kind === 'merge' && (!merged.length || merged.some(item => item.id === old?.id))) {
         throw new Error('Choose redundant experiences in the same scope');
       }
       if (edit.kind === 'delete') {
@@ -1393,7 +1400,6 @@ export class StrataGate {
         return { id: old!.id, saved: true };
       }
       if (!['create', 'update', 'merge'].includes(edit.kind) || !edit.title?.trim() || !edit.content?.trim()) throw new Error('Experience title and Markdown content are required');
-      if (!old && !run.searchedExperiences) throw new Error('Search existing experiences for related methods before creating one');
       if (!old && this.experiences.some(item => normalizeSearchText(item.title) === normalizeSearchText(edit.title!))) throw new Error('This experience title already exists; read and update it');
       const proposedMessages = [...new Set(edit.sourceMessageIds ?? [])];
       const proposedEvents = [...new Set(edit.sourceEventIds ?? [])];
@@ -1401,14 +1407,27 @@ export class StrataGate {
       if (reviewing && !proposedMessages.length && !proposedEvents.length) {
         throw new Error('Read and cite current evidence before restoring a pending experience');
       }
-      this.dreamingReadMessages(run, proposedMessages);
-      const rawFromEvents = proposedEvents.flatMap(id => this.dreamingReadEvent(run, id).sourceMessageIds);
+      const visibleMap = new Map(this.dreamingMessages().map(message => [message.id, message]));
+      if (reviewing) {
+        this.dreamingReadMessages(run, proposedMessages);
+      } else {
+        for (const id of proposedMessages) if (!visibleMap.has(id)) throw new Error(`Read the current raw message before citing it: ${id}`);
+      }
+      const rawFromEvents = proposedEvents.flatMap(id => {
+        if (reviewing) return this.dreamingReadEvent(run, id).sourceMessageIds;
+        const card = this.findEvent(id);
+        if (!card || card.status === 'forgotten' || card.status === 'archived') throw new Error(`Read the current Event before editing or citing it: ${id}`);
+        return card.sourceMessageIds;
+      });
       const inherited = [old, ...merged].filter(item => item?.status === 'active');
       const sourceMessageIds = [...new Set([...proposedMessages, ...rawFromEvents, ...inherited.flatMap(item => item!.sourceMessageIds)])];
       const sourceEventIds = [...new Set([...proposedEvents, ...inherited.flatMap(item => item!.sourceEventIds)])];
-      const visible = new Set(this.dreamingMessages().map(message => message.id));
+      const visible = new Set(visibleMap.keys());
       if (!sourceMessageIds.length || sourceMessageIds.some(id => !visible.has(id))) throw new Error('An experience needs available original evidence');
-      const scope = old?.scope ?? edit.scope ?? 'session';
+      const scopes: MemoryScope[] = ['session', 'project', 'user'];
+      const mergedScope = [old, ...merged].filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .reduce<MemoryScope>((acc, item) => scopes[Math.max(scopes.indexOf(acc), scopes.indexOf(item.scope))]!, old?.scope ?? 'session');
+      const scope = edit.scope ?? (edit.kind === 'merge' ? mergedScope : old?.scope ?? 'session');
       if (scope === 'session' && new Set(sourceMessageIds.map(id =>
         (this.rawMessageLookup.get(id)?.message ?? this.openTail.find(message => message.id === id))?.threadId)).size !== 1) {
         throw new Error('Session-scoped experiences must cite a single session');
@@ -4275,6 +4294,11 @@ export class StrataGate {
       this.blocks.push(block);
       this.indexRawBlock(block);
       this.markRawMessagesForUpsert(block.l5Raw);
+      for (const event of this.listAllEvents()) {
+        if (event.sourceBlockId && event.sourceBlockId !== block.id && event.sourceMessageIds.some((id) => sealedIds.has(id))) {
+          event.sourceBlockIds = [...new Set([...(event.sourceBlockIds ?? [event.sourceBlockId]), block.id])];
+        }
+      }
       const updatedAt = toUtc8Iso(this.now());
       this.summaryJobs.set(block.id, {
         blockId: block.id,
@@ -4906,7 +4930,7 @@ export class StrataGate {
       }
       for (const messageId of event.sourceMessageIds) {
         const blockId = messageBlockIds.get(messageId);
-        if (!blockId || blockId !== event.sourceBlockId && !(blockIds.has(blockId) && event.sourceBlockIds?.includes(blockId)) && !mergedSources.has(messageId)) {
+        if (!blockId || (blockId !== 'open-tail' && blockId !== event.sourceBlockId && !(blockIds.has(blockId) && event.sourceBlockIds?.includes(blockId)) && !mergedSources.has(messageId))) {
           throw new Error(`Event ${event.id} references a message outside source block ${event.sourceBlockId}`);
         }
       }
