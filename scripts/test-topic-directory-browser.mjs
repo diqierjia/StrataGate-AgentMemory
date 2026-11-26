@@ -180,9 +180,8 @@ try {
   await sourceRead
   await memory.locator('.sg-event-page-header').waitFor()
   await memory.getByRole('heading', { name: '记忆内容', exact: true }).waitFor()
-  await memory.locator('.sg-citation-disclosure').filter({ has: page.locator('summary', { hasText: '来源与证据' }) }).locator('summary').click()
   await memory.locator('.sg-citation-message').filter({ hasText: fixtures.raw }).waitFor()
-  await memory.locator('.sg-citation-disclosure').filter({ has: page.locator('summary', { hasText: '技术信息' }) }).locator('summary').click()
+  await memory.getByRole('tab', { name: '技术信息', exact: true }).click()
   await memory.getByText(clickedEventId, { exact: true }).waitFor()
   await memory.getByText('来源 Block', { exact: true }).waitFor()
   await memory.locator('.sg-back').click()

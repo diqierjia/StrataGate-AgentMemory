@@ -392,7 +392,23 @@
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, usePluginSettings, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
-      else if (view.name === 'event') content = h(EventDetail, { event: view.item, project, source, onBack: goBack, backLabel, onNode: openGraphNode })
+      else if (view.name === 'event') content = h(EventDetail, {
+        event: view.item,
+        project,
+        source,
+        onBack: goBack,
+        backLabel,
+        onNode: openGraphNode,
+        onOpenEvent: openEvent,
+        onOpenSession: (block) => {
+          directoryScrollRef.current = null
+          if (block?.threadId) setConversationId(block.threadId)
+          setSection('short')
+          setView({ name: 'root' })
+          clearSource()
+          if (block?.threadId) void loadDashboard(namespace, { threadId: block.threadId, force: true })
+        },
+      })
       else if (view.name === 'status') content = h(ProcessingStatus, { key: namespace, overview: selected, blocks: data.blocks, conversations, namespace, serverVersion: overview.pluginVersion, onBack: view.back ? goBack : () => setView({ name: 'root' }), backLabel: view.back?.name === 'settings' ? '高级设置' : '返回', refresh })
       else if (view.name === 'import') content = h(ImportPage, { key: namespace, namespace, onBack: moreBack, refresh })
       else if (view.name === 'structure') content = h(StructurePage, { events: data.events, eventPage: data.pagination?.events, graph: data.graph, openEvent, namespace, onBack: moreBack })

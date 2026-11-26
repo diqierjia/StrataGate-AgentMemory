@@ -563,7 +563,7 @@
       const end = eventDate(temporal.happenedEnd)
       const happened = start ? start + (end && end !== start ? ' — ' + end : '') : end
       const nodeMap = new Map(nodes.map((node) => [node.id, node]))
-      const linked = [...new Set(temporal.participantNodeIds || [])].map((id) => nodeMap.get(id)).filter(Boolean)
+      const linked = [...new Set(temporal.participantNodeIds || [])].map((id) => nodeMap.get(id)).filter((node) => node && String(node.name || '').trim())
       const linkedNames = new Set(linked.flatMap((node) => [node.name, ...(node.aliases || [])]).map(participantIdentity).filter(Boolean))
       const seenText = new Set()
       const unlinked = (temporal.participants || []).map((name) => String(name || '').trim()).filter((name) => {
@@ -647,9 +647,9 @@
       }, '')
     }
 
-    function relativeTurnTicks(maximum) {
+    function relativeTurnTicks(maximum, intervals = 5) {
       if (maximum <= 0) return [0]
-      const target = Math.max(1, maximum / 5)
+      const target = Math.max(1, maximum / Math.max(2, intervals))
       const magnitude = 10 ** Math.floor(Math.log10(target))
       const candidates = [1, 2, 5, 10].map((value) => value * magnitude)
       const step = candidates.reduce((best, value) => Math.abs(value - target) < Math.abs(best - target) ? value : best)
@@ -659,8 +659,9 @@
       return [...new Set(ticks)]
     }
 
-    function MemoryWeightTrajectory({ event }) {
+    function MemoryWeightTrajectory({ event, layout = 'default' }) {
       const [hoveredSegment, setHoveredSegment] = React.useState(null)
+      const gradId = 'sg-wt-' + (typeof React.useId === 'function' ? React.useId() : String(event?.id || 'default')).replace(/[^a-zA-Z0-9_-]/g, '')
       const trajectory = event?.weightTrajectory
       const points = Array.isArray(trajectory?.points) ? trajectory.points.filter((point) => Number.isFinite(point?.turn) && Number.isFinite(point?.weight)) : []
       const formedTurn = Number.isSafeInteger(event?.formedTurn) ? event.formedTurn : Number.isSafeInteger(trajectory?.formedTurn) ? trajectory.formedTurn : null
@@ -668,11 +669,36 @@
       const currentWeight = Number.isFinite(trajectory?.currentWeight) ? trajectory.currentWeight : Number(event?.weight?.forcedCap ?? 1)
       const effectiveAdoptions = Number.isSafeInteger(trajectory?.effectiveAdoptions) ? trajectory.effectiveAdoptions : Math.max(0, Number(event?.weight?.mentionCount || 1) - 1)
       const floorWeight = Number.isFinite(event?.weight?.floorWeight) ? event.weight.floorWeight : Number.isFinite(trajectory?.floorWeight) ? trajectory.floorWeight : 0
-      const metrics = h('div', { className: 'sg-weight-metrics' },
-        h('div', { className: 'sg-weight-metric' }, h('span', null, '当前权重'), h('strong', null, Number(currentWeight).toFixed(2))),
-        h('div', { className: 'sg-weight-metric' }, h('span', null, 'Agent 已采纳'), h('span', { className: 'sg-weight-value' }, h('strong', null, effectiveAdoptions + ' 次'), h(AdoptionHistoryInfo, { trajectory }))),
-        h('div', { className: 'sg-weight-metric' }, h('span', null, '最低权重'), h('span', { className: 'sg-weight-value' }, h('strong', null, Number(floorWeight).toFixed(2)), h(FloorWeightInfo, { event, floorWeight }))))
-      if (!trajectory || points.length === 0) return h(React.Fragment, null, h('div', { className: 'sg-weight-header' }, h('h3', { className: 'sg-section-title' }, '记忆状态')), metrics)
+      const dossier = layout === 'dossier'
+      const clampedWeight = Math.max(0, Math.min(1, Number(currentWeight) || 0))
+      const statusLabel = event?.status === 'archived' ? '已归档' : event?.status === 'superseded' ? '已替代' : event?.status === 'forgotten' ? '已遗忘' : '活跃'
+      const statusTone = event?.status === 'active' || !event?.status ? 'active' : 'muted'
+      const header = h('div', { className: 'sg-weight-header' },
+        h('h3', { className: 'sg-section-title' }, '记忆状态'),
+        dossier ? h('span', { className: 'sg-weight-live ' + statusTone }, h('i', { className: 'sg-weight-live-dot', 'aria-hidden': 'true' }), statusLabel) : null)
+      const metrics = dossier
+        ? h('div', { className: 'sg-weight-metrics-b' },
+          h('div', { className: 'sg-weight-hero' },
+            h('strong', { className: 'sg-weight-big' }, Number(currentWeight).toFixed(2)),
+            h('span', { className: 'sg-weight-scale' }, '当前权重 / 1.00')),
+          h('div', { className: 'sg-weight-bar', 'aria-hidden': 'true' }, h('i', { style: { width: (clampedWeight > 0 ? Math.max(4, Math.round(clampedWeight * 100)) : 0) + '%' } })),
+          h('div', { className: 'sg-weight-mini-grid' },
+            h('div', { className: 'sg-weight-mini' },
+              h('span', { className: 'sg-weight-mini-label' }, 'Agent 已采纳'),
+              h('span', { className: 'sg-weight-value' }, h('strong', null, effectiveAdoptions + ' 次'), h(AdoptionHistoryInfo, { trajectory }))),
+            h('div', { className: 'sg-weight-mini' },
+              h('span', { className: 'sg-weight-mini-label' }, '最低权重'),
+              h('span', { className: 'sg-weight-value' }, h('strong', null, Number(floorWeight).toFixed(2)), h(FloorWeightInfo, { event, floorWeight })))))
+        : h('div', { className: 'sg-weight-metrics' },
+          h('div', { className: 'sg-weight-metric' }, h('span', null, '当前权重'), h('strong', null, Number(currentWeight).toFixed(2))),
+          h('div', { className: 'sg-weight-metric' }, h('span', null, 'Agent 已采纳'), h('span', { className: 'sg-weight-value' }, h('strong', null, effectiveAdoptions + ' 次'), h(AdoptionHistoryInfo, { trajectory }))),
+          h('div', { className: 'sg-weight-metric' }, h('span', null, '最低权重'), h('span', { className: 'sg-weight-value' }, h('strong', null, Number(floorWeight).toFixed(2)), h(FloorWeightInfo, { event, floorWeight }))))
+      if (!trajectory || points.length === 0) {
+        return h(React.Fragment, null,
+          header,
+          metrics,
+          dossier ? h('p', { className: 'sg-weight-caption' }, '记忆随对话推进自然衰减，不会低于最低权重。') : null)
+      }
       const rawSegments = Array.isArray(trajectory.segments) ? trajectory.segments : [points]
       const segments = rawSegments.map((segment) => {
         const source = Array.isArray(segment) ? segment : segment?.points
@@ -685,8 +711,16 @@
       const maxTurn = Math.max(...points.map((point) => point.turn))
       const minTurn = Math.min(Number.isSafeInteger(trajectoryStartTurn) ? trajectoryStartTurn : maxTurn, ...points.map((point) => point.turn))
       const turnSpan = Math.max(0, maxTurn - minTurn)
-      const x = (turn) => turnSpan === 0 ? 307 : 48 + (turn - minTurn) / turnSpan * 518
-      const y = (weight) => 22 + (1 - Math.max(0, Math.min(1, weight))) * 154
+      const plotLeft = dossier ? 32 : 48
+      const plotRight = dossier ? 306 : 566
+      const plotTop = dossier ? 20 : 22
+      const plotBottom = dossier ? 118 : 176
+      const plotWidth = plotRight - plotLeft
+      const plotHeight = plotBottom - plotTop
+      const svgWidth = dossier ? 320 : 620
+      const svgHeight = dossier ? 142 : 238
+      const x = (turn) => turnSpan === 0 ? plotLeft + plotWidth / 2 : plotLeft + (turn - minTurn) / turnSpan * plotWidth
+      const y = (weight) => plotTop + (1 - Math.max(0, Math.min(1, weight))) * plotHeight
       const nodeByTurn = new Map()
       for (const point of points.filter((candidate) => candidate.kind !== 'sample')) {
         const existing = nodeByTurn.get(point.turn)
@@ -695,8 +729,16 @@
       }
       const nodes = [...nodeByTurn.values()].sort((left, right) => left.turn - right.turn)
       const adoptionNodes = nodes.filter((point) => point.kind === 'adoption')
-      const ticks = relativeTurnTicks(turnSpan)
+      const rawTicks = relativeTurnTicks(turnSpan, dossier ? 4 : 5)
+      const ticks = dossier && rawTicks.length > 2
+        ? rawTicks.filter((offset, index) => {
+          if (index === 0 || index === rawTicks.length - 1) return true
+          const px = x(minTurn + offset)
+          return px - plotLeft >= 34 && plotRight - px >= 42
+        })
+        : rawTicks
       const relativeAxis = formedTurn !== null
+      const hasIncomplete = segments.some((segment) => segment.certainty === 'incomplete' && segment.points.length > 1)
       const nodeLabel = (point) => {
         if (point.kind === 'creation') return point.label || ''
         if (point.kind === 'current') return '当前'
@@ -717,10 +759,16 @@
         if (!label) continue
         const px = x(point.turn)
         const anchor = index === 0 ? 'start' : index === nodes.length - 1 ? 'end' : 'middle'
-        const width = Math.max(28, label.length * 6.6)
+        const width = dossier ? Math.max(22, label.length * 10.2) : Math.max(28, label.length * 6.6)
         const left = anchor === 'start' ? px : anchor === 'end' ? px - width : px - width / 2
-        const candidates = [y(point.weight) - 11, y(point.weight) - 27, y(point.weight) + 24, y(point.weight) + 40]
-        const py = candidates.map((value) => Math.max(13, Math.min(169, value))).find((value) => !occupiedLabels.some((box) => left < box.right + 7 && left + width > box.left - 7 && Math.abs(value - box.y) < 15)) ?? Math.max(13, Math.min(169, candidates.at(-1)))
+        const minY = dossier ? 11 : 13
+        const maxY = dossier ? plotBottom - 6 : 169
+        const candidates = dossier
+          ? [y(point.weight) - 10, y(point.weight) + 17, y(point.weight) - 22, y(point.weight) + 29]
+          : [y(point.weight) - 11, y(point.weight) - 27, y(point.weight) + 24, y(point.weight) + 40]
+        const padX = dossier ? 6 : 7
+        const padY = dossier ? 13 : 15
+        const py = candidates.map((value) => Math.max(minY, Math.min(maxY, value))).find((value) => !occupiedLabels.some((box) => left < box.right + padX && left + width > box.left - padX && Math.abs(value - box.y) < padY)) ?? Math.max(minY, Math.min(maxY, candidates.at(-1)))
         occupiedLabels.push({ left, right: left + width, y: py })
         labelPositions.set(point, { x: px, y: py, anchor, label })
       }
@@ -730,7 +778,7 @@
         const first = segment.points[0]
         const last = segment.points.at(-1)
         setHoveredSegment({
-          x: Math.max(128, Math.min(bounds.width - 128, event.clientX - bounds.left)),
+          x: Math.max(88, Math.min(bounds.width - 88, event.clientX - bounds.left)),
           y: Math.max(18, event.clientY - bounds.top),
           below: event.clientY - bounds.top < 72,
           certainty: segment.certainty,
@@ -740,41 +788,98 @@
           endWeight: last.weight,
         })
       }
+      const showNodeTooltip = (event, point) => {
+        const bounds = event.currentTarget?.ownerSVGElement?.parentElement?.getBoundingClientRect?.()
+        if (!bounds) return
+        setHoveredSegment({
+          x: Math.max(88, Math.min(bounds.width - 88, event.clientX - bounds.left)),
+          y: Math.max(18, event.clientY - bounds.top),
+          below: event.clientY - bounds.top < 72,
+          node: point,
+        })
+      }
+      const mutedGradId = gradId + '-muted'
       return h(React.Fragment, null,
-        h('div', { className: 'sg-weight-header' }, h('h3', { className: 'sg-section-title' }, '记忆状态')),
+        header,
         metrics,
-        h('div', { className: 'sg-weight-chart' },
-          h('svg', { viewBox: '0 0 620 238', preserveAspectRatio: 'xMidYMid meet', role: 'img', 'aria-label': '该 Event 的记忆权重轨迹，横轴为' + (relativeAxis ? '距记忆形成的对话轮次' : '对话轮次') + '，纵轴为记忆权重，最低权重为 ' + Number(floorWeight).toFixed(2) },
+        h('div', { className: 'sg-weight-chart' + (dossier ? ' dossier' : '') },
+          dossier ? h('div', { className: 'sg-weight-chart-head' },
+            h('span', { className: 'sg-weight-chart-title' }, '衰减轨迹'),
+            h('div', { className: 'sg-weight-legend' },
+              adoptionNodes.length ? h('span', { className: 'sg-wt-leg' }, h('i', { className: 'dot', 'aria-hidden': 'true' }), '采纳') : null,
+              hasIncomplete ? h('span', { className: 'sg-wt-leg' }, h('i', { className: 'dash', 'aria-hidden': 'true' }), '推算') : null,
+              floorWeight > 0 ? h('span', { className: 'sg-wt-leg' }, h('i', { className: 'floor', 'aria-hidden': 'true' }), '下限 ' + Number(floorWeight).toFixed(2)) : null,
+              !adoptionNodes.length && !hasIncomplete && floorWeight <= 0 ? h('span', { className: 'sg-wt-span' }, turnSpan > 0 ? '共 ' + turnSpan + ' 轮' : '刚形成') : null)) : null,
+          h('svg', { viewBox: '0 0 ' + svgWidth + ' ' + svgHeight, preserveAspectRatio: 'xMidYMid meet', role: 'img', 'aria-label': '该 Event 的记忆权重轨迹，横轴为' + (relativeAxis ? '距记忆形成的对话轮次' : '对话轮次') + '，纵轴为记忆权重，最低权重为 ' + Number(floorWeight).toFixed(2) },
+            h('defs', null,
+              h('linearGradient', { id: gradId, x1: '0', y1: '0', x2: '0', y2: '1' },
+                h('stop', { offset: '0%', stopColor: 'var(--sg-accent)', stopOpacity: dossier ? '0.24' : '0.22' }),
+                dossier ? h('stop', { offset: '58%', stopColor: 'var(--sg-accent)', stopOpacity: '0.07' }) : null,
+                h('stop', { offset: '100%', stopColor: 'var(--sg-accent)', stopOpacity: '0.00' })),
+              dossier ? h('linearGradient', { id: mutedGradId, x1: '0', y1: '0', x2: '0', y2: '1' },
+                h('stop', { offset: '0%', stopColor: 'var(--sg-muted)', stopOpacity: '0.11' }),
+                h('stop', { offset: '100%', stopColor: 'var(--sg-muted)', stopOpacity: '0.00' })) : null),
             [0, .5, 1].map((weight) => h(React.Fragment, { key: weight },
-              h('line', { className: 'sg-weight-grid', x1: '48', y1: String(y(weight)), x2: '566', y2: String(y(weight)) }),
-              h('text', { className: 'sg-weight-axis-label', x: '39', y: String(y(weight) + 4), textAnchor: 'end' }, weight.toFixed(1)))),
-            h('line', { className: 'sg-weight-floor', x1: '48', y1: String(y(floorWeight)), x2: '566', y2: String(y(floorWeight)) }),
-            h('text', { className: 'sg-weight-floor-label', x: '562', y: String(y(floorWeight) + 16), textAnchor: 'end' }, '最低权重 ' + Number(floorWeight).toFixed(2)),
-            segments.filter((segment) => segment.points.length > 1).map((segment, index) => h(React.Fragment, { key: 'segment:' + index },
-              h('path', { className: 'sg-weight-line ' + (segment.certainty === 'incomplete' ? 'incomplete' : 'known'), d: denseWeightPath(segment.points, x, y) }),
+              h('line', { className: 'sg-weight-grid' + (weight === 0 ? ' baseline' : ''), x1: String(plotLeft), y1: String(y(weight)), x2: String(plotRight), y2: String(y(weight)) }),
+              h('text', { className: 'sg-weight-axis-label', x: String(plotLeft - (dossier ? 8 : 9)), y: String(y(weight) + (dossier ? 3.5 : 4)), textAnchor: 'end' }, weight.toFixed(1)))),
+            dossier && floorWeight > 0 ? h('rect', { className: 'sg-weight-floor-band', x: String(plotLeft), y: String(y(floorWeight)), width: String(plotWidth), height: String(Math.max(0, plotBottom - y(floorWeight))) }) : null,
+            h('line', { className: 'sg-weight-floor' + (dossier && floorWeight <= 0 ? ' zero' : ''), x1: String(plotLeft), y1: String(y(floorWeight)), x2: String(plotRight), y2: String(y(floorWeight)) }),
+            !dossier ? h('text', { className: 'sg-weight-floor-label', x: '562', y: String(y(floorWeight) + 16), textAnchor: 'end' }, '最低权重 ' + Number(floorWeight).toFixed(2)) : null,
+            segments.filter((segment) => segment.points.length > 1).map((segment, index) => {
+              const linePath = denseWeightPath(segment.points, x, y)
+              const firstPoint = segment.points[0]
+              const lastPoint = segment.points.at(-1)
+              const showArea = (segment.certainty !== 'incomplete' || dossier) && firstPoint && lastPoint
+              const areaPath = showArea
+                ? linePath + ' L ' + x(lastPoint.turn).toFixed(1) + ' ' + y(0).toFixed(1) + ' L ' + x(firstPoint.turn).toFixed(1) + ' ' + y(0).toFixed(1) + ' Z'
+                : ''
+              const areaFill = segment.certainty === 'incomplete' ? 'url(#' + mutedGradId + ')' : 'url(#' + gradId + ')'
+              return h(React.Fragment, { key: 'segment:' + index },
+                areaPath ? h('path', { className: 'sg-weight-area' + (segment.certainty === 'incomplete' ? ' incomplete' : ''), d: areaPath, fill: areaFill }) : null,
+                dossier && segment.certainty !== 'incomplete' ? h('path', { className: 'sg-weight-line-glow', d: linePath }) : null,
+                h('path', { className: 'sg-weight-line ' + (segment.certainty === 'incomplete' ? 'incomplete' : 'known'), d: linePath }),
               h('path', {
                 className: 'sg-weight-line-hit',
-                d: denseWeightPath(segment.points, x, y),
+                d: linePath,
                 onPointerEnter: (event) => showSegmentTooltip(event, segment),
                 onPointerMove: (event) => showSegmentTooltip(event, segment),
                 onPointerLeave: () => setHoveredSegment(null),
                 'aria-label': segment.certainty === 'incomplete' ? '旧数据推算的记忆权重轨迹' : '已确认的记忆权重轨迹',
-              }))),
+              }))
+            }),
             nodes.map((point, index) => h(React.Fragment, { key: point.kind + ':' + point.turn + ':' + index },
-              h('circle', { className: 'sg-weight-node ' + point.kind, cx: String(x(point.turn)), cy: String(y(point.weight)), r: point.kind === 'adoption' ? '6' : '5' },
+              dossier && point.kind === 'adoption' ? h('line', { className: 'sg-weight-drop', x1: String(x(point.turn)), y1: String(y(point.weight) + 4), x2: String(x(point.turn)), y2: String(plotBottom) }) : null,
+              dossier && (point.kind === 'current' || point.isCurrent) ? h('circle', { className: 'sg-weight-node-beacon', cx: String(x(point.turn)), cy: String(y(point.weight)), r: '7.5' }) : null,
+              h('circle', {
+                className: 'sg-weight-node ' + point.kind + (point.isCurrent ? ' is-current' : ''),
+                cx: String(x(point.turn)),
+                cy: String(y(point.weight)),
+                r: dossier ? (point.kind === 'creation' ? '3.4' : '3.8') : (point.kind === 'adoption' ? '6' : '5'),
+                onPointerEnter: dossier ? (event) => showNodeTooltip(event, point) : undefined,
+                onPointerLeave: dossier ? () => setHoveredSegment(null) : undefined,
+              },
                 h('title', null, nodeTooltip(point))),
-              labelPositions.has(point) ? h('text', { className: 'sg-weight-node-label', x: String(labelPositions.get(point).x), y: String(labelPositions.get(point).y), textAnchor: labelPositions.get(point).anchor }, labelPositions.get(point).label) : null)),
+              labelPositions.has(point) ? h('text', { className: 'sg-weight-node-label' + (dossier ? ' ' + point.kind : ''), x: String(labelPositions.get(point).x), y: String(labelPositions.get(point).y), textAnchor: labelPositions.get(point).anchor }, labelPositions.get(point).label) : null)),
             ticks.map((offset) => {
               const turn = minTurn + offset
               return h(React.Fragment, { key: 'tick:' + turn },
-                h('line', { className: 'sg-weight-tick', x1: String(x(turn)), y1: '176', x2: String(x(turn)), y2: '181' }),
-                h('text', { className: 'sg-weight-axis-label', x: String(x(turn)), y: '215', textAnchor: offset === 0 ? 'start' : offset === turnSpan ? 'end' : 'middle' }, relativeAxis ? turn - formedTurn : turn))
+                h('line', { className: 'sg-weight-tick', x1: String(x(turn)), y1: String(plotBottom), x2: String(x(turn)), y2: String(plotBottom + (dossier ? 3.5 : 5)) }),
+                h('text', { className: 'sg-weight-axis-label', x: String(x(turn)), y: String(dossier ? 136 : 215), textAnchor: offset === 0 ? 'start' : offset === turnSpan ? 'end' : 'middle' }, relativeAxis ? turn - formedTurn : turn))
             }),
-            h('text', { className: 'sg-weight-axis-label', x: '307', y: '232', textAnchor: 'middle' }, relativeAxis ? '距记忆形成的对话轮次' : '对话轮次')),
+            !dossier ? h('text', { className: 'sg-weight-axis-label', x: '307', y: '232', textAnchor: 'middle' }, relativeAxis ? '距记忆形成的对话轮次' : '对话轮次') : null),
+          dossier ? h('div', { className: 'sg-weight-chart-foot' },
+            h('span', null, relativeAxis ? '横轴 · 距形成轮次' : '横轴 · 对话轮次'),
+            h('span', null, '悬停查看轮次明细')) : null,
           hoveredSegment ? h('div', { className: 'sg-weight-tooltip ' + (hoveredSegment.below ? 'below' : 'above'), style: { left: hoveredSegment.x + 'px', top: hoveredSegment.y + 'px' }, role: 'tooltip' },
-            h('strong', null, hoveredSegment.certainty === 'incomplete' ? '旧数据推算轨迹' : '已确认轨迹'),
-            h('small', null, '第 ' + hoveredSegment.startTurn + '–' + hoveredSegment.endTurn + ' 轮 · ' + Number(hoveredSegment.startWeight).toFixed(2) + ' → ' + Number(hoveredSegment.endWeight).toFixed(2)),
-            hoveredSegment.certainty === 'incomplete' ? h('small', null, '旧版本未记录部分采纳的准确轮次') : null) : null))
+            hoveredSegment.node
+              ? h(React.Fragment, null,
+                h('strong', null, hoveredSegment.node.kind === 'creation' ? '记忆形成' : hoveredSegment.node.kind === 'adoption' ? 'Agent 采纳' : '当前权重'),
+                h('small', null, '第 ' + hoveredSegment.node.turn + ' 轮 · 权重 ' + Number(hoveredSegment.node.weight).toFixed(2)))
+              : h(React.Fragment, null,
+                h('strong', null, hoveredSegment.certainty === 'incomplete' ? '旧数据推算轨迹' : '已确认轨迹'),
+                h('small', null, '第 ' + hoveredSegment.startTurn + '–' + hoveredSegment.endTurn + ' 轮 · ' + Number(hoveredSegment.startWeight).toFixed(2) + ' → ' + Number(hoveredSegment.endWeight).toFixed(2)),
+                hoveredSegment.certainty === 'incomplete' ? h('small', null, '旧版本未记录部分采纳的准确轮次') : null)) : null),
+        dossier ? h('p', { className: 'sg-weight-caption' }, '随对话自然衰减至最低权重，每次被助手采纳后自动恢复。') : null)
     }
 
     function CopyEventId({ value }) {
@@ -801,15 +906,259 @@
     function EventTechnicalDisclosure({ event, citation }) {
       const evidenceRef = String(citation?.evidenceRef || '')
       const redundantEvidenceRef = !evidenceRef || evidenceRef === event.id || evidenceRef === 'event:' + event.id
+      const mergedIds = Array.isArray(event?.mergedFromEventIds) ? event.mergedFromEventIds.filter(Boolean) : []
       return h(CitationDisclosure, { title: '技术信息' }, h('dl', { className: 'sg-event-technical' },
         h('dt', null, 'Event ID'), h('dd', null, h('code', null, event.id), h(CopyEventId, { value: event.id })),
         !redundantEvidenceRef ? h(React.Fragment, null, h('dt', null, 'evidenceRef'), h('dd', null, h('code', null, evidenceRef))) : null,
         citation?.detailKind ? h(React.Fragment, null, h('dt', null, 'detailKind'), h('dd', null, h('code', null, citation.detailKind))) : null,
-        event.sourceBlockId ? h(React.Fragment, null, h('dt', null, '来源 Block'), h('dd', null, h('code', null, event.sourceBlockId))) : null))
+        event.sourceBlockId ? h(React.Fragment, null, h('dt', null, '来源 Block'), h('dd', null, h('code', null, event.sourceBlockId))) : null,
+        mergedIds.length ? h(React.Fragment, null, h('dt', null, '合并来源'), h('dd', null, h('code', null, mergedIds.join(', ')))) : null))
     }
 
-    function EventMemoryDetails({ event, sourceMessages = [], citation = null, relatedEvents = [] }) {
+    function formatEventQuote(value, origin = '') {
+      let text = String(value || '').trim()
+      if (origin === 'auto_extracted') {
+        const jsonField = text.match(/^"[a-zA-Z0-9_]+":\s*"([\s\S]+?)"?[,;]?$/)
+        if (jsonField && jsonField[1]) text = jsonField[1].trim()
+      }
+      return /^[“"「『]/.test(text) ? text : '“' + text + '”'
+    }
+
+    function shortMonthDay(value) {
+      const full = eventDate(value)
+      return full.length >= 10 ? full.slice(5, 10) : full
+    }
+
+    function formatBlockDisplayTitle(block) {
+      const rawTitle = String(block?.title || '').trim()
+      if (rawTitle && /[\p{L}\p{N}]/u.test(rawTitle)) return rawTitle
+      const summary = String(block?.summary || '').trim()
+      if (summary) return summary.length > 56 ? summary.slice(0, 56) + '…' : summary
+      return block?.id ? '封存对话块 ' + String(block.id).slice(0, 12) : '封存对话块'
+    }
+
+    function EventProvenanceTabs({ event, sourceMessages = [], sourceBlocks = [], siblingEvents = [], relatedEvents = [], topicContext = null, citation = null, onOpenEvent, onOpenSession }) {
+      const primaryBlock = sourceBlocks[0] || null
+      const combinedRelated = []
+      const seenRel = new Set([event?.id])
+      for (const item of relatedEvents || []) {
+        if (!item?.id || seenRel.has(item.id)) continue
+        seenRel.add(item.id)
+        combinedRelated.push({ ...item, group: 'relation' })
+      }
+      for (const item of siblingEvents || []) {
+        if (!item?.id || seenRel.has(item.id)) continue
+        seenRel.add(item.id)
+        combinedRelated.push({ ...item, group: 'sibling' })
+      }
+      const defaultTab = sourceMessages.length ? 'messages' : combinedRelated.length ? 'siblings' : sourceBlocks.length ? 'blocks' : 'technical'
+      const [activeTab, setActiveTab] = React.useState(defaultTab)
+      const [expandedMsgs, setExpandedMsgs] = React.useState({})
+      const prevEventIdRef = React.useRef ? React.useRef(event?.id) : { current: event?.id }
+      if (prevEventIdRef.current !== event?.id) {
+        prevEventIdRef.current = event?.id
+      }
+      if (typeof React.useEffect === 'function') {
+        React.useEffect(() => {
+          setActiveTab(sourceMessages.length ? 'messages' : combinedRelated.length ? 'siblings' : sourceBlocks.length ? 'blocks' : 'technical')
+          setExpandedMsgs({})
+        }, [event?.id, sourceMessages.length, combinedRelated.length, sourceBlocks.length])
+      }
+      const tabs = [
+        { id: 'messages', label: sourceMessages.length ? '原始对话 (' + sourceMessages.length + ')' : '原始对话' },
+        ...(combinedRelated.length ? [{ id: 'siblings', label: (topicContext?.sectionTitle ? '同节记忆' : '关联记忆') + ' (' + combinedRelated.length + ')' }] : []),
+        ...(sourceBlocks.length ? [{ id: 'blocks', label: '来源封存块' }] : []),
+        { id: 'technical', label: '技术信息' },
+      ]
+      const currentTab = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0].id
+      const mergedIds = Array.isArray(event?.mergedFromEventIds) ? event.mergedFromEventIds.filter(Boolean) : []
+      const evidenceRef = citation?.evidenceRef || (event?.id ? 'event:' + event.id : '')
+      const redundantEvidenceRef = evidenceRef === 'event:' + event?.id
+      const scopeText = event?.scope === 'global' ? '跨工作区' : '当前工作区'
+      const criticalityText = CRITICALITY_INFO[event?.criticality]?.[0] || ''
+      return h('section', { className: 'sg-event-provenance', 'aria-label': '来源与延伸信息' },
+        h('div', { className: 'sg-event-tabbar', role: 'tablist' },
+          tabs.map((tab) => h('button', {
+            key: tab.id,
+            type: 'button',
+            role: 'tab',
+            'aria-selected': currentTab === tab.id ? 'true' : 'false',
+            className: 'sg-event-tab' + (currentTab === tab.id ? ' active' : ''),
+            onClick: () => setActiveTab(tab.id),
+          }, tab.label))),
+        currentTab === 'messages' ? h('div', { className: 'sg-event-tab-panel', role: 'tabpanel' },
+          sourceMessages.length
+            ? h('div', { className: 'sg-event-chat-list' }, sourceMessages.map((message, index) => {
+              const key = message.id || String(index)
+              const roleKind = message.role === 'user' ? 'user' : message.role === 'assistant' ? 'assistant' : 'other'
+              const roleLabel = message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : (message.role || '消息')
+              const rawText = String(message.content || '').trim()
+              const isLong = rawText.length > 340
+              const expanded = Boolean(expandedMsgs[key])
+              const shownText = isLong && !expanded ? rawText.slice(0, 340) + '…' : rawText
+              return h('div', { key, className: 'sg-citation-message sg-event-chat-msg ' + roleKind },
+                h('span', { className: 'sg-event-chat-role' }, roleLabel),
+                h('div', { className: 'sg-event-chat-body' },
+                  h('div', { className: 'sg-event-chat-text' }, shownText || '（空消息）'),
+                  isLong ? h('button', {
+                    type: 'button',
+                    className: 'sg-event-chat-more',
+                    onClick: () => setExpandedMsgs((prev) => ({ ...prev, [key]: !prev[key] })),
+                  }, expanded ? '收起原文' : '展开全文') : null))
+            }))
+            : h('p', { className: 'sg-event-empty-note' }, '没有可展示的原始对话片段。'),
+          primaryBlock ? h('div', { className: 'sg-event-block-foot' },
+            h('span', { className: 'sg-event-block-foot-title', title: formatBlockDisplayTitle(primaryBlock) }, '来源封存块：' + formatBlockDisplayTitle(primaryBlock)),
+            onOpenSession ? h('button', { type: 'button', className: 'sg-event-link-btn', onClick: () => onOpenSession(primaryBlock) }, '前往会话记忆 →') : null) : null) : null,
+        currentTab === 'siblings' ? h('div', { className: 'sg-event-tab-panel', role: 'tabpanel' },
+          h('div', { className: 'sg-event-rel-list' }, combinedRelated.map((item) => h('button', {
+            key: item.id,
+            type: 'button',
+            className: 'sg-event-rel-row',
+            onClick: onOpenEvent ? () => onOpenEvent(item) : undefined,
+            disabled: !onOpenEvent,
+          },
+            h('span', { className: 'sg-event-rel-main' },
+              item.relation ? h('span', { className: 'sg-event-rel-badge' }, item.relation) : null,
+              h('span', { className: 'sg-event-rel-title' }, item.title || '未命名事件')),
+            h('span', { className: 'sg-event-rel-meta' }, shortMonthDay(item.temporal?.happenedStart || item.updatedAt || item.createdAt) || '查看 →'))))) : null,
+        currentTab === 'blocks' ? h('div', { className: 'sg-event-tab-panel', role: 'tabpanel' },
+          h('div', { className: 'sg-event-block-list' }, sourceBlocks.map((block) => h('article', { key: block.id, className: 'sg-event-block-card' },
+            h('div', { className: 'sg-event-block-card-head' },
+              h('strong', null, formatBlockDisplayTitle(block)),
+              Number.isSafeInteger(block.startTurn) && Number.isSafeInteger(block.endTurn)
+                ? h('span', { className: 'sg-event-block-turns' }, '第 ' + block.startTurn + '–' + block.endTurn + ' 轮')
+                : null),
+            block.summary ? h('p', { className: 'sg-event-block-summary' }, block.summary) : null,
+            h('div', { className: 'sg-event-block-card-foot' },
+              h('span', null, block.createdAt ? exactTime(block.createdAt) : block.id),
+              onOpenSession ? h('button', { type: 'button', className: 'sg-event-link-btn', onClick: () => onOpenSession(block) }, '前往会话记忆 →') : null))))) : null,
+        currentTab === 'technical' ? h('div', { className: 'sg-event-tab-panel', role: 'tabpanel' },
+          h('dl', { className: 'sg-technical-list' },
+            h('dt', null, 'Event ID'), h('dd', null, h('code', null, event?.id || ''), event?.id ? h(CopyEventId, { value: event.id }) : null),
+            !redundantEvidenceRef && evidenceRef ? h(React.Fragment, null, h('dt', null, 'evidenceRef'), h('dd', null, h('code', null, evidenceRef))) : null,
+            citation?.detailKind ? h(React.Fragment, null, h('dt', null, 'detailKind'), h('dd', null, h('code', null, citation.detailKind))) : null,
+            event?.sourceBlockId ? h(React.Fragment, null, h('dt', null, '来源 Block'), h('dd', null, h('code', null, event.sourceBlockId))) : null,
+            h('dt', null, '范围 / 重要度'), h('dd', null, scopeText + (criticalityText ? ' · ' + criticalityText : '')),
+            event?.createdAt ? h(React.Fragment, null, h('dt', null, '记录创建'), h('dd', null, exactTime(event.createdAt))) : null,
+            event?.updatedAt ? h(React.Fragment, null, h('dt', null, '最近更新'), h('dd', null, exactTime(event.updatedAt))) : null,
+            mergedIds.length ? h(React.Fragment, null, h('dt', null, '合并来源'), h('dd', null, h('code', null, mergedIds.join(', ')))) : null)) : null)
+    }
+
+    function EventDossierRail({ event, nodes = [], adoptionReceipts = [], tags = [], onNode }) {
+      const [showAllReceipts, setShowAllReceipts] = React.useState(false)
+      const [showAllEntities, setShowAllEntities] = React.useState(false)
+      const temporal = event?.temporal || {}
+      const nodeMap = new Map(nodes.map((node) => [node.id, node]))
+      const linkedNodes = [...new Set(temporal.participantNodeIds || [])]
+        .map((id) => nodeMap.get(id))
+        .filter((node) => node && String(node.name || '').trim())
+      const linkedNames = new Set(linkedNodes.flatMap((node) => [node.name, ...(node.aliases || [])]).map(participantIdentity).filter(Boolean))
+      const seenUnlinked = new Set()
+      const unlinkedNames = (temporal.participants || []).map((name) => String(name || '').trim()).filter((name) => {
+        const identity = participantIdentity(name)
+        if (!identity || linkedNames.has(identity) || seenUnlinked.has(identity)) return false
+        seenUnlinked.add(identity)
+        return true
+      })
+      const fallbackHistory = Array.isArray(event?.weightTrajectory?.adoptionHistory)
+        ? [...event.weightTrajectory.adoptionHistory].reverse().map((item) => ({ receiptId: item.receiptId, createdAt: item.createdAt, turn: item.turn, fit: '' }))
+        : []
+      const receipts = adoptionReceipts.length ? adoptionReceipts : fallbackHistory
+      const visibleReceipts = showAllReceipts ? receipts : receipts.slice(0, 2)
+      const totalEntities = linkedNodes.length + unlinkedNames.length
+      const entityLimit = showAllEntities ? totalEntities : 5
+      const visibleLinked = linkedNodes.slice(0, entityLimit)
+      const remainingForUnlinked = Math.max(0, entityLimit - visibleLinked.length)
+      const visibleUnlinked = unlinkedNames.slice(0, remainingForUnlinked)
+      return h('aside', { className: 'sg-event-dossier-side', 'aria-label': '记忆状态与关联脉络' },
+        h('div', { className: 'sg-rail-block' },
+          h(MemoryWeightTrajectory, { event, layout: 'dossier' })),
+        receipts.length ? h('div', { className: 'sg-rail-block sg-rail-divided' },
+          h('div', { className: 'sg-rail-head' },
+            h('span', null, '近期被助手采纳'),
+            h('span', { className: 'sg-rail-count' }, receipts.length > 2 ? '最近 ' + visibleReceipts.length + ' / ' + receipts.length + ' 次' : receipts.length + ' 次')),
+          h('div', { className: 'sg-rail-receipts' }, visibleReceipts.map((item, index) => h('div', { key: item.receiptId || index, className: 'sg-rail-receipt' },
+            h('div', { className: 'sg-rail-receipt-head' },
+              h('span', null, item.createdAt ? exactTime(item.createdAt) : '采纳记录'),
+              h('span', { className: 'sg-rail-receipt-tag' }, '采纳')),
+            item.fit ? h('p', { className: 'sg-rail-receipt-fit' }, item.fit) : h('p', { className: 'sg-rail-receipt-fit muted' }, '在对话中被助手检索并采纳')))),
+          receipts.length > 2 ? h('button', { type: 'button', className: 'sg-rail-more', onClick: () => setShowAllReceipts((value) => !value) }, showAllReceipts ? '收起记录' : '查看全部 ' + receipts.length + ' 条采纳记录') : null) : null,
+        totalEntities ? h('div', { className: 'sg-rail-block sg-rail-divided' },
+          h('div', { className: 'sg-rail-head' },
+            h('span', null, '参与实体'),
+            h('span', { className: 'sg-rail-count' }, String(totalEntities))),
+          h('div', { className: 'sg-rail-entities sg-event-participants' },
+            visibleLinked.map((node) => {
+              const typeLabel = NODE_META[node.type]?.[0] || ''
+              return h('button', {
+                key: node.id,
+                type: 'button',
+                className: 'sg-rail-entity sg-entity-pill',
+                onClick: onNode ? (clickEvent) => onNode(node.id, clickEvent) : undefined,
+                disabled: !onNode,
+              },
+                h('span', { className: 'sg-rail-entity-info' },
+                  h('strong', { className: 'sg-rail-entity-name' }, node.name),
+                  typeLabel ? h('span', { className: 'sg-rail-entity-type' }, typeLabel) : null),
+                onNode ? h('span', { className: 'sg-rail-entity-go' }, '图谱 →') : null)
+            }),
+            visibleUnlinked.map((name) => h('span', { key: name, className: 'sg-rail-entity static sg-entity-pill' },
+              h('span', { className: 'sg-rail-entity-info' }, h('strong', { className: 'sg-rail-entity-name' }, name))))),
+          totalEntities > 5 ? h('button', { type: 'button', className: 'sg-rail-more', onClick: () => setShowAllEntities((value) => !value) }, showAllEntities ? '收起实体列表' : '展开全部 ' + totalEntities + ' 个实体') : null) : null,
+        tags.length ? h('div', { className: 'sg-rail-block sg-rail-divided' },
+          h('div', { className: 'sg-event-tags' }, tags.map((tag) => h('span', { key: tag, className: 'sg-event-tag' }, tag)))) : null)
+    }
+
+    function EventMemoryDetails({
+      event,
+      sourceMessages = [],
+      citation = null,
+      relatedEvents = [],
+      layout = 'default',
+      headerSlot = null,
+      sourceBlocks = [],
+      relatedNodes = [],
+      adoptionReceipts = [],
+      topicContext = null,
+      onNode,
+      onOpenEvent,
+      onOpenSession,
+    }) {
       const memoryContent = event?.summary
+      if (layout === 'dossier') {
+        const quotes = Array.isArray(event?.quotes) ? event.quotes.map((item) => String(item || '').trim()).filter(Boolean) : []
+        const tags = Array.isArray(event?.tags) ? [...new Set(event.tags.map((item) => String(item || '').trim()).filter(Boolean))] : []
+        return h('div', { className: 'sg-event-dossier' },
+          h('div', { className: 'sg-event-dossier-main' },
+            headerSlot,
+            h('section', { className: 'sg-event-narrative' },
+              h('h3', { className: 'sg-event-section-title' }, '记忆内容'),
+              h('p', { className: 'sg-event-memory-copy' }, memoryContent || '暂无可展示的记忆内容。')),
+            quotes.length ? h('section', { className: 'sg-event-quotes-section' },
+              event.quotesOrigin === 'auto_extracted'
+                ? h('div', { className: 'sg-event-block-head' }, h('span', { className: 'sg-event-block-note', title: event.quotesNotice || undefined }, '自动摘录原话'))
+                : null,
+              h('ul', { className: 'sg-event-quotes' }, quotes.map((quote, index) => h('li', { key: index }, formatEventQuote(quote, event.quotesOrigin))))) : null,
+            h(EventProvenanceTabs, {
+              event,
+              sourceMessages,
+              sourceBlocks,
+              siblingEvents: topicContext?.siblingEvents || [],
+              relatedEvents,
+              topicContext,
+              citation,
+              onOpenEvent,
+              onOpenSession,
+            })),
+          h(EventDossierRail, {
+            event,
+            nodes: relatedNodes,
+            adoptionReceipts,
+            tags,
+            onNode,
+          }))
+      }
       return h(React.Fragment, null,
         h('section', { className: 'sg-event-section' }, h('h3', { className: 'sg-event-section-title' }, '记忆内容'), h('p', { className: 'sg-event-memory-copy' }, memoryContent || '暂无可展示的记忆内容。')),
         h('section', { className: 'sg-event-section sg-event-weight-section' }, h(MemoryWeightTrajectory, { event })),

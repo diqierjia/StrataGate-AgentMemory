@@ -1353,6 +1353,67 @@ describe('StrataGate admin routes', () => {
     }])
   })
 
+  it('omits participant nodes whose effective name provenance is hidden', async () => {
+    const hiddenNameSnapshot = structuredClone(snapshot)
+    hiddenNameSnapshot.events[0]!.temporal = {
+      participantNodeIds: ['node_1', 'node_hidden_name'],
+    }
+    hiddenNameSnapshot.graphNodes.push({
+      ...hiddenNameSnapshot.graphNodes[0]!,
+      id: 'node_hidden_name',
+      name: 'npm',
+      type: 'tool',
+      aliases: [],
+      sourceEventIds: ['evt_1'],
+      metadataProvenance: { name: ['evt_deleted_or_forgotten'] },
+    })
+    const hiddenRuntime = { adminSnapshot: async () => hiddenNameSnapshot } as unknown as StrataGateRuntime
+    const source = await request('/api/stratagate/sources?namespace=hidden-name&eventId=evt_1', 'GET', hiddenRuntime)
+    expect(source.body.relatedNodes).toEqual([{
+      id: 'node_1', name: 'pnpm', type: 'tool', aliases: [],
+    }])
+  })
+
+  it('returns adoptionReceipts, relatedEvents, and enriched block provenance for event sources', async () => {
+    const richSnapshot = structuredClone(snapshot)
+    richSnapshot.events.push({
+      ...richSnapshot.events[0]!,
+      id: 'evt_2',
+      title: 'Related benchmark decision',
+    })
+    richSnapshot.events[0]!.temporal = {
+      ...richSnapshot.events[0]!.temporal,
+      relatedEventIds: ['evt_2'],
+    }
+    richSnapshot.usageReceipts.push({
+      id: 'rec_detail_1',
+      eventIds: ['evt_1'],
+      elementIds: [],
+      createdAt: '2026-09-04T10:00:00.000Z',
+      audit: {
+        sessionId: 'sess_1',
+        turn: 2,
+        fit: 'Matched pnpm preference during workspace check.',
+      },
+    })
+    const richRuntime = { adminSnapshot: async () => richSnapshot } as unknown as StrataGateRuntime
+    const source = await request('/api/stratagate/sources?namespace=rich-detail&eventId=evt_1', 'GET', richRuntime)
+    expect(source.status).toBe(200)
+    expect(source.body.relatedEvents).toEqual([
+      expect.objectContaining({ id: 'evt_2', title: 'Related benchmark decision', relation: '相关' }),
+    ])
+    expect(source.body.adoptionReceipts).toEqual([
+      expect.objectContaining({ receiptId: 'rec_detail_1', fit: 'Matched pnpm preference during workspace check.' }),
+      expect.objectContaining({ receiptId: 'dsh:s1:tool:c1', fit: 'Direct project decision.' }),
+    ])
+    expect(source.body.blocks[0]).toMatchObject({
+      id: 'blk_1',
+      summary: richSnapshot.blocks[0]!.l1Summary,
+      startTurn: richSnapshot.blocks[0]!.startTurn,
+      endTurn: richSnapshot.blocks[0]!.endTurn,
+    })
+  })
+
   it('reports the injected surface layer separately from the decay target', async () => {
     const layerRuntime = {
       adminSnapshot: async () => ({
