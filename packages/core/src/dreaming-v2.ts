@@ -25,7 +25,13 @@ export interface DreamingExperienceEdit {
   sourceEventIds?: string[];
 }
 
-export type DreamingEditResult = { id?: string; saved: boolean; experiencesToReview?: string[] };
+export type DreamingEditResult = {
+  id?: string;
+  saved: boolean;
+  experiencesToReview?: string[];
+  unreadSourceMessageIds?: string[];
+  warning?: string;
+};
 export type DreamingClaim = { id: string; owner: string; epoch: number };
 export const DREAMING_AUTO_INTERVAL = 24 * 60 * 60_000;
 export const DREAMING_IDLE_TIME = 30 * 60_000;
