@@ -4,8 +4,6 @@
 
 # StrataGate
 
-项目源码、版本发布和问题反馈请前往 [GitHub](https://github.com/diqierjia/StrataGate-AgentMemory)；[Gitee](https://gitee.com/diqier4123/StrataGate-AgentMemory) 保留为同步仓库。
-
 ### 近期对话保留细节，远期记忆逐渐简化。
 
 StrataGate 是 DeepSeek Harness 的跨会话记忆插件。每日笔记帮助接续近期工作，分层会话保留可展开的历史细节，长期事件与主题目录保存重要信息并帮助查找来源。知识图谱、向量检索和结果精排可按需启用。
