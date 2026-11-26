@@ -622,6 +622,9 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     const newer = await cards(third, '部署计划 B', '后来选择 B。', '2026-11-13')
     const wrong = await cards(third, '虚构决定 Omega', '模型误抽取了从未发生的决定。')
     const toCorrect = await cards(second, '必须清空队列', '错误地把持久化队列提取成清空队列。')
+    for (let index = 0; index < 45; index++) {
+      await cards(third, `增量巡检事件 ${index}`, `普通变更记录 ${index}。`)
+    }
     const forgottenBlock = await add('forgotten', 'PrivateRecallSentinel')
     const hidden = await cards(forgottenBlock, '需遗忘的事实', '用户要求忘记。')
     await f.memory.forgetEvent(hidden.id)
@@ -681,7 +684,6 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     const steps: Array<readonly [string, Record<string, unknown>] | (() => Promise<readonly [string, Record<string, unknown>]>)> = [
       ['dreaming_event', merge],
       eventRead(old.id), eventRead(newer.id),
-      ['dreaming_event', { kind: 'merge', id: newer.id, otherIds: [old.id], title: '不应合并', summary: '两个真实的阶段。' }],
       ['dreaming_event', { kind: 'supersede', id: newer.id, otherIds: [old.id], reason: '11 月 13 日改为 B，保留先前计划。' }],
       eventRead(wrong.id),
       ['dreaming_event', { kind: 'delete', id: wrong.id, reason: '原文未曾出现 Omega。' }],
@@ -720,7 +722,6 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     }), { timeout: 25_000 })
     await nextCtx.agents.get(started.sessionId)?.whenIdle()
     const history = JSON.stringify(nextCtx.agents.get(started.sessionId)!.session.deriveMessages())
-    expect(history).toContain('different points in history')
     expect(history).toContain('本批已完成。请根据最新任务继续。')
     expect(history).toContain('整理完毕。')
     await inspect.reloadFromStorage()
@@ -2361,6 +2362,15 @@ describe('Dreaming Agent orchestration and admin API', () => {
         createdAt: '2026-11-21T06:00:00.000Z',
       })
     }
+    const firstBlock = f.memory.listBlocks()[0]!
+    for (let index = 0; index < 48; index++) {
+      await f.memory.addEvent({
+        title: `第一批事件 ${index}`,
+        summary: `批量事件摘要 ${index}。`,
+        sourceBlockId: firstBlock.id,
+        sourceMessageIds: [firstBlock.l5Raw[0]!.id],
+      })
+    }
     const agentCard = await f.memory.recordAgentEvent({
       content: '腾讯实习进展：已拿到组面通知，下周二下午三点面试。这里有一段很长的补充背景说明。',
       category: 'fact',
@@ -2383,7 +2393,7 @@ describe('Dreaming Agent orchestration and admin API', () => {
     const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
     expect(run.units.length).toBeGreaterThan(1)
     const payload = dreamingPayload(f.memory, run) as any
-    expect(payload.events).toEqual([])
+    expect(payload.events.length).toBe(48)
     expect(payload.todayAndChanged.events).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: agentCard.eventId,
@@ -2468,7 +2478,6 @@ describe('Dreaming Agent orchestration and admin API', () => {
         sourceMessageIds: [updateMessageId],
       }],
       ['dreaming_finish', { summary: '第一批已更新已有主动记忆卡' }],
-      ['dreaming_finish', { summary: '第二批无需新建重复卡' }],
     ]
     let stepIndex = 0
     const ctx = await nativeHost(runtime, f.directory, async function* (options) {
@@ -2495,18 +2504,23 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(memoryTasks).toHaveLength(1)
     expect(memoryTasks[0]).toMatchObject({
       scope: 'memory',
-      events: [],
+      phase: 'orient',
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          id: agentCard.eventId,
+          source: 'agent-recorded',
+          status: 'active',
+        }),
+      ]),
       todayAndChanged: {
-        events: expect.arrayContaining([
+        blocks: expect.arrayContaining([
           expect.objectContaining({
-            id: agentCard.eventId,
-            source: 'agent-recorded',
-            status: 'active',
+            threadId: 'thread-0',
           }),
         ]),
       },
     })
-    expect(memoryTasks[0].todayAndChanged.events.find((item: any) => item.id === agentCard.eventId)).not.toHaveProperty('summary')
+    expect(memoryTasks[0].todayAndChanged.blocks.find((item: any) => item.threadId === 'thread-0')).not.toHaveProperty('summary')
 
     const reopened = await f.reopen()
     const activeEvents = reopened.listAllEvents().filter(event => event.status === 'active')
@@ -3049,20 +3063,15 @@ describe('Dreaming Agent orchestration and admin API', () => {
       title: 'SQLite 存储选型',
       summary: '确认使用 SQLite 存储并整合同日补充记录。',
     })
-    // Deleting an Event without reading its raw sourceMessageIds is rejected.
-    await expect(f.memory.editDreamingEvent(claim(run), {
+    // Auto-Dream: deleting an Event without reading its raw sourceMessageIds succeeds with a non-blocking warning and snapshot.
+    const deleted = await f.memory.editDreamingEvent(claim(run), {
       kind: 'delete',
       id: eventC.id,
-      reason: '尚未读原文尝试删除',
-    })).rejects.toThrow('Read the original sources')
-
-    // After reading raw sourceMessageIds, delete succeeds; create-chapter with initial sections works too.
-    await readSource('message', rawMsgId)
-    await f.memory.editDreamingEvent(claim(run), {
-      kind: 'delete',
-      id: eventC.id,
-      reason: '已读原始消息核实为重复冗余提取',
+      reason: '重复冗余提取，可凭快照恢复',
     })
+    expect(deleted.saved).toBe(true)
+    expect(deleted.unreadSourceMessageIds).toEqual([rawMsgId])
+    expect(deleted.warning).toContain(rawMsgId)
     run = await f.memory.dreaming({
       ...claim(run),
       kind: 'apply',
@@ -3389,5 +3398,274 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(updatedWithRead.saved).toBe(true)
     expect(updatedWithRead.unreadSourceMessageIds).toBeUndefined()
     expect(updatedWithRead.warning).toBeUndefined()
+  })
+
+  it('Auto-Dream: advances 4 phases (orient -> gather -> consolidate -> prune) and allows low-friction event mutations with pinned protection', async () => {
+    const f = await fixture(2, '项目改用 Rust 实现。', 'auto-dream-phases')
+    await f.memory.appendTurn({ threadId: 'phase-thread-2', user: '确认改用 Rust 实现核心引擎。', assistant: '收到。' })
+    const blocks = f.memory.listBlocks()
+    const msg1 = blocks[0]!.l5Raw[0]!.id
+    const msg2 = blocks[1]!.l5Raw[0]!.id
+    const evMain = await f.memory.addEvent({
+      title: '后端语言选型',
+      summary: '明天准备评估 Rust 方案。',
+      quotes: ['用户原话：准备评估 Rust。'],
+      temporal: { happenedStart: '2026-11-10' },
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+    const evCrossDate = await f.memory.addEvent({
+      title: '后端语言选型（补充）',
+      summary: '确定改用 Rust 实现核心引擎。',
+      temporal: { happenedStart: '2026-11-12' },
+      sourceBlockId: blocks[1]!.id,
+      sourceMessageIds: [msg2],
+    })
+    const evOldSameDay = await f.memory.addEvent({
+      title: '旧方案 A',
+      summary: '早先考虑方案 A。',
+      temporal: { happenedStart: '2026-11-12' },
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+    const evNewSameDay = await f.memory.addEvent({
+      title: '新方案 B',
+      summary: '同日切换为方案 B。',
+      temporal: { happenedStart: '2026-11-12' },
+      sourceBlockId: blocks[1]!.id,
+      sourceMessageIds: [msg2],
+    })
+    const evPinned = await f.memory.addEvent({
+      title: '置顶事实',
+      summary: '用户置顶不可误删。',
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+    await f.memory.pinEvent(evPinned.id, true)
+    const evOrphan = await f.memory.addEvent({
+      title: '孤立空卡',
+      summary: '待清理。',
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+
+    const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const runClaim = claim(run)
+    expect(run.phase).toBe('orient')
+    expect((dreamingPayload(f.memory, run) as any).phase).toBe('orient')
+
+    // Gather phase on dreaming_read
+    const gathered = await f.memory.dreaming({
+      ...runClaim,
+      kind: 'checkpoint',
+      estimatedTokens: 100,
+      trace: {
+        tool: 'dreaming_read',
+        args: { kind: 'event', id: evMain.id },
+        result: { content: '...', contentVersion: 'v1', offset: 0, nextOffset: null },
+      },
+    })
+    expect(gathered.phase).toBe('gather')
+
+    // Consolidate phase: low-friction update WITHOUT reading evCrossDate / evOldSameDay / evOrphan
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'update',
+      id: evMain.id,
+      summary: '2026-11-11 决定评估并改用 Rust 方案。',
+    })
+    expect(f.memory.exportSnapshot().memoryTopicState?.dreaming?.phase).toBe('consolidate')
+    expect(f.memory.listEvents().find(card => card.id === evMain.id)).toMatchObject({
+      title: '后端语言选型',
+      summary: '2026-11-11 决定评估并改用 Rust 方案。',
+      quotes: ['用户原话：准备评估 Rust。'],
+    })
+
+    // Tolerant cross-date merge succeeds without prior read ticket
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'merge',
+      id: evMain.id,
+      otherIds: [evCrossDate.id],
+      summary: '确认改用 Rust 实现核心引擎。',
+    })
+    expect(f.memory.listEvents().some(card => card.id === evCrossDate.id)).toBe(false)
+
+    // Tolerant same-day supersede succeeds, and status:'active' can undo superseded
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'supersede',
+      id: evNewSameDay.id,
+      otherIds: [evOldSameDay.id],
+      reason: '同日从方案 A 切换为方案 B。',
+    })
+    expect(f.memory.listEvents().find(card => card.id === evOldSameDay.id)).toMatchObject({
+      status: 'superseded',
+      supersededBy: evNewSameDay.id,
+    })
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'update',
+      id: evOldSameDay.id,
+      status: 'active',
+    })
+    expect(f.memory.listEvents().find(card => card.id === evOldSameDay.id)?.status).toBe('active')
+    expect(f.memory.listEvents().find(card => card.id === evOldSameDay.id)?.supersededBy).toBeFalsy()
+
+    // Pinned cards are protected from delete and absorption in merge
+    await expect(f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: evPinned.id, reason: '误删测试' })).rejects.toThrow(/pinned/i)
+    await expect(f.memory.editDreamingEvent(runClaim, { kind: 'merge', id: evMain.id, otherIds: [evPinned.id] })).rejects.toThrow(/pinned/i)
+
+    // Unpinned card can be deleted without read ticket
+    await f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: evOrphan.id, reason: '无用空卡' })
+    expect(f.memory.listEvents().some(card => card.id === evOrphan.id)).toBe(false)
+
+    // Prune phase on finish-unit
+    const finished = await f.memory.dreaming({ ...runClaim, kind: 'finish-unit' })
+    expect(finished.status).toBe('completed')
+    expect(finished.phase).toBe('prune')
+  })
+
+  it('Auto-Dream: direct dreaming_directory overview rewrite skips Topic Projector for rewritten events while untouched edited events still re-project', async () => {
+    const f = await fixture(2, '话题概要维护测试。', 'auto-dream-direct-overview')
+    await f.memory.appendTurn({ threadId: 'overview-thread-2', user: '外围工具准备升级。', assistant: '收到。' })
+    const blocks = f.memory.listBlocks()
+    const evRewritten = await f.memory.addEvent({
+      title: '核心架构重构',
+      summary: '初版摘要。',
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [blocks[0]!.l5Raw[0]!.id],
+    })
+    const evUntouched = await f.memory.addEvent({
+      title: '外围工具升级',
+      summary: '初版外围摘要。',
+      sourceBlockId: blocks[1]!.id,
+      sourceMessageIds: [blocks[1]!.l5Raw[0]!.id],
+    })
+    const job = (await f.memory.claimNextTopicProjection())!
+    const projected = await f.memory.completeTopicProjection(job.jobId, {
+      topics: [{
+        title: '系统架构',
+        description: '架构与工具',
+        sourceEventIds: [evRewritten.id, evUntouched.id],
+        sections: [
+          { title: '演进', sourceEventIds: [evRewritten.id] },
+          { title: '外围工具', sourceEventIds: [evUntouched.id] },
+        ],
+        overview: [
+          { kind: 'decision', title: '演进', text: '旧的核心架构描述。', sourceEventIds: [evRewritten.id] },
+          { kind: 'change', title: '外围工具', text: '旧的外围工具描述。', sourceEventIds: [evUntouched.id] },
+        ],
+      }],
+    })
+    const topicId = projected.topicIds[0]!
+
+    const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const runClaim = claim(run)
+    await f.memory.editDreamingEvent(runClaim, { kind: 'update', id: evRewritten.id, summary: '已全面迁移到 Auto-Dream 四阶段。' })
+    await f.memory.editDreamingEvent(runClaim, { kind: 'update', id: evUntouched.id, summary: '外围工具升级到 2.0。' })
+
+    // Directly rewrite overview for evRewritten WITHOUT calling dreaming_read first
+    const version = f.memory.getDreamingTopicVersion(topicId)!
+    const applied = await f.memory.dreaming({
+      ...runClaim,
+      kind: 'apply',
+      topicId,
+      topicVersion: version,
+      operations: [{
+        kind: 'set-overview',
+        title: '演进',
+        entries: [
+          { kind: 'decision', text: 'Dreaming 直接改写后的核心架构概要。', sourceEventIds: [evRewritten.id] },
+        ],
+      }],
+    })
+    expect(applied.phase).toBe('prune')
+    await f.memory.dreaming({ ...runClaim, kind: 'finish-unit' })
+
+    // Background Topic Projector should skip evRewritten (directly rewritten by Dreaming) and only project evUntouched
+    const nextJob = await f.memory.claimNextTopicProjection()
+    expect(nextJob).not.toBeNull()
+    expect(nextJob!.events.map(event => event.id)).toEqual([evUntouched.id])
+    expect(nextJob!.events.map(event => event.id)).not.toContain(evRewritten.id)
+  })
+
+  it('Auto-Dream: records pre-mutation event snapshots and supports single-item & full-run rollback via HTTP API', async () => {
+    const f = await fixture(2, '快照与回滚测试。', 'auto-dream-rollback')
+    const block = f.memory.listBlocks()[0]!
+    const ev1 = await f.memory.addEvent({
+      title: '项目代号 Polaris',
+      summary: '初始摘要：项目代号定为 Polaris。',
+      quotes: ['项目代号定为 Polaris。'],
+      sourceBlockId: block.id,
+      sourceMessageIds: [block.l5Raw[0]!.id],
+    })
+    const ev2 = await f.memory.addEvent({
+      title: '待删事件',
+      summary: '准备被 Dreaming 删除后再恢复。',
+      sourceBlockId: block.id,
+      sourceMessageIds: [block.l5Raw[0]!.id],
+    })
+    const agentCard = await f.memory.recordAgentEvent({
+      content: '主动记忆卡：保留原池位置。',
+      category: 'fact',
+      threadId: 't-rb',
+    })
+
+    const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const runClaim = claim(run)
+    await f.memory.editDreamingEvent(runClaim, { kind: 'update', id: ev1.id, title: '项目代号改名', summary: '被 Dreaming 改写的摘要。' })
+    await f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: ev2.id, reason: '测试误删恢复' })
+    await f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: agentCard.eventId!, reason: '测试 agentEvents 池恢复' })
+    const created = await f.memory.editDreamingEvent(runClaim, {
+      kind: 'create',
+      title: 'Dreaming 新建事件',
+      summary: '整轮撤销时应被移除。',
+      sourceMessageIds: [block.l5Raw[0]!.id],
+    })
+    await f.memory.dreaming({ ...runClaim, kind: 'finish-unit' })
+
+    const runtime = runtimeFor(f.database, async () => ({ tool: 'finish', args: {} }), true)
+    cleanups.push(async () => { await runtime.close() })
+
+    // GET /api/stratagate/dreaming returns recentRuns with 4 revertible snapshots
+    const status = await runtime.adminDreamingStatus(f.namespace) as any
+    expect(status.recentRuns).toHaveLength(1)
+    expect(status.recentRuns[0]).toMatchObject({ runId: run.id, totalCount: 4, revertibleCount: 4 })
+    expect(status.run.changes.items.filter((item: any) => item.canRevert)).toHaveLength(4)
+
+    const callPost = async (payload: Record<string, unknown>) => {
+      let body = ''
+      const res = { statusCode: 0, setHeader: () => {}, end: (chunk?: string) => { body = String(chunk ?? '') } }
+      const raw = JSON.stringify(payload)
+      const req = {
+        method: 'POST',
+        url: `/api/stratagate/dreaming?namespace=${encodeURIComponent(f.namespace)}&action=revert`,
+        headers: { 'content-type': 'application/json' },
+        async *[Symbol.asyncIterator]() { yield Buffer.from(raw) },
+      }
+      await handleAdminRequest(runtime, req as never, res as never)
+      return { statusCode: res.statusCode, json: JSON.parse(body) }
+    }
+
+    // Single-item revert restores deleted ev2
+    const deleteSnap = status.recentRuns[0].items.find((item: any) => item.id === ev2.id)
+    expect(deleteSnap).toBeDefined()
+    const single = await callPost({ runId: run.id, changeId: deleteSnap.changeId })
+    expect(single.statusCode).toBe(200)
+    expect(single.json.revert.revertedCount).toBe(1)
+    expect(single.json.dreaming.recentRuns[0].revertibleCount).toBe(3)
+    let reopened = await f.reopen()
+    expect(reopened.listEvents().find(card => card.id === ev2.id)).toMatchObject({ title: '待删事件' })
+
+    // Full-run revert restores ev1, restores agentCard to agentEvents pool, and removes created
+    const full = await callPost({ runId: run.id })
+    expect(full.statusCode).toBe(200)
+    expect(full.json.revert.revertedCount).toBe(3)
+    expect(full.json.dreaming.recentRuns[0].revertibleCount).toBe(0)
+    reopened = await f.reopen()
+    expect(reopened.listEvents().find(card => card.id === ev1.id)).toMatchObject({
+      title: '项目代号 Polaris',
+      summary: '初始摘要：项目代号定为 Polaris。',
+      quotes: ['项目代号定为 Polaris。'],
+    })
+    expect(reopened.listAllEvents().some(card => card.id === created.id)).toBe(false)
+    expect(reopened.exportSnapshot().agentEvents.some(card => card.id === agentCard.eventId)).toBe(true)
   })
 })

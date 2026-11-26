@@ -1,8 +1,8 @@
-import { effectiveGraphNodeView, estimateTokens, dreamingEventVersion, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
+import { effectiveGraphNodeView, estimateTokens, dreamingEventVersion, dreamingPhaseActivity, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
   dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, DREAMING_SOURCE_PAGE_CHARACTERS,
   toUtc8Iso,
   normalizeMemoryTopicLabel,
-  type BlockLevel, type DreamingRun, type EventCard, type MemoryTopic, type StrataGate } from '@diqier/stratagate'
+  type BlockLevel, type DreamingEventRollbackRecord, type DreamingRun, type EventCard, type MemoryTopic, type StrataGate } from '@diqier/stratagate'
 import { memoryTopicSections, sortMemoryTopics, topicPage } from './topics.js'
 import type { DailyNotes } from './daily-notes.js'
 
@@ -365,6 +365,25 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       ...(event.tags.includes('agent-recorded') ? { source: 'agent-recorded' as const } : {}),
       ...(event.sourceBlockId ? { sourceBlockId: event.sourceBlockId } : {}),
     })
+    const eventOrientItem = (event: EventCard) => ({
+      ...eventPath(event),
+      scope: event.scope,
+      summaryPreview: event.summary.slice(0, 240),
+      ...(event.summary.length > 240 ? { truncated: true } : {}),
+      ...(event.weight.pinned ? { pinned: true } : {}),
+      ...(event.supersededBy ? { supersededBy: event.supersededBy } : {}),
+      ...(event.temporal.happenedStart || event.temporal.happenedEnd || event.temporal.mentionedAt || event.temporal.status || event.temporal.originalText
+        ? {
+            temporal: {
+              ...(event.temporal.happenedStart ? { happenedStart: event.temporal.happenedStart } : {}),
+              ...(event.temporal.happenedEnd ? { happenedEnd: event.temporal.happenedEnd } : {}),
+              ...(event.temporal.mentionedAt ? { mentionedAt: event.temporal.mentionedAt } : {}),
+              ...(event.temporal.status ? { status: event.temporal.status } : {}),
+              ...(event.temporal.originalText ? { originalText: event.temporal.originalText } : {}),
+            },
+          }
+        : {}),
+    })
     const blockPath = (block: ReturnType<StrataGate['listBlocks']>[number]) => ({
       id: block.id,
       threadId: block.threadId,
@@ -373,6 +392,54 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       ...(block.l5Raw.every(message => visible.has(message.id)) ? { title: block.l0Title } : {}),
     })
     const visibleEvents = dreamingEvents(memory, run)
+    const directorySkeleton = memory.listMemoryTopics(visibleEvents.map(event => event.id))
+      .filter(topic => !topic.isFallback)
+      .slice(0, 60)
+      .map(topic => ({
+        id: topic.id,
+        title: topic.title,
+        eventCount: topic.sourceEventIds.length,
+        sections: memoryTopicMembershipSections(topic).map(section => ({
+          title: section.title,
+          eventCount: section.sourceEventIds.length,
+        })),
+      }))
+    const recentSessionMap = new Map<string, { threadId: string; blockCount: number; openMessageCount: number; latestAt: string; sampleTitle?: string }>()
+    for (const block of memory.listBlocks()) {
+      if (!block.l5Raw.some(message => visible.has(message.id))) continue;
+      const key = block.threadId ?? '(default)'
+      const prev = recentSessionMap.get(key)
+      const fullVisible = block.l5Raw.every(message => visible.has(message.id))
+      if (!prev) {
+        recentSessionMap.set(key, {
+          threadId: key,
+          blockCount: 1,
+          openMessageCount: 0,
+          latestAt: block.createdAt,
+          ...(fullVisible && block.l0Title ? { sampleTitle: block.l0Title } : {}),
+        })
+      } else {
+        prev.blockCount++
+        if (block.createdAt > prev.latestAt) {
+          prev.latestAt = block.createdAt
+          if (fullVisible && block.l0Title) prev.sampleTitle = block.l0Title
+        }
+      }
+    }
+    for (const message of memory.listOpenTail()) {
+      if (!visible.has(message.id)) continue
+      const key = message.threadId ?? '(default)'
+      const prev = recentSessionMap.get(key)
+      if (!prev) {
+        recentSessionMap.set(key, { threadId: key, blockCount: 0, openMessageCount: 1, latestAt: message.createdAt })
+      } else {
+        prev.openMessageCount++
+        if (message.createdAt > prev.latestAt) prev.latestAt = message.createdAt
+      }
+    }
+    const recentSessions = [...recentSessionMap.values()]
+      .sort((left, right) => right.latestAt.localeCompare(left.latestAt))
+      .slice(0, 15)
     const sameDay = (iso: string) => {
       const time = Date.parse(iso)
       return Number.isFinite(time) && toUtc8Iso(time).slice(0, 10) === today
@@ -411,14 +478,16 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
     const visibleTopics = memory.listMemoryTopics(visibleEvents.map(event => event.id)).filter(topic => !topic.isFallback)
     const directoryOverview = visibleTopics.length ? buildDreamingDirectoryOverview(visibleTopics) : null
     return {
-      scope: 'memory', completedBatches: run.cursor, totalBatches: run.units.length, trigger: run.trigger,
+      scope: 'memory', phase: run.phase ?? 'orient', completedBatches: run.cursor, totalBatches: run.units.length, trigger: run.trigger,
+      directorySkeleton,
+      recentSessions,
       blocks: memory.listBlocks().filter(block => unit.blockIds?.includes(block.id) && block.l5Raw.some(message => visible.has(message.id))).map(block => ({
         id: block.id, threadId: block.threadId, createdAt: block.createdAt, turns: [block.startTurn, block.endTurn],
         ...(block.l5Raw.every(message => visible.has(message.id)) ? { title: block.l0Title, summary: block.l1Summary?.slice(0, 400) } : {}),
       })),
       openMessages: memory.listOpenTail().filter(message => visible.has(message.id) && unit.messageIds?.includes(message.id))
         .map(({ id, threadId, createdAt, role }) => ({ id, threadId, createdAt, role })),
-      events: visibleEvents.filter(event => batchEventIds.has(event.id)).map(eventPath),
+      events: visibleEvents.filter(event => batchEventIds.has(event.id)).map(eventOrientItem),
       experiencesToReview: unit.experienceIds?.length ? memory.listExperiences(true)
         .filter(item => item.status === 'needs-review' && unit.experienceIds?.includes(item.id)).map(({ id, title }) => ({ id, title })) : [],
       noteDates: unit.noteDates ?? [], graphEnabled: memory.graphEnabled,
@@ -462,20 +531,44 @@ export function dreamingEstimatedTokens(payload: unknown, action: DreamingAction
   return estimateTokens(JSON.stringify(payload)) + estimateTokens(JSON.stringify(action))
 }
 
-export function dreamingStatus(run?: DreamingRun): unknown {
+export function enrichDreamingChanges(
+  changes: DreamingRun['changes'],
+  runId: string,
+  snapshots: readonly DreamingEventRollbackRecord[] = [],
+) {
+  const base = changes ?? { editedEvents: 0, deletedEvents: 0, experiences: 0, items: [] }
+  const byChange = new Map(snapshots.filter(item => item.runId === runId).map(item => [item.changeId, item]))
+  const items = (base.items ?? []).map(item => {
+    if (!item.changeId) return { ...item, runId: item.runId ?? runId }
+    const snap = byChange.get(item.changeId)
+    if (!snap) return { ...item, runId: item.runId ?? runId, canRevert: false }
+    return {
+      ...item,
+      runId,
+      action: item.action ?? snap.action,
+      canRevert: !snap.revertedAt,
+      revertedAt: snap.revertedAt ?? null,
+    }
+  })
+  return { ...base, items }
+}
+
+export function dreamingStatus(run?: DreamingRun, snapshots: readonly DreamingEventRollbackRecord[] = []): unknown {
   if (!run) return null
   const interrupted = ['running', 'pausing'].includes(run.status) && !!run.leaseUntil && Date.parse(run.leaseUntil) <= Date.now()
   const legacyBoundary = run.status === 'paused' && run.tokenLimit != null && /消耗边界/.test(run.reason ?? '')
+  const phase = run.scope === 'memory' ? (run.phase ?? (run.status === 'completed' ? 'prune' : 'orient')) : null
   return { id: run.id, sessionId: run.sessionId ?? null, status: interrupted ? 'paused' : run.status, scope: run.scope,
+    phase,
     activity: interrupted || run.status === 'paused'
       ? run.scope === 'memory' ? '已暂停，进度已保存'
         : run.replanRequired ? '需要重新开始；后台目录整理等待本轮终止' : '已暂停；后台目录整理等待本轮继续或终止'
-      : run.activity,
+      : (run.activity || (phase ? dreamingPhaseActivity(phase) : '')),
     reason: interrupted ? '上次运行已中断，可以继续' : legacyBoundary ? '上次整理已暂停，可以继续；已完成的修改已保存。' : run.reason,
     waitingForProjection: !!run.waitingForProjection, replanRequired: !!run.replanRequired,
     completed: run.cursor, total: run.units.length, changedBatches: run.changedBatches, calls: run.calls,
     estimatedTokens: run.estimatedTokens,
-    changes: run.changes ?? { editedEvents: 0, deletedEvents: 0, experiences: 0, items: [] },
+    changes: enrichDreamingChanges(run.changes, run.id, snapshots),
     letter: run.letter ?? null,
     updatedAt: run.updatedAt }
 }

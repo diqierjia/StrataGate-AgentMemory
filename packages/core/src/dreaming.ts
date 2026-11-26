@@ -14,7 +14,26 @@ export const DREAMING_SOURCE_PAGE_CHARACTERS = 12_000;
 /** A generous per-batch write boundary; explicit resume grants another window. */
 export const DREAMING_BATCH_WRITE_LIMIT = 64;
 const DREAMING_IDLE_CALL_LIMIT = 12;
-export interface DreamingUnit { topicId: string; eventIds: string[]; blockIds?: string[]; messageIds?: string[]; noteDates?: string[]; experienceIds?: string[] }
+export type DreamingPhase = 'orient' | 'gather' | 'consolidate' | 'prune';
+export type DreamingEventAction = 'create' | 'update' | 'delete' | 'merge' | 'supersede';
+export interface DreamingEventSnapshotEntry {
+  event: EventCard;
+  pool: 'events' | 'agentEvents';
+}
+export interface DreamingEventRollbackRecord {
+  changeId: string;
+  runId: string;
+  seq: number;
+  action: DreamingEventAction;
+  primaryEventId: string;
+  label: string;
+  detail?: string;
+  beforeEvents: DreamingEventSnapshotEntry[];
+  createdEventIds: string[];
+  createdAt: string;
+  revertedAt?: string;
+}
+export interface DreamingUnit { topicId: string; eventIds: string[]; blockIds?: string[]; messageIds?: string[]; noteDates?: string[]; experienceIds?: string[]; recentActivity?: boolean }
 export interface DreamingTrace { tool: string; args: Record<string, unknown>; result: unknown }
 export interface DreamingChangeItem {
   kind: 'event-edit' | 'event-delete' | 'experience' | 'daily-note';
@@ -23,6 +42,11 @@ export interface DreamingChangeItem {
   detail?: string;
   date?: string;
   deleted?: boolean;
+  changeId?: string;
+  action?: DreamingEventAction;
+  runId?: string;
+  canRevert?: boolean;
+  revertedAt?: string | null;
 }
 export interface DreamingChangeCounts {
   editedEvents: number;
@@ -47,6 +71,7 @@ export interface DreamingReport {
 }
 export interface DreamingRun {
   id: string; policyVersion: number; scope: 'directory' | 'memory';
+  phase?: DreamingPhase;
   discoveryVersions?: Record<string, string>;
   readVersions?: Record<string, string>;
   searchedExperiences?: boolean;
@@ -169,6 +194,8 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     if (command.discovery) {
       run.discoveryVersions = command.discovery.versions; run.readVersions = {}; run.appliedOperations = {}; run.trigger = command.trigger ?? 'manual';
       run.includeAgentEvents = !command.allowedEventIds;
+      run.phase = 'orient';
+      if (!waitingForProjection) run.activity = '阶段 1/4 · 全局定向：浏览主题目录与变动清单';
       if (run.trigger === 'automatic') state.lastAutoDreamingAt = now;
     }
     state.dreaming = run;
@@ -304,6 +331,8 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     targetTopicId = template.id;
     run.topicVersion = dreamingTopicVersion(template);
     effectiveOperations = effectiveOperations.slice(1);
+    run.phase = 'prune';
+    run.activity = '阶段 4/4 · 收口索引：已微调主题目录与概要';
     if (!effectiveOperations.length) {
       run.changedBatches++;
       return structuredClone(run);
@@ -468,7 +497,9 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
       if (run.idleCalls >= DREAMING_IDLE_CALL_LIMIT) run.reason = '连续调用没有有效进展，断点已保存';
     }
   } else if (command.kind === 'apply') {
-    if (run.scope !== 'memory' && dreamingTopicVersion(topic) !== run.topicVersion) throw new Error('Directory changed during Dreaming');
+    const expectedTopicVersion = run.scope === 'memory' ? command.topicVersion : run.topicVersion;
+    if (expectedTopicVersion !== undefined && dreamingTopicVersion(topic) !== expectedTopicVersion) throw new Error('Directory changed during Dreaming');
+    if (run.scope !== 'memory' && expectedTopicVersion === undefined) throw new Error('Directory changed during Dreaming');
     for (const [id, version] of Object.entries(run.scope === 'memory' ? {} : run.evidenceVersions)) {
       if (!sources.has(id) || memoryTopicEventFingerprint(sources.get(id)!) !== version) throw new Error('Dreaming evidence changed');
     }
@@ -511,6 +542,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         modifiedOtherTopics.set(other.id, clone);
       }
     };
+    const rewrittenOverviewSections = new Set<string>();
     if (!Array.isArray(effectiveOperations) || !effectiveOperations.length) throw new Error('Directory operations are required');
     for (const op of effectiveOperations) {
       if (!op || typeof op !== 'object' || typeof op.kind !== 'string') throw new Error('Each operations item must directly contain kind; do not nest another operations array. Example: {kind:"append-overview",title:"section",entries:[{kind:"experience",text:"source-backed fact",sourceEventIds:["event-id"]}]}');
@@ -590,7 +622,7 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
         for (const part of updated.overview) if (memoryTopicOverviewMatchesSection(part, op.from)) part.title = title;
       } else if (op.kind === 'move-events') {
         const title = label(op.title);
-        if (!Array.isArray(op.eventIds) || !op.eventIds.length || op.eventIds.some(id => !unit.eventIds.includes(id) || run.scope === 'directory' && !members.has(id))) {
+        if (!Array.isArray(op.eventIds) || !op.eventIds.length || op.eventIds.some(id => (run.scope === 'memory' ? !sources.has(id) : !unit.eventIds.includes(id) || !members.has(id)))) {
           throw new Error(run.scope === 'memory' ? 'Membership changes need available Events' : 'Membership changes must belong to the current batch');
         }
         if (run.scope === 'memory') for (const id of op.eventIds) if (!members.has(id)) {
@@ -643,7 +675,10 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
             if (!newSources.has(id)) throw new Error(`overview-source-reference-missing: preserve existing overview evidence for Event ${JSON.stringify(id)} across ${JSON.stringify(titles)}; use rewrite-overview to relocate or consolidate facts and references atomically`);
           }
         }
-        if (op.kind !== 'append-overview') updated.overview = updated.overview.filter(part => !memoryTopicOverviewMatchesSection(part, titles));
+        if (op.kind !== 'append-overview') {
+          updated.overview = updated.overview.filter(part => !memoryTopicOverviewMatchesSection(part, titles));
+          for (const title of titles) rewrittenOverviewSections.add(normalizeMemoryTopicLabel(title));
+        }
         // Deduplicate only the edited sections; a local rewrite must not clean
         // up unrelated legacy entries elsewhere in the chapter as a side effect.
         const selected = updated.overview.filter(part => memoryTopicOverviewMatchesSection(part, titles));
@@ -659,15 +694,29 @@ export function updateDreaming(state: MemoryTopicState, events: readonly EventCa
     updated.updatedAt = now;
     if (run.scope === 'memory') {
       updated.dreamingManaged = true;
+      for (const id of updated.sourceEventIds) {
+        const card = sources.get(id);
+        if (card) updated.sourceVersions[id] = memoryTopicEventFingerprint(card);
+      }
       const overviewEvidence = (part: typeof topic.overview[number]) => dreamingTopicVersion([part.kind, part.text, part.sourceEventIds]);
       const originalOverview = new Set(topic.overview.map(overviewEvidence));
       const writtenOverviewIds = new Set(updated.overview.filter(part => !originalOverview.has(overviewEvidence(part)))
         .flatMap(part => part.sourceEventIds));
+      if (rewrittenOverviewSections.size > 0) {
+        for (const section of memoryTopicMembershipSections(updated)) {
+          if (!rewrittenOverviewSections.has(normalizeMemoryTopicLabel(section.title))) continue;
+          for (const id of section.sourceEventIds) writtenOverviewIds.add(id);
+        }
+      }
       for (const id of updated.sourceEventIds) {
         if (!writtenOverviewIds.has(id) || state.topics.some(other => other.id !== topic.id && !other.invalidated
           && other.sourceEventIds.includes(id) && !other.overview.some(part => part.sourceEventIds.includes(id)))) continue;
-        state.projectedVersions[id] = updated.sourceVersions[id]!;
+        const version = updated.sourceVersions[id]!;
+        state.projectedVersions[id] = version;
+        if (state.rebuildVersions?.[id] === version) delete state.rebuildVersions[id];
       }
+      run.phase = 'prune';
+      run.activity = '阶段 4/4 · 收口索引：已微调主题目录与概要';
     }
     if (run.scope === 'directory') updated.dependencyVersions = { ...updated.dependencyVersions, ...run.evidenceVersions };
     state.topics[state.topics.indexOf(topic)] = updated;

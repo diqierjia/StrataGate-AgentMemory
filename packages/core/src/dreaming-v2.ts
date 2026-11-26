@@ -1,4 +1,4 @@
-import { dreamingTopicVersion, type DreamingChangeItem, type DreamingCommand, type DreamingRun, type DreamingUnit } from './dreaming.js';
+import { dreamingTopicVersion, type DreamingChangeItem, type DreamingCommand, type DreamingPhase, type DreamingRun, type DreamingUnit } from './dreaming.js';
 import { legacyMemoryTopicEventFingerprints, memoryTopicEventFingerprint, type MemoryTopicState } from './topics.js';
 import type { EventCard, EventTemporal, MemoryBlock, MemoryScope, RawMessage } from './types.js';
 
@@ -9,6 +9,7 @@ export interface DreamingEventEdit {
   title?: string;
   summary?: string;
   scope?: MemoryScope;
+  status?: 'active';
   temporal?: EventTemporal;
   sourceMessageIds?: string[];
   reason?: string;
@@ -35,6 +36,16 @@ export type DreamingEditResult = {
 export type DreamingClaim = { id: string; owner: string; epoch: number };
 export const DREAMING_AUTO_INTERVAL = 24 * 60 * 60_000;
 export const DREAMING_IDLE_TIME = 30 * 60_000;
+const DREAMING_MEMORY_PAGE = 48;
+
+export function dreamingPhaseActivity(phase: DreamingPhase): string {
+  switch (phase) {
+    case 'orient': return '阶段 1/4 · 全局定向：浏览主题目录与变动清单';
+    case 'gather': return '阶段 2/4 · 按需核实：查阅疑点卡片与局部上下文';
+    case 'consolidate': return '阶段 3/4 · 集中整合：修正、合并与固化记忆事实';
+    case 'prune': return '阶段 4/4 · 收口索引：微调目录与清理关联索引';
+  }
+}
 
 /** Accumulate committed user-visible changes in execution order. */
 export function recordDreamingChange(run: DreamingRun, delta: {
@@ -64,16 +75,17 @@ export function discoverDreaming(blocks: readonly MemoryBlock[], tail: readonly 
   previous: Record<string, string> = {}, notes: Record<string, string> = {}, reviewIds: string[] = []): DreamingDiscovery {
   const versions: Record<string, string> = {};
   const changes: DreamingDiscovery['units'] = [];
+  let hasRecentTranscriptChange = false;
   for (const id of reviewIds) changes.push({ topicId: '', eventIds: [], experienceIds: [id] });
   for (const block of blocks) {
     const key = `block:${block.id}`;
     versions[key] = dreamingTopicVersion([block.l0Title, block.l1Summary, block.l2Keypoints, block.processingStatus, block.l5Raw.map(message => message.id)]);
-    if (versions[key] !== previous[key]) changes.push({ topicId: '', eventIds: [], blockIds: [block.id] });
+    if (versions[key] !== previous[key]) hasRecentTranscriptChange = true;
   }
   for (const message of tail) {
     const key = `message:${message.id}`;
     versions[key] = dreamingTopicVersion(message);
-    if (versions[key] !== previous[key]) changes.push({ topicId: '', eventIds: [], messageIds: [message.id] });
+    if (versions[key] !== previous[key]) hasRecentTranscriptChange = true;
   }
   for (const event of events) {
     const key = `event:${event.id}`;
@@ -88,12 +100,20 @@ export function discoverDreaming(blocks: readonly MemoryBlock[], tail: readonly 
     if (version !== previous[`note:${date}`]) changes.push({ topicId: '', eventIds: [], noteDates: [date] });
   }
   const units: DreamingDiscovery['units'] = [];
-  // Batching is navigation/context paging, never an evidence or write quota.
-  for (let offset = 0; offset < changes.length; offset += 24) {
-    const page = changes.slice(offset, offset + 24);
-    units.push({ topicId: '', eventIds: page.flatMap(item => item.eventIds), blockIds: page.flatMap(item => item.blockIds ?? []),
-      messageIds: page.flatMap(item => item.messageIds ?? []), noteDates: page.flatMap(item => item.noteDates ?? []),
-      experienceIds: page.flatMap(item => item.experienceIds ?? []) });
+  // Memory-layer consolidation: raw transcripts stay in the on-demand archive
+  // instead of flooding mandatory backlog batches.
+  for (let offset = 0; offset < changes.length; offset += DREAMING_MEMORY_PAGE) {
+    const page = changes.slice(offset, offset + DREAMING_MEMORY_PAGE);
+    units.push({
+      topicId: '',
+      eventIds: page.flatMap(item => item.eventIds),
+      noteDates: page.flatMap(item => item.noteDates ?? []),
+      experienceIds: page.flatMap(item => item.experienceIds ?? []),
+      ...(hasRecentTranscriptChange && offset === 0 ? { recentActivity: true } : {}),
+    });
+  }
+  if (!units.length && hasRecentTranscriptChange) {
+    units.push({ topicId: '', eventIds: [], recentActivity: true });
   }
   return { versions, units };
 }
@@ -103,11 +123,22 @@ export function updateDreamingMemory(state: MemoryTopicState, run: DreamingRun, 
   if (command.kind === 'memory-write') {
     return structuredClone(run);
   } else if (command.kind === 'prepare') {
-    run.activity = '正在调查和整理记忆';
+    run.phase ??= 'orient';
+    run.activity = dreamingPhaseActivity(run.phase);
   } else if (command.kind === 'checkpoint') {
     const trace = command.trace;
     const result = trace.result as { error?: string; content?: string; contentVersion?: string; offset?: number; nextOffset?: number | null; sourceRefs?: Record<string, string>; date?: string; version?: string };
     run.idleModelSteps = 0;
+    if (!result?.error) {
+      if (trace.tool === 'dreaming_directory') {
+        run.phase = 'prune';
+      } else if (trace.tool === 'dreaming_event' || trace.tool === 'dreaming_experience' || trace.tool === 'dreaming_daily_write') {
+        if (run.phase !== 'prune') run.phase = 'consolidate';
+      } else if (trace.tool === 'dreaming_read' || trace.tool === 'dreaming_search' || trace.tool === 'memory_list_topics' || trace.tool === 'memory_expand_topic') {
+        if (!run.phase || run.phase === 'orient') run.phase = 'gather';
+      }
+      run.activity = dreamingPhaseActivity(run.phase ?? 'orient');
+    }
     if (trace.tool === 'dreaming_search' && trace.args.kind === 'experiences' && !result?.error) run.searchedExperiences = true;
     if (trace.tool === 'dreaming_daily_write' && result.date && result.version) {
       (run.discoveryVersions ??= {})[`note:${result.date}`] = result.version;
@@ -147,8 +178,12 @@ export function updateDreamingMemory(state: MemoryTopicState, run: DreamingRun, 
     run.cursor++; run.idleCalls = 0; run.idleModelSteps = 0;
     delete run.lastToolSignature;
     if (run.cursor >= run.units.length) {
+      run.phase = 'prune';
       run.status = 'completed'; run.leaseUntil = null; run.activity = '本轮整理完成';
       state.dreamingWatermark = { ...run.discoveryVersions };
+    } else {
+      run.phase = 'orient';
+      run.activity = dreamingPhaseActivity('orient');
     }
   } else return undefined;
   return structuredClone(run);

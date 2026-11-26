@@ -90,7 +90,7 @@ import { EventDuplicateMaintenance, sourceContext } from './event-duplicate-main
 import { eventDuplicateMergeCompatible, eventDuplicateManualMergeBlockReason, eventDuplicateFingerprint, validEventMergeDraft, type EventDuplicatePair, type EventMergeDraft } from '@diqier/stratagate'
 import { containsCredentials, DiagnosticsRecorder, type DiagnosticStage } from './diagnostics.js'
 import { boundedTopic, renderMemoryDirectory, topicPage, type TopicListOptions } from './topics.js'
-import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, type DreamingAction } from './dreaming.js'
+import { dreamingTool, dreamingPayload, dreamingEstimatedTokens, dreamingStatus, enrichDreamingChanges, type DreamingAction } from './dreaming.js'
 import type { DreamingRun, DreamingCommand, DreamingDirectoryOperation, DreamingEventEdit, DreamingExperienceEdit } from '@diqier/stratagate'
 import { DailyLetters, shiftLetterDate, type ArchivedLetter } from './letters.js'
 
@@ -3009,9 +3009,52 @@ export class StrataGateRuntime {
     const snapshot = await this.adminSnapshot(namespace)
     if (!snapshot) throw new Error('Unknown memory namespace')
     const run = snapshot.memoryTopicState?.dreaming
+    const snapshots = snapshot.memoryTopicState?.dreamingSnapshots ?? []
+    const grouped = new Map<string, {
+      runId: string
+      createdAt: string
+      revertibleCount: number
+      totalCount: number
+      items: Array<{
+        changeId: string
+        seq: number
+        action: string
+        id: string
+        label: string
+        detail?: string
+        canRevert: boolean
+        revertedAt: string | null
+        createdAt: string
+      }>
+    }>()
+    for (const record of snapshots) {
+      let group = grouped.get(record.runId)
+      if (!group) {
+        group = { runId: record.runId, createdAt: record.createdAt, revertibleCount: 0, totalCount: 0, items: [] }
+        grouped.set(record.runId, group)
+      }
+      if (record.createdAt > group.createdAt) group.createdAt = record.createdAt
+      group.totalCount += 1
+      if (!record.revertedAt) group.revertibleCount += 1
+      group.items.push({
+        changeId: record.changeId,
+        seq: record.seq,
+        action: record.action,
+        id: record.primaryEventId,
+        label: record.label,
+        ...(record.detail ? { detail: record.detail } : {}),
+        canRevert: !record.revertedAt,
+        revertedAt: record.revertedAt ?? null,
+        createdAt: record.createdAt,
+      })
+    }
+    const recentRuns = [...grouped.values()]
+      .map(group => ({ ...group, items: group.items.sort((left, right) => left.seq - right.seq) }))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     return {
       namespace,
-      run: dreamingStatus(run),
+      run: dreamingStatus(run, snapshots),
+      recentRuns,
       letterDates: this.letterStore()?.dates(namespace) ?? [],
       settings: this.dreamingSettings(),
       usage: this.dreamingDailyUsage(),
@@ -3169,6 +3212,34 @@ export class StrataGateRuntime {
 
   adminDailyLetter(namespace: string, date: string): ArchivedLetter | null {
     return this.letterStore()?.read(namespace, date) ?? null
+  }
+
+  async adminDailyLetterView(namespace: string, date: string): Promise<ArchivedLetter | null> {
+    const letter = this.adminDailyLetter(namespace, date)
+    if (!letter) return null
+    const snapshot = await this.adminSnapshot(namespace)
+    const snapshots = snapshot?.memoryTopicState?.dreamingSnapshots ?? []
+    if (!snapshots.length || !letter.reports?.length) return letter
+    return {
+      ...letter,
+      reports: letter.reports.map(report => ({
+        ...report,
+        changes: enrichDreamingChanges(report.changes, report.id, snapshots),
+      })),
+    }
+  }
+
+  async adminDreamingRevert(namespace: string, runId: string, changeId?: string): Promise<unknown> {
+    if (this.closed) throw new Error('Runtime is closed')
+    const revert = await this.retryExternalImportWrite(
+      namespace,
+      memory => memory.revertDreamingEventChange(runId, changeId),
+    )
+    this.wakeBackgroundWorker()
+    return {
+      revert,
+      dreaming: await this.adminDreamingStatus(namespace),
+    }
   }
 
   private letterStore(): DailyLetters | undefined {
