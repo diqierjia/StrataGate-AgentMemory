@@ -1491,6 +1491,7 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
         ...(eventSummary(event, snapshot) as object),
         relatedNodes: [...new Set(event.temporal.participantNodeIds ?? [])]
           .flatMap(id => nodesById.get(id) ?? []).sort((left, right) => nodeOrder.get(left)! - nodeOrder.get(right)!)
+          .filter(({ name }) => Boolean(name.trim()))
           .map(({ id, name, type, aliases }) => ({ id, name, type, aliases })),
         relatedElements: (elementsByEvent.get(event.id) ?? [])
           .map(({ id, name }) => ({ id, name })),
@@ -1669,6 +1670,92 @@ async function memories(runtime: StrataGateRuntime, url: URL): Promise<unknown> 
   return { namespace, kind, total: filtered.length, offset, limit, items: filtered.slice(offset, offset + limit) }
 }
 
+function eventTopicContext(snapshot: AdminReadModel, eventId: string, agentMemoryWeight: number) {
+  try {
+    const projection = topicDirectoryProjection(snapshot, agentMemoryWeight)
+    const eventById = new Map(projection.visibleEvents.map((item) => [item.id, item]))
+    const pickSiblings = (ids: string[]) => ids
+      .filter((id) => id !== eventId)
+      .map((id) => eventById.get(id))
+      .filter((item): item is EventCard => Boolean(item))
+      .sort((left, right) => String(right.updatedAt || right.createdAt).localeCompare(String(left.updatedAt || left.createdAt)))
+      .slice(0, 12)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        formedTurn: item.formedTurn,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        temporal: {
+          happenedStart: item.temporal.happenedStart,
+          status: item.temporal.status,
+          eventType: item.temporal.eventType,
+        },
+      }))
+    for (const [chapterIdx, chapter] of projection.chapters.entries()) {
+      const sections = memoryTopicSections(chapter)
+      for (const [sectionIdx, section] of sections.entries()) {
+        if (section.sourceEventIds.includes(eventId)) {
+          return {
+            chapterId: chapter.id,
+            chapterIndex: chapterIdx + 1,
+            chapterTitle: chapter.title,
+            sectionId: section.key,
+            sectionIndex: sectionIdx + 1,
+            sectionNumber: `${chapterIdx + 1}.${sectionIdx + 1}`,
+            sectionTitle: section.title,
+            sectionEventCount: section.sourceEventIds.length,
+            siblingEvents: pickSiblings(section.sourceEventIds),
+          }
+        }
+      }
+      if (chapter.sourceEventIds.includes(eventId)) {
+        const assigned = new Set(sections.flatMap((section) => section.sourceEventIds))
+        const unassignedIds = chapter.sourceEventIds.filter((id) => !assigned.has(id))
+        return {
+          chapterId: chapter.id,
+          chapterIndex: chapterIdx + 1,
+          chapterTitle: chapter.title,
+          sectionId: null,
+          sectionIndex: null,
+          sectionNumber: null,
+          sectionTitle: null,
+          sectionEventCount: unassignedIds.length,
+          siblingEvents: pickSiblings(unassignedIds),
+        }
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function eventRelatedSummaries(snapshot: AdminReadModel, event: EventCard) {
+  const relationSpecs: Array<[string, string[]]> = [
+    ['替代', event.temporal.supersedesEventIds ?? []],
+    ['冲突', event.temporal.conflictsWithEventIds ?? []],
+    ['同一事件', event.temporal.sameEventId ? [event.temporal.sameEventId] : []],
+    ['早于', event.temporal.beforeEventIds ?? []],
+    ['晚于', event.temporal.afterEventIds ?? []],
+    ['相关', event.temporal.relatedEventIds ?? []],
+    ['合并来源', event.mergedFromEventIds ?? []],
+  ]
+  const byId = new Map(snapshot.events.map((item) => [item.id, item]))
+  const seen = new Set<string>([event.id])
+  const results: Array<{ id: string; title: string; relation: string; createdAt: string; updatedAt: string }> = []
+  for (const [relation, ids] of relationSpecs) {
+    for (const id of ids) {
+      if (!id || seen.has(id)) continue
+      const target = byId.get(id)
+      if (!target) continue
+      seen.add(id)
+      results.push({ id: target.id, title: target.title, relation, createdAt: target.createdAt, updatedAt: target.updatedAt })
+    }
+  }
+  return results.slice(0, 12)
+}
+
 async function sources(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
   const namespace = url.searchParams.get('namespace')?.trim() ?? ''
   if (!namespace) throw new AdminHttpError(400, 'namespace is required')
@@ -1754,16 +1841,38 @@ async function sources(runtime: StrataGateRuntime, url: URL): Promise<unknown> {
   return {
     namespace,
     events: events.map((event) => eventSummary(event, eventId ? snapshot : undefined)),
-    ...(eventId ? {
+    ...(eventId && events[0] ? {
       relatedNodes: snapshot.graphNodes
         .filter(({ id }) => events[0]?.temporal.participantNodeIds?.includes(id))
         .flatMap((candidate) => effectiveGraphNodeView(candidate, snapshot.graphEdges, snapshot.events)?.node ?? [])
+        .filter(({ name }) => Boolean(name.trim()))
         .map(({ id, name, type, aliases }) => ({ id, name, type, aliases })),
+      topicContext: eventTopicContext(snapshot, eventId, runtime.adminAgentMemoryRetrievalWeight?.() ?? 1),
+      relatedEvents: eventRelatedSummaries(snapshot, events[0]),
+      adoptionReceipts: snapshot.usageReceipts
+        .filter(({ eventIds }) => eventIds.includes(eventId))
+        .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')))
+        .slice(0, 8)
+        .map((receipt) => ({
+          receiptId: receipt.id,
+          createdAt: receipt.createdAt,
+          turn: Number.isSafeInteger(receipt.audit?.turn) && receipt.audit!.turn! >= 0 ? receipt.audit!.turn! : null,
+          fit: String(receipt.audit?.fit || '').trim(),
+        })),
     } : {}),
     elements: elements.map(elementSummary),
     blocks: snapshot.blocks.filter(block => events.some(event => event.sourceBlockId === block.id)
       || block.l5Raw.some(message => ids.has(message.id)))
-      .map((block) => ({ id: block.id, title: block.l0Title, createdAt: block.createdAt })),
+      .map((block) => ({
+        id: block.id,
+        title: block.l0Title,
+        summary: block.l1Summary,
+        sequence: block.sequence,
+        startTurn: block.startTurn,
+        endTurn: block.endTurn,
+        threadId: block.threadId,
+        createdAt: block.createdAt,
+      })),
     messages: sourceMessages(snapshot, ids),
   }
 }

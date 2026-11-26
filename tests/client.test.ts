@@ -12,6 +12,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderStarLink, loadStarCount, formatStarCount, GitHubMarkIcon, StrataGateMark, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, OverviewPage, ProfilePage, ProfileLimitSettings, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
   ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, overviewRuntimeState, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, visibleBlockLevel, BlockSelectionFeedback,')
+  .replace('exports.__test = {', 'exports.__test = { EventDetail, EventMemoryDetails, EventProvenanceTabs, EventDossierRail,')
   let definition: any
   runInNewContext(instrumented, {
     Blob,
@@ -675,8 +676,8 @@ describe('StrataGate Web client contract', () => {
     const { EventMetadata, NodePill, StaticEntityPill } = loadSupportHelpers()
     const node = { id: 'node_1', name: 'StrataGate DSH', aliases: ['stratagate-dsh'], type: 'project' }
     const tree = EventMetadata({
-      event: { temporal: { participantNodeIds: ['node_1', 'node_1'], participants: ['stratagate-dsh', 'StrataGate DSH', 'Alice', 'alice'] } },
-      nodes: [node, { id: 'related_only', name: 'Unrelated', aliases: [], type: 'tool' }],
+      event: { temporal: { participantNodeIds: ['node_1', 'node_1', 'node_empty'], participants: ['stratagate-dsh', 'StrataGate DSH', 'Alice', 'alice'] } },
+      nodes: [node, { id: 'node_empty', name: '   ', aliases: [], type: 'tool' }, { id: 'related_only', name: 'Unrelated', aliases: [], type: 'tool' }],
       onNode: () => {},
     })
     const participantComponents: Array<{ name: string; props: any }> = []
@@ -700,6 +701,133 @@ describe('StrataGate Web client contract', () => {
     expect(stopped).toBe(2)
     expect(linkedPill).toContain('StrataGate DSH')
     expect(StaticEntityPill({ name: 'Alice' })).toEqual(['span', { className: 'sg-entity-pill sg-entity-pill-static' }, 'Alice'])
+  })
+
+  it('renders EventDetail in Plan B two-column research split with breadcrumbs, provenance tabs, rail, and trajectory', () => {
+    const { EventDetail, EventMemoryDetails, EventProvenanceTabs, EventDossierRail, MemoryWeightTrajectory } = loadSupportHelpers()
+    const sampleEvent = {
+      id: 'evt_dossier',
+      title: 'npm官方30天下载量实测',
+      summary: '直连 npm API 查询近30天下载量。',
+      quotes: ['npm 官方统计是 500', '“在纯记忆插件里排第 2”'],
+      quotesOrigin: 'auto_extracted',
+      quotesNotice: '摘录自来源对话',
+      tags: ['StrataGate-AgentMemory', 'npm下载量', 'npm下载量'],
+      formedTurn: 32,
+      criticality: 'routine',
+      scope: 'global',
+      status: 'active',
+      sourceBlockId: 'blk_source_1',
+      mergedFromEventIds: ['evt_old_1'],
+      temporal: { happenedStart: '2026-08-20T10:00:00+08:00', status: 'occurred', eventType: 'release', participantNodeIds: ['node_1'] },
+      weightTrajectory: {
+        formedTurn: 32,
+        latestAdoptionTurn: 88,
+        currentWeight: 0.62,
+        effectiveAdoptions: 11,
+        floorWeight: 0,
+        points: [
+          { kind: 'creation', turn: 32, weight: 1, label: '形成' },
+          { kind: 'adoption', turn: 88, weight: 1, adoptionCount: 1 },
+          { kind: 'current', turn: 100, weight: 0.62 },
+        ],
+      },
+    }
+    const topicContext = {
+      chapterId: 'topic_1',
+      chapterIndex: 1,
+      chapterTitle: 'StrataGate：从机制设计到版本演进',
+      sectionId: 'sec_1',
+      sectionIndex: 3,
+      sectionNumber: '1.3',
+      sectionTitle: '竞品与发布数据分析',
+      sectionEventCount: 12,
+      siblingEvents: [{ id: 'evt_sib_1', title: 'meow-memory竞品拆解', createdAt: '2026-08-20T12:00:00+08:00' }],
+    }
+    const adoptionReceipts = [
+      { receiptId: 'rec_1', createdAt: '2026-09-04T17:46:13+08:00', turn: 88, fit: '核查 StrataGate 版本现状' },
+    ]
+    const sourceBlocks = [
+      { id: 'blk_source_1', title: 'StrataGate根因闭环', summary: '直连 npm 拿到下载数据', startTurn: 28, endTurn: 33, threadId: 'thr_1', createdAt: '2026-08-20T14:39:41Z' },
+    ]
+    const relatedNodes = [{ id: 'node_1', name: 'StrataGate', type: 'project', aliases: [] }]
+    const messages = [{ id: 'm1', role: 'user', content: '查一下下载量', createdAt: '2026-08-20T10:00:00+08:00' }]
+    const tree = EventDetail({
+      event: sampleEvent,
+      source: {
+        events: [sampleEvent],
+        relatedNodes,
+        topicContext,
+        adoptionReceipts,
+        blocks: sourceBlocks,
+        messages,
+      },
+      onBack: () => {},
+      backLabel: '长期记忆',
+      onNode: () => {},
+    })
+    const serialized = JSON.stringify(tree)
+    expect(serialized).toContain('sg-event-topbar')
+    expect(serialized).toContain('第1章 StrataGate：从机制设计到版本演进')
+    expect(serialized).toContain('1.3 竞品与发布数据分析')
+    expect(serialized).toContain('已发生')
+    expect(serialized).toContain('发布')
+    expect(serialized).toContain('跨工作区')
+    expect(serialized).toContain('已合并 1 条')
+    expect(serialized).toContain('长期记忆 · 合并事件档案')
+    expect(serialized).toContain('sg-event-time-rail')
+    expect(serialized).toContain('"layout":"dossier"')
+    const detailsTree = EventMemoryDetails({ event: sampleEvent, sourceMessages: messages, sourceBlocks, relatedNodes, adoptionReceipts, topicContext, layout: 'dossier' })
+    const detailsProps = deepElementProps(detailsTree)
+    expect(detailsProps.some((value) => value.className === 'sg-event-dossier')).toBe(true)
+    expect(detailsProps.some((value) => value.className === 'sg-event-narrative')).toBe(true)
+    expect(detailsProps.some((value) => value.className === 'sg-event-quotes')).toBe(true)
+    expect(JSON.stringify(detailsTree)).toContain('“npm 官方统计是 500”')
+    expect(JSON.stringify(detailsTree)).toContain('“在纯记忆插件里排第 2”')
+    const tabsTree = EventProvenanceTabs({ event: sampleEvent, sourceMessages: messages, sourceBlocks, siblingEvents: topicContext.siblingEvents, topicContext })
+    const tabsSerialized = JSON.stringify(tabsTree)
+    expect(tabsSerialized).toContain('原始对话 (1)')
+    expect(tabsSerialized).toContain('同节记忆 (1)')
+    expect(tabsSerialized).toContain('来源封存块')
+    expect(tabsSerialized).toContain('技术信息')
+    expect(tabsSerialized).toContain('查一下下载量')
+    const railTree = EventDossierRail({ event: sampleEvent, nodes: relatedNodes, adoptionReceipts, tags: ['StrataGate-AgentMemory', 'npm下载量'], onNode: () => {} })
+    const railProps = deepElementProps(railTree)
+    expect(railProps.some((value) => value.className === 'sg-event-dossier-side')).toBe(true)
+    expect(railProps.filter((value) => value.className === 'sg-event-tag')).toHaveLength(2)
+    expect(JSON.stringify(railTree)).toContain('核查 StrataGate 版本现状')
+    expect(JSON.stringify(railTree)).toContain('StrataGate')
+    expect(JSON.stringify(railTree)).toContain('图谱 →')
+    const trajectoryTree = MemoryWeightTrajectory({ event: sampleEvent, layout: 'dossier' })
+    const trajectorySerialized = JSON.stringify(trajectoryTree)
+    expect(trajectorySerialized).toContain('sg-weight-metrics-b')
+    expect(trajectorySerialized).toContain('sg-weight-bar')
+    expect(trajectorySerialized).toContain('sg-weight-area')
+    expect(trajectorySerialized).toContain('0 0 320 142')
+    expect(trajectorySerialized).toContain('sg-weight-node-beacon')
+    expect(trajectorySerialized).toContain('sg-weight-chart-head')
+    expect(trajectorySerialized).toContain('sg-weight-chart-foot')
+    const longDecayTree = MemoryWeightTrajectory({
+      event: {
+        formedTurn: 0,
+        weight: { floorWeight: 0, mentionCount: 1 },
+        weightTrajectory: {
+          formedTurn: 0,
+          trajectoryStartTurn: 0,
+          currentWeight: 0.04,
+          effectiveAdoptions: 0,
+          points: [
+            { kind: 'creation', turn: 0, weight: 1, label: '形成' },
+            { kind: 'current', turn: 231, weight: 0.04 },
+          ],
+          segments: [{ certainty: 'known', points: [{ kind: 'creation', turn: 0, weight: 1 }, { kind: 'current', turn: 231, weight: 0.04 }] }],
+        },
+      },
+      layout: 'dossier',
+    })
+    const longDecaySerialized = JSON.stringify(longDecayTree)
+    expect(longDecaySerialized).toContain(',231]')
+    expect(longDecaySerialized).not.toContain(',200]')
   })
 
   it('renders solid weight trajectories with a wider invisible hover target and collision-aware labels', () => {

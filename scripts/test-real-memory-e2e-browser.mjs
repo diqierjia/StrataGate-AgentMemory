@@ -331,6 +331,41 @@ try {
       const rootEl = document.getElementById('root')
       if (rootEl) rootEl.style.width = '100%'
     })
+    const firstTopicEvent = page.locator('.sg-topic-section > .sg-directory-fold.open .sg-topic-event').first()
+    if (await firstTopicEvent.count() > 0) {
+      await firstTopicEvent.click()
+      await page.locator('.sg-event-page-header').waitFor({ timeout: 10000 })
+      await page.locator('.sg-event-dossier').waitFor({ timeout: 10000 })
+      await page.waitForTimeout(250)
+      const emptyPills = await page.locator('.sg-event-participants .sg-entity-pill').evaluateAll((els) =>
+        els.filter((el) => !(el.textContent || '').trim()).map((el) => el.outerHTML))
+      assert.deepEqual(emptyPills, [], `Unexpected empty participant pills on 05c-long-term-detail: ${JSON.stringify(emptyPills)}`)
+      await inspectAndCapture('05c-long-term-detail', null)
+      await page.locator('.sg-back').click()
+      await page.locator('.sg-topic-directory').waitFor({ timeout: 10000 })
+    }
+    const firstSectionToggle = page.locator('button.sg-topic-section-toggle').first()
+    if (await firstSectionToggle.count() > 0) {
+      if ((await firstSectionToggle.getAttribute('aria-expanded')) !== 'true') {
+        await firstSectionToggle.click()
+        await page.waitForTimeout(200)
+      }
+      const topEvent = page.locator('.sg-topic-section > .sg-directory-fold.open .sg-topic-event').first()
+      if (await topEvent.count() > 0) {
+        await topEvent.click()
+        await page.locator('.sg-event-page-header').waitFor({ timeout: 10000 })
+        await page.locator('.sg-event-dossier').waitFor({ timeout: 10000 })
+        await page.waitForTimeout(250)
+        await inspectAndCapture('05d-long-term-detail-npm', null)
+        const techTab = page.getByRole('tab', { name: '技术信息', exact: true })
+        if (await techTab.count() > 0) {
+          await techTab.click()
+          await page.locator('.sg-technical-list').waitFor({ timeout: 5000 })
+        }
+        await page.locator('.sg-back').click()
+        await page.locator('.sg-topic-directory').waitFor({ timeout: 10000 })
+      }
+    }
     return { sharedTitleTested: sharedIndices.length >= 2, checkedIndices: sharedIndices, readerScroll }
   })()
   await inspectAndCapture('06-more', '更多')
@@ -365,6 +400,23 @@ try {
     await page.locator('.sg-dreaming-setting').waitFor({ timeout: 10000 })
     await page.waitForTimeout(300)
     await inspectAndCapture('09b-advanced-settings-dark-narrow', null)
+  }
+  await page.locator('.sg-tabs button', { hasText: '长期记忆' }).click()
+  await page.waitForTimeout(250)
+  const darkSectionToggle = page.locator('button.sg-topic-section-toggle').first()
+  if (await darkSectionToggle.count() > 0) {
+    if ((await darkSectionToggle.getAttribute('aria-expanded')) !== 'true') {
+      await darkSectionToggle.click()
+      await page.waitForTimeout(200)
+    }
+    const darkEvent = page.locator('.sg-topic-section > .sg-directory-fold.open .sg-topic-event').first()
+    if (await darkEvent.count() > 0) {
+      await darkEvent.click()
+      await page.locator('.sg-event-page-header').waitFor({ timeout: 10000 })
+      await page.locator('.sg-event-dossier').waitFor({ timeout: 10000 })
+      await page.waitForTimeout(250)
+      await inspectAndCapture('10-long-term-detail-dark-narrow', null)
+    }
   }
 
   await context.close()

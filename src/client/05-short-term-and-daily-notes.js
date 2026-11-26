@@ -586,12 +586,58 @@
           messages.length ? messages.map((message) => h('div', { key: message.id, className: 'sg-raw-message' }, h('div', { className: 'sg-muted' }, String(message.role || '') + ' · ' + formatTime(message.createdAt)), h('div', { className: 'sg-code' }, String(message.content || '')))) : h('div', { className: 'sg-muted' }, '当前数据中没有可显示的来源消息。'))))
     }
 
-    function EventDetail({ event, project, source, onBack, backLabel, onNode }) {
+    function EventDetail({ event, project, source, onBack, backLabel, onNode, onOpenEvent, onOpenSession }) {
       const detailedEvent = source?.events?.find((item) => item.id === event.id) || event
+      const temporal = detailedEvent?.temporal || {}
+      const statusText = temporal.status && temporal.status !== 'unknown' ? EVENT_STATUS_TEXT[temporal.status] : ''
+      const typeText = temporal.eventType && temporal.eventType !== 'other' ? EVENT_TYPE_TEXT[temporal.eventType] : ''
+      const criticalityText = CRITICALITY_INFO[detailedEvent?.criticality]?.[0] || ''
+      const mergedCount = Array.isArray(detailedEvent?.mergedFromEventIds) ? detailedEvent.mergedFromEventIds.length : 0
+      const topicContext = source?.topicContext || null
+      const start = eventDate(temporal.happenedStart)
+      const end = eventDate(temporal.happenedEnd)
+      const happened = start ? start + (end && end !== start ? ' — ' + end : '') : end
+      const latestAdoptionTurn = detailedEvent?.weightTrajectory?.latestAdoptionTurn
+      const latestReceiptDate = shortMonthDay(source?.adoptionReceipts?.[0]?.createdAt || detailedEvent?.weightTrajectory?.adoptionHistory?.at?.(-1)?.createdAt)
+      const topSummaryParts = [
+        statusText,
+        typeText,
+        detailedEvent?.scope === 'global' ? '跨工作区' : '当前工作区',
+        criticalityText && criticalityText !== '普通事件' ? criticalityText : '',
+        mergedCount > 0 ? '已合并 ' + mergedCount + ' 条' : '',
+      ].filter(Boolean)
+      const headerSlot = h('header', { className: 'sg-detail-header sg-event-page-header' },
+        h('span', { className: 'sg-event-detail-kicker' },
+          h('i', { className: 'sg-event-kicker-swatch', 'aria-hidden': 'true' }),
+          mergedCount > 0 ? '长期记忆 · 合并事件档案' : '长期记忆 · 事件档案'),
+        h('h2', { className: 'sg-detail-title' }, detailedEvent.title || '记忆详情'),
+        (happened || Number.isSafeInteger(detailedEvent?.formedTurn) || Number.isSafeInteger(latestAdoptionTurn)) ? h('div', { className: 'sg-event-time-rail' },
+          happened ? h('span', { className: 'sg-event-time-item' }, h('span', null, '发生时间'), h('strong', null, happened)) : null,
+          Number.isSafeInteger(detailedEvent?.formedTurn) ? h('span', { className: 'sg-event-time-item' }, h('span', null, '形成轮次'), h('strong', null, '第 ' + detailedEvent.formedTurn + ' 轮')) : null,
+          Number.isSafeInteger(latestAdoptionTurn) ? h('span', { className: 'sg-event-time-item' }, h('span', null, '最近采纳'), h('strong', null, '第 ' + latestAdoptionTurn + ' 轮' + (latestReceiptDate ? ' (' + latestReceiptDate + ')' : ''))) : null) : null)
       return h(InfoPopoverGroup, null,
-        h(BackBar, { label: backLabel, onBack }),
-        h('header', { className: 'sg-detail-header sg-event-page-header' }, h('span', { className: 'sg-event-detail-kicker' }, 'Event'), h('h2', { className: 'sg-detail-title' }, detailedEvent.title || '记忆详情'), h(EventMetadata, { event: detailedEvent, nodes: source?.relatedNodes || [], onNode })),
-        h(EventMemoryDetails, { event: detailedEvent, sourceMessages: source?.messages || [] }))
+        h('div', { className: 'sg-event-topbar' },
+          h('div', { className: 'sg-event-crumbs' },
+            h(BackBar, { label: backLabel, onBack }),
+            topicContext ? h(React.Fragment, null,
+              h('span', { className: 'sg-event-crumb-sep', 'aria-hidden': 'true' }, '/'),
+              h('span', { className: 'sg-event-crumb-ch', title: topicContext.chapterTitle }, '第' + topicContext.chapterIndex + '章 ' + topicContext.chapterTitle),
+              topicContext.sectionTitle ? h(React.Fragment, null,
+                h('span', { className: 'sg-event-crumb-sep', 'aria-hidden': 'true' }, '/'),
+                h('span', { className: 'sg-event-crumb-sec', title: topicContext.sectionTitle }, (topicContext.sectionNumber ? topicContext.sectionNumber + ' ' : '') + topicContext.sectionTitle)) : null) : null),
+          topSummaryParts.length ? h('div', { className: 'sg-event-top-meta' }, topSummaryParts.join(' · ')) : null),
+        h(EventMemoryDetails, { event: detailedEvent, headerSlot,
+          sourceMessages: source?.messages || [],
+          sourceBlocks: source?.blocks || [],
+          relatedNodes: source?.relatedNodes || [],
+          relatedEvents: source?.relatedEvents || [],
+          adoptionReceipts: source?.adoptionReceipts || [],
+          topicContext,
+          onNode,
+          onOpenEvent,
+          onOpenSession,
+          layout: 'dossier',
+        }))
     }
 
     function ElementDetail({ element, events, source, openEvent, onBack, backLabel }) {
