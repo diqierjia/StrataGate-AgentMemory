@@ -3276,4 +3276,118 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(rawSearch.items[0].text.length).toBe(1499)
     expect(rawSearch).toEqual(JSON.parse(JSON.stringify(rawSearch)))
   })
+
+  it('reminds the agent without blocking when creating or updating an Event with unread raw message sources', async () => {
+    let tick = Date.parse('2026-11-22T09:00:00Z')
+    const f = await fixture(0, '线程 A 的原始对话记录。', 'dreaming-unread-raw-reminder', () => new Date(tick += 1000))
+    const blockA = (await f.memory.appendTurn({ threadId: 'thread-a', user: '线程 A 决定启用 WAL 模式。', assistant: '已记录。' })).sealedBlock!
+    const msgA = blockA.l5Raw[0]!.id
+    await f.memory.reserveUserMessage({
+      id: 'open-unread-1',
+      content: '这是一条留在 openMessages 里的未读消息正文，应当提醒 Agent 去查看。',
+      threadId: 'thread-a',
+    })
+    await f.memory.reserveUserMessage({
+      id: 'open-unread-2',
+      content: '这是用于 update 追加引用的第二条未读原始消息正文。',
+      threadId: 'thread-a',
+    })
+    await f.memory.reserveUserMessage({
+      id: 'open-unread-3',
+      content: '这是先完整读取后再追加引用的第三条原始消息正文。',
+      threadId: 'thread-a',
+    })
+    const existingEvent = await f.memory.addEvent({
+      title: '线程 A 启用 WAL',
+      summary: '线程 A 决定启用 SQLite WAL。',
+      scope: 'session',
+      sourceBlockId: blockA.id,
+      sourceMessageIds: [msgA],
+      temporal: { threadId: 'thread-a', happenedStart: '2026-11-22T09:05:00Z' },
+    })
+
+    let run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const readTool = async (kind: string, id: string, extraArgs: Record<string, unknown> = {}) => {
+      const action = { tool: 'dreaming_read', args: { kind, id, ...extraArgs } }
+      const { result, evidenceIds } = await dreamingTool(f.memory, run, action)
+      run = await f.memory.dreaming({ ...claim(run), kind: 'checkpoint', trace: { ...action, result }, evidenceIds, estimatedTokens: 0 })
+      return result
+    }
+
+    // Creating an Event citing an unread openMessages ID succeeds and returns a reminder.
+    const createdUnread = await f.memory.editDreamingEvent(claim(run), {
+      kind: 'create',
+      title: '未读 openMessages 建卡',
+      summary: '尚未读正文但允许写入并返回提醒。',
+      scope: 'session',
+      sourceMessageIds: ['open-unread-1'],
+    })
+    expect(createdUnread.saved).toBe(true)
+    expect(createdUnread.unreadSourceMessageIds).toEqual(['open-unread-1'])
+    expect(createdUnread.warning).toContain('open-unread-1')
+    expect(createdUnread.warning).toContain('dreaming_read(kind:"message")')
+
+    // Partial read still triggers the reminder; completing the read clears it.
+    await readTool('message', 'open-unread-1', { offset: 0, limit: 10 })
+    const createdPartial = await f.memory.editDreamingEvent(claim(run), {
+      kind: 'create',
+      title: '仅读前 10 字建卡',
+      summary: '未读完正文仍应提醒。',
+      scope: 'session',
+      sourceMessageIds: ['open-unread-1'],
+    })
+    expect(createdPartial.saved).toBe(true)
+    expect(createdPartial.unreadSourceMessageIds).toEqual(['open-unread-1'])
+
+    await readTool('message', 'open-unread-1', { offset: 10 })
+    const createdRead = await f.memory.editDreamingEvent(claim(run), {
+      kind: 'create',
+      title: '已完整读取正文建卡',
+      summary: '完整读取后不再提醒。',
+      scope: 'session',
+      sourceMessageIds: ['open-unread-1'],
+    })
+    expect(createdRead.saved).toBe(true)
+    expect(createdRead.unreadSourceMessageIds).toBeUndefined()
+    expect(createdRead.warning).toBeUndefined()
+
+    // Update keeping existing citations emits no reminder; adding a new unread ID saves with reminder.
+    await readTool('event', existingEvent.id)
+    const updatedKeepSources = await f.memory.editDreamingEvent(claim(run), {
+      kind: 'update',
+      id: existingEvent.id,
+      title: '线程 A 启用 WAL（仅润色）',
+      summary: '沿用已有来源，不触发未读提醒。',
+      sourceMessageIds: [msgA],
+    })
+    expect(updatedKeepSources.saved).toBe(true)
+    expect(updatedKeepSources.unreadSourceMessageIds).toBeUndefined()
+    expect(updatedKeepSources.warning).toBeUndefined()
+
+    await readTool('event', existingEvent.id)
+    const updatedWithUnread = await f.memory.editDreamingEvent(claim(run), {
+      kind: 'update',
+      id: existingEvent.id,
+      title: '线程 A 启用 WAL（追加未读来源）',
+      summary: '追加未读来源时放行但返回提醒。',
+      sourceMessageIds: [msgA, 'open-unread-2'],
+    })
+    expect(updatedWithUnread.saved).toBe(true)
+    expect(updatedWithUnread.unreadSourceMessageIds).toEqual(['open-unread-2'])
+    expect(updatedWithUnread.warning).toContain('open-unread-2')
+
+    // Reading the newly cited message beforehand clears the reminder on update.
+    await readTool('event', existingEvent.id)
+    await readTool('message', 'open-unread-3')
+    const updatedWithRead = await f.memory.editDreamingEvent(claim(run), {
+      kind: 'update',
+      id: existingEvent.id,
+      title: '线程 A 启用 WAL（追加已读来源）',
+      summary: '已读新增来源，不返回提醒。',
+      sourceMessageIds: [msgA, 'open-unread-2', 'open-unread-3'],
+    })
+    expect(updatedWithRead.saved).toBe(true)
+    expect(updatedWithRead.unreadSourceMessageIds).toBeUndefined()
+    expect(updatedWithRead.warning).toBeUndefined()
+  })
 })

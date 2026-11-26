@@ -1116,6 +1116,16 @@ export class StrataGate {
         if (!messages.has(id)) throw new Error(`Read the current raw message before citing it: ${id}`);
       }
       const ids = edit.kind === 'update' && !requestedIds.length && target ? [...target.sourceMessageIds] : requestedIds;
+      const existingSourceIds = new Set(target?.sourceMessageIds ?? []);
+      const newlyCitedIds = edit.kind === 'create'
+        ? requestedIds
+        : edit.kind === 'update'
+          ? requestedIds.filter(id => !existingSourceIds.has(id))
+          : [];
+      const unreadSourceMessageIds = newlyCitedIds.filter(id => {
+        const message = messages.get(id);
+        return message && run.readVersions?.[`message:${id}`] !== dreamingTopicVersion(message);
+      });
       const affected = new Set<string>();
       const removed = new Set<string>();
       const removedTitles = new Map<string, string>();
@@ -1314,7 +1324,15 @@ export class StrataGate {
         recordDreamingChange(run, { editedEvents: 1, items: [{ kind: 'event-edit', id: event.id, label: event.title, detail }] });
       }
       this.validateReferences();
-      return { ...(event ? { id: event.id } : {}), saved: true, ...(experiencesToReview.length ? { experiencesToReview } : {}) };
+      return {
+        ...(event ? { id: event.id } : {}),
+        saved: true,
+        ...(experiencesToReview.length ? { experiencesToReview } : {}),
+        ...(unreadSourceMessageIds.length ? {
+          unreadSourceMessageIds,
+          warning: `提醒：你尚未通过 dreaming_read(kind:"message") 完整查看以下原始消息的正文（${unreadSourceMessageIds.join(', ')}）。请按需读取正文核对事实，如有出入可用 dreaming_event(kind:"update") 修正。`,
+        } : {}),
+      };
     });
   }
 

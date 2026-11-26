@@ -53,7 +53,7 @@ export interface DreamingRun {
   includeAgentEvents?: boolean;
   lastToolSignature?: string;
   interrupted?: boolean;
-  appliedOperations?: Record<string, { id?: string; saved: boolean; experiencesToReview?: string[] }>;
+  appliedOperations?: Record<string, { id?: string; saved: boolean; experiencesToReview?: string[]; unreadSourceMessageIds?: string[]; warning?: string }>;
   trigger?: 'manual' | 'automatic';
   changes?: DreamingChangeCounts;
   letter?: DreamingDiaryLetter;
