@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.72
+
+- 重构 Event 详情页，优化内容阅读、记忆状态和权重图表，并将 GitHub Star 展示更新为 123。
+
 ## 0.3.71
 
 - 为 Dreaming 写入/更新 Event 增加未读原始消息正文提醒（不阻断写入）：当 `dreaming_event` 的 `create` 或 `update` 引入尚未通过 `dreaming_read(kind:"message")` 完整读完正文的原始消息来源时，照常保存并在结果中返回 `unreadSourceMessageIds` 与 `warning`，提醒 Agent 按需读取正文核对事实并在有出入时通过 `update` 修正；同时在 `dreaming_event` 工具说明中补充核对建议并补齐对应自动化测试。
