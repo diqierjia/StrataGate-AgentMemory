@@ -813,13 +813,16 @@ window.__ModuleLoader__.load({
       .sg-ov-speech{display:block;width:calc(54 * var(--sg-overview-unit));height:calc(48 * var(--sg-overview-unit));flex:none;color:var(--sg-text)}
       .sg-ov-big .sg-ov-speech{margin-bottom:calc(6 * var(--sg-overview-unit))}
       .sg-ov-summary{margin:calc(32 * var(--sg-overview-unit)) 0 0;color:color-mix(in srgb,var(--sg-text) 35%,var(--sg-muted));font-size:calc(24 * var(--sg-overview-unit));line-height:1.6;text-wrap:pretty}
-      .sg-memory .sg-ov-dreaming{display:flex;align-items:center;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;width:min(100%,290px);margin-top:calc(28 * var(--sg-overview-unit));padding-top:8px;border-top:1px solid var(--sg-hair);font-size:clamp(12px,calc(24 * var(--sg-overview-unit)),15px)}
-      .sg-ov-dreaming-controls{display:flex;align-items:center;gap:5px;min-width:0}
-      .sg-ov-dreaming .sg-dreaming-quiet{display:inline-flex;align-items:center;gap:7px;min-height:28px;padding:2px 0;border:0;background:none;color:var(--sg-text);white-space:nowrap;font:inherit;cursor:pointer}
+      .sg-memory .sg-ov-dreaming{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:min(100%,290px);margin-top:calc(28 * var(--sg-overview-unit));padding-top:8px;border-top:1px solid var(--sg-hair);font-size:clamp(12px,calc(24 * var(--sg-overview-unit)),15px)}
+      .sg-ov-dreaming-row{display:flex;align-items:center;justify-content:space-between;gap:6px 12px;min-width:0}
+      .sg-ov-dreaming-controls{display:flex;align-items:center;gap:4px;min-width:0;flex:1 1 auto}
+      .sg-ov-dreaming-controls.is-active{justify-content:space-between}
+      .sg-ov-dreaming-btns{display:inline-flex;align-items:center;gap:2px;flex:none}
+      .sg-ov-dreaming-links{display:flex;align-items:center;flex-wrap:wrap;gap:2px 16px;min-width:0}
+      .sg-ov-dreaming .sg-dreaming-quiet{display:inline-flex;align-items:center;gap:6px;min-height:28px;min-width:0;padding:2px 0;border:0;background:none;color:var(--sg-text);white-space:nowrap;font:inherit;cursor:pointer}
       .sg-ov-dreaming .sg-dreaming-quiet:hover:not(:disabled){color:var(--sg-moss);text-decoration:underline;text-underline-offset:.22em}
       .sg-ov-dreaming .sg-dreaming-quiet:disabled{color:var(--sg-muted);cursor:default}
-      .sg-ov-dreaming .sg-dreaming-quiet.sg-dreaming-icon{justify-content:center;min-width:28px;color:var(--sg-muted)}
-      .sg-ov-dreaming .sg-dreaming-read{margin-left:auto}
+      .sg-ov-dreaming .sg-dreaming-quiet.sg-dreaming-icon{justify-content:center;min-width:24px;color:var(--sg-muted)}
       .sg-ov-dreaming svg,.sg-daily-letter svg{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
       .sg-ov-dreaming svg{color:var(--sg-moss)}
       .sg-ov-dreaming>p{flex-basis:100%;margin:0}
@@ -4108,7 +4111,7 @@ window.__ModuleLoader__.load({
     const DREAMING_MARKS = {
       moon: 'M13.8 10.6A6 6 0 0 1 5.4 2.2a6.1 6.1 0 1 0 8.4 8.4Z',
       mail: 'M2 3.5h12v9H2z M2.5 4 8 8.5l5.5-4.5',
-      undo: 'M6 4.5 2.5 8 6 11.5M3 8h6.5a4 4 0 1 1 0 8H8',
+      undo: 'M5.5 3.5 2 7l3.5 3.5M2.5 7H9a3.5 3.5 0 1 1 0 7H6',
       pause: 'M6 3.5v9m4-9v9',
       resume: 'M5 3.5l7 4.5-7 4.5z',
       stop: 'M4.5 4.5h7v7h-7z',
@@ -4574,17 +4577,25 @@ window.__ModuleLoader__.load({
           disabled: Boolean(busy && !options.read) || options.disabled, onClick, 'aria-label': label, title: options.iconOnly ? label : undefined },
         h(DreamingMark, { name }), options.iconOnly ? null : label)
         const state = running ? (phaseShort ? '正在整理 · ' + phaseShort : '正在整理') : pausing ? '正在暂停' : '已暂停'
+        const letterButton = letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null
+        const changesButton = hasSnapshots ? quiet('undo', revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '改动与恢复', () => setChangesOpen(true), { read: true }) : null
+        const inlineSecondary = !outstanding ? (letterButton || changesButton) : null
+        const stackedLinks = outstanding
+          ? [letterButton, changesButton].filter(Boolean)
+          : (letterButton && changesButton ? [changesButton] : [])
         return h(React.Fragment, null, stopConfirmation ? styles : null,
           h('div', { className: 'sg-ov-dreaming', 'data-testid': 'overview-dreaming' },
-            h('div', { className: 'sg-ov-dreaming-controls' },
-              outstanding ? h(React.Fragment, null,
-                quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
-                running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
-                paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
-                quiet('stop', '终止整理', showStopDialog, { iconOnly: true }))
-                : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
-            hasSnapshots ? quiet('undo', revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '改动与恢复', () => setChangesOpen(true), { read: true }) : null,
-            letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null,
+            h('div', { className: 'sg-ov-dreaming-row' },
+              h('div', { className: 'sg-ov-dreaming-controls' + (outstanding ? ' is-active' : '') },
+                outstanding ? h(React.Fragment, null,
+                  quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
+                  h('span', { className: 'sg-ov-dreaming-btns' },
+                    running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
+                    paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
+                    quiet('stop', '终止整理', showStopDialog, { iconOnly: true })))
+                  : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
+              inlineSecondary),
+            stackedLinks.length ? h('div', { className: 'sg-ov-dreaming-links' }, ...stackedLinks) : null,
             run?.replanRequired ? h('p', { className: 'sg-dreaming-failure' }, '请终止这次整理后重新开始。') : null, toastMessage, feedback),
           letterDate ? h(DreamingLetterModal, { namespace, dates: letterDates, date: letterDate, onDate: setLetterDate, onClose: () => setLetterDate(''), onDirectoryChanged }) : null,
           changesModal,

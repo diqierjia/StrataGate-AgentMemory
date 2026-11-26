@@ -250,7 +250,7 @@
     const DREAMING_MARKS = {
       moon: 'M13.8 10.6A6 6 0 0 1 5.4 2.2a6.1 6.1 0 1 0 8.4 8.4Z',
       mail: 'M2 3.5h12v9H2z M2.5 4 8 8.5l5.5-4.5',
-      undo: 'M6 4.5 2.5 8 6 11.5M3 8h6.5a4 4 0 1 1 0 8H8',
+      undo: 'M5.5 3.5 2 7l3.5 3.5M2.5 7H9a3.5 3.5 0 1 1 0 7H6',
       pause: 'M6 3.5v9m4-9v9',
       resume: 'M5 3.5l7 4.5-7 4.5z',
       stop: 'M4.5 4.5h7v7h-7z',
@@ -716,17 +716,25 @@
           disabled: Boolean(busy && !options.read) || options.disabled, onClick, 'aria-label': label, title: options.iconOnly ? label : undefined },
         h(DreamingMark, { name }), options.iconOnly ? null : label)
         const state = running ? (phaseShort ? '正在整理 · ' + phaseShort : '正在整理') : pausing ? '正在暂停' : '已暂停'
+        const letterButton = letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null
+        const changesButton = hasSnapshots ? quiet('undo', revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '改动与恢复', () => setChangesOpen(true), { read: true }) : null
+        const inlineSecondary = !outstanding ? (letterButton || changesButton) : null
+        const stackedLinks = outstanding
+          ? [letterButton, changesButton].filter(Boolean)
+          : (letterButton && changesButton ? [changesButton] : [])
         return h(React.Fragment, null, stopConfirmation ? styles : null,
           h('div', { className: 'sg-ov-dreaming', 'data-testid': 'overview-dreaming' },
-            h('div', { className: 'sg-ov-dreaming-controls' },
-              outstanding ? h(React.Fragment, null,
-                quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
-                running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
-                paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
-                quiet('stop', '终止整理', showStopDialog, { iconOnly: true }))
-                : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
-            hasSnapshots ? quiet('undo', revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '改动与恢复', () => setChangesOpen(true), { read: true }) : null,
-            letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null,
+            h('div', { className: 'sg-ov-dreaming-row' },
+              h('div', { className: 'sg-ov-dreaming-controls' + (outstanding ? ' is-active' : '') },
+                outstanding ? h(React.Fragment, null,
+                  quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
+                  h('span', { className: 'sg-ov-dreaming-btns' },
+                    running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
+                    paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
+                    quiet('stop', '终止整理', showStopDialog, { iconOnly: true })))
+                  : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
+              inlineSecondary),
+            stackedLinks.length ? h('div', { className: 'sg-ov-dreaming-links' }, ...stackedLinks) : null,
             run?.replanRequired ? h('p', { className: 'sg-dreaming-failure' }, '请终止这次整理后重新开始。') : null, toastMessage, feedback),
           letterDate ? h(DreamingLetterModal, { namespace, dates: letterDates, date: letterDate, onDate: setLetterDate, onClose: () => setLetterDate(''), onDirectoryChanged }) : null,
           changesModal,
