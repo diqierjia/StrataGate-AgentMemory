@@ -36,7 +36,6 @@ export type DreamingEditResult = {
 export type DreamingClaim = { id: string; owner: string; epoch: number };
 export const DREAMING_AUTO_INTERVAL = 24 * 60 * 60_000;
 export const DREAMING_IDLE_TIME = 30 * 60_000;
-const DREAMING_MEMORY_PAGE = 48;
 
 export function dreamingPhaseActivity(phase: DreamingPhase): string {
   switch (phase) {
@@ -74,18 +73,18 @@ export interface DreamingDiscovery {
 export function discoverDreaming(blocks: readonly MemoryBlock[], tail: readonly RawMessage[], events: readonly EventCard[],
   previous: Record<string, string> = {}, notes: Record<string, string> = {}, reviewIds: string[] = []): DreamingDiscovery {
   const versions: Record<string, string> = {};
-  const changes: DreamingDiscovery['units'] = [];
+  const noteDates: string[] = [];
+  const unit: DreamingUnit = { topicId: '', eventIds: [], blockIds: [], messageIds: [], noteDates, experienceIds: reviewIds };
   let hasRecentTranscriptChange = false;
-  for (const id of reviewIds) changes.push({ topicId: '', eventIds: [], experienceIds: [id] });
   for (const block of blocks) {
     const key = `block:${block.id}`;
     versions[key] = dreamingTopicVersion([block.l0Title, block.l1Summary, block.l2Keypoints, block.processingStatus, block.l5Raw.map(message => message.id)]);
-    if (versions[key] !== previous[key]) hasRecentTranscriptChange = true;
+    if (versions[key] !== previous[key]) { unit.blockIds!.push(block.id); hasRecentTranscriptChange = true; }
   }
   for (const message of tail) {
     const key = `message:${message.id}`;
     versions[key] = dreamingTopicVersion(message);
-    if (versions[key] !== previous[key]) hasRecentTranscriptChange = true;
+    if (versions[key] !== previous[key]) { unit.messageIds!.push(message.id); hasRecentTranscriptChange = true; }
   }
   for (const event of events) {
     const key = `event:${event.id}`;
@@ -93,29 +92,14 @@ export function discoverDreaming(blocks: readonly MemoryBlock[], tail: readonly 
     versions[key] = dreamingEventVersion(event);
     const prev = previous[key];
     const unchanged = prev === versions[key] || (prev !== undefined && legacyMemoryTopicEventFingerprints(event).includes(prev));
-    if (!unchanged) changes.push({ topicId: '', eventIds: [event.id] });
+    if (!unchanged) unit.eventIds.push(event.id);
   }
   for (const [date, version] of Object.entries(notes)) {
     versions[`note:${date}`] = version;
-    if (version !== previous[`note:${date}`]) changes.push({ topicId: '', eventIds: [], noteDates: [date] });
+    if (version !== previous[`note:${date}`]) noteDates.push(date);
   }
-  const units: DreamingDiscovery['units'] = [];
-  // Memory-layer consolidation: raw transcripts stay in the on-demand archive
-  // instead of flooding mandatory backlog batches.
-  for (let offset = 0; offset < changes.length; offset += DREAMING_MEMORY_PAGE) {
-    const page = changes.slice(offset, offset + DREAMING_MEMORY_PAGE);
-    units.push({
-      topicId: '',
-      eventIds: page.flatMap(item => item.eventIds),
-      noteDates: page.flatMap(item => item.noteDates ?? []),
-      experienceIds: page.flatMap(item => item.experienceIds ?? []),
-      ...(hasRecentTranscriptChange && offset === 0 ? { recentActivity: true } : {}),
-    });
-  }
-  if (!units.length && hasRecentTranscriptChange) {
-    units.push({ topicId: '', eventIds: [], recentActivity: true });
-  }
-  return { versions, units };
+  if (hasRecentTranscriptChange) unit.recentActivity = true;
+  return { versions, units: unit.eventIds.length || noteDates.length || reviewIds.length || hasRecentTranscriptChange ? [unit] : [] };
 }
 
 /** Common claim/pause/usage handling lives in V1's reducer; V2 only replaces directory batching gates. */
@@ -123,6 +107,19 @@ export function updateDreamingMemory(state: MemoryTopicState, run: DreamingRun, 
   if (command.kind === 'memory-write') {
     return structuredClone(run);
   } else if (command.kind === 'prepare') {
+    // Fold pending work from older persisted runs into a single task.
+    const pending = run.units.slice(run.cursor);
+    if (pending.length > 1) {
+      run.units.splice(run.cursor, pending.length, {
+        topicId: '',
+        eventIds: [...new Set(pending.flatMap(unit => unit.eventIds))],
+        blockIds: [...new Set(pending.flatMap(unit => unit.blockIds ?? []))],
+        messageIds: [...new Set(pending.flatMap(unit => unit.messageIds ?? []))],
+        noteDates: [...new Set(pending.flatMap(unit => unit.noteDates ?? []))],
+        experienceIds: [...new Set(pending.flatMap(unit => unit.experienceIds ?? []))],
+        recentActivity: pending.some(unit => unit.recentActivity),
+      });
+    }
     run.phase ??= 'orient';
     run.activity = dreamingPhaseActivity(run.phase);
   } else if (command.kind === 'checkpoint') {
@@ -134,7 +131,7 @@ export function updateDreamingMemory(state: MemoryTopicState, run: DreamingRun, 
         run.phase = 'prune';
       } else if (trace.tool === 'dreaming_event' || trace.tool === 'dreaming_experience' || trace.tool === 'dreaming_daily_write') {
         if (run.phase !== 'prune') run.phase = 'consolidate';
-      } else if (trace.tool === 'dreaming_read' || trace.tool === 'dreaming_search' || trace.tool === 'memory_list_topics' || trace.tool === 'memory_expand_topic') {
+      } else if (trace.tool === 'dreaming_read' || trace.tool === 'dreaming_search' || trace.tool === 'dreaming_workspace' || trace.tool === 'memory_list_topics' || trace.tool === 'memory_expand_topic') {
         if (!run.phase || run.phase === 'orient') run.phase = 'gather';
       }
       run.activity = dreamingPhaseActivity(run.phase ?? 'orient');
@@ -175,12 +172,24 @@ export function updateDreamingMemory(state: MemoryTopicState, run: DreamingRun, 
       if (run.idleCalls >= 11) run.reason = '相同工具及结果连续重复，没有有效进展；已保存断点';
     }
   } else if (command.kind === 'finish-unit') {
+    if (run.status === 'pausing') {
+      run.status = 'paused'; run.leaseUntil = null; run.activity = '已暂停';
+      return structuredClone(run);
+    }
     run.cursor++; run.idleCalls = 0; run.idleModelSteps = 0;
     delete run.lastToolSignature;
     if (run.cursor >= run.units.length) {
       run.phase = 'prune';
       run.status = 'completed'; run.leaseUntil = null; run.activity = '本轮整理完成';
       state.dreamingWatermark = { ...run.discoveryVersions };
+      if (run.trigger === 'automatic' && command.letterTimeZone) {
+        const finishedAt = Date.parse(run.updatedAt);
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: command.letterTimeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+        }).formatToParts(finishedAt);
+        const date = ['year', 'month', 'day'].map(type => parts.find(part => part.type === type)!.value).join('-');
+        run.letterJob = { date, timeZone: command.letterTimeZone, finishedAt };
+      }
     } else {
       run.phase = 'orient';
       run.activity = dreamingPhaseActivity('orient');

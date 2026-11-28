@@ -643,7 +643,7 @@
           h('div', { className: 'sg-dreaming-pref-row' },
             h('div', { className: 'sg-dreaming-pref-copy' },
               h('span', { className: 'sg-dreaming-pref-label' }, '每日自动来信'),
-              h('span', { className: 'sg-dreaming-pref-desc' }, '关闭后不再在次日自动生成手写来信，已有来信与记录保留。')),
+              h('span', { className: 'sg-dreaming-pref-desc' }, '每天第一次自动整理完成后写一封。手动整理的结果会在整理会话里汇报。')),
             h('button', {
               type: 'button',
               className: 'sg-setting-switch',

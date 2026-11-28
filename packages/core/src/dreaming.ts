@@ -82,6 +82,7 @@ export interface DreamingRun {
   trigger?: 'manual' | 'automatic';
   changes?: DreamingChangeCounts;
   letter?: DreamingDiaryLetter;
+  letterJob?: { date: string; timeZone: string; finishedAt: number };
   status: 'running' | 'pausing' | 'paused' | 'completed' | 'terminated';
   owner: string; epoch: number; leaseUntil: string | null;
   sessionId?: string;
@@ -116,7 +117,8 @@ export type DreamingCommand =
   | { kind: 'resume'; id: string; owner: string; trigger?: 'manual' | 'automatic' }
   | { kind: 'pause'; id: string; reason?: string }
   | { kind: 'terminate'; id: string }
-  | { kind: 'heartbeat' | 'prepare' | 'finish-unit'; id: string; owner: string; epoch: number }
+  | { kind: 'heartbeat' | 'prepare'; id: string; owner: string; epoch: number }
+  | { kind: 'finish-unit'; id: string; owner: string; epoch: number; letterTimeZone?: string }
   | { kind: 'checkpoint'; id: string; owner: string; epoch: number; trace: DreamingTrace; evidenceIds?: string[]; estimatedTokens: number }
   | { kind: 'bind-session'; id: string; owner: string; epoch: number; sessionId: string }
   | { kind: 'model-step'; id: string; owner: string; epoch: number; estimatedTokens: number }
