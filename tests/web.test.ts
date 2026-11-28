@@ -397,6 +397,13 @@ describe('StrataGate admin routes', () => {
     expect(result).toMatchObject({ status: 200, body: { namespace: null, overview: { namespaces: [] }, data: null, processing: false } })
   })
 
+  it('keeps an unknown requested workspace empty instead of falling back to existing memory', async () => {
+    const existing = { adminSnapshotEntries: async () => [{ namespace: 'dsh:project:existing', revision: 1, snapshot }],
+      adminDataDirectory: () => 'fixture', adminWorkspaceName: () => 'Existing' } as unknown as StrataGateRuntime
+    const result = await request('/api/stratagate/dashboard?namespace=dsh%3Aproject%3Anew', 'GET', existing)
+    expect(result).toMatchObject({ status: 200, body: { namespace: 'dsh:project:new', data: null, overview: { namespaces: [{ namespace: 'dsh:project:existing' }] } } })
+  })
+
   it('exposes optional Event metadata while keeping legacy API cards unchanged', async () => {
     const copy = structuredClone(snapshot);
     copy.events[0]!.catalogHints = ['工作方式', '包管理'];

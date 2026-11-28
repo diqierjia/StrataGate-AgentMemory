@@ -193,7 +193,7 @@
         h('button', { type: 'button', 'aria-label': '增加' + label, disabled: disabled || !Number.isFinite(current) || current >= max, onClick: () => bump(1) }, '+'))
     }
 
-    function MoreHome({ setView, selected, overview = {}, namespace, dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }) {
+    function MoreHome({ setView, selected, workspaceTitles, overview = {}, namespace, dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }) {
       const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
       const settingsWritable = pluginSettings?.writable === true
       const [pending, setPending] = React.useState({})
@@ -275,7 +275,7 @@
         goRow('settings', '高级设置', '向量检索、精排与记忆配置', 'settings'),
         h('li', { key: 'directory', className: 'sg-more-row sg-more-row-path' }, h('div', { className: 'sg-more-path' }, h('span', { className: 'sg-k2' }, '数据目录'), h('span', { className: 'sg-s2 sg-mono sg-path', title: dataDirectory || undefined }, dataDirectory || '当前使用内存存储')),
         h('button', { type: 'button', className: 'sg-quiet-button', disabled: !dataDirectory, onClick: () => void api('storage/open-directory', {}, { method: 'POST' }).catch((reason) => setSettingError({ key: 'directory', text: '打开失败：' + String(reason?.message || reason) })) }, '打开')),
-        h('li', { key: 'workspace', className: 'sg-more-row' }, h('div', null, h('span', { className: 'sg-k2' }, '当前工作区'), h('span', { className: 'sg-s2 sg-mono' }, selected?.workspaceName || '当前工作区')),
+        h('li', { key: 'workspace', className: 'sg-more-row' }, h('div', null, h('span', { className: 'sg-k2' }, '当前工作区'), h('span', { className: 'sg-s2 sg-mono' }, projectName(selected || namespace, workspaceTitles))),
           h('button', { type: 'button', className: 'sg-quiet-button', disabled: !namespace, onClick: copyWorkspace }, copyState || '复制 ID')),
       ]
       const feedbackRows = [

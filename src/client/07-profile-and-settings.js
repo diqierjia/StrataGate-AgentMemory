@@ -593,7 +593,7 @@
         !saved || feedback.kind === 'failed' ? h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving || reading, onClick: () => void readSaved() }, reading ? '正在读取…' : '重新读取配置') : null)
     }
 
-    function SettingsPage({ selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged, onOpenDreamingSession }) {
+    function SettingsPage({ selected, workspaceTitles, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged, onOpenDreamingSession }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       const [eventLambda, setEventLambda] = React.useState(String(selected.eventDecayLambda ?? 0.015))
@@ -622,7 +622,7 @@
       const effortMode = pluginSettings?.value?.structuredReasoningEffort || 'auto'
       const effortOverridden = pluginSettings?.user?.structuredReasoningEffort !== undefined
       const settingsWritable = pluginSettings?.writable === true
-      const workspaceRows = [['Schema', 'v' + selected.schemaVersion], ['工作区', selected.workspaceName || '当前工作区'], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
+      const workspaceRows = [['Schema', 'v' + selected.schemaVersion], ['工作区', projectName(selected?.namespace ? selected : namespace, workspaceTitles)], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
       const runtimeDiagnostics = [
         ['duplicates', '⇄', '重复记忆整理', '查看保留原因、合并候选与重新扫描'],
         ['system', '✓', '系统状态', '处理概览与最近整理时间'],
