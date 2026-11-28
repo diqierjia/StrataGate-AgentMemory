@@ -4,7 +4,7 @@ import { previewMemoryTitle } from './events.js';
 import type { EventCard } from './types.js';
 import { LEGACY_TOPIC_OVERVIEW_SECTION_ERROR, TopicProjectionError, safeTopicDiagnostics, validateTopicOverviewText, type TopicProjectionDiagnostics } from './topic-diagnostics.js';
 import { uniqueTopicOverviewEntries, type TopicOverviewRepairRequirement } from './topic-overview-repair.js';
-import { updateDreaming, type DreamingCommand, type DreamingRun } from './dreaming.js';
+import { updateDreaming, type DreamingCommand, type DreamingEventRollbackRecord, type DreamingRun } from './dreaming.js';
 
 export const MEMORY_TOPIC_PROJECTOR_VERSION = 3;
 export const TOPIC_BATCH_LIMIT = 12;
@@ -144,6 +144,7 @@ export interface MemoryTopicState {
   dreaming?: DreamingRun;
   dreamingWatermark?: Record<string, string>;
   lastAutoDreamingAt?: string;
+  dreamingSnapshots?: DreamingEventRollbackRecord[];
   topics: StoredMemoryTopic[];
   jobs: TopicProjectionJob[];
   projectedVersions: Record<string, string>;
@@ -366,6 +367,43 @@ export class MemoryTopicDirectory {
 
   saveMemoryDreamingRun(run: DreamingRun): void {
     this.state.dreaming = run;
+  }
+
+  recordDreamingSnapshot(record: DreamingEventRollbackRecord): void {
+    const list = (this.state.dreamingSnapshots ??= []);
+    list.push(structuredClone(record));
+    const maxRuns = 10;
+    const maxRecords = 300;
+    const runOrder: string[] = [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const runId = list[i]!.runId;
+      if (!runOrder.includes(runId)) runOrder.push(runId);
+    }
+    const keepRuns = new Set(runOrder.slice(0, maxRuns));
+    const filtered = list.filter(item => keepRuns.has(item.runId));
+    this.state.dreamingSnapshots = filtered.length > maxRecords ? filtered.slice(-maxRecords) : filtered;
+  }
+
+  listDreamingSnapshots(runId?: string): DreamingEventRollbackRecord[] {
+    const list = this.state.dreamingSnapshots ?? [];
+    return structuredClone(runId ? list.filter(item => item.runId === runId) : list);
+  }
+
+  markDreamingSnapshotReverted(runId: string, changeIds: readonly string[], now: string): void {
+    const set = new Set(changeIds);
+    for (const record of this.state.dreamingSnapshots ?? []) {
+      if (record.runId === runId && set.has(record.changeId) && !record.revertedAt) {
+        record.revertedAt = now;
+      }
+    }
+    if (this.state.dreaming?.id === runId && this.state.dreaming.changes?.items) {
+      for (const item of this.state.dreaming.changes.items) {
+        if (item.changeId && set.has(item.changeId)) {
+          item.revertedAt = now;
+          item.canRevert = false;
+        }
+      }
+    }
   }
 
   reconcileDreamingEvents(events: readonly EventCard[], affected: ReadonlySet<string>, redirects: ReadonlyMap<string, string>, now: string): void {

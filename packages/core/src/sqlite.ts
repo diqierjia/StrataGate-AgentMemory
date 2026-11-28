@@ -631,6 +631,17 @@ CREATE TABLE IF NOT EXISTS dreaming_reports (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS dreaming_reports_date_idx ON dreaming_reports(namespace, finished_at);
 
+CREATE TABLE IF NOT EXISTS dreaming_letter_jobs (
+  namespace TEXT NOT NULL,
+  date TEXT NOT NULL,
+  time_zone TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  finished_at INTEGER NOT NULL,
+  changes_json TEXT,
+  PRIMARY KEY (namespace, date),
+  FOREIGN KEY (namespace) REFERENCES memory_spaces(namespace) ON DELETE CASCADE
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS usage_receipts (
   namespace TEXT NOT NULL,
   receipt_id TEXT NOT NULL,
@@ -2097,6 +2108,15 @@ export class SqliteStorage implements StorageAdapter {
     `).run(namespace, JSON.stringify(snapshot.memoryTopicState ?? { topics: [], jobs: [], projectedVersions: {} }), updatedAt);
 
     const dreaming = snapshot.memoryTopicState?.dreaming;
+    if ((!changes || changes.topics) && dreaming?.status === 'completed' && dreaming.letterJob) {
+      // Capture the first eligible completion in the same transaction as the
+      // memory writes. Later rounds cannot change its report or retry state.
+      this.database.prepare(`
+        INSERT INTO dreaming_letter_jobs (namespace, date, time_zone, run_id, finished_at, changes_json) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (namespace, date) DO NOTHING
+      `).run(namespace, dreaming.letterJob.date, dreaming.letterJob.timeZone, dreaming.id, dreaming.letterJob.finishedAt,
+        dreaming.changes?.items.length ? JSON.stringify(dreaming.changes) : null);
+    }
     if ((!changes || changes.topics) && dreaming?.changes && ['completed', 'terminated'].includes(dreaming.status)) {
       const { editedEvents, deletedEvents, experiences } = dreaming.changes;
       const finishedAt = Date.parse(dreaming.updatedAt);

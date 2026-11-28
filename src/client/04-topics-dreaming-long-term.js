@@ -250,6 +250,7 @@
     const DREAMING_MARKS = {
       moon: 'M13.8 10.6A6 6 0 0 1 5.4 2.2a6.1 6.1 0 1 0 8.4 8.4Z',
       mail: 'M2 3.5h12v9H2z M2.5 4 8 8.5l5.5-4.5',
+      undo: 'M5.5 3.5 2 7l3.5 3.5M2.5 7H9a3.5 3.5 0 1 1 0 7H6',
       pause: 'M6 3.5v9m4-9v9',
       resume: 'M5 3.5l7 4.5-7 4.5z',
       stop: 'M4.5 4.5h7v7h-7z',
@@ -257,15 +258,103 @@
       more: 'm6 4 4 4-4 4',
     }
 
+    const DREAMING_PHASES = [
+      { key: 'orient', label: '1 定向', short: '定向' },
+      { key: 'gather', label: '2 核实', short: '核实' },
+      { key: 'consolidate', label: '3 整合', short: '整合' },
+      { key: 'prune', label: '4 收口', short: '收口' },
+    ]
+
+    const DREAMING_ACTION_LABELS = {
+      create: '新增',
+      update: '修改',
+      merge: '合并',
+      supersede: '替代',
+      delete: '删除',
+    }
+
     function DreamingMark({ name }) {
       return h('svg', { viewBox: '0 0 16 16', 'aria-hidden': 'true' }, h('path', { d: DREAMING_MARKS[name] }))
     }
 
-    function DreamingLetterModal({ namespace, dates, date, onDate, onClose }) {
+    function DreamingPhaseBar({ phase }) {
+      const activeIndex = DREAMING_PHASES.findIndex(step => step.key === phase)
+      if (activeIndex < 0) return null
+      return h('div', { className: 'sg-dreaming-phases', role: 'list', 'aria-label': '整理阶段', 'data-testid': 'stratagate-dreaming-phases' },
+        DREAMING_PHASES.map((step, index) => {
+          const state = index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending'
+          return h('div', { key: step.key, role: 'listitem', className: 'sg-dreaming-phase ' + state, 'aria-current': state === 'active' ? 'step' : undefined },
+            h('span', { className: 'sg-dreaming-phase-dot', 'aria-hidden': 'true' }),
+            h('span', { className: 'sg-dreaming-phase-label' }, step.label))
+        }))
+    }
+
+    function DreamingChangesModal({ namespace, runs, onReverted, onClose }) {
+      const [busyKey, setBusyKey] = React.useState('')
+      const [error, setError] = React.useState('')
+      React.useEffect(() => {
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape' && !busyKey) { event.preventDefault(); onClose() }
+        }
+        document.addEventListener('keydown', onKeyDown)
+        return () => document.removeEventListener('keydown', onKeyDown)
+      }, [busyKey, onClose])
+      const revert = async (runId, changeId) => {
+        const key = changeId ? runId + ':' + changeId : runId
+        if (busyKey) return
+        setBusyKey(key); setError('')
+        try {
+          const response = await api('dreaming', { namespace, action: 'revert' }, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(changeId ? { runId, changeId } : { runId }),
+          })
+          await onReverted?.(response?.dreaming)
+        } catch (reason) {
+          setError(reason?.message || '恢复失败，请稍后重试。')
+        } finally { setBusyKey('') }
+      }
+      const formatTime = (iso) => typeof iso === 'string' && iso.length >= 16 ? iso.slice(0, 16).replace('T', ' ') : ''
+      return h('div', { className: 'sg-import-overlay', role: 'presentation', onClick: event => { if (event.target === event.currentTarget && !busyKey) onClose() } },
+        h('section', { className: 'sg-dreaming-changes-dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sg-dreaming-changes-title', 'data-testid': 'stratagate-dreaming-changes-modal' },
+          h('div', { className: 'sg-dreaming-changes-head' },
+            h('h3', { id: 'sg-dreaming-changes-title' }, 'Dreaming 事件改动与恢复'),
+            h('button', { type: 'button', className: 'sg-btn ghost', disabled: Boolean(busyKey), onClick: onClose }, '关闭')),
+          error ? h('p', { className: 'sg-dreaming-failure', role: 'alert' }, error) : null,
+          h('div', { className: 'sg-dreaming-changes-body' },
+            runs.length ? runs.map(group => {
+              const runBusy = busyKey === group.runId
+              return h('section', { key: group.runId, className: 'sg-dreaming-run-card', 'data-testid': 'dreaming-snapshot-run' },
+                h('div', { className: 'sg-dreaming-run-head' },
+                  h('span', { className: 'sg-dreaming-run-time' }, (formatTime(group.createdAt) || '近期整理') + ' · 共 ' + group.totalCount + ' 项事件改动'),
+                  group.revertibleCount > 0
+                    ? h('button', { type: 'button', className: 'sg-dreaming-revert-btn', 'data-testid': 'dreaming-revert-run', disabled: Boolean(busyKey), onClick: () => revert(group.runId) },
+                      runBusy ? '正在撤销…' : '撤销整轮事件改动')
+                    : h('span', { className: 'sg-dreaming-reverted-tag' }, '本轮已全部恢复')),
+                h('ul', { className: 'sg-dreaming-run-list' },
+                  group.items.map(item => {
+                    const itemKey = group.runId + ':' + item.changeId
+                    const actionName = DREAMING_ACTION_LABELS[item.action] || '改动'
+                    return h('li', { key: item.changeId, className: 'sg-dreaming-change-row' },
+                      h('span', { className: 'sg-dreaming-action-tag ' + (item.action || 'update') }, actionName),
+                      h('div', { className: 'sg-dreaming-change-copy' },
+                        h('strong', null, item.label),
+                        item.detail ? h('span', null, item.detail) : null),
+                      item.canRevert
+                        ? h('button', { type: 'button', className: 'sg-dreaming-revert-btn', 'data-testid': 'dreaming-revert-item', disabled: Boolean(busyKey), onClick: () => revert(group.runId, item.changeId) },
+                          busyKey === itemKey ? '恢复中…' : '恢复')
+                        : h('span', { className: 'sg-dreaming-reverted-tag' }, '已恢复'))
+                  })))
+            }) : h('p', { className: 'sg-muted' }, '当前没有可恢复的事件快照。'))))
+    }
+
+    function DreamingLetterModal({ namespace, dates, date, onDate, onClose, onDirectoryChanged }) {
       const dialogRef = React.useRef(null)
       const [letter, setLetter] = React.useState(null)
       const [error, setError] = React.useState('')
       const [retry, setRetry] = React.useState(0)
+      const [revertBusy, setRevertBusy] = React.useState('')
+      const [revertError, setRevertError] = React.useState('')
       React.useEffect(() => {
         const dialog = dialogRef.current
         dialog?.showModal()
@@ -273,7 +362,7 @@
       }, [])
       React.useEffect(() => {
         const controller = new AbortController()
-        setError('')
+        setError(''); setRevertError('')
         api('letters/note', { namespace, date }, { signal: controller.signal }).then(value => {
           if (!controller.signal.aborted) setLetter(value)
         }).catch(() => {
@@ -282,6 +371,22 @@
         if (dialogRef.current) dialogRef.current.scrollTop = 0
         return () => controller.abort()
       }, [namespace, date, retry])
+      const revertItem = async (runId, changeId) => {
+        const key = changeId ? runId + ':' + changeId : runId
+        if (!runId || revertBusy) return
+        setRevertBusy(key); setRevertError('')
+        try {
+          await api('dreaming', { namespace, action: 'revert' }, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(changeId ? { runId, changeId } : { runId }),
+          })
+          setRetry(value => value + 1)
+          await onDirectoryChanged?.()
+        } catch (reason) {
+          setRevertError(reason?.message || '恢复失败，请稍后重试。')
+        } finally { setRevertBusy('') }
+      }
       const current = letter?.date === date ? letter : null
       const runs = (current?.reports || []).map(dreamingChangesOf)
       const items = runs.flatMap(run => run.items)
@@ -292,6 +397,7 @@
         ['event-edit', '修改的事件', edited], ['event-delete', '删除的事件', deleted], ['experience', '整理出的经验', experiences],
       ]
       const counts = `修改 ${edited} 个事件 · 删除 ${deleted} 个事件 · 提取 ${experiences} 条经验`
+      const revertibleRunIds = [...new Set(items.filter(item => item.canRevert && item.runId).map(item => item.runId))]
       return h('dialog', { ref: dialogRef, className: 'sg-daily-letter', 'aria-labelledby': 'sg-letter-heading',
         onCancel: event => { event.preventDefault(); onClose() },
         onClick: event => { if (event.target === event.currentTarget) onClose() } },
@@ -307,10 +413,26 @@
               : h('p', { role: 'status' }, '正在读取来信…'),
           edited || deleted || experiences ? h('details', { key: date, className: 'sg-daily-letter-changes' },
             h('summary', null, counts, h(DreamingMark, { name: 'more' })),
+            revertError ? h('p', { className: 'sg-daily-letter-revert-err', role: 'alert' }, revertError) : null,
             groups.filter(([, , count]) => count > 0).map(([kind, label, count]) => {
               const group = items.filter(item => item.kind === kind)
-              return h('section', { key: kind }, h('h3', null, label),
-                h('ul', null, group.map((item, index) => h('li', { key: index }, h('strong', null, item.label), item.detail ? h('span', null, item.detail) : null))),
+              const showRunRevert = kind !== 'experience' && revertibleRunIds.length === 1 && group.some(item => item.canRevert)
+              return h('section', { key: kind },
+                h('div', { className: 'sg-daily-letter-changes-head' },
+                  h('h3', null, label),
+                  showRunRevert ? h('button', { type: 'button', className: 'sg-letter-revert-btn', disabled: Boolean(revertBusy), onClick: () => revertItem(revertibleRunIds[0]) },
+                    revertBusy === revertibleRunIds[0] ? '撤销中…' : '撤销本轮事件改动') : null),
+                h('ul', null, group.map((item, index) => {
+                  const hasAction = Boolean(item.changeId && item.runId && (item.canRevert || item.revertedAt))
+                  const key = hasAction ? item.runId + ':' + item.changeId : ''
+                  return h('li', { key: item.changeId || index, className: hasAction ? 'has-action' : undefined },
+                    h('strong', null, item.label),
+                    item.detail ? h('span', null, item.detail) : hasAction ? h('span', null, '') : null,
+                    hasAction ? (item.canRevert
+                      ? h('button', { type: 'button', className: 'sg-letter-revert-btn', disabled: Boolean(revertBusy), onClick: () => revertItem(item.runId, item.changeId) },
+                        revertBusy === key ? '恢复中…' : '恢复')
+                      : h('span', { className: 'sg-letter-reverted' }, '已恢复')) : null)
+                })),
                 group.length < count ? h('p', null, '部分改动没有留存明细。') : null)
             })) : null,
           dates.length > 1 ? h('footer', null,
@@ -351,6 +473,8 @@
       const [toast, setToast] = React.useState('')
       const [letterDates, setLetterDates] = React.useState([])
       const [letterDate, setLetterDate] = React.useState('')
+      const [recentRuns, setRecentRuns] = React.useState([])
+      const [changesOpen, setChangesOpen] = React.useState(false)
       const [prefs, setPrefs] = React.useState({ autoEnabled: true, dailyTokenBudget: 5_000_000, dailyLettersEnabled: true })
       const [usage, setUsage] = React.useState({ reportedTokens: 0, estimatedTokens: 0, effectiveTokens: 0, calls: 0, budget: 5_000_000, budgetExceeded: false })
       const [budgetDraft, setBudgetDraft] = React.useState('500')
@@ -380,6 +504,7 @@
         previousRunId.current = next?.id
         previousStatus.current = next?.status
         setLetterDates(Array.isArray(value?.letterDates) ? value.letterDates : [])
+        if (Array.isArray(value?.recentRuns)) setRecentRuns(value.recentRuns)
         if (value?.settings && typeof value.settings === 'object') {
           const nextPrefs = {
             autoEnabled: value.settings.autoEnabled !== false,
@@ -448,6 +573,21 @@
         finally { setBusy(false) }
       }
       const changes = dreamingChangesOf(run)
+      const safeRecentRuns = Array.isArray(recentRuns) ? recentRuns : []
+      const revertibleCount = safeRecentRuns.reduce((sum, group) => sum + Number(group.revertibleCount || 0), 0)
+      const hasSnapshots = safeRecentRuns.length > 0
+      const phaseShort = DREAMING_PHASES.find(step => step.key === run?.phase)?.short || ''
+      const handleReverted = async (dreamingPayload) => {
+        if (dreamingPayload) accept(dreamingPayload, false)
+        setToast('已恢复选中的事件改动')
+        await onDirectoryChanged?.()
+      }
+      const changesModal = changesOpen ? h(DreamingChangesModal, {
+        namespace,
+        runs: safeRecentRuns,
+        onReverted: handleReverted,
+        onClose: () => setChangesOpen(false),
+      }) : null
       const formatWan = (tokens) => {
         const num = Number(tokens || 0)
         if (num >= 10_000) {
@@ -503,7 +643,7 @@
           h('div', { className: 'sg-dreaming-pref-row' },
             h('div', { className: 'sg-dreaming-pref-copy' },
               h('span', { className: 'sg-dreaming-pref-label' }, '每日自动来信'),
-              h('span', { className: 'sg-dreaming-pref-desc' }, '关闭后不再在次日自动生成手写来信，已有来信与记录保留。')),
+              h('span', { className: 'sg-dreaming-pref-desc' }, '每天第一次自动整理完成后写一封。手动整理的结果会在整理会话里汇报。')),
             h('button', {
               type: 'button',
               className: 'sg-setting-switch',
@@ -575,26 +715,40 @@
         const quiet = (name, label, onClick, options = {}) => h('button', { type: 'button', className: 'sg-dreaming-quiet' + (options.iconOnly ? ' sg-dreaming-icon' : options.read ? ' sg-dreaming-read' : ''),
           disabled: Boolean(busy && !options.read) || options.disabled, onClick, 'aria-label': label, title: options.iconOnly ? label : undefined },
         h(DreamingMark, { name }), options.iconOnly ? null : label)
-        const state = running ? '正在整理' : pausing ? '正在暂停' : '已暂停'
+        const state = running ? (phaseShort ? '正在整理 · ' + phaseShort : '正在整理') : pausing ? '正在暂停' : '已暂停'
+        const letterButton = letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null
+        const changesButton = hasSnapshots ? quiet('undo', revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '改动与恢复', () => setChangesOpen(true), { read: true }) : null
+        const inlineSecondary = !outstanding ? (letterButton || changesButton) : null
+        const stackedLinks = outstanding
+          ? [letterButton, changesButton].filter(Boolean)
+          : (letterButton && changesButton ? [changesButton] : [])
         return h(React.Fragment, null, stopConfirmation ? styles : null,
           h('div', { className: 'sg-ov-dreaming', 'data-testid': 'overview-dreaming' },
-            h('div', { className: 'sg-ov-dreaming-controls' },
-              outstanding ? h(React.Fragment, null,
-                quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
-                running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
-                paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
-                quiet('stop', '终止整理', showStopDialog, { iconOnly: true }))
-                : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
-            letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null,
+            h('div', { className: 'sg-ov-dreaming-row' },
+              h('div', { className: 'sg-ov-dreaming-controls' + (outstanding ? ' is-active' : '') },
+                outstanding ? h(React.Fragment, null,
+                  quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
+                  h('span', { className: 'sg-ov-dreaming-btns' },
+                    running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
+                    paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
+                    quiet('stop', '终止整理', showStopDialog, { iconOnly: true })))
+                  : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
+              inlineSecondary),
+            stackedLinks.length ? h('div', { className: 'sg-ov-dreaming-links' }, ...stackedLinks) : null,
             run?.replanRequired ? h('p', { className: 'sg-dreaming-failure' }, '请终止这次整理后重新开始。') : null, toastMessage, feedback),
-          letterDate ? h(DreamingLetterModal, { namespace, dates: letterDates, date: letterDate, onDate: setLetterDate, onClose: () => setLetterDate('') }) : null,
+          letterDate ? h(DreamingLetterModal, { namespace, dates: letterDates, date: letterDate, onDate: setLetterDate, onClose: () => setLetterDate(''), onDirectoryChanged }) : null,
+          changesModal,
           stopConfirmation)
       }
       if (!outstanding) return renderSettings(h(React.Fragment, null, styles,
         ['completed', 'terminated'].includes(run?.status) ? h('div', { className: 'sg-dreaming-done' },
           h('span', { className: 'sg-dreaming-state-pill ' + (run.status === 'completed' ? 'done' : 'paused') }, h('i', { className: 'sg-dreaming-state-dot', 'aria-hidden': 'true' }), run.status === 'completed' ? '已完成' : '已终止'),
           renderChangesNums(false)) : null,
-        run?.sessionId ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', disabled: Boolean(busy), onClick: openSession }, '查看上次整理') : null,
+        run?.sessionId || hasSnapshots ? h('div', { className: 'sg-dreaming-done-actions' },
+          run?.sessionId ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', disabled: Boolean(busy), onClick: openSession }, '查看上次整理') : null,
+          hasSnapshots ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', 'data-testid': 'stratagate-dreaming-changes-btn', disabled: Boolean(busy), onClick: () => setChangesOpen(true) },
+            revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '查看改动快照') : null) : null,
+        changesModal,
         toastMessage, feedback),
         h('div', { className: 'sg-dreaming-setting-actions' },
           h('button', { type: 'button', className: 'sg-save-button sg-dreaming-setting-start', disabled: !!busy || !available || !statusReady, onClick: () => control('start') },
@@ -612,10 +766,14 @@
             running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
             paused && !run.replanRequired ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
             h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: showStopDialog }, '终止'))),
+        run.scope === 'memory' && run.phase ? h(DreamingPhaseBar, { phase: run.phase }) : null,
         renderChangesNums(false),
-        h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
+        h('div', { className: 'sg-dreaming-done-actions' },
+          h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
+          hasSnapshots ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', 'data-testid': 'stratagate-dreaming-changes-btn', disabled: Boolean(busy), onClick: () => setChangesOpen(true) },
+            revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '查看改动快照') : null),
         run?.reason ? h('p', null, run.reason) : null,
-        feedback, stopConfirmation)
+        feedback, changesModal, stopConfirmation)
       return renderSettings(progressCard)
     }
 

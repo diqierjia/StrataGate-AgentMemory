@@ -608,7 +608,7 @@ function topicDirectoryProjection(snapshot: AdminReadModel, agentMemoryWeight: n
     failures,
     data: {
       navigationOnly: true as const,
-      dreaming: dreamingStatus(snapshot.memoryTopicState?.dreaming),
+      dreaming: dreamingStatus(snapshot.memoryTopicState?.dreaming, snapshot.memoryTopicState?.dreamingSnapshots ?? []),
       revision,
       context: renderMemoryDirectory(topics, visibleEvents),
       topics: chapters.map((topic) => ({
@@ -2234,7 +2234,7 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
       if (!namespace) throw new AdminHttpError(400, 'namespace is required')
       const date = url.searchParams.get('date') ?? ''
       try { validDate(date) } catch { throw new AdminHttpError(400, 'date 必须是有效的 YYYY-MM-DD') }
-      const letter = runtime.adminDailyLetter(namespace, date)
+      const letter = await runtime.adminDailyLetterView(namespace, date)
       if (!letter) throw new AdminHttpError(404, '该日期没有来信')
       sendJson(res, 200, letter, true)
     } else if (path === '/api/stratagate/dreaming') {
@@ -2256,6 +2256,16 @@ export async function handleAdminRequest(runtime: StrataGateRuntime, req: WebReq
             dailyTokenBudget?: number
             dailyLettersEnabled?: boolean
           }))
+          return
+        }
+        if (action === 'revert') {
+          const body = await jsonBody(req, 'Dreaming revert') as { runId?: unknown; changeId?: unknown }
+          const runId = typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : (id ?? '')
+          const changeId = typeof body.changeId === 'string' && body.changeId.trim()
+            ? body.changeId.trim()
+            : (url.searchParams.get('changeId')?.trim() || undefined)
+          if (!runId) throw new AdminHttpError(400, 'runId is required')
+          sendJson(res, 200, await runtime.adminDreamingRevert(namespace, runId, changeId))
           return
         }
         if (!['start', 'pause', 'resume', 'terminate'].includes(action) || (action !== 'start' && !id)) throw new AdminHttpError(400, 'Invalid Dreaming control')

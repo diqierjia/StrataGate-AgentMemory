@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
@@ -11,6 +11,7 @@ import { StrataGate, estimateTokens, dreamingEventContent, dreamingEventContentV
 import { memoryTopicSectionNavigation } from '../src/topics.js'
 import { StrataGateRuntime } from '../src/runtime.js'
 import { dreamingPayload, dreamingTool } from '../src/dreaming.js'
+import { discoverDreaming } from '../packages/core/src/dreaming-v2.js'
 import { DailyLetters } from '../src/letters.js'
 import type { DshModelBridge } from '../src/llm.js'
 import { handleAdminRequest } from '../src/web.js'
@@ -18,6 +19,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import SessionStore from '@deepseek-ai/dsh-session'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -35,10 +37,10 @@ const cleanups: Array<() => Promise<void>> = []
 // DSH 0.2.1 exposes the plugin as named exports; earlier hosts use a default class.
 const JsonlPersistence = (JsonlPersistenceModule as any).default ?? JsonlPersistenceModule
 afterEach(async () => { while (cleanups.length) await cleanups.pop()!() })
-async function fixture(count = 2, userMessage = '用户明确要求保留来源，优化目录。', namespace = 'dreaming-test', now?: () => Date) {
+async function fixture(count = 2, userMessage = '用户明确要求保留来源，优化目录。', namespace: string | ((directory: string) => string) = 'dreaming-test', now?: () => Date) {
   const directory = await mkdtemp(join(tmpdir(), 'stratagate-dreaming-'))
   const database = join(directory, 'memory.sqlite')
-  const options = { database, namespace, blockTurnSize: 1, disableElementProjection: true, ...(now ? { now } : {}),
+  const options = { database, namespace: typeof namespace === 'function' ? namespace(directory) : namespace, blockTurnSize: 1, disableElementProjection: true, ...(now ? { now } : {}),
     summarizer: async () => ({ l0Title: '项目', l0Tags: [], l1Summary: '项目资料', l2Keypoints: [], shouldExtract: false }) }
   const memory = await StrataGate.open(options)
   const opened = [memory]
@@ -469,6 +471,139 @@ function* nativeCall(name: string, args: unknown, id = 'call', index = 0) {
 }
 
 describe('Dreaming V2 across real DSH sessions and tools', () => {
+  it('records only new or updated blocks and open messages after the previous discovery', async () => {
+    const f = await fixture(0)
+    const first = f.block
+    const oldMessage = { ...first.l5Raw[0]!, id: 'old-tail' }
+    const baseline = discoverDreaming([first], [oldMessage], [])
+    const updated = { ...first, l0Title: 'updated title' }
+    const nextMessage = { ...oldMessage, id: 'new-tail', createdAt: '2026-11-22T00:00:00.000Z' }
+    const result = discoverDreaming([updated], [oldMessage, nextMessage], [], baseline.versions)
+    expect(result.units[0]).toMatchObject({ blockIds: [first.id], messageIds: ['new-tail'], recentActivity: true })
+    expect(discoverDreaming([updated], [oldMessage, nextMessage], [], result.versions).units).toEqual([])
+  })
+  it('bounds open-message previews and exposes every changed open message through paged search', async () => {
+    const f = await fixture(0)
+    const memory = await StrataGate.open({ database: f.database, namespace: 'open-message-preview', blockTurnSize: 100, disableElementProjection: true })
+    try {
+      for (let i = 0; i < 12; i++) await memory.appendTurn({ user: `open message ${i}`, assistant: 'ok' })
+      const run = (await memory.startMemoryDreaming('owner', 'manual', {}))!
+      const payload = dreamingPayload(memory, run) as any
+      expect(run.units[0]!.messageIds).toHaveLength(24)
+      expect(payload.openMessages).toHaveLength(16)
+      expect(payload.changeCounts.openMessages).toBe(24)
+      const first = (await dreamingTool(memory, run, { tool: 'dreaming_search', args: { kind: 'changes', changeKind: 'openMessages', query: '', limit: 20 } })).result as any
+      const second = (await dreamingTool(memory, run, { tool: 'dreaming_search', args: { kind: 'changes', changeKind: 'openMessages', query: '', limit: 20, offset: first.nextOffset } })).result as any
+      expect([first.total, first.items.length, first.nextOffset, second.items.length, second.nextOffset]).toEqual([24, 20, 20, 4, null])
+    } finally { await memory.close() }
+  })
+  it('exposes only authorized native workspace reads and guards paths and reporting', async () => {
+    const f = await fixture(1, undefined, directory => 'dsh:project:' + createHash('sha256')
+      .update(join(directory, 'workspace').replaceAll('\\', '/').toLowerCase()).digest('hex').slice(0, 20))
+    const cwd = join(f.directory, 'workspace')
+    const other = join(f.directory, 'outside')
+    await mkdir(cwd); await mkdir(other); await mkdir(join(cwd, 'src'))
+    await writeFile(join(cwd, 'queue.ts'), 'SQLite WAL')
+    await symlink(other, join(cwd, 'link'), process.platform === 'win32' ? 'junction' : 'dir')
+    const runtime = runtimeFor(f.database, async () => { throw new Error('Expected native Dreaming') })
+    const executed: string[] = []
+    const calls: Array<[string, Record<string, string>, boolean]> = [
+      ['read', { filePath: 'queue.ts' }, true], ['glob', { path: '.' }, true],
+      ['grep', { path: 'src' }, true], ['glob', {}, true],
+      ['read', { filePath: 'queue.ts' }, true], ['glob', { path: 'src' }, true],
+      ['grep', { path: '.' }, true], ['glob', {}, true],
+      ['read', { filePath: '../outside/notes.txt' }, false],
+      ['read', { filePath: join(other, 'notes.txt') }, false],
+      ['grep', { path: 'link/missing' }, false], ['read', { filePath: '.env.local' }, false],
+      ['glob', { path: '.git' }, false], ['grep', { path: 'private.sqlite' }, false],
+      ['write', {}, false], ['edit', {}, false], ['bash', {}, false],
+    ]
+    let step = 0, reportingChecked = false
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      if (step === 0) {
+        const agent = ctx.agents.get((await runtime.adminDreamingStatus(f.namespace) as any).run.sessionId)!
+        for (const [name, args] of calls.filter(call => !call[2])) {
+          const result = await agent.ctx.tools.execute({ name, arguments: args, agent, callId: `guard-${name}` as any, signal: new AbortController().signal })
+          expect(result.isError).toBe(true)
+        }
+      }
+      const call = calls.filter(item => item[2])[step++]
+      if (call) {
+        expect(options.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(['read', 'glob', 'grep']))
+        yield* nativeCall(call[0], call[1], `workspace-${step}`)
+      } else if (step === calls.filter(item => item[2]).length + 1) yield* nativeCall('dreaming_finish', {})
+      else {
+        expect(options.tools ?? []).toEqual([])
+        const agent = ctx.agents.get((await runtime.adminDreamingStatus(f.namespace) as any).run.sessionId)!
+        for (const name of ['read', 'glob', 'grep', 'dreaming_search', 'write']) {
+          const result = await agent.ctx.tools.execute({ name, arguments: {}, agent, callId: `report-${name}` as any, signal: new AbortController().signal })
+          expect(JSON.stringify(result)).toContain('本轮整理已完成')
+        }
+        reportingChecked = true
+        yield { type: 'text-delta', index: 0, text: '整理完毕。' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }, true, 'memory')
+    for (const name of ['read', 'glob', 'grep', 'write', 'edit', 'bash']) ctx.tools.register(defineTool({
+      name, description: 'host tool', parameters: { filePath: { type: 'string' }, path: { type: 'string' } },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      execute: async args => { executed.push(`${name}:${JSON.stringify(args)}`); return 'host execution succeeded' },
+    }))
+    await ctx.agents.create({ sessionId: 'workspace-owner' as any, meta: { cwd } })
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(async () => expect(reportingChecked, JSON.stringify({ step, executed, status: await runtime.adminDreamingStatus(f.namespace) })).toBe(true), { timeout: 15_000 })
+    expect(executed).toEqual(calls.filter(call => call[2]).map(([name, args]) => `${name}:${JSON.stringify(args)}`))
+  }, 20_000)
+
+  it('uses the safe workspace fallback when the host has no native reads', async () => {
+    const f = await fixture(1, undefined, directory => 'dsh:project:' + createHash('sha256')
+      .update(join(directory, 'workspace').replaceAll('\\', '/').toLowerCase()).digest('hex').slice(0, 20))
+    const cwd = join(f.directory, 'workspace'), outside = join(f.directory, 'outside')
+    await mkdir(cwd); await mkdir(outside); await mkdir(join(cwd, 'src'))
+    await writeFile(join(cwd, 'src', 'queue.ts'), 'SQLite WAL marker')
+    await writeFile(join(cwd, '.env'), 'PRIVATE_MARKER')
+    await symlink(outside, join(cwd, 'link'), process.platform === 'win32' ? 'junction' : 'dir')
+    const runtime = runtimeFor(f.database, async () => { throw new Error('Expected native Dreaming') })
+    let checked = false
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      if (!checked) {
+        expect(options.tools.map((tool: {name: string}) => tool.name)).toContain('dreaming_workspace')
+        const agent = ctx.agents.get((await runtime.adminDreamingStatus(f.namespace) as any).run.sessionId)!
+        const invoke = (args: Record<string, unknown>) => agent.ctx.tools.execute({ name: 'dreaming_workspace', arguments: args, agent, callId: 'fallback-test' as any, signal: new AbortController().signal })
+        expect(JSON.stringify(await invoke({kind:'list', path:'.', recursive:true}))).toContain('src/queue.ts')
+        expect(JSON.stringify(await invoke({kind:'search', path:'.', query:'SQLite'}))).toContain('SQLite WAL marker')
+        expect(JSON.stringify(await invoke({kind:'read', path:'src/queue.ts'}))).toContain('SQLite WAL marker')
+        for (const path of ['.env', '../outside', 'link']) expect(JSON.stringify(await invoke({kind:'read', path}))).toContain('error')
+        checked = true
+        yield* nativeCall('dreaming_finish', {})
+      } else { yield { type: 'text-delta', index: 0, text: '整理完毕。' }; yield { type: 'finish', reason: { kind: 'stop' } } }
+    }, true, 'memory')
+    await ctx.agents.create({ sessionId: 'workspace-owner' as any, meta: { cwd } })
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(() => expect(checked).toBe(true), {timeout: 15000})
+  }, 20000)
+
+  it('does not expose native workspace tools in a non-workspace memory space', async () => {
+    const f = await fixture(1)
+    const runtime = runtimeFor(f.database, async () => { throw new Error('Expected native Dreaming') })
+    let checked = false
+    const ctx = await nativeHost(runtime, f.directory, async function* (options) {
+      expect(options.tools.map((tool: { name: string }) => tool.name)).not.toEqual(expect.arrayContaining(['read']))
+      const agent = ctx.agents.get((await runtime.adminDreamingStatus(f.namespace) as any).run.sessionId)!
+      for (const name of ['read', 'glob', 'grep']) {
+        expect(options.tools.some((tool: { name: string }) => tool.name === name)).toBe(false)
+        const result = await agent.ctx.tools.execute({ name, arguments: {}, agent, callId: `deny-${name}` as any, signal: new AbortController().signal })
+        expect(JSON.stringify(result)).toContain('Dreaming 仅可使用授权整理工具')
+      }
+      checked = true
+      yield* nativeCall('dreaming_finish', {})
+    }, true, 'memory')
+    for (const name of ['read', 'glob', 'grep']) ctx.tools.register(defineTool({ name, description: 'host tool', parameters: {},
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] }, execute: async () => 'unexpected' }))
+    await runtime.adminDreamingControl(f.namespace, 'start')
+    await vi.waitFor(() => expect(checked).toBe(true), { timeout: 10_000 })
+  })
+
   async function inspectSource(memory: StrataGate, run: DreamingRun, kind: string, id: string) {
     const action = { tool: 'dreaming_read', args: { kind, id } }
     const { result, evidenceIds } = await dreamingTool(memory, run, action)
@@ -600,7 +735,7 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     expect(await reopened.startMemoryDreaming('owner', 'automatic', {})).toBeNull()
   })
 
-  it('repairs cross-session memory, resumes without replay, and completes successive pages unattended', async () => {
+  it('repairs cross-session memory, resumes without replay, and completes the whole round once', async () => {
     const f = await fixture(0)
     const date = '2026-11-10'
     const add = async (threadId: string, user: string, createdAt = `${date}T12:00:00Z`) => {
@@ -622,6 +757,9 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     const newer = await cards(third, '部署计划 B', '后来选择 B。', '2026-11-13')
     const wrong = await cards(third, '虚构决定 Omega', '模型误抽取了从未发生的决定。')
     const toCorrect = await cards(second, '必须清空队列', '错误地把持久化队列提取成清空队列。')
+    for (let index = 0; index < 45; index++) {
+      await cards(third, `增量巡检事件 ${index}`, `普通变更记录 ${index}。`)
+    }
     const forgottenBlock = await add('forgotten', 'PrivateRecallSentinel')
     const hidden = await cards(forgottenBlock, '需遗忘的事实', '用户要求忘记。')
     await f.memory.forgetEvent(hidden.id)
@@ -669,7 +807,7 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     await runtime.adminDreamingControl(f.namespace, 'start')
     await vi.waitFor(() => expect(reachedCommit).toBe(true), { timeout: 15_000 })
     const started = (await runtime.adminDreamingStatus(f.namespace) as any).run
-    expect(started).toMatchObject({ scope: 'memory', total: 2, changedBatches: 1 })
+    expect(started).toMatchObject({ scope: 'memory', total: 1, changedBatches: 1 })
     const rawResult = JSON.stringify(ctx.agents.get(started.sessionId)!.session.deriveMessages())
     expect(rawResult).toContain(second.l5Raw[0]!.id)
     expect(rawResult).not.toContain('PrivateRecallSentinel')
@@ -681,7 +819,6 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     const steps: Array<readonly [string, Record<string, unknown>] | (() => Promise<readonly [string, Record<string, unknown>]>)> = [
       ['dreaming_event', merge],
       eventRead(old.id), eventRead(newer.id),
-      ['dreaming_event', { kind: 'merge', id: newer.id, otherIds: [old.id], title: '不应合并', summary: '两个真实的阶段。' }],
       ['dreaming_event', { kind: 'supersede', id: newer.id, otherIds: [old.id], reason: '11 月 13 日改为 B，保留先前计划。' }],
       eventRead(wrong.id),
       ['dreaming_event', { kind: 'delete', id: wrong.id, reason: '原文未曾出现 Omega。' }],
@@ -699,7 +836,7 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
       async () => { await inspect.reloadFromStorage(); return ['dreaming_directory', { topicId, version: inspect.getDreamingTopicVersion(topicId),
         operations: [{ kind: 'rename-section', from: '维护', title: '部署与恢复' }] }] },
       ...Array.from({ length: 14 }, (_, index) => ['dreaming_search', { kind: 'raw', query: `unrelated-query-${index}` }] as const),
-      ['dreaming_finish', { summary: '第一批已整理' }], ['dreaming_finish', { summary: '第二批无需更改' }],
+      ['dreaming_finish', { summary: '本轮已整理' }],
     ]
     let nextStep = 0
     const nextCtx = await nativeHost(next, f.directory, async function* () {
@@ -707,7 +844,7 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
       if (step) {
         const [tool, args] = typeof step === 'function' ? await step() : step
         yield* nativeCall(tool, args, `v2-after-${nextStep}`)
-        if (tool === 'dreaming_finish' && nextStep === steps.length - 1) {
+        if (tool === 'dreaming_finish' && nextStep === steps.length) {
           for (const chunk of nativeCall(tool, args, 'duplicate-finish')) {
             yield chunk.type === 'tool-call-delta' ? { ...chunk, index: 1 } : chunk
           }
@@ -716,12 +853,11 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     }, true, 'memory')
     await next.adminDreamingControl(f.namespace, 'resume', started.id)
     await vi.waitFor(async () => expect((await next.adminDreamingStatus(f.namespace) as any).run).toMatchObject({
-      status: 'completed', sessionId: started.sessionId, completed: 2,
+      status: 'completed', sessionId: started.sessionId, completed: 1,
     }), { timeout: 25_000 })
     await nextCtx.agents.get(started.sessionId)?.whenIdle()
     const history = JSON.stringify(nextCtx.agents.get(started.sessionId)!.session.deriveMessages())
-    expect(history).toContain('different points in history')
-    expect(history).toContain('本批已完成。请根据最新任务继续。')
+    expect(history).toContain('整理任务已变化。请根据最新任务继续。')
     expect(history).toContain('整理完毕。')
     await inspect.reloadFromStorage()
     expect(inspect.listEvents().find(card => card.id === keep.id)?.sourceMessageIds).toEqual(messages.slice(0, 2))
@@ -754,9 +890,14 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
 
   it('starts manually without Events and only starts automatically after idle time and with new changes', async () => {
     const f = await fixture(0)
-    const runtime = runtimeFor(f.database, async () => { throw new Error('Expected native Dreaming') })
+    const write = vi.fn(async () => ({ title: '来信', paragraphs: ['有新的进展。'], signature: '整理助手' }))
+    const runtime = runtimeFor(f.database, async () => { throw new Error('Expected native Dreaming') }, false, write)
     const host = { run: vi.fn(async (namespace: string, run: DreamingRun) => {
-      for (const _unit of run.units) await runtime.dreamingMutate(namespace, run, { kind: 'finish-unit' })
+      const store = new DailyLetters(f.database)
+      try {
+        expect(store.due(Date.now())).toEqual([])
+        await runtime.dreamingExecute(namespace, run.id, { tool: 'dreaming_finish', args: {} }, run.epoch, run.cursor)
+      } finally { store.close() }
     }), open: async () => '', close: async () => {} }
     runtime.setDreamingHost(host)
     const internal = runtime as unknown as { lastMainActivity: number; checkAutomaticDreaming(now: number): Promise<void> }
@@ -767,6 +908,8 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     await internal.checkAutomaticDreaming(start + DREAMING_IDLE_TIME)
     await vi.waitFor(async () => expect((await runtime.adminDreamingStatus(f.namespace) as any).run?.status).toBe('completed'))
     expect(host.run.mock.calls[0]?.[1].trigger).toBe('automatic')
+    await (runtime as any).checkDreamingLetters()
+    expect(write).toHaveBeenCalledTimes(1)
     await f.memory.reloadFromStorage()
     await f.memory.appendTurn({ user: '新的输入', assistant: '记录。' })
     await internal.checkAutomaticDreaming(start + DREAMING_IDLE_TIME + 60_001)
@@ -774,6 +917,9 @@ describe('Dreaming V2 across real DSH sessions and tools', () => {
     await runtime.adminDreamingControl(f.namespace, 'start')
     await vi.waitFor(() => expect(host.run).toHaveBeenCalledTimes(2))
     expect(host.run.mock.calls[1]?.[1].trigger).toBe('manual')
+    await vi.waitFor(async () => expect((await runtime.adminDreamingStatus(f.namespace) as any).run?.status).toBe('completed'))
+    await (runtime as any).checkDreamingLetters()
+    expect(write).toHaveBeenCalledTimes(1)
   })
 })
 async function historyController(ctx: Context) {
@@ -1679,7 +1825,8 @@ describe('directory Dreaming persistence and source-only tools', () => {
     const status = await runtime.adminDreamingStatus(f.namespace) as any
     expect(status.run.sessionId).toMatch(/^stratagate-dreaming:/)
     expect(await runtime.adminDreamingSession(f.namespace, status.run.id)).toEqual({ sessionId: status.run.sessionId })
-    expect(requests.every(request => request.tools.every((tool: any) => tool.name !== 'shell'))).toBe(true)
+    expect(requests.every(request => (request.tools ?? []).every((tool: any) => tool.name !== 'shell'))).toBe(true)
+    expect(requests.at(-1)?.tools ?? []).toEqual([])
     expect(events.filter(event => event.type === 'tool/result')).toHaveLength(3)
     expect(JSON.stringify(events.filter(event => event.type === 'tool/result')[0])).toMatch(/denied|授权|restricted|not available|not found|unknown|不存在/i)
     expect(ordinary).not.toHaveBeenCalled()
@@ -2212,56 +2359,71 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(f.memory.exportSnapshot().memoryTopicState?.dreaming).toBeUndefined()
   })
 
-  it('archives one dated letter after midnight, with both rounds’ committed changes and independent working notes', async () => {
+  it('retries the first automatic completion after restart using its original workspace, date, cutoff and report', async () => {
     const date = '2026-11-19'
-    const clock = () => new Date(`${date}T10:00:00+08:00`)
-    const f = await fixture(2, '决定重启前先保留待写队列。', 'dreaming-test', clock)
-    const { SqliteStorage } = await import('@diqier/stratagate/sqlite')
-    const storage = new SqliteStorage({ filename: f.database })
-    cleanups.push(async () => { await storage.close() })
-    for (const index of [0, 1]) {
-      const run = await f.memory.dreaming({ kind: 'start', owner: 'test' })
-      const snapshot = f.memory.exportSnapshot()
-      const item = index === 0
-        ? { kind: 'event-edit' as const, id: f.events[0]!.id, label: '保留待写队列', detail: '摘要写明重启前保留队列。' }
-        : { kind: 'event-delete' as const, id: f.events[1]!.id, label: '重复草稿', detail: '合并到保留待写队列。' }
-      snapshot.memoryTopicState!.dreaming = { ...run, status: 'completed', leaseUntil: null,
-        changes: { editedEvents: 1 - index, deletedEvents: index, experiences: 0, items: [item] } }
-      await storage.save(f.namespace, snapshot, f.memory.storageRevision)
-      await f.memory.reloadFromStorage()
+    let at = Date.parse('2026-11-18T16:30:00Z')
+    const f = await fixture(2, '决定重启前先保留待写队列。', 'dreaming-test', () => new Date(at))
+    const unit = { topicId: '', eventIds: f.events.map(event => event.id) }
+    const start = (trigger: 'manual' | 'automatic') => f.memory.dreaming({
+      kind: 'start', owner: 'owner', trigger, discovery: { versions: {}, units: [unit] },
+    })
+    const finish = (run: DreamingRun) => f.memory.dreaming({ kind: 'finish-unit', ...claim(run), letterTimeZone: 'Asia/Shanghai' })
+    const complete = async (trigger: 'manual' | 'automatic', index: number) => {
+      const run = await start(trigger)
+      const id = f.events[index]!.id
+      const { result, evidenceIds } = await dreamingTool(f.memory, run, { tool: 'dreaming_read', args: { kind: 'event', id } })
+      await f.memory.dreaming({ kind: 'checkpoint', ...claim(run), trace: { tool: 'dreaming_read', args: { kind: 'event', id }, result }, evidenceIds, estimatedTokens: 0 })
+      await f.memory.editDreamingEvent(claim(run), { kind: 'update', id, title: index === 0 ? '保留待写队列' : '第二次整理' })
+      return finish(run)
     }
+    const archive = new DailyLetters(f.database)
+    cleanups.push(async () => archive.close())
+    await finish(await start('manual'))
+    const paused = await start('automatic')
+    await f.memory.dreaming({ kind: 'pause', id: paused.id })
+    expect(await finish(paused)).toMatchObject({ status: 'paused' })
+    await f.memory.dreaming({ kind: 'terminate', id: paused.id })
+    expect(archive.due(at)).toEqual([])
+
+    const first = await complete('automatic', 0)
+    expect(archive.due(at)).toMatchObject([{ date, run_id: first.id }])
+    const failedClaim = archive.claim(f.namespace, date, at)!
+    const { nextRetryAt } = archive.recordFailure(f.namespace, date, failedClaim, 'temporary model failure', at)
+    expect(archive.due(nextRetryAt - 1)).toEqual([])
+
+    at += 30 * 60_000
+    await f.memory.appendTurn({ user: '这条消息在第一次整理以后才写入。', assistant: '稍后处理。' })
+    const second = await complete('automatic', 1)
+    expect(second.id).not.toBe(first.id)
+    expect(archive.due(at)).toMatchObject([{ date, run_id: first.id }])
 
     const write = vi.fn(async () => ({ title: '那条队列留下来了', signature: '小墨', paragraphs: ['林工，今天把重启前的队列安顿好了。'] }))
-    const runtime = runtimeFor(f.database, async () => { throw new Error('Dreaming should not run') }, false, write)
-    runtime.applyLiveDailyNotes(undefined, 'Asia/Shanghai', undefined)
-    runtime.updatePersistentProfile('assistantPreferredName', '小墨', 'settings')
-    runtime.updatePersistentProfile('userPreferredName', '林工', 'settings')
-    await runtime.dailyNotes.write(f.namespace, { date, title: '工作笔记', content: '定位重启问题。' })
-    const note = (await runtime.dailyNotes.read(f.namespace, { date })).content
-    const writeClosed = (at: string) => (runtime as any).writeClosedDayLetters(Date.parse(at))
-    await writeClosed(`${date}T23:59:59+08:00`)
-    expect(write).not.toHaveBeenCalled()
-    expect(runtime.adminDailyLetter(f.namespace, date)).toBeNull()
-    await Promise.all([writeClosed('2026-11-20T00:10:00+08:00'), writeClosed('2026-11-20T00:10:00+08:00')])
+    const a = runtimeFor(f.database, async () => { throw new Error('Dreaming should not run') }, false, write)
+    const b = runtimeFor(f.database, async () => { throw new Error('Dreaming should not run') }, false, write)
+    const host = { run: async () => {}, open: async () => '', close: async () => {} }
+    a.setDreamingHost(host)
+    b.setDreamingHost(host)
+    a.applyLiveDailyNotes(undefined, 'UTC', undefined)
+    a.updatePersistentProfile('assistantPreferredName', '小墨', 'settings')
+    const drain = (runtime: StrataGateRuntime) => (runtime as any).checkDreamingLetters(nextRetryAt)
+    await Promise.all([drain(a), drain(b)])
     expect(write).toHaveBeenCalledExactlyOnceWith(
       { date, messages: [{ role: 'user', text: '决定重启前先保留待写队列。' }, { role: 'assistant', text: '记录。' }] },
       expect.stringContaining('小墨'),
     )
-    expect(runtime.adminDailyLetter(f.namespace, date)).toMatchObject({
-      date, title: '那条队列留下来了', profileStyled: true,
-      reports: expect.arrayContaining([
-        expect.objectContaining({ changes: expect.objectContaining({ editedEvents: 1, items: [expect.objectContaining({ label: '保留待写队列' })] }) }),
-        expect.objectContaining({ changes: expect.objectContaining({ deletedEvents: 1, items: [expect.objectContaining({ label: '重复草稿', detail: '合并到保留待写队列。' })] }) }),
-      ]),
+    expect(archive.dates(f.namespace)).toEqual([date])
+    expect(archive.read(f.namespace, date)).toMatchObject({
+      title: '那条队列留下来了', profileStyled: true,
+      reports: [{ id: first.id, changes: { editedEvents: 1, items: [{ label: '保留待写队列' }] } }],
     })
-    expect((await runtime.dailyNotes.read(f.namespace, { date })).content).toBe(note)
-    await runtime.close()
-    const archive = new DailyLetters(f.database)
-    try {
-      expect(archive.dates(f.namespace)).toEqual([date])
-      expect(archive.read(f.namespace, date)?.reports).toHaveLength(2)
-      expect(archive.read('other-workspace', date)).toBeNull()
-    } finally { archive.close() }
+    expect(archive.read('other-workspace', date)).toBeNull()
+
+    // The next local day can have its own letter even without new chat material.
+    at = Date.parse('2026-11-19T16:00:00Z')
+    await finish(await start('automatic'))
+    await (a as any).checkDreamingLetters(at)
+    expect(archive.read(f.namespace, '2026-11-20')).toMatchObject({ paragraphs: ['今天的记忆整理已完成。'], reports: [] })
+    expect(write).toHaveBeenCalledTimes(1)
   }, 30_000)
 
   it('lets Dreaming update, supersede, merge, and delete agentEvents (including openTail) and pinned cards across reopen', async () => {
@@ -2350,7 +2512,7 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(reopened.listAgentEvents().some(card => card.id === agentDrop.eventId)).toBe(false)
   })
 
-  it('surfaces today and cross-batch changed events and blocks as lightweight paths without full bodies', async () => {
+  it('keeps a single task with bounded context and makes every changed card reachable on demand', async () => {
     const now = () => new Date('2026-11-21T06:00:00.000Z')
     const f = await fixture(0, '初始对话。', 'dreaming-today-paths', now)
     for (let index = 0; index < 25; index++) {
@@ -2359,6 +2521,15 @@ describe('Dreaming Agent orchestration and admin API', () => {
         user: `普通对话轮次 ${index}`,
         assistant: '好的。',
         createdAt: '2026-11-21T06:00:00.000Z',
+      })
+    }
+    const firstBlock = f.memory.listBlocks()[0]!
+    for (let index = 0; index < 48; index++) {
+      await f.memory.addEvent({
+        title: `第一批事件 ${index}`,
+        summary: `批量事件摘要 ${index}。`,
+        sourceBlockId: firstBlock.id,
+        sourceMessageIds: [firstBlock.l5Raw[0]!.id],
       })
     }
     const agentCard = await f.memory.recordAgentEvent({
@@ -2381,25 +2552,41 @@ describe('Dreaming Agent orchestration and admin API', () => {
     await f.memory.forgetEvent(forgottenEvent.id)
 
     const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
-    expect(run.units.length).toBeGreaterThan(1)
+    expect(run.units).toHaveLength(1)
     const payload = dreamingPayload(f.memory, run) as any
-    expect(payload.events).toEqual([])
-    expect(payload.todayAndChanged.events).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: agentCard.eventId,
-        source: 'agent-recorded',
-        status: 'active',
-      }),
-    ]))
-    const listedAgent = payload.todayAndChanged.events.find((item: any) => item.id === agentCard.eventId)
-    expect(listedAgent).not.toHaveProperty('summary')
-    expect(JSON.stringify(payload.todayAndChanged)).not.toContain('很长的补充背景说明')
+    expect(payload.events).toHaveLength(16)
+    expect(payload.changeCounts).toMatchObject({ events: 49 })
+    expect(payload.blocks).toHaveLength(16)
+    expect(payload.changeCounts.blocks).toBeGreaterThan(16)
+    expect(payload).not.toHaveProperty('directorySkeleton')
+    expect(payload).toMatchObject({ currentDate: '2026-11-21', timeZone: 'Asia/Shanghai' })
+    expect(dreamingPayload(f.memory, run, 'America/Los_Angeles')).toMatchObject({ currentDate: '2026-11-20', timeZone: 'America/Los_Angeles' })
+    const blockIds: string[] = []
+    let blockOffset: number | null = 0
+    do {
+      const { result } = await dreamingTool(f.memory, run, { tool: 'dreaming_search', args: { kind: 'changes', changeKind: 'blocks', query: '', offset: blockOffset, limit: 20 } })
+      const resultPage = result as { total: number; nextOffset: number | null; items: { id: string }[] }
+      expect(resultPage.total).toBe(payload.changeCounts.blocks)
+      blockIds.push(...resultPage.items.map(item => item.id))
+      blockOffset = resultPage.nextOffset
+    } while (blockOffset !== null)
+    expect(new Set(blockIds).size).toBe(payload.changeCounts.blocks)
+    expect(payload).not.toHaveProperty('totalBatches')
+    const ids = []
+    let offset: number | null = 0
+    do {
+      const { result } = await dreamingTool(f.memory, run, { tool: 'dreaming_search', args: { kind: 'changes', query: '', offset, limit: 20 } })
+      const page = result as { total: number; nextOffset: number | null; items: { id: string }[] }
+      expect(page.total).toBe(49)
+      ids.push(...page.items.map(item => item.id))
+      offset = page.nextOffset
+    } while (offset !== null)
+    expect(new Set(ids).size).toBe(49)
+    expect(ids).toContain(agentCard.eventId)
+    expect(ids).not.toContain(forgottenEvent.id)
+    expect(await f.memory.dreaming({ kind: 'finish-unit', ...claim(run) })).toMatchObject({ status: 'completed', cursor: 1 })
     expect(JSON.stringify(payload)).not.toContain('ForgottenPathSecret')
     expect(JSON.stringify(payload)).not.toContain('HiddenEventTitle')
-    expect(payload.todayAndChanged.blocks?.length).toBeGreaterThan(0)
-    for (const block of payload.todayAndChanged.blocks) {
-      expect(block).not.toHaveProperty('summary')
-    }
   })
 
   it('keeps earlier-today watermarked agent-recorded cards visible when a block seals later the same day', async () => {
@@ -2468,7 +2655,6 @@ describe('Dreaming Agent orchestration and admin API', () => {
         sourceMessageIds: [updateMessageId],
       }],
       ['dreaming_finish', { summary: '第一批已更新已有主动记忆卡' }],
-      ['dreaming_finish', { summary: '第二批无需新建重复卡' }],
     ]
     let stepIndex = 0
     const ctx = await nativeHost(runtime, f.directory, async function* (options) {
@@ -2495,18 +2681,16 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(memoryTasks).toHaveLength(1)
     expect(memoryTasks[0]).toMatchObject({
       scope: 'memory',
-      events: [],
-      todayAndChanged: {
-        events: expect.arrayContaining([
-          expect.objectContaining({
-            id: agentCard.eventId,
-            source: 'agent-recorded',
-            status: 'active',
-          }),
-        ]),
-      },
+      phase: 'orient',
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          id: agentCard.eventId,
+          source: 'agent-recorded',
+          status: 'active',
+        }),
+      ]),
+      blocks: expect.arrayContaining([expect.objectContaining({ threadId: 'thread-0' })]),
     })
-    expect(memoryTasks[0].todayAndChanged.events.find((item: any) => item.id === agentCard.eventId)).not.toHaveProperty('summary')
 
     const reopened = await f.reopen()
     const activeEvents = reopened.listAllEvents().filter(event => event.status === 'active')
@@ -2913,7 +3097,7 @@ describe('Dreaming Agent orchestration and admin API', () => {
     const runtime = runtimeFor(wsA.database, step, true, writeDailyLetter)
     const internal = runtime as unknown as {
       dreamingScope: DreamingRun['scope']
-      writeClosedDayLetters(now: number): Promise<void>
+      checkDreamingLetters(now: number): Promise<void> | undefined
     }
     internal.dreamingScope = 'memory'
     cleanups.push(async () => { await runtime.close() })
@@ -2924,7 +3108,9 @@ describe('Dreaming Agent orchestration and admin API', () => {
       signal?.addEventListener('abort', () => { if (id.startsWith('stratagate-letter:')) letterAborted = true }, { once: true })
       return origRunDetached(id, operation, signal)
     }
-    const letterPromise = internal.writeClosedDayLetters(Date.parse('2026-11-24T06:00:00.000Z'))
+    const completed = (await wsA.memory.startMemoryDreaming('letter', 'automatic', {}))!
+    await wsA.memory.dreaming({ kind: 'finish-unit', ...claim(completed), letterTimeZone: 'UTC' })
+    const letterPromise = internal.checkDreamingLetters(Date.parse('2026-11-24T06:00:00.000Z'))
     await vi.waitFor(() => expect(letterStarted).toBe(true), { timeout: 3000 })
     await runtime.adminUpdateDreamingSettings('workspace-global-b', { dailyLettersEnabled: false })
     await letterPromise
@@ -3049,20 +3235,15 @@ describe('Dreaming Agent orchestration and admin API', () => {
       title: 'SQLite 存储选型',
       summary: '确认使用 SQLite 存储并整合同日补充记录。',
     })
-    // Deleting an Event without reading its raw sourceMessageIds is rejected.
-    await expect(f.memory.editDreamingEvent(claim(run), {
+    // Auto-Dream: deleting an Event without reading its raw sourceMessageIds succeeds with a non-blocking warning and snapshot.
+    const deleted = await f.memory.editDreamingEvent(claim(run), {
       kind: 'delete',
       id: eventC.id,
-      reason: '尚未读原文尝试删除',
-    })).rejects.toThrow('Read the original sources')
-
-    // After reading raw sourceMessageIds, delete succeeds; create-chapter with initial sections works too.
-    await readSource('message', rawMsgId)
-    await f.memory.editDreamingEvent(claim(run), {
-      kind: 'delete',
-      id: eventC.id,
-      reason: '已读原始消息核实为重复冗余提取',
+      reason: '重复冗余提取，可凭快照恢复',
     })
+    expect(deleted.saved).toBe(true)
+    expect(deleted.unreadSourceMessageIds).toEqual([rawMsgId])
+    expect(deleted.warning).toContain(rawMsgId)
     run = await f.memory.dreaming({
       ...claim(run),
       kind: 'apply',
@@ -3389,5 +3570,274 @@ describe('Dreaming Agent orchestration and admin API', () => {
     expect(updatedWithRead.saved).toBe(true)
     expect(updatedWithRead.unreadSourceMessageIds).toBeUndefined()
     expect(updatedWithRead.warning).toBeUndefined()
+  })
+
+  it('Auto-Dream: advances 4 phases (orient -> gather -> consolidate -> prune) and allows low-friction event mutations with pinned protection', async () => {
+    const f = await fixture(2, '项目改用 Rust 实现。', 'auto-dream-phases')
+    await f.memory.appendTurn({ threadId: 'phase-thread-2', user: '确认改用 Rust 实现核心引擎。', assistant: '收到。' })
+    const blocks = f.memory.listBlocks()
+    const msg1 = blocks[0]!.l5Raw[0]!.id
+    const msg2 = blocks[1]!.l5Raw[0]!.id
+    const evMain = await f.memory.addEvent({
+      title: '后端语言选型',
+      summary: '明天准备评估 Rust 方案。',
+      quotes: ['用户原话：准备评估 Rust。'],
+      temporal: { happenedStart: '2026-11-10' },
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+    const evCrossDate = await f.memory.addEvent({
+      title: '后端语言选型（补充）',
+      summary: '确定改用 Rust 实现核心引擎。',
+      temporal: { happenedStart: '2026-11-12' },
+      sourceBlockId: blocks[1]!.id,
+      sourceMessageIds: [msg2],
+    })
+    const evOldSameDay = await f.memory.addEvent({
+      title: '旧方案 A',
+      summary: '早先考虑方案 A。',
+      temporal: { happenedStart: '2026-11-12' },
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+    const evNewSameDay = await f.memory.addEvent({
+      title: '新方案 B',
+      summary: '同日切换为方案 B。',
+      temporal: { happenedStart: '2026-11-12' },
+      sourceBlockId: blocks[1]!.id,
+      sourceMessageIds: [msg2],
+    })
+    const evPinned = await f.memory.addEvent({
+      title: '置顶事实',
+      summary: '用户置顶不可误删。',
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+    await f.memory.pinEvent(evPinned.id, true)
+    const evOrphan = await f.memory.addEvent({
+      title: '孤立空卡',
+      summary: '待清理。',
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [msg1],
+    })
+
+    const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const runClaim = claim(run)
+    expect(run.phase).toBe('orient')
+    expect((dreamingPayload(f.memory, run) as any).phase).toBe('orient')
+
+    // Gather phase on dreaming_read
+    const gathered = await f.memory.dreaming({
+      ...runClaim,
+      kind: 'checkpoint',
+      estimatedTokens: 100,
+      trace: {
+        tool: 'dreaming_read',
+        args: { kind: 'event', id: evMain.id },
+        result: { content: '...', contentVersion: 'v1', offset: 0, nextOffset: null },
+      },
+    })
+    expect(gathered.phase).toBe('gather')
+
+    // Consolidate phase: low-friction update WITHOUT reading evCrossDate / evOldSameDay / evOrphan
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'update',
+      id: evMain.id,
+      summary: '2026-11-11 决定评估并改用 Rust 方案。',
+    })
+    expect(f.memory.exportSnapshot().memoryTopicState?.dreaming?.phase).toBe('consolidate')
+    expect(f.memory.listEvents().find(card => card.id === evMain.id)).toMatchObject({
+      title: '后端语言选型',
+      summary: '2026-11-11 决定评估并改用 Rust 方案。',
+      quotes: ['用户原话：准备评估 Rust。'],
+    })
+
+    // Tolerant cross-date merge succeeds without prior read ticket
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'merge',
+      id: evMain.id,
+      otherIds: [evCrossDate.id],
+      summary: '确认改用 Rust 实现核心引擎。',
+    })
+    expect(f.memory.listEvents().some(card => card.id === evCrossDate.id)).toBe(false)
+
+    // Tolerant same-day supersede succeeds, and status:'active' can undo superseded
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'supersede',
+      id: evNewSameDay.id,
+      otherIds: [evOldSameDay.id],
+      reason: '同日从方案 A 切换为方案 B。',
+    })
+    expect(f.memory.listEvents().find(card => card.id === evOldSameDay.id)).toMatchObject({
+      status: 'superseded',
+      supersededBy: evNewSameDay.id,
+    })
+    await f.memory.editDreamingEvent(runClaim, {
+      kind: 'update',
+      id: evOldSameDay.id,
+      status: 'active',
+    })
+    expect(f.memory.listEvents().find(card => card.id === evOldSameDay.id)?.status).toBe('active')
+    expect(f.memory.listEvents().find(card => card.id === evOldSameDay.id)?.supersededBy).toBeFalsy()
+
+    // Pinned cards are protected from delete and absorption in merge
+    await expect(f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: evPinned.id, reason: '误删测试' })).rejects.toThrow(/pinned/i)
+    await expect(f.memory.editDreamingEvent(runClaim, { kind: 'merge', id: evMain.id, otherIds: [evPinned.id] })).rejects.toThrow(/pinned/i)
+
+    // Unpinned card can be deleted without read ticket
+    await f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: evOrphan.id, reason: '无用空卡' })
+    expect(f.memory.listEvents().some(card => card.id === evOrphan.id)).toBe(false)
+
+    // Prune phase on finish-unit
+    const finished = await f.memory.dreaming({ ...runClaim, kind: 'finish-unit' })
+    expect(finished.status).toBe('completed')
+    expect(finished.phase).toBe('prune')
+  })
+
+  it('Auto-Dream: direct dreaming_directory overview rewrite skips Topic Projector for rewritten events while untouched edited events still re-project', async () => {
+    const f = await fixture(2, '话题概要维护测试。', 'auto-dream-direct-overview')
+    await f.memory.appendTurn({ threadId: 'overview-thread-2', user: '外围工具准备升级。', assistant: '收到。' })
+    const blocks = f.memory.listBlocks()
+    const evRewritten = await f.memory.addEvent({
+      title: '核心架构重构',
+      summary: '初版摘要。',
+      sourceBlockId: blocks[0]!.id,
+      sourceMessageIds: [blocks[0]!.l5Raw[0]!.id],
+    })
+    const evUntouched = await f.memory.addEvent({
+      title: '外围工具升级',
+      summary: '初版外围摘要。',
+      sourceBlockId: blocks[1]!.id,
+      sourceMessageIds: [blocks[1]!.l5Raw[0]!.id],
+    })
+    const job = (await f.memory.claimNextTopicProjection())!
+    const projected = await f.memory.completeTopicProjection(job.jobId, {
+      topics: [{
+        title: '系统架构',
+        description: '架构与工具',
+        sourceEventIds: [evRewritten.id, evUntouched.id],
+        sections: [
+          { title: '演进', sourceEventIds: [evRewritten.id] },
+          { title: '外围工具', sourceEventIds: [evUntouched.id] },
+        ],
+        overview: [
+          { kind: 'decision', title: '演进', text: '旧的核心架构描述。', sourceEventIds: [evRewritten.id] },
+          { kind: 'change', title: '外围工具', text: '旧的外围工具描述。', sourceEventIds: [evUntouched.id] },
+        ],
+      }],
+    })
+    const topicId = projected.topicIds[0]!
+
+    const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const runClaim = claim(run)
+    await f.memory.editDreamingEvent(runClaim, { kind: 'update', id: evRewritten.id, summary: '已全面迁移到 Auto-Dream 四阶段。' })
+    await f.memory.editDreamingEvent(runClaim, { kind: 'update', id: evUntouched.id, summary: '外围工具升级到 2.0。' })
+
+    // Directly rewrite overview for evRewritten WITHOUT calling dreaming_read first
+    const version = f.memory.getDreamingTopicVersion(topicId)!
+    const applied = await f.memory.dreaming({
+      ...runClaim,
+      kind: 'apply',
+      topicId,
+      topicVersion: version,
+      operations: [{
+        kind: 'set-overview',
+        title: '演进',
+        entries: [
+          { kind: 'decision', text: 'Dreaming 直接改写后的核心架构概要。', sourceEventIds: [evRewritten.id] },
+        ],
+      }],
+    })
+    expect(applied.phase).toBe('prune')
+    await f.memory.dreaming({ ...runClaim, kind: 'finish-unit' })
+
+    // Background Topic Projector should skip evRewritten (directly rewritten by Dreaming) and only project evUntouched
+    const nextJob = await f.memory.claimNextTopicProjection()
+    expect(nextJob).not.toBeNull()
+    expect(nextJob!.events.map(event => event.id)).toEqual([evUntouched.id])
+    expect(nextJob!.events.map(event => event.id)).not.toContain(evRewritten.id)
+  })
+
+  it('Auto-Dream: records pre-mutation event snapshots and supports single-item & full-run rollback via HTTP API', async () => {
+    const f = await fixture(2, '快照与回滚测试。', 'auto-dream-rollback')
+    const block = f.memory.listBlocks()[0]!
+    const ev1 = await f.memory.addEvent({
+      title: '项目代号 Polaris',
+      summary: '初始摘要：项目代号定为 Polaris。',
+      quotes: ['项目代号定为 Polaris。'],
+      sourceBlockId: block.id,
+      sourceMessageIds: [block.l5Raw[0]!.id],
+    })
+    const ev2 = await f.memory.addEvent({
+      title: '待删事件',
+      summary: '准备被 Dreaming 删除后再恢复。',
+      sourceBlockId: block.id,
+      sourceMessageIds: [block.l5Raw[0]!.id],
+    })
+    const agentCard = await f.memory.recordAgentEvent({
+      content: '主动记忆卡：保留原池位置。',
+      category: 'fact',
+      threadId: 't-rb',
+    })
+
+    const run = (await f.memory.startMemoryDreaming('owner', 'manual', {}))!
+    const runClaim = claim(run)
+    await f.memory.editDreamingEvent(runClaim, { kind: 'update', id: ev1.id, title: '项目代号改名', summary: '被 Dreaming 改写的摘要。' })
+    await f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: ev2.id, reason: '测试误删恢复' })
+    await f.memory.editDreamingEvent(runClaim, { kind: 'delete', id: agentCard.eventId!, reason: '测试 agentEvents 池恢复' })
+    const created = await f.memory.editDreamingEvent(runClaim, {
+      kind: 'create',
+      title: 'Dreaming 新建事件',
+      summary: '整轮撤销时应被移除。',
+      sourceMessageIds: [block.l5Raw[0]!.id],
+    })
+    await f.memory.dreaming({ ...runClaim, kind: 'finish-unit' })
+
+    const runtime = runtimeFor(f.database, async () => ({ tool: 'finish', args: {} }), true)
+    cleanups.push(async () => { await runtime.close() })
+
+    // GET /api/stratagate/dreaming returns recentRuns with 4 revertible snapshots
+    const status = await runtime.adminDreamingStatus(f.namespace) as any
+    expect(status.recentRuns).toHaveLength(1)
+    expect(status.recentRuns[0]).toMatchObject({ runId: run.id, totalCount: 4, revertibleCount: 4 })
+    expect(status.run.changes.items.filter((item: any) => item.canRevert)).toHaveLength(4)
+
+    const callPost = async (payload: Record<string, unknown>) => {
+      let body = ''
+      const res = { statusCode: 0, setHeader: () => {}, end: (chunk?: string) => { body = String(chunk ?? '') } }
+      const raw = JSON.stringify(payload)
+      const req = {
+        method: 'POST',
+        url: `/api/stratagate/dreaming?namespace=${encodeURIComponent(f.namespace)}&action=revert`,
+        headers: { 'content-type': 'application/json' },
+        async *[Symbol.asyncIterator]() { yield Buffer.from(raw) },
+      }
+      await handleAdminRequest(runtime, req as never, res as never)
+      return { statusCode: res.statusCode, json: JSON.parse(body) }
+    }
+
+    // Single-item revert restores deleted ev2
+    const deleteSnap = status.recentRuns[0].items.find((item: any) => item.id === ev2.id)
+    expect(deleteSnap).toBeDefined()
+    const single = await callPost({ runId: run.id, changeId: deleteSnap.changeId })
+    expect(single.statusCode).toBe(200)
+    expect(single.json.revert.revertedCount).toBe(1)
+    expect(single.json.dreaming.recentRuns[0].revertibleCount).toBe(3)
+    let reopened = await f.reopen()
+    expect(reopened.listEvents().find(card => card.id === ev2.id)).toMatchObject({ title: '待删事件' })
+
+    // Full-run revert restores ev1, restores agentCard to agentEvents pool, and removes created
+    const full = await callPost({ runId: run.id })
+    expect(full.statusCode).toBe(200)
+    expect(full.json.revert.revertedCount).toBe(3)
+    expect(full.json.dreaming.recentRuns[0].revertibleCount).toBe(0)
+    reopened = await f.reopen()
+    expect(reopened.listEvents().find(card => card.id === ev1.id)).toMatchObject({
+      title: '项目代号 Polaris',
+      summary: '初始摘要：项目代号定为 Polaris。',
+      quotes: ['项目代号定为 Polaris。'],
+    })
+    expect(reopened.listAllEvents().some(card => card.id === created.id)).toBe(false)
+    expect(reopened.exportSnapshot().agentEvents.some(card => card.id === agentCard.eventId)).toBe(true)
   })
 })

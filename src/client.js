@@ -813,13 +813,16 @@ window.__ModuleLoader__.load({
       .sg-ov-speech{display:block;width:calc(54 * var(--sg-overview-unit));height:calc(48 * var(--sg-overview-unit));flex:none;color:var(--sg-text)}
       .sg-ov-big .sg-ov-speech{margin-bottom:calc(6 * var(--sg-overview-unit))}
       .sg-ov-summary{margin:calc(32 * var(--sg-overview-unit)) 0 0;color:color-mix(in srgb,var(--sg-text) 35%,var(--sg-muted));font-size:calc(24 * var(--sg-overview-unit));line-height:1.6;text-wrap:pretty}
-      .sg-memory .sg-ov-dreaming{display:flex;align-items:center;justify-content:space-between;gap:4px 12px;flex-wrap:wrap;width:min(100%,290px);margin-top:calc(28 * var(--sg-overview-unit));padding-top:8px;border-top:1px solid var(--sg-hair);font-size:clamp(12px,calc(24 * var(--sg-overview-unit)),15px)}
-      .sg-ov-dreaming-controls{display:flex;align-items:center;gap:5px;min-width:0}
-      .sg-ov-dreaming .sg-dreaming-quiet{display:inline-flex;align-items:center;gap:7px;min-height:28px;padding:2px 0;border:0;background:none;color:var(--sg-text);white-space:nowrap;font:inherit;cursor:pointer}
+      .sg-memory .sg-ov-dreaming{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:min(100%,290px);margin-top:calc(28 * var(--sg-overview-unit));padding-top:8px;border-top:1px solid var(--sg-hair);font-size:clamp(12px,calc(24 * var(--sg-overview-unit)),15px)}
+      .sg-ov-dreaming-row{display:flex;align-items:center;justify-content:space-between;gap:6px 12px;min-width:0}
+      .sg-ov-dreaming-controls{display:flex;align-items:center;gap:4px;min-width:0;flex:1 1 auto}
+      .sg-ov-dreaming-controls.is-active{justify-content:space-between}
+      .sg-ov-dreaming-btns{display:inline-flex;align-items:center;gap:2px;flex:none}
+      .sg-ov-dreaming-links{display:flex;align-items:center;flex-wrap:wrap;gap:2px 16px;min-width:0}
+      .sg-ov-dreaming .sg-dreaming-quiet{display:inline-flex;align-items:center;gap:6px;min-height:28px;min-width:0;padding:2px 0;border:0;background:none;color:var(--sg-text);white-space:nowrap;font:inherit;cursor:pointer}
       .sg-ov-dreaming .sg-dreaming-quiet:hover:not(:disabled){color:var(--sg-moss);text-decoration:underline;text-underline-offset:.22em}
       .sg-ov-dreaming .sg-dreaming-quiet:disabled{color:var(--sg-muted);cursor:default}
-      .sg-ov-dreaming .sg-dreaming-quiet.sg-dreaming-icon{justify-content:center;min-width:28px;color:var(--sg-muted)}
-      .sg-ov-dreaming .sg-dreaming-read{margin-left:auto}
+      .sg-ov-dreaming .sg-dreaming-quiet.sg-dreaming-icon{justify-content:center;min-width:24px;color:var(--sg-muted)}
       .sg-ov-dreaming svg,.sg-daily-letter svg{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
       .sg-ov-dreaming svg{color:var(--sg-moss)}
       .sg-ov-dreaming>p{flex-basis:100%;margin:0}
@@ -846,6 +849,14 @@ window.__ModuleLoader__.load({
       .sg-daily-letter-changes ul{display:grid;gap:7px;list-style:none;padding:0;margin:0}
       .sg-daily-letter-changes li{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.65fr);gap:3px 12px;overflow-wrap:anywhere}
       .sg-daily-letter-changes li span{color:var(--sg-muted)}
+      .sg-daily-letter-changes li.has-action{grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto;align-items:start}
+      .sg-daily-letter-changes .sg-letter-revert-btn{padding:2px 8px;border:1px solid var(--sg-border);border-radius:5px;background:var(--sg-page);color:var(--letter-link);font-size:11.5px;line-height:1.4;white-space:nowrap;text-decoration:none}
+      .sg-daily-letter-changes .sg-letter-revert-btn:hover:not(:disabled){border-color:var(--letter-link);text-decoration:none}
+      .sg-daily-letter-changes .sg-letter-revert-btn:disabled{opacity:.55;cursor:default}
+      .sg-daily-letter-changes .sg-letter-reverted{font-size:11.5px;color:var(--sg-muted);white-space:nowrap}
+      .sg-daily-letter-changes-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 7px}
+      .sg-daily-letter-changes-head h3{margin:0}
+      .sg-daily-letter-revert-err{margin:6px 0 0;color:var(--sg-danger);font-size:12px}
       .sg-daily-letter-history{margin-top:8px;font-size:13px}
       .sg-daily-letter-history summary{justify-content:flex-end}
       .sg-daily-letter-dates{display:flex;justify-content:flex-end;gap:5px 8px;flex-wrap:wrap;max-height:120px;overflow:auto}
@@ -1399,6 +1410,37 @@ window.__ModuleLoader__.load({
       .sg-dreaming-pref-status.failed{color:var(--sg-danger)}
       .sg-dreaming-done{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--sg-soft)}
       .sg-dreaming-done .sg-dreaming-nums{margin-top:0}
+      .sg-dreaming-done-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+      .sg-dreaming-phases{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:10px}
+      .sg-dreaming-phase{display:flex;align-items:center;gap:6px;min-width:0;padding:5px 8px;border:1px solid var(--sg-hair);border-radius:7px;background:var(--sg-page);color:var(--sg-muted);font-size:11.5px;line-height:1.3}
+      .sg-dreaming-phase-dot{width:6px;height:6px;border-radius:50%;flex:none;background:var(--sg-border)}
+      .sg-dreaming-phase-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .sg-dreaming-phase.done{border-color:color-mix(in srgb,var(--sg-good) 35%,var(--sg-hair));color:var(--sg-text)}
+      .sg-dreaming-phase.done .sg-dreaming-phase-dot{background:var(--sg-good)}
+      .sg-dreaming-phase.active{border-color:color-mix(in srgb,var(--sg-accent) 55%,var(--sg-hair));background:color-mix(in srgb,var(--sg-accent) 9%,var(--sg-page));color:var(--sg-accent);font-weight:600}
+      .sg-dreaming-phase.active .sg-dreaming-phase-dot{background:var(--sg-accent)}
+      .sg-dreaming-changes-dlg{width:min(640px,calc(100% - 28px));max-height:min(80vh,700px);display:flex;flex-direction:column;gap:12px;padding:18px 20px;border:1px solid var(--sg-border);border-radius:12px;background:var(--sg-page);color:var(--sg-text);box-shadow:0 20px 56px rgba(0,0,0,.22)}
+      .sg-dreaming-changes-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+      .sg-dreaming-changes-head h3{margin:0;font-size:15px;font-weight:650}
+      .sg-dreaming-changes-body{display:grid;gap:12px;overflow-y:auto;padding-right:2px;min-height:0}
+      .sg-dreaming-run-card{display:grid;gap:8px;padding:11px 12px;border:1px solid var(--sg-hair);border-radius:9px;background:var(--sg-surface)}
+      .sg-dreaming-run-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+      .sg-dreaming-run-time{font:12px var(--sg-mono);color:var(--sg-muted)}
+      .sg-dreaming-run-list{display:grid;gap:7px;list-style:none;margin:0;padding:0}
+      .sg-dreaming-change-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:8px 10px;padding:8px 9px;border:1px solid var(--sg-hair);border-radius:7px;background:var(--sg-page)}
+      .sg-dreaming-action-tag{padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;background:var(--sg-soft);color:var(--sg-text)}
+      .sg-dreaming-action-tag.delete{background:color-mix(in srgb,var(--sg-danger) 13%,transparent);color:var(--sg-danger)}
+      .sg-dreaming-action-tag.create{background:color-mix(in srgb,var(--sg-good) 14%,transparent);color:var(--sg-good)}
+      .sg-dreaming-action-tag.merge,.sg-dreaming-action-tag.supersede{background:color-mix(in srgb,var(--sg-sand) 16%,transparent);color:var(--sg-sand)}
+      .sg-dreaming-action-tag.update{background:color-mix(in srgb,var(--sg-water) 14%,transparent);color:var(--sg-water)}
+      .sg-dreaming-change-copy{display:grid;gap:2px;min-width:0}
+      .sg-dreaming-change-copy strong{font-size:12.5px;color:var(--sg-text);overflow-wrap:anywhere}
+      .sg-dreaming-change-copy span{font-size:11.5px;color:var(--sg-muted);line-height:1.45;overflow-wrap:anywhere}
+      .sg-dreaming-revert-btn{padding:4px 10px;border:1px solid var(--sg-border);border-radius:6px;background:var(--sg-page);color:var(--sg-text);font-size:11.5px;font-weight:550;cursor:pointer;white-space:nowrap}
+      .sg-dreaming-revert-btn:hover:not(:disabled){border-color:var(--sg-accent);color:var(--sg-accent)}
+      .sg-dreaming-revert-btn:disabled{opacity:.55;cursor:default}
+      .sg-dreaming-reverted-tag{font-size:11.5px;color:var(--sg-muted);padding:4px 2px;white-space:nowrap}
+      @media(max-width:560px){.sg-dreaming-phases{grid-template-columns:repeat(2,minmax(0,1fr))}.sg-dreaming-change-row{grid-template-columns:minmax(0,1fr) auto}.sg-dreaming-action-tag{grid-column:1 / -1;justify-self:start}}
       .sg-settings-shell .sg-pg-head .sg-pg-tag{display:none}
       @media (max-width:680px){.sg-more{grid-template-columns:minmax(0,1fr);gap:16px}}
       /* The settings dialog can be ~900px wide, where two columns get cramped.
@@ -4069,6 +4111,7 @@ window.__ModuleLoader__.load({
     const DREAMING_MARKS = {
       moon: 'M13.8 10.6A6 6 0 0 1 5.4 2.2a6.1 6.1 0 1 0 8.4 8.4Z',
       mail: 'M2 3.5h12v9H2z M2.5 4 8 8.5l5.5-4.5',
+      undo: 'M5.5 3.5 2 7l3.5 3.5M2.5 7H9a3.5 3.5 0 1 1 0 7H6',
       pause: 'M6 3.5v9m4-9v9',
       resume: 'M5 3.5l7 4.5-7 4.5z',
       stop: 'M4.5 4.5h7v7h-7z',
@@ -4076,15 +4119,103 @@ window.__ModuleLoader__.load({
       more: 'm6 4 4 4-4 4',
     }
 
+    const DREAMING_PHASES = [
+      { key: 'orient', label: '1 定向', short: '定向' },
+      { key: 'gather', label: '2 核实', short: '核实' },
+      { key: 'consolidate', label: '3 整合', short: '整合' },
+      { key: 'prune', label: '4 收口', short: '收口' },
+    ]
+
+    const DREAMING_ACTION_LABELS = {
+      create: '新增',
+      update: '修改',
+      merge: '合并',
+      supersede: '替代',
+      delete: '删除',
+    }
+
     function DreamingMark({ name }) {
       return h('svg', { viewBox: '0 0 16 16', 'aria-hidden': 'true' }, h('path', { d: DREAMING_MARKS[name] }))
     }
 
-    function DreamingLetterModal({ namespace, dates, date, onDate, onClose }) {
+    function DreamingPhaseBar({ phase }) {
+      const activeIndex = DREAMING_PHASES.findIndex(step => step.key === phase)
+      if (activeIndex < 0) return null
+      return h('div', { className: 'sg-dreaming-phases', role: 'list', 'aria-label': '整理阶段', 'data-testid': 'stratagate-dreaming-phases' },
+        DREAMING_PHASES.map((step, index) => {
+          const state = index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending'
+          return h('div', { key: step.key, role: 'listitem', className: 'sg-dreaming-phase ' + state, 'aria-current': state === 'active' ? 'step' : undefined },
+            h('span', { className: 'sg-dreaming-phase-dot', 'aria-hidden': 'true' }),
+            h('span', { className: 'sg-dreaming-phase-label' }, step.label))
+        }))
+    }
+
+    function DreamingChangesModal({ namespace, runs, onReverted, onClose }) {
+      const [busyKey, setBusyKey] = React.useState('')
+      const [error, setError] = React.useState('')
+      React.useEffect(() => {
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape' && !busyKey) { event.preventDefault(); onClose() }
+        }
+        document.addEventListener('keydown', onKeyDown)
+        return () => document.removeEventListener('keydown', onKeyDown)
+      }, [busyKey, onClose])
+      const revert = async (runId, changeId) => {
+        const key = changeId ? runId + ':' + changeId : runId
+        if (busyKey) return
+        setBusyKey(key); setError('')
+        try {
+          const response = await api('dreaming', { namespace, action: 'revert' }, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(changeId ? { runId, changeId } : { runId }),
+          })
+          await onReverted?.(response?.dreaming)
+        } catch (reason) {
+          setError(reason?.message || '恢复失败，请稍后重试。')
+        } finally { setBusyKey('') }
+      }
+      const formatTime = (iso) => typeof iso === 'string' && iso.length >= 16 ? iso.slice(0, 16).replace('T', ' ') : ''
+      return h('div', { className: 'sg-import-overlay', role: 'presentation', onClick: event => { if (event.target === event.currentTarget && !busyKey) onClose() } },
+        h('section', { className: 'sg-dreaming-changes-dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sg-dreaming-changes-title', 'data-testid': 'stratagate-dreaming-changes-modal' },
+          h('div', { className: 'sg-dreaming-changes-head' },
+            h('h3', { id: 'sg-dreaming-changes-title' }, 'Dreaming 事件改动与恢复'),
+            h('button', { type: 'button', className: 'sg-btn ghost', disabled: Boolean(busyKey), onClick: onClose }, '关闭')),
+          error ? h('p', { className: 'sg-dreaming-failure', role: 'alert' }, error) : null,
+          h('div', { className: 'sg-dreaming-changes-body' },
+            runs.length ? runs.map(group => {
+              const runBusy = busyKey === group.runId
+              return h('section', { key: group.runId, className: 'sg-dreaming-run-card', 'data-testid': 'dreaming-snapshot-run' },
+                h('div', { className: 'sg-dreaming-run-head' },
+                  h('span', { className: 'sg-dreaming-run-time' }, (formatTime(group.createdAt) || '近期整理') + ' · 共 ' + group.totalCount + ' 项事件改动'),
+                  group.revertibleCount > 0
+                    ? h('button', { type: 'button', className: 'sg-dreaming-revert-btn', 'data-testid': 'dreaming-revert-run', disabled: Boolean(busyKey), onClick: () => revert(group.runId) },
+                      runBusy ? '正在撤销…' : '撤销整轮事件改动')
+                    : h('span', { className: 'sg-dreaming-reverted-tag' }, '本轮已全部恢复')),
+                h('ul', { className: 'sg-dreaming-run-list' },
+                  group.items.map(item => {
+                    const itemKey = group.runId + ':' + item.changeId
+                    const actionName = DREAMING_ACTION_LABELS[item.action] || '改动'
+                    return h('li', { key: item.changeId, className: 'sg-dreaming-change-row' },
+                      h('span', { className: 'sg-dreaming-action-tag ' + (item.action || 'update') }, actionName),
+                      h('div', { className: 'sg-dreaming-change-copy' },
+                        h('strong', null, item.label),
+                        item.detail ? h('span', null, item.detail) : null),
+                      item.canRevert
+                        ? h('button', { type: 'button', className: 'sg-dreaming-revert-btn', 'data-testid': 'dreaming-revert-item', disabled: Boolean(busyKey), onClick: () => revert(group.runId, item.changeId) },
+                          busyKey === itemKey ? '恢复中…' : '恢复')
+                        : h('span', { className: 'sg-dreaming-reverted-tag' }, '已恢复'))
+                  })))
+            }) : h('p', { className: 'sg-muted' }, '当前没有可恢复的事件快照。'))))
+    }
+
+    function DreamingLetterModal({ namespace, dates, date, onDate, onClose, onDirectoryChanged }) {
       const dialogRef = React.useRef(null)
       const [letter, setLetter] = React.useState(null)
       const [error, setError] = React.useState('')
       const [retry, setRetry] = React.useState(0)
+      const [revertBusy, setRevertBusy] = React.useState('')
+      const [revertError, setRevertError] = React.useState('')
       React.useEffect(() => {
         const dialog = dialogRef.current
         dialog?.showModal()
@@ -4092,7 +4223,7 @@ window.__ModuleLoader__.load({
       }, [])
       React.useEffect(() => {
         const controller = new AbortController()
-        setError('')
+        setError(''); setRevertError('')
         api('letters/note', { namespace, date }, { signal: controller.signal }).then(value => {
           if (!controller.signal.aborted) setLetter(value)
         }).catch(() => {
@@ -4101,6 +4232,22 @@ window.__ModuleLoader__.load({
         if (dialogRef.current) dialogRef.current.scrollTop = 0
         return () => controller.abort()
       }, [namespace, date, retry])
+      const revertItem = async (runId, changeId) => {
+        const key = changeId ? runId + ':' + changeId : runId
+        if (!runId || revertBusy) return
+        setRevertBusy(key); setRevertError('')
+        try {
+          await api('dreaming', { namespace, action: 'revert' }, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(changeId ? { runId, changeId } : { runId }),
+          })
+          setRetry(value => value + 1)
+          await onDirectoryChanged?.()
+        } catch (reason) {
+          setRevertError(reason?.message || '恢复失败，请稍后重试。')
+        } finally { setRevertBusy('') }
+      }
       const current = letter?.date === date ? letter : null
       const runs = (current?.reports || []).map(dreamingChangesOf)
       const items = runs.flatMap(run => run.items)
@@ -4111,6 +4258,7 @@ window.__ModuleLoader__.load({
         ['event-edit', '修改的事件', edited], ['event-delete', '删除的事件', deleted], ['experience', '整理出的经验', experiences],
       ]
       const counts = `修改 ${edited} 个事件 · 删除 ${deleted} 个事件 · 提取 ${experiences} 条经验`
+      const revertibleRunIds = [...new Set(items.filter(item => item.canRevert && item.runId).map(item => item.runId))]
       return h('dialog', { ref: dialogRef, className: 'sg-daily-letter', 'aria-labelledby': 'sg-letter-heading',
         onCancel: event => { event.preventDefault(); onClose() },
         onClick: event => { if (event.target === event.currentTarget) onClose() } },
@@ -4126,10 +4274,26 @@ window.__ModuleLoader__.load({
               : h('p', { role: 'status' }, '正在读取来信…'),
           edited || deleted || experiences ? h('details', { key: date, className: 'sg-daily-letter-changes' },
             h('summary', null, counts, h(DreamingMark, { name: 'more' })),
+            revertError ? h('p', { className: 'sg-daily-letter-revert-err', role: 'alert' }, revertError) : null,
             groups.filter(([, , count]) => count > 0).map(([kind, label, count]) => {
               const group = items.filter(item => item.kind === kind)
-              return h('section', { key: kind }, h('h3', null, label),
-                h('ul', null, group.map((item, index) => h('li', { key: index }, h('strong', null, item.label), item.detail ? h('span', null, item.detail) : null))),
+              const showRunRevert = kind !== 'experience' && revertibleRunIds.length === 1 && group.some(item => item.canRevert)
+              return h('section', { key: kind },
+                h('div', { className: 'sg-daily-letter-changes-head' },
+                  h('h3', null, label),
+                  showRunRevert ? h('button', { type: 'button', className: 'sg-letter-revert-btn', disabled: Boolean(revertBusy), onClick: () => revertItem(revertibleRunIds[0]) },
+                    revertBusy === revertibleRunIds[0] ? '撤销中…' : '撤销本轮事件改动') : null),
+                h('ul', null, group.map((item, index) => {
+                  const hasAction = Boolean(item.changeId && item.runId && (item.canRevert || item.revertedAt))
+                  const key = hasAction ? item.runId + ':' + item.changeId : ''
+                  return h('li', { key: item.changeId || index, className: hasAction ? 'has-action' : undefined },
+                    h('strong', null, item.label),
+                    item.detail ? h('span', null, item.detail) : hasAction ? h('span', null, '') : null,
+                    hasAction ? (item.canRevert
+                      ? h('button', { type: 'button', className: 'sg-letter-revert-btn', disabled: Boolean(revertBusy), onClick: () => revertItem(item.runId, item.changeId) },
+                        revertBusy === key ? '恢复中…' : '恢复')
+                      : h('span', { className: 'sg-letter-reverted' }, '已恢复')) : null)
+                })),
                 group.length < count ? h('p', null, '部分改动没有留存明细。') : null)
             })) : null,
           dates.length > 1 ? h('footer', null,
@@ -4170,6 +4334,8 @@ window.__ModuleLoader__.load({
       const [toast, setToast] = React.useState('')
       const [letterDates, setLetterDates] = React.useState([])
       const [letterDate, setLetterDate] = React.useState('')
+      const [recentRuns, setRecentRuns] = React.useState([])
+      const [changesOpen, setChangesOpen] = React.useState(false)
       const [prefs, setPrefs] = React.useState({ autoEnabled: true, dailyTokenBudget: 5_000_000, dailyLettersEnabled: true })
       const [usage, setUsage] = React.useState({ reportedTokens: 0, estimatedTokens: 0, effectiveTokens: 0, calls: 0, budget: 5_000_000, budgetExceeded: false })
       const [budgetDraft, setBudgetDraft] = React.useState('500')
@@ -4199,6 +4365,7 @@ window.__ModuleLoader__.load({
         previousRunId.current = next?.id
         previousStatus.current = next?.status
         setLetterDates(Array.isArray(value?.letterDates) ? value.letterDates : [])
+        if (Array.isArray(value?.recentRuns)) setRecentRuns(value.recentRuns)
         if (value?.settings && typeof value.settings === 'object') {
           const nextPrefs = {
             autoEnabled: value.settings.autoEnabled !== false,
@@ -4267,6 +4434,21 @@ window.__ModuleLoader__.load({
         finally { setBusy(false) }
       }
       const changes = dreamingChangesOf(run)
+      const safeRecentRuns = Array.isArray(recentRuns) ? recentRuns : []
+      const revertibleCount = safeRecentRuns.reduce((sum, group) => sum + Number(group.revertibleCount || 0), 0)
+      const hasSnapshots = safeRecentRuns.length > 0
+      const phaseShort = DREAMING_PHASES.find(step => step.key === run?.phase)?.short || ''
+      const handleReverted = async (dreamingPayload) => {
+        if (dreamingPayload) accept(dreamingPayload, false)
+        setToast('已恢复选中的事件改动')
+        await onDirectoryChanged?.()
+      }
+      const changesModal = changesOpen ? h(DreamingChangesModal, {
+        namespace,
+        runs: safeRecentRuns,
+        onReverted: handleReverted,
+        onClose: () => setChangesOpen(false),
+      }) : null
       const formatWan = (tokens) => {
         const num = Number(tokens || 0)
         if (num >= 10_000) {
@@ -4322,7 +4504,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'sg-dreaming-pref-row' },
             h('div', { className: 'sg-dreaming-pref-copy' },
               h('span', { className: 'sg-dreaming-pref-label' }, '每日自动来信'),
-              h('span', { className: 'sg-dreaming-pref-desc' }, '关闭后不再在次日自动生成手写来信，已有来信与记录保留。')),
+              h('span', { className: 'sg-dreaming-pref-desc' }, '每天第一次自动整理完成后写一封。手动整理的结果会在整理会话里汇报。')),
             h('button', {
               type: 'button',
               className: 'sg-setting-switch',
@@ -4394,26 +4576,40 @@ window.__ModuleLoader__.load({
         const quiet = (name, label, onClick, options = {}) => h('button', { type: 'button', className: 'sg-dreaming-quiet' + (options.iconOnly ? ' sg-dreaming-icon' : options.read ? ' sg-dreaming-read' : ''),
           disabled: Boolean(busy && !options.read) || options.disabled, onClick, 'aria-label': label, title: options.iconOnly ? label : undefined },
         h(DreamingMark, { name }), options.iconOnly ? null : label)
-        const state = running ? '正在整理' : pausing ? '正在暂停' : '已暂停'
+        const state = running ? (phaseShort ? '正在整理 · ' + phaseShort : '正在整理') : pausing ? '正在暂停' : '已暂停'
+        const letterButton = letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null
+        const changesButton = hasSnapshots ? quiet('undo', revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '改动与恢复', () => setChangesOpen(true), { read: true }) : null
+        const inlineSecondary = !outstanding ? (letterButton || changesButton) : null
+        const stackedLinks = outstanding
+          ? [letterButton, changesButton].filter(Boolean)
+          : (letterButton && changesButton ? [changesButton] : [])
         return h(React.Fragment, null, stopConfirmation ? styles : null,
           h('div', { className: 'sg-ov-dreaming', 'data-testid': 'overview-dreaming' },
-            h('div', { className: 'sg-ov-dreaming-controls' },
-              outstanding ? h(React.Fragment, null,
-                quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
-                running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
-                paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
-                quiet('stop', '终止整理', showStopDialog, { iconOnly: true }))
-                : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
-            letterDates.length ? quiet('mail', '读来信', () => setLetterDate(letterDates[0]), { read: true }) : null,
+            h('div', { className: 'sg-ov-dreaming-row' },
+              h('div', { className: 'sg-ov-dreaming-controls' + (outstanding ? ' is-active' : '') },
+                outstanding ? h(React.Fragment, null,
+                  quiet('moon', state, openSession, { disabled: !run.sessionId || !onOpenDreamingSession }),
+                  h('span', { className: 'sg-ov-dreaming-btns' },
+                    running ? quiet('pause', '暂停整理', () => control('pause'), { iconOnly: true }) : null,
+                    paused && !run.replanRequired ? quiet('resume', '继续整理', () => control('resume'), { iconOnly: true }) : null,
+                    quiet('stop', '终止整理', showStopDialog, { iconOnly: true })))
+                  : quiet('moon', busy === 'start' ? '正在启动…' : '整理记忆', () => control('start'), { disabled: !available || !statusReady })),
+              inlineSecondary),
+            stackedLinks.length ? h('div', { className: 'sg-ov-dreaming-links' }, ...stackedLinks) : null,
             run?.replanRequired ? h('p', { className: 'sg-dreaming-failure' }, '请终止这次整理后重新开始。') : null, toastMessage, feedback),
-          letterDate ? h(DreamingLetterModal, { namespace, dates: letterDates, date: letterDate, onDate: setLetterDate, onClose: () => setLetterDate('') }) : null,
+          letterDate ? h(DreamingLetterModal, { namespace, dates: letterDates, date: letterDate, onDate: setLetterDate, onClose: () => setLetterDate(''), onDirectoryChanged }) : null,
+          changesModal,
           stopConfirmation)
       }
       if (!outstanding) return renderSettings(h(React.Fragment, null, styles,
         ['completed', 'terminated'].includes(run?.status) ? h('div', { className: 'sg-dreaming-done' },
           h('span', { className: 'sg-dreaming-state-pill ' + (run.status === 'completed' ? 'done' : 'paused') }, h('i', { className: 'sg-dreaming-state-dot', 'aria-hidden': 'true' }), run.status === 'completed' ? '已完成' : '已终止'),
           renderChangesNums(false)) : null,
-        run?.sessionId ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', disabled: Boolean(busy), onClick: openSession }, '查看上次整理') : null,
+        run?.sessionId || hasSnapshots ? h('div', { className: 'sg-dreaming-done-actions' },
+          run?.sessionId ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', disabled: Boolean(busy), onClick: openSession }, '查看上次整理') : null,
+          hasSnapshots ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', 'data-testid': 'stratagate-dreaming-changes-btn', disabled: Boolean(busy), onClick: () => setChangesOpen(true) },
+            revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '查看改动快照') : null) : null,
+        changesModal,
         toastMessage, feedback),
         h('div', { className: 'sg-dreaming-setting-actions' },
           h('button', { type: 'button', className: 'sg-save-button sg-dreaming-setting-start', disabled: !!busy || !available || !statusReady, onClick: () => control('start') },
@@ -4431,10 +4627,14 @@ window.__ModuleLoader__.load({
             running || pausing ? h('button', { type: 'button', disabled: busy || pausing, onClick: () => control('pause') }, pausing ? '正在暂停…' : '暂停') : null,
             paused && !run.replanRequired ? h('button', { type: 'button', disabled: busy, onClick: () => control('resume') }, '继续') : null,
             h('button', { type: 'button', className: 'sg-dreaming-stop', disabled: busy, onClick: showStopDialog }, '终止'))),
+        run.scope === 'memory' && run.phase ? h(DreamingPhaseBar, { phase: run.phase }) : null,
         renderChangesNums(false),
-        h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
+        h('div', { className: 'sg-dreaming-done-actions' },
+          h('button', { type: 'button', className: 'sg-dreaming-session', disabled: busy || !run.sessionId, onClick: openSession }, run.sessionId ? '打开 Dreaming 会话 ↗' : running || pausing ? '会话准备中…' : '本轮未创建会话'),
+          hasSnapshots ? h('button', { type: 'button', className: 'sg-dreaming-open-letter', 'data-testid': 'stratagate-dreaming-changes-btn', disabled: Boolean(busy), onClick: () => setChangesOpen(true) },
+            revertibleCount > 0 ? '改动与恢复 (' + revertibleCount + ')' : '查看改动快照') : null),
         run?.reason ? h('p', null, run.reason) : null,
-        feedback, stopConfirmation)
+        feedback, changesModal, stopConfirmation)
       return renderSettings(progressCard)
     }
 

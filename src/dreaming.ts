@@ -1,10 +1,10 @@
-import { effectiveGraphNodeView, estimateTokens, dreamingEventVersion, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
+import { effectiveGraphNodeView, estimateTokens, dreamingEventVersion, dreamingPhaseActivity, memoryTopicEventFingerprint, memoryTopicMembershipSections, memoryTopicOverviewMatchesSection, renderBlock,
   dreamingEventContent, dreamingEventContentVersion, dreamingTopicVersion, DREAMING_SOURCE_PAGE_CHARACTERS,
-  toUtc8Iso,
   normalizeMemoryTopicLabel,
-  type BlockLevel, type DreamingRun, type EventCard, type MemoryTopic, type StrataGate } from '@diqier/stratagate'
+  type BlockLevel, type DreamingEventRollbackRecord, type DreamingRun, type EventCard, type MemoryTopic, type StrataGate } from '@diqier/stratagate'
 import { memoryTopicSections, sortMemoryTopics, topicPage } from './topics.js'
 import type { DailyNotes } from './daily-notes.js'
+import { dailyDate } from './daily-notes.js'
 
 export interface DreamingAction { tool: string; args: Record<string, unknown> }
 /** Shared by native and detached hosts so operation semantics cannot diverge. */
@@ -27,6 +27,7 @@ function page<T>(items: T[], args: Record<string, unknown>): unknown {
 const DREAMING_DIRECTORY_OVERVIEW_MAX_CHAPTERS = 25
 const DREAMING_DIRECTORY_OVERVIEW_MAX_CHARS = 4500
 const DREAMING_SECTION_EVENTS_PREVIEW_LIMIT = 40
+const DREAMING_CHANGE_PREVIEW_LIMIT = 16
 const DREAMING_BLOATED_OVERVIEW_COUNT = 5
 const DREAMING_BLOATED_OVERVIEW_CHARS = 1500
 
@@ -134,6 +135,43 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
   notes?: { store: DailyNotes; namespace: string }): Promise<{ result: unknown; evidenceIds: string[] }> {
   const { tool, args } = action
   const events = dreamingEvents(memory, run)
+  if (tool === 'dreaming_search' && run.scope === 'memory' && args.kind === 'changes') {
+    if (typeof args.query !== 'string') throw new Error('query is required')
+    const query = args.query.trim().toLowerCase()
+    const matches = (text: string) => !query || text.toLowerCase().includes(query)
+    // Use the saved discovery list, so resumed runs still expose their entire
+    // change set. Full text remains available through the normal read tools.
+    const changed = run.units
+    if (args.changeKind === 'blocks' || args.changeKind === 'openMessages') {
+      const visible = new Set(memory.dreamingMessages().map(message => message.id))
+      if (args.changeKind === 'blocks') {
+        const ids = new Set(changed.flatMap(unit => unit.blockIds ?? []))
+        const items = memory.listBlocks().filter(block => ids.has(block.id) && block.l5Raw.some(message => visible.has(message.id)))
+          .map(block => ({ id: block.id, threadId: block.threadId, createdAt: block.createdAt, turns: [block.startTurn, block.endTurn],
+            ...(block.l5Raw.every(message => visible.has(message.id)) ? { title: block.l0Title, summary: block.l1Summary?.slice(0, 400) } : {}) }))
+          .filter(block => matches(`${block.title ?? ''} ${block.summary ?? ''}`))
+        return { result: page(items, args), evidenceIds: [] }
+      }
+      const ids = new Set(changed.flatMap(unit => unit.messageIds ?? []))
+      const items = memory.listOpenTail().filter(message => ids.has(message.id) && visible.has(message.id) && matches(message.content))
+        .map(({ id, threadId, createdAt, role }) => ({ id, threadId, createdAt, role }))
+      return { result: page(items, args), evidenceIds: [] }
+    }
+    if (args.changeKind === 'daily') {
+      const dates = [...new Set(changed.flatMap(unit => unit.noteDates ?? []))]
+      return { result: page(dates.filter(matches).sort().reverse().map(date => ({ date })), args), evidenceIds: [] }
+    }
+    if (args.changeKind === 'experiences') {
+      const ids = new Set(changed.flatMap(unit => unit.experienceIds ?? []))
+      const items = memory.listExperiences(true).filter(item => ids.has(item.id) && item.status === 'needs-review'
+        && matches(`${item.title} ${item.content}`))
+      return { result: page(items.map(({ id, title }) => ({ id, title })), args), evidenceIds: [] }
+    }
+    if (args.changeKind !== undefined && args.changeKind !== 'events') throw new Error('Unknown change kind')
+    const ids = new Set(changed.flatMap(unit => unit.eventIds))
+    const items = events.filter(event => ids.has(event.id) && matches(`${event.title} ${event.summary}`))
+    return { result: page(items.map(event => ({ id: event.id, title: event.title, summary: safeSlice(event.summary, 500) })), args), evidenceIds: [] }
+  }
   const allowed = new Set(events.map(event => event.id))
   const topics = memory.listMemoryTopics([...allowed]).filter(topic => !topic.isFallback)
   const evidenceIds: string[] = []
@@ -343,11 +381,11 @@ export async function dreamingTool(memory: StrataGate, run: DreamingRun, action:
   throw new Error('Unknown Dreaming tool')
 }
 
-export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
+export function dreamingPayload(memory: StrataGate, run: DreamingRun, timeZone = 'Asia/Shanghai'): unknown {
   const unit = run.units[run.cursor]!
   if (run.scope === 'memory') {
     const visible = new Set(memory.dreamingMessages().map(message => message.id))
-    const today = toUtc8Iso(memory.currentTime()).slice(0, 10)
+    const today = dailyDate(new Date(memory.currentTime()), timeZone)
     const batchBlockIds = new Set(unit.blockIds ?? [])
     const batchMessageIds = new Set(unit.messageIds ?? [])
     const batchEventIds = new Set(unit.eventIds)
@@ -365,6 +403,25 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       ...(event.tags.includes('agent-recorded') ? { source: 'agent-recorded' as const } : {}),
       ...(event.sourceBlockId ? { sourceBlockId: event.sourceBlockId } : {}),
     })
+    const eventOrientItem = (event: EventCard) => ({
+      ...eventPath(event),
+      scope: event.scope,
+      summaryPreview: event.summary.slice(0, 240),
+      ...(event.summary.length > 240 ? { truncated: true } : {}),
+      ...(event.weight.pinned ? { pinned: true } : {}),
+      ...(event.supersededBy ? { supersededBy: event.supersededBy } : {}),
+      ...(event.temporal.happenedStart || event.temporal.happenedEnd || event.temporal.mentionedAt || event.temporal.status || event.temporal.originalText
+        ? {
+            temporal: {
+              ...(event.temporal.happenedStart ? { happenedStart: event.temporal.happenedStart } : {}),
+              ...(event.temporal.happenedEnd ? { happenedEnd: event.temporal.happenedEnd } : {}),
+              ...(event.temporal.mentionedAt ? { mentionedAt: event.temporal.mentionedAt } : {}),
+              ...(event.temporal.status ? { status: event.temporal.status } : {}),
+              ...(event.temporal.originalText ? { originalText: event.temporal.originalText } : {}),
+            },
+          }
+        : {}),
+    })
     const blockPath = (block: ReturnType<StrataGate['listBlocks']>[number]) => ({
       id: block.id,
       threadId: block.threadId,
@@ -373,9 +430,45 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
       ...(block.l5Raw.every(message => visible.has(message.id)) ? { title: block.l0Title } : {}),
     })
     const visibleEvents = dreamingEvents(memory, run)
+    const recentSessionMap = new Map<string, { threadId: string; blockCount: number; openMessageCount: number; latestAt: string; sampleTitle?: string }>()
+    for (const block of memory.listBlocks()) {
+      if (!block.l5Raw.some(message => visible.has(message.id))) continue;
+      const key = block.threadId ?? '(default)'
+      const prev = recentSessionMap.get(key)
+      const fullVisible = block.l5Raw.every(message => visible.has(message.id))
+      if (!prev) {
+        recentSessionMap.set(key, {
+          threadId: key,
+          blockCount: 1,
+          openMessageCount: 0,
+          latestAt: block.createdAt,
+          ...(fullVisible && block.l0Title ? { sampleTitle: block.l0Title } : {}),
+        })
+      } else {
+        prev.blockCount++
+        if (block.createdAt > prev.latestAt) {
+          prev.latestAt = block.createdAt
+          if (fullVisible && block.l0Title) prev.sampleTitle = block.l0Title
+        }
+      }
+    }
+    for (const message of memory.listOpenTail()) {
+      if (!visible.has(message.id)) continue
+      const key = message.threadId ?? '(default)'
+      const prev = recentSessionMap.get(key)
+      if (!prev) {
+        recentSessionMap.set(key, { threadId: key, blockCount: 0, openMessageCount: 1, latestAt: message.createdAt })
+      } else {
+        prev.openMessageCount++
+        if (message.createdAt > prev.latestAt) prev.latestAt = message.createdAt
+      }
+    }
+    const recentSessions = [...recentSessionMap.values()]
+      .sort((left, right) => right.latestAt.localeCompare(left.latestAt))
+      .slice(0, 15)
     const sameDay = (iso: string) => {
       const time = Date.parse(iso)
-      return Number.isFinite(time) && toUtc8Iso(time).slice(0, 10) === today
+      return Number.isFinite(time) && dailyDate(new Date(time), timeZone) === today
     }
     const otherEvents = visibleEvents
       .filter(event => !batchEventIds.has(event.id) && (
@@ -411,17 +504,21 @@ export function dreamingPayload(memory: StrataGate, run: DreamingRun): unknown {
     const visibleTopics = memory.listMemoryTopics(visibleEvents.map(event => event.id)).filter(topic => !topic.isFallback)
     const directoryOverview = visibleTopics.length ? buildDreamingDirectoryOverview(visibleTopics) : null
     return {
-      scope: 'memory', completedBatches: run.cursor, totalBatches: run.units.length, trigger: run.trigger,
-      blocks: memory.listBlocks().filter(block => unit.blockIds?.includes(block.id) && block.l5Raw.some(message => visible.has(message.id))).map(block => ({
+      scope: 'memory', phase: run.phase ?? 'orient', trigger: run.trigger,
+      currentDate: today, timeZone,
+      recentSessions,
+      blocks: memory.listBlocks().filter(block => unit.blockIds?.includes(block.id) && block.l5Raw.some(message => visible.has(message.id))).slice(0, DREAMING_CHANGE_PREVIEW_LIMIT).map(block => ({
         id: block.id, threadId: block.threadId, createdAt: block.createdAt, turns: [block.startTurn, block.endTurn],
         ...(block.l5Raw.every(message => visible.has(message.id)) ? { title: block.l0Title, summary: block.l1Summary?.slice(0, 400) } : {}),
       })),
-      openMessages: memory.listOpenTail().filter(message => visible.has(message.id) && unit.messageIds?.includes(message.id))
+      openMessages: memory.listOpenTail().filter(message => visible.has(message.id) && unit.messageIds?.includes(message.id)).slice(0, DREAMING_CHANGE_PREVIEW_LIMIT)
         .map(({ id, threadId, createdAt, role }) => ({ id, threadId, createdAt, role })),
-      events: visibleEvents.filter(event => batchEventIds.has(event.id)).map(eventPath),
+      changeCounts: { blocks: batchBlockIds.size, openMessages: batchMessageIds.size, events: batchEventIds.size, daily: batchNoteDates.size, experiences: unit.experienceIds?.length ?? 0 },
+      events: visibleEvents.filter(event => batchEventIds.has(event.id)).slice(0, DREAMING_CHANGE_PREVIEW_LIMIT).map(eventOrientItem),
       experiencesToReview: unit.experienceIds?.length ? memory.listExperiences(true)
-        .filter(item => item.status === 'needs-review' && unit.experienceIds?.includes(item.id)).map(({ id, title }) => ({ id, title })) : [],
-      noteDates: unit.noteDates ?? [], graphEnabled: memory.graphEnabled,
+        .filter(item => item.status === 'needs-review' && unit.experienceIds?.includes(item.id))
+        .slice(0, DREAMING_CHANGE_PREVIEW_LIMIT).map(({ id, title }) => ({ id, title })) : [],
+      noteDates: (unit.noteDates ?? []).slice(0, DREAMING_CHANGE_PREVIEW_LIMIT), graphEnabled: memory.graphEnabled,
       ...(directoryOverview ? { directoryOverview } : {}),
       ...(Object.keys(todayAndChanged).length ? { todayAndChanged } : {}),
       lastWriteFailure: run.lastWriteFailure ? { error: run.lastWriteFailure.error } : null,
@@ -462,20 +559,44 @@ export function dreamingEstimatedTokens(payload: unknown, action: DreamingAction
   return estimateTokens(JSON.stringify(payload)) + estimateTokens(JSON.stringify(action))
 }
 
-export function dreamingStatus(run?: DreamingRun): unknown {
+export function enrichDreamingChanges(
+  changes: DreamingRun['changes'],
+  runId: string,
+  snapshots: readonly DreamingEventRollbackRecord[] = [],
+) {
+  const base = changes ?? { editedEvents: 0, deletedEvents: 0, experiences: 0, items: [] }
+  const byChange = new Map(snapshots.filter(item => item.runId === runId).map(item => [item.changeId, item]))
+  const items = (base.items ?? []).map(item => {
+    if (!item.changeId) return { ...item, runId: item.runId ?? runId }
+    const snap = byChange.get(item.changeId)
+    if (!snap) return { ...item, runId: item.runId ?? runId, canRevert: false }
+    return {
+      ...item,
+      runId,
+      action: item.action ?? snap.action,
+      canRevert: !snap.revertedAt,
+      revertedAt: snap.revertedAt ?? null,
+    }
+  })
+  return { ...base, items }
+}
+
+export function dreamingStatus(run?: DreamingRun, snapshots: readonly DreamingEventRollbackRecord[] = []): unknown {
   if (!run) return null
   const interrupted = ['running', 'pausing'].includes(run.status) && !!run.leaseUntil && Date.parse(run.leaseUntil) <= Date.now()
   const legacyBoundary = run.status === 'paused' && run.tokenLimit != null && /消耗边界/.test(run.reason ?? '')
+  const phase = run.scope === 'memory' ? (run.phase ?? (run.status === 'completed' ? 'prune' : 'orient')) : null
   return { id: run.id, sessionId: run.sessionId ?? null, status: interrupted ? 'paused' : run.status, scope: run.scope,
+    phase,
     activity: interrupted || run.status === 'paused'
       ? run.scope === 'memory' ? '已暂停，进度已保存'
         : run.replanRequired ? '需要重新开始；后台目录整理等待本轮终止' : '已暂停；后台目录整理等待本轮继续或终止'
-      : run.activity,
+      : (run.activity || (phase ? dreamingPhaseActivity(phase) : '')),
     reason: interrupted ? '上次运行已中断，可以继续' : legacyBoundary ? '上次整理已暂停，可以继续；已完成的修改已保存。' : run.reason,
     waitingForProjection: !!run.waitingForProjection, replanRequired: !!run.replanRequired,
     completed: run.cursor, total: run.units.length, changedBatches: run.changedBatches, calls: run.calls,
     estimatedTokens: run.estimatedTokens,
-    changes: run.changes ?? { editedEvents: 0, deletedEvents: 0, experiences: 0, items: [] },
+    changes: enrichDreamingChanges(run.changes, run.id, snapshots),
     letter: run.letter ?? null,
     updatedAt: run.updatedAt }
 }
