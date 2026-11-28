@@ -25,7 +25,7 @@ Next: run CI and check build and test results.
 - **Default window & search:** Notes from the three most recent dates with notes are included in new sessions by default (configurable from 1 to 30). Older notes remain searchable by date or keyword.
 - **Session snapshot:** Each session fixes a note snapshot when first loaded so later writes do not repeatedly churn the active context. The latest notes can still be read again on demand.
 - **Verification boundary:** Daily notes are maintained by the agent and are not complete conversation transcripts. Always verify historical decisions, dates, or reasons against Events and original messages. Reading notes does not reinforce memory.
-- **UI & toggle:** View notes under **DSH Settings → StrataGate-AgentMemory → Short-term memory**. Disabling daily notes stops new writes and automatic inclusion while preserving existing files.
+- **UI & hot-reload settings:** View notes under **DSH Settings → StrataGate-AgentMemory → Short-term memory**. Toggling daily notes, changing timezone, or adjusting the 1–30 day window takes effect immediately on save without restarting DSH; disabling stops new writes and automatic inclusion while preserving existing files.
 
 ---
 
@@ -72,7 +72,7 @@ Actual transitions depend on both the decay coefficient and level thresholds; ea
 
 - **Preview vs apply:** The layered-content preview is for viewing only. Choosing an action such as “Let the assistant reference L4” attempts to apply that content to the conversation. The interface distinguishes an applied choice, a pending choice, and one that cannot be applied.
 - **Priority & fallback:** A user's manually chosen level takes priority over automatic compression and the agent's evidence reads. If context capacity is insufficient, the system first tries to condense other automatically managed history while preserving other manual choices; if capacity is still insufficient, it explains why.
-- **Decay reset:** A manual choice resets the decay anchor, and the view can gradually become concise again as subsequent conversation accumulates. See [manual level selection details (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/user-operation-priority.md).
+- **Decay reset:** A manual choice resets the decay anchor, and the view can gradually become concise again as subsequent conversation accumulates. See [manual level selection details (Chinese)](user-operation-priority.md).
 
 ---
 
@@ -106,7 +106,20 @@ Records also need an appropriate scope: for example, “Align the arrows in this
 | Two statements conflict and their validity is unresolved | Retain the conflict for further verification |
 | Several records may describe the same event | Check their complete contents and sources before deciding whether to merge |
 
-**Similarity does not establish duplication, and later progress does not make earlier records useless.** After code discovers potential duplicates, AI evaluates both records and their sources. Clearly distinct facts can remain separate; uncertain or unfinished cases are presented for user review. Users can inspect both sources, edit a merged draft, keep either record, or keep both, with processing history and undo support.
+**Similarity does not establish duplication, and later progress does not make earlier records useless.** After code discovers potential duplicates, AI evaluates both records and their sources. Clearly distinct facts can remain separate; uncertain or unfinished cases are presented for user review. Users can inspect both sources, edit a merged draft, keep either record, or keep both, with processing history and undo support. Event cards also attach verbatim source quotes extracted from source messages (clearly labeled when auto-selected versus manually supplied).
+
+---
+
+<a id="dreaming-and-letters"></a>
+
+## 3b. Dreaming controls & Daily Letters
+
+- **Multiple entry points:** Start, pause, resume, or open the live Dreaming session from the **Overview**, **Topic directory**, or **More → Advanced settings**.
+- **Persistent switches & daily token budget:** Under **More → Advanced settings**, you can persistently enable or disable automatic Dreaming and Daily Letters, set a **daily token budget** (default 5,000,000 tokens/day; `0` for unlimited), and inspect today's usage progress bar. Disabling automatic Dreaming or reaching the daily budget immediately halts active automatic runs across workspaces without interrupting manually triggered runs.
+- **Unread source reminder:** When Dreaming creates or updates an Event referencing source messages whose full body has not yet been read, the write succeeds while returning `unreadSourceMessageIds` and a warning reminding the agent to verify facts if needed.
+- **Daily Letters:** Separate from daily notes, the assistant archives at most one handwritten-style letter per workspace after a day rolls over, reflecting on concrete progress from that day's sessions. Letters open from the **Overview** page and include an expandable footer summarizing Events and reusable experiences organized by Dreaming that day (including which Events were kept after merges). Built-in per-day backoff and a 24-hour circuit breaker prevent repeated retry spend on failures.
+
+See [Dreaming maintenance details (Chinese)](dreaming-agent.md).
 
 ---
 
@@ -120,7 +133,7 @@ The knowledge graph derives people, projects, organizations, tools, places, and 
 - **How to enable:** Go to **More → Advanced settings → Memory configuration → Enable knowledge graph**. If historical Events need backfilling, the interface shows the pending volume for confirmation before starting.
 - **Disabling safely:** Disabling the graph stops its processing, queries, and automatic recall while preserving existing graph data and sources. Event cards, topics, ordinary retrieval, and the persistent Profile work independently.
 
-See [optional knowledge graph details (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md).
+See [optional knowledge graph details (Chinese)](knowledge-graph.md).
 
 ---
 
@@ -128,7 +141,7 @@ See [optional knowledge graph details (Chinese)](https://github.com/diqierjia/St
 
 ## 5. Persistent Profile routing & consent rules
 
-The persistent Profile stores user information that should remain available across every session, separately from Events retrieved by relevance and requests that apply only to the current answer:
+The persistent Profile stores user information that should remain available across every session (total character limit configurable between **2,000 and 12,000 characters**, default 6,000, with the maintenance trigger scaling accordingly), separately from Events retrieved by relevance and requests that apply only to the current answer:
 
 | User statement | Where it belongs | When it is used |
 | --- | --- | --- |
@@ -210,7 +223,7 @@ The base Event-weight function is:
 
 <p align="center"><strong>λ(n) = λ<sub>event</sub> / (1 + 1.5 ln(n))</strong></p>
 
-The default base decay coefficient λ<sub>event</sub> is **0.015** (configurable in settings; `0` disables decay).
+The default base decay coefficient λ<sub>event</sub> is **0.015** (configurable from `0–0.2` in steps of `0.005` under **More → Engine parameters** or **More → Advanced settings**; `0` disables decay, separate from the Block decay coefficient `λ_block` in `0–0.4`).
 
 - `t` is the difference between the current turn and the most recent reinforcement anchor (new Events start counting from creation);
 - `n` is an internal count initialized to 1 and incremented by answer adoption or duplicate confirmation during active-memory recording (retrieval alone does not increment it);

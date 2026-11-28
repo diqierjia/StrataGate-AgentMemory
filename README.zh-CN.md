@@ -133,7 +133,7 @@ Agent 按需把进展、阶段结果、有效失败经验、阻塞和下一步�
 下一步：运行 CI，检查构建与测试结果。
 ```
 
-新会话默认带入**最近三个有笔记日期**的内容（可调为 1–30），首次加载时固定快照，避免后续写入反复改动上下文；更早笔记仍可按日期或关键词检索。
+新会话默认带入**最近三个有笔记日期**的内容（可调为 1–30；开关、时区与带入天数保存后热更新生效，无需重启），首次加载时固定快照，避免后续写入反复改动上下文；更早笔记仍可按日期或关键词检索。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/stratagate-ui-daily-notes-dark.png" />
@@ -171,7 +171,7 @@ L3/L4 精简规则、衰减公式、默认层级表与容量回退策略见[机�
 
 #### 3.1 事件记忆与更新
 
-重要事实、决定、偏好、要求和变化保存为 Event，保留内容、适用范围、来源消息以及时间信息——区分**提及时间**与**发生时间**（例如 5 月 6 日说“下周完成原型”，记录的是计划时间，而非已完成证据）。常规读文件、工具调用和仅限当前任务的指示不会无差别转为长期事件。
+重要事实、决定、偏好、要求和变化保存为 Event，保留内容、适用范围、来源消息（含按相似度抽取并标注来源性质的逐字原文引用）以及时间信息——区分**提及时间**与**发生时间**（例如 5 月 6 日说“下周完成原型”，记录的是计划时间，而非已完成证据）。常规读文件、工具调用和仅限当前任务的指示不会无差别转为长期事件。
 
 ![StrataGate 长期记忆时间线界面：按时间排列的事件、Dreaming 整理记录与采用标记](docs/assets/stratagate-ui-event-timeline.png)
 
@@ -197,19 +197,19 @@ L3/L4 精简规则、衰减公式、默认层级表与容量回退策略见[机�
   <img src="docs/assets/stratagate-market-topic-directory.png" alt="StrataGate 书本样式的主题目录界面：左侧章节目录，右侧小节概览与关联事件" width="100%" />
 </picture>
 
-**Dreaming 整理历史记忆。** 可在目录页手动点「整理记忆」，也会在有新增内容、主 Agent 空闲约 30 分钟且距上次自动运行至少 24 小时时自动启动。独立 Agent 按需查阅跨会话原文、Event 和笔记，补记遗漏、修正或删除错误的派生 Event、合并重复并维护目录与可复用经验（`memory_search_experiences`），同时保持原始对话、真实历史变化与 Profile 不变。运行可随时查看、暂停、继续或终止且保留已保存修改。详见[记忆目录说明](docs/MEMORY_TOPICS.zh-CN.md)和[Dreaming 记忆整理](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md)。
+**Dreaming 整理历史记忆，每日来信回顾当天进展。** 可从**总览页**、**主题目录页**或**更多 → 高级设置**启动、暂停、继续或打开对应整理会话；也会在有新增内容、主 Agent 空闲约 30 分钟且距上次自动运行至少 24 小时时自动启动。在**更多 → 高级设置**中可永久开关自动 Dreaming 与每日来信，并设置**每日 Token 上限**（默认 500 万/天，`0` 为不限）及查看今日消耗——关闭自动开关或触达上限时会跨工作区中止自动任务，但不会误杀手动启动的任务。独立 Agent 按需查阅跨会话原文、Event 和笔记，补记遗漏、修正或删除错误的派生 Event、合并重复并维护目录与可复用经验（`memory_search_experiences`），同时保持原始对话、真实历史变化与 Profile 不变。独立于每日笔记，**每日来信**在跨日后按工作区归档手写风格来信（每天最多一封，可从总览翻阅），末尾可展开查看当天整理涉及的事件与经验。详见[记忆目录说明](docs/MEMORY_TOPICS.zh-CN.md)、[Dreaming 与每日来信细则](docs/MEMORY_DETAILS.zh-CN.md#dreaming-and-letters)和[Dreaming 记忆整理](docs/dreaming-agent.md)。
 
 <a id="current-state-graph"></a>
 
 #### 3.3 知识图谱（可选）
 
-开启后，知识图谱从 Event 派生人物、项目、组织、工具和地点及关联关系，并保留来源，用于回答“现在是什么情况”。**图谱默认关闭**，开启会增加模型调用；关闭后停止处理与召回但保留已有数据，不影响事件卡、主题目录、普通检索和常驻画像。开启入口与历史补建说明见[机制细则：可选知识图谱](docs/MEMORY_DETAILS.zh-CN.md#knowledge-graph)和[可选知识图谱说明](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md)。
+开启后，知识图谱从 Event 派生人物、项目、组织、工具和地点及关联关系，并保留来源，用于回答“现在是什么情况”。**图谱默认关闭**，开启会增加模型调用；关闭后停止处理与召回但保留已有数据，不影响事件卡、主题目录、普通检索和常驻画像。开启入口与历史补建说明见[机制细则：可选知识图谱](docs/MEMORY_DETAILS.zh-CN.md#knowledge-graph)和[可选知识图谱说明](docs/knowledge-graph.md)。
 
 <a id="persistent-profile"></a>
 
 #### 3.4 常驻画像
 
-常驻画像保存每次对话都需要持续参考的用户信息，与按相关性查找的 Event、仅本次有效的对话要求分开：
+常驻画像保存每次对话都需要持续参考的用户信息（总字数上限支持 **2,000–12,000 字**自定义，默认 6,000），与按相关性查找的 Event、仅本次有效的对话要求分开：
 
 | 用户表达 | 保存位置 | 什么时候使用 |
 | --- | --- | --- |
@@ -282,6 +282,7 @@ Event 权重参与后续召回排序，未被采用时随对话轮次逐渐衰�
 
 ![StrataGate 更多与设置界面：运行状态、重复记忆复核、外部 AI 记忆导入、短期记忆开关与引擎参数](docs/assets/stratagate-ui-settings.png)
 
+- **引擎参数与 Dreaming 控制：** 可在**更多 → 引擎参数**或**高级设置**中分别调整 **Block 衰减系数**（`0–0.4`，默认 `0.30`）与 **Event 衰减系数**（`0–0.2`，默认 `0.015`，`0` 关闭衰减），以及自动 Dreaming 开关、每日来信开关与每日 Token 上限。
 - **外部 AI 记忆迁移：** 在 DSH 界面粘贴其他 AI 导出的记忆总结，预览新增、合并、取代与冲突决策，低置信度项可人工选择，提交后支持按批次撤销并保留原始导入内容。→ [外部记忆导入说明](docs/EXTERNAL_MEMORY_IMPORT.zh-CN.md)
 - **兼容性与本地存储：** 升级后请重启对应的 DSH profile。当前版本覆盖 DSH **0.2.x** 及其预发布版并保留旧版适配，DSH **0.3.x** 暂不支持。会话来源与长期记忆保存在本地 SQLite，每日笔记保存为 Markdown，卸载插件不会自动删除数据。→ [配置与升级细则](docs/MEMORY_DETAILS.zh-CN.md#configuration-and-import) · [插件使用说明](docs/DSH.zh-CN.md)
 
@@ -325,9 +326,9 @@ npm run build
 | [记忆机制细则与公式](docs/MEMORY_DETAILS.zh-CN.md) | L3/L4 精简规则、衰减与权重公式、更新规则、证据门字段与 R8 失败分析 |
 | [记忆目录与主题概览](docs/MEMORY_TOPICS.zh-CN.md) | 章节与小节、来源追溯、后台整理、预算和恢复 |
 | [事件提取规则](docs/event-extractor.md) | 提取判断、适用范围、重复与历史关系，以及兼容边界 |
-| [Dreaming 记忆整理](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md) | 整理范围、启动条件、删除语义和恢复 |
-| [可选知识图谱](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md) | 默认状态、开启、暂停、关闭及历史补建 |
-| [手动层级选择](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/user-operation-priority.md) | 内容预览、实际应用、容量不足与恢复操作 |
+| [Dreaming 记忆整理](docs/dreaming-agent.md) | 整理范围、启动条件、删除语义和恢复 |
+| [可选知识图谱](docs/knowledge-graph.md) | 默认状态、开启、暂停、关闭及历史补建 |
+| [手动层级选择](docs/user-operation-priority.md) | 内容预览、实际应用、容量不足与恢复操作 |
 | [架构文档](docs/ARCHITECTURE.md) | 分层规则、事件与图谱、检索、证据门、权重、存储和核心 API |
 | [外部记忆导入](docs/EXTERNAL_MEMORY_IMPORT.zh-CN.md) | 导出格式、导入流程和接入示例 |
 | [完整评测](docs/EVALUATION.md) | 实验协议、版本演变、失败分析和结果范围 |
