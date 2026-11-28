@@ -3791,7 +3791,7 @@ export class StrataGateRuntime {
     if (!key) throw new TypeError('StrataGate admin namespace must not be empty')
     if (!text.trim()) throw new TypeError('External memory text must not be empty')
     await this.flush()
-    const { memory, owned } = await this.openAdminMemory(key)
+    const { memory, owned } = await this.openAdminMemory(key, { allowCreate: true })
     try {
       await this.refreshExternalImportMemory(key, memory)
       const job = await memory.createExternalMemoryImportJob(text)
@@ -3805,6 +3805,7 @@ export class StrataGateRuntime {
   async adminExternalMemoryStatus(namespace: string, jobId?: string): Promise<unknown> {
     const key = namespace.trim()
     if (!key) throw new TypeError('StrataGate admin namespace must not be empty')
+    if (!this.spaces.has(key) && !(await this.adminNamespaces()).includes(key)) return { job: null }
     const { memory, owned } = await this.openAdminMemory(key)
     try {
       await this.refreshExternalImportMemory(key, memory)
@@ -4669,12 +4670,12 @@ export class StrataGateRuntime {
 
   private async openAdminMemory(
     namespace: string,
-    options: { derivation?: boolean } = {},
+    options: { derivation?: boolean; allowCreate?: boolean } = {},
   ): Promise<{ memory: StrataGate; owned: boolean }> {
     this.graphStore()
     const active = this.spaces.get(namespace)
     if (active) return { memory: await active, owned: false }
-    if (this.config.database === ':memory:' || !existsSync(this.config.database)) {
+    if (!options.allowCreate && (this.config.database === ':memory:' || !existsSync(this.config.database))) {
       throw new Error(`Unknown StrataGate namespace: ${namespace}`)
     }
     return {

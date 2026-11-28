@@ -2708,7 +2708,10 @@ window.__ModuleLoader__.load({
     }
 
     function workspaceProjectKey(path) {
-      const canonical = String(path || '').replaceAll('\\', '/').toLowerCase()
+      let canonical = String(path || '').replaceAll('\\', '/').toLowerCase()
+      if (/^[a-z]:\/+$/.test(canonical)) canonical = canonical.slice(0, 2) + '/'
+      else if (/^\/+$/.test(canonical)) canonical = '/'
+      else canonical = canonical.replace(/\/+$/, '')
       if (!canonical || !globalThis.crypto?.subtle) return Promise.resolve('')
       return globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical)).then((digest) =>
         Array.from(new Uint8Array(digest).slice(0, 10), (byte) => byte.toString(16).padStart(2, '0')).join(''))
@@ -5989,7 +5992,7 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', 'aria-label': '增加' + label, disabled: disabled || !Number.isFinite(current) || current >= max, onClick: () => bump(1) }, '+'))
     }
 
-    function MoreHome({ setView, selected, overview = {}, namespace, dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }) {
+    function MoreHome({ setView, selected, workspaceTitles, overview = {}, namespace, dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }) {
       const pluginSettings = usePluginSettings ? usePluginSettings((state) => state) : null
       const settingsWritable = pluginSettings?.writable === true
       const [pending, setPending] = React.useState({})
@@ -6071,7 +6074,7 @@ window.__ModuleLoader__.load({
         goRow('settings', '高级设置', '向量检索、精排与记忆配置', 'settings'),
         h('li', { key: 'directory', className: 'sg-more-row sg-more-row-path' }, h('div', { className: 'sg-more-path' }, h('span', { className: 'sg-k2' }, '数据目录'), h('span', { className: 'sg-s2 sg-mono sg-path', title: dataDirectory || undefined }, dataDirectory || '当前使用内存存储')),
         h('button', { type: 'button', className: 'sg-quiet-button', disabled: !dataDirectory, onClick: () => void api('storage/open-directory', {}, { method: 'POST' }).catch((reason) => setSettingError({ key: 'directory', text: '打开失败：' + String(reason?.message || reason) })) }, '打开')),
-        h('li', { key: 'workspace', className: 'sg-more-row' }, h('div', null, h('span', { className: 'sg-k2' }, '当前工作区'), h('span', { className: 'sg-s2 sg-mono' }, selected?.workspaceName || '当前工作区')),
+        h('li', { key: 'workspace', className: 'sg-more-row' }, h('div', null, h('span', { className: 'sg-k2' }, '当前工作区'), h('span', { className: 'sg-s2 sg-mono' }, projectName(selected || namespace, workspaceTitles))),
           h('button', { type: 'button', className: 'sg-quiet-button', disabled: !namespace, onClick: copyWorkspace }, copyState || '复制 ID')),
       ]
       const feedbackRows = [
@@ -7765,7 +7768,7 @@ window.__ModuleLoader__.load({
         !saved || feedback.kind === 'failed' ? h('button', { type: 'button', className: 'sg-quiet-button', disabled: saving || reading, onClick: () => void readSaved() }, reading ? '正在读取…' : '重新读取配置') : null)
     }
 
-    function SettingsPage({ selected, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged, onOpenDreamingSession }) {
+    function SettingsPage({ selected, workspaceTitles, graphSettings, vectorSettings, retrievalSettingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory, onBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged, onOpenDreamingSession }) {
       const [turnSize, setTurnSize] = React.useState(String(selected.blockTurnSize ?? 6))
       const [lambda, setLambda] = React.useState(String(selected.blockDecayLambda ?? 0.3))
       const [eventLambda, setEventLambda] = React.useState(String(selected.eventDecayLambda ?? 0.015))
@@ -7794,7 +7797,7 @@ window.__ModuleLoader__.load({
       const effortMode = pluginSettings?.value?.structuredReasoningEffort || 'auto'
       const effortOverridden = pluginSettings?.user?.structuredReasoningEffort !== undefined
       const settingsWritable = pluginSettings?.writable === true
-      const workspaceRows = [['Schema', 'v' + selected.schemaVersion], ['工作区', selected.workspaceName || '当前工作区'], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
+      const workspaceRows = [['Schema', 'v' + selected.schemaVersion], ['工作区', projectName(selected?.namespace ? selected : namespace, workspaceTitles)], ['内部空间 ID', namespace], ['已处理轮次', selected.currentTurn]]
       const runtimeDiagnostics = [
         ['duplicates', '⇄', '重复记忆整理', '查看保留原因、合并候选与重新扫描'],
         ['system', '✓', '系统状态', '处理概览与最近整理时间'],
@@ -8011,6 +8014,8 @@ window.__ModuleLoader__.load({
       const [overview, setOverview] = React.useState({ namespaces: [] })
       const [namespace, setNamespace] = React.useState('')
       const [workspaceTitles, setWorkspaceTitles] = React.useState({})
+      const [hostNamespaces, setHostNamespaces] = React.useState([])
+      const workspaceSignature = JSON.stringify((workspaceItems || []).map((item) => [item.path, item.title, item.sessionIds]))
       const [workspaceSessionIds, setWorkspaceSessionIds] = React.useState({})
       const [conversationId, setConversationId] = React.useState('')
       const [section, setSection] = React.useState('overview')
@@ -8025,6 +8030,7 @@ window.__ModuleLoader__.load({
       const [recentError, setRecentError] = React.useState('')
       const [savingSettings, setSavingSettings] = React.useState(false)
       const [pollFast, setPollFast] = React.useState(false)
+      const hostSignatureRef = React.useRef(workspaceSignature)
       const dashboardRequestRef = React.useRef(null)
       const sourceRequestRef = React.useRef(null)
       const namespaceRef = React.useRef(namespace)
@@ -8054,11 +8060,12 @@ window.__ModuleLoader__.load({
           sessionIds: Array.isArray(workspace.sessionIds) ? workspace.sessionIds.map(String) : [],
         }))).then((entries) => {
           if (!active) return
+          setHostNamespaces(entries.filter(({ key }) => key).map(({ key }) => ({ namespace: 'dsh:project:' + key })))
           setWorkspaceTitles(Object.fromEntries(entries.filter(({ key, title }) => key && title).map(({ key, title }) => [key, title])))
           setWorkspaceSessionIds(Object.fromEntries(entries.filter(({ key }) => key).map(({ key, sessionIds }) => [key, sessionIds])))
         })
         return () => { active = false }
-      }, [workspaceItems])
+      }, [workspaceSignature])
 
       const loadDashboard = React.useCallback((activeNamespace, options = {}) => {
         const background = options.background === true
@@ -8081,7 +8088,7 @@ window.__ModuleLoader__.load({
           setPollFast(next.processing === true)
           if (next.namespace) {
             loadedNamespaceRef.current = next.namespace
-            setNamespace((current) => next.overview?.namespaces?.some((item) => item.namespace === current) ? current : next.namespace)
+            setNamespace((current) => current || next.namespace)
           }
           if (next.data) {
             setData(next.data)
@@ -8151,7 +8158,6 @@ window.__ModuleLoader__.load({
         setConversationId(''); if (!navigated) setView({ name: 'root' }); setSource(null); setRecentError(''); setData({ events: [], graph: { nodes: [], edges: [], migration: null }, blocks: [], openBlock: null, conversations: [], activeThreadId: null, audit: [], pagination: { events: { total: 0, offset: 0, limit: 40 }, blocks: { total: 0, offset: 0, limit: 40 }, audit: { total: 0, offset: 0, limit: 100 } } }); void loadDashboard(namespace, { force: true })
       }, [namespace, loadDashboard])
       React.useEffect(() => {
-        if (!namespace) return undefined
         let stopped = false
         let timer = null
         const schedule = (delay) => {
@@ -8182,6 +8188,22 @@ window.__ModuleLoader__.load({
         }
       }, [namespace, conversationId, pollFast, loadDashboard])
 
+      React.useEffect(() => {
+        if (hostSignatureRef.current === workspaceSignature) return undefined
+        hostSignatureRef.current = workspaceSignature
+        let stopped = false
+        let timer = null
+        const refreshHost = () => {
+          if (stopped) return
+          if (dashboardRequestRef.current) { timer = window.setTimeout(refreshHost, 150); return }
+          void loadDashboard(namespaceRef.current, { background: true })
+        }
+        timer = window.setTimeout(refreshHost, 150)
+        return () => { stopped = true; if (timer !== null) window.clearTimeout(timer) }
+      }, [workspaceSignature, loadDashboard])
+
+      const workspaceOptions = [...(overview.namespaces || [])]
+      for (const item of hostNamespaces) if (!workspaceOptions.some((row) => row.namespace === item.namespace)) workspaceOptions.push(item)
       const selected = (overview.namespaces || []).find((item) => item.namespace === namespace)
       const runtimeState = overviewRuntimeState(selected, loading, error)
       const project = projectName(selected || namespace, workspaceTitles)
@@ -8284,9 +8306,10 @@ window.__ModuleLoader__.load({
       const moreBack = () => setView({ name: 'root' })
 
       let content = null
-      if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
-      else if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings') content = h(SettingsPage, { selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, eventDecayLambda: 0.015, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
+      if (selected && (section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
+      else if (loading && !selected && !namespace) content = h(Loading)
+      else if (view.name === 'settings') content = h(SettingsPage, { workspaceTitles, selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, eventDecayLambda: 0.015, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
+      else if (section === 'overview' && view.name === 'root' && !selected && !!namespace) content = h(Empty, { title: '该工作区暂无记忆', copy: '开始对话或在更多页面导入其他 AI 记忆。' })
       else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection,
         dreaming: namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
@@ -8321,7 +8344,7 @@ window.__ModuleLoader__.load({
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blockTurnSize: selected?.blockTurnSize || 6, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh })
           : section === 'long' ? null
-            : h(MoreHome, { setView, selected, overview, namespace, dataDirectory: overview.dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }))
+            : h(MoreHome, { setView, selected, workspaceTitles, overview, namespace, dataDirectory: overview.dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }))
 
       return h('main', { className: 'sg-memory sg-unified-top' + (section === 'overview' && view.name === 'root' ? ' sg-overview-page' : '') + (view.name === 'duplicates' ? ' sg-memory-review' : '') + (view.name === 'settings' || view.name === 'display' || (section === 'more' && view.name === 'root') ? ' sg-settings-page' : ''), 'data-testid': 'stratagate-memory-ui' },
         h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS + R6_STYLES),
@@ -8332,7 +8355,7 @@ window.__ModuleLoader__.load({
               h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null), onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
             // Workspace switcher sits right beside Star, not on its own row.
             h('div', { className: 'sg-header-end' },
-              h('div', { className: 'sg-project' }, h('i', { className: 'sg-runtime-dot', 'data-testid': 'overview-workspace-dot', 'data-state': runtimeState.state, role: 'img', 'aria-label': runtimeState.text, title: runtimeState.text }), h('span', { className: 'sg-project-label' }, '当前工作区'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
+              h('div', { className: 'sg-project' }, h('i', { className: 'sg-runtime-dot', 'data-testid': 'overview-workspace-dot', 'data-state': runtimeState.state, role: 'img', 'aria-label': runtimeState.text, title: runtimeState.text }), h('span', { className: 'sg-project-label' }, '当前工作区'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, [!namespace ? h('option', { key: '', value: '' }, '选择工作区') : null, ...workspaceOptions.map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles)))])),
               GITHUB_FEEDBACK_ENABLED ? h(HeaderStarLink) : null)),
         h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['overview', '总览'], ['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, TAB_SWATCH[id] ? h('i', { key: 'sw', className: 'sg-tab-swatch ' + TAB_SWATCH[id], 'aria-hidden': 'true' }) : null, label))),
         h('div', { className: 'sg-page-body' },

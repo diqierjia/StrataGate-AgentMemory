@@ -121,7 +121,10 @@
     }
 
     function workspaceProjectKey(path) {
-      const canonical = String(path || '').replaceAll('\\', '/').toLowerCase()
+      let canonical = String(path || '').replaceAll('\\', '/').toLowerCase()
+      if (/^[a-z]:\/+$/.test(canonical)) canonical = canonical.slice(0, 2) + '/'
+      else if (/^\/+$/.test(canonical)) canonical = '/'
+      else canonical = canonical.replace(/\/+$/, '')
       if (!canonical || !globalThis.crypto?.subtle) return Promise.resolve('')
       return globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical)).then((digest) =>
         Array.from(new Uint8Array(digest).slice(0, 10), (byte) => byte.toString(16).padStart(2, '0')).join(''))

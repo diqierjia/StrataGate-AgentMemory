@@ -518,6 +518,29 @@ describe('DSH runtime ingestion', () => {
     }
   })
 
+  it('does not create an unseen workspace until an external import starts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'stratagate-import-new-workspace-'))
+    const database = join(directory, 'memory.db')
+    const namespace = 'dsh:project:0123456789abcdef0123'
+    const models = { ...fakeModels,
+      runDetached: async <T>(_sessionId: string, operation: () => Promise<T>): Promise<T> => operation(),
+      externalMemoryExtractor: async () => ({ candidates: [{ title: '导入记忆', summary: '新工作区。' }] }),
+      externalMemoryDecider: async () => ({ action: 'ADD' as const, confidence: 0.99 }),
+    } as unknown as DshModelBridge
+    const runtime = new StrataGateRuntime({ database, namespaceMode: 'project', namespacePrefix: 'dsh', globalNamespace: 'global',
+      blockTurnSize: 6, blockDecayLambda: 0.3, ingestSubagents: false, maxOutputTokens: 2048 }, models)
+    try {
+      expect(await runtime.adminExternalMemoryStatus(namespace)).toEqual({ job: null })
+      expect(await runtime.adminNamespaces()).toEqual([])
+      const started = await runtime.adminPreviewExternalMemory(namespace, '{broken') as { jobId: string }
+      expect(await runtime.adminNamespaces()).toContain(namespace)
+      await vi.waitFor(async () => expect(await runtime.adminExternalMemoryStatus(namespace, started.jobId)).toMatchObject({ status: 'awaiting_confirmation' }))
+    } finally {
+      await runtime.close()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('runs malformed external-memory recovery in a resumable background job', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'stratagate-import-job-'))
     const database = join(directory, 'memory.db')

@@ -11,7 +11,7 @@ function loadSupportHelpers(stateValues: unknown[] = [], globals: Record<string,
   const instrumented = source.replace(
     "    exports.name = 'stratagate-dsh'",
     "    exports.__test = { feedbackEmailUrl, copyReportAndComposeEmail, handleFeedbackEmailResult, HeaderStarLink, loadStarCount, formatStarCount, GitHubMarkIcon, StrataGateMark, GITHUB_FEEDBACK_ENABLED, FEEDBACK_EMAIL, EMAIL_BODY_HINT, feedbackDraftMarkdown, restoreFeedbackDraftValues, shouldExpandFeedbackPreview, handleFeedbackIssueResult, issueUrl, buildSupportReport, copyReportAndOpenIssue, downloadSupportReport, readFeedbackDeepLink, readFeedbackNavigationState, readNewFeedbackNavigationState, readGraphNodeNavigationState, readGraphNodeDeepLink, consumeFeedbackDeepLink, consumeGraphNodeDeepLink, feedbackLinkTarget, navigateToFeedback, navigateToGraphNode, installFeedbackLinkNavigation, NodePill, StaticEntityPill, EventMetadata, MemoryWeightTrajectory, ProcessingStatus, summaryUnavailable, SummaryUnavailable, TopicBootstrapNotice, taskStatus, OverviewPage, ProfilePage, ProfileLimitSettings, SettingsPage, SupportPage, SidebarPlacementPrompt, readSidebarPromptState, ISSUE_URL, ISSUE_BODY_HINT, FEEDBACK_AI_PROMPT, apply }; exports.name = 'stratagate-dsh'",
-  ).replace('exports.__test = {', 'exports.__test = { RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, overviewRuntimeState, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, visibleBlockLevel, BlockSelectionFeedback,')
+  ).replace('exports.__test = {', 'exports.__test = { workspaceProjectKey, projectName, RetrievalModelSettings, MoreHome, DailyNotesPage, DailyNotesSettings, renderDailyMarkdown, dailyRelative, dailyInline, DreamingPanel, overviewRuntimeState, MemoryPage, LongTermPage, ShortTermPage, BlockLayerPanel, visibleBlockLevel, BlockSelectionFeedback,')
   .replace('exports.__test = {', 'exports.__test = { EventDetail, EventMemoryDetails, EventProvenanceTabs, EventDossierRail,')
   let definition: any
   runInNewContext(instrumented, {
@@ -64,6 +64,17 @@ function deepElementProps(tree: unknown): any[] {
 }
 
 describe('StrataGate Web client contract', () => {
+  it('matches trailing separators and preserves root workspace paths', async () => {
+    const { webcrypto, createHash } = await import('node:crypto')
+    const { workspaceProjectKey, projectName } = loadSupportHelpers([], { crypto: webcrypto, TextEncoder })
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex').slice(0, 20)
+    expect(await workspaceProjectKey('C:\\Project\\')).toBe(hash('c:/project'))
+    expect(await workspaceProjectKey('C:\\\\')).toBe(hash('c:/'))
+    expect(await workspaceProjectKey('/')).toBe(hash('/'))
+    const key = hash('c:/project')
+    expect(projectName({ namespace: 'dsh:project:' + key, workspaceName: 'old' }, { [key]: '宿主标题' })).toBe('宿主标题')
+  })
+
   it.each(['embedding', 'rerank'])('shows confirmed saved state only after %s settings are available', (kind) => {
     const { RetrievalModelSettings } = loadSupportHelpers()
     const missing = RetrievalModelSettings({ kind, settings: null, writable: true })

@@ -111,6 +111,8 @@
       const [overview, setOverview] = React.useState({ namespaces: [] })
       const [namespace, setNamespace] = React.useState('')
       const [workspaceTitles, setWorkspaceTitles] = React.useState({})
+      const [hostNamespaces, setHostNamespaces] = React.useState([])
+      const workspaceSignature = JSON.stringify((workspaceItems || []).map((item) => [item.path, item.title, item.sessionIds]))
       const [workspaceSessionIds, setWorkspaceSessionIds] = React.useState({})
       const [conversationId, setConversationId] = React.useState('')
       const [section, setSection] = React.useState('overview')
@@ -125,6 +127,7 @@
       const [recentError, setRecentError] = React.useState('')
       const [savingSettings, setSavingSettings] = React.useState(false)
       const [pollFast, setPollFast] = React.useState(false)
+      const hostSignatureRef = React.useRef(workspaceSignature)
       const dashboardRequestRef = React.useRef(null)
       const sourceRequestRef = React.useRef(null)
       const namespaceRef = React.useRef(namespace)
@@ -154,11 +157,12 @@
           sessionIds: Array.isArray(workspace.sessionIds) ? workspace.sessionIds.map(String) : [],
         }))).then((entries) => {
           if (!active) return
+          setHostNamespaces(entries.filter(({ key }) => key).map(({ key }) => ({ namespace: 'dsh:project:' + key })))
           setWorkspaceTitles(Object.fromEntries(entries.filter(({ key, title }) => key && title).map(({ key, title }) => [key, title])))
           setWorkspaceSessionIds(Object.fromEntries(entries.filter(({ key }) => key).map(({ key, sessionIds }) => [key, sessionIds])))
         })
         return () => { active = false }
-      }, [workspaceItems])
+      }, [workspaceSignature])
 
       const loadDashboard = React.useCallback((activeNamespace, options = {}) => {
         const background = options.background === true
@@ -181,7 +185,7 @@
           setPollFast(next.processing === true)
           if (next.namespace) {
             loadedNamespaceRef.current = next.namespace
-            setNamespace((current) => next.overview?.namespaces?.some((item) => item.namespace === current) ? current : next.namespace)
+            setNamespace((current) => current || next.namespace)
           }
           if (next.data) {
             setData(next.data)
@@ -251,7 +255,6 @@
         setConversationId(''); if (!navigated) setView({ name: 'root' }); setSource(null); setRecentError(''); setData({ events: [], graph: { nodes: [], edges: [], migration: null }, blocks: [], openBlock: null, conversations: [], activeThreadId: null, audit: [], pagination: { events: { total: 0, offset: 0, limit: 40 }, blocks: { total: 0, offset: 0, limit: 40 }, audit: { total: 0, offset: 0, limit: 100 } } }); void loadDashboard(namespace, { force: true })
       }, [namespace, loadDashboard])
       React.useEffect(() => {
-        if (!namespace) return undefined
         let stopped = false
         let timer = null
         const schedule = (delay) => {
@@ -282,6 +285,22 @@
         }
       }, [namespace, conversationId, pollFast, loadDashboard])
 
+      React.useEffect(() => {
+        if (hostSignatureRef.current === workspaceSignature) return undefined
+        hostSignatureRef.current = workspaceSignature
+        let stopped = false
+        let timer = null
+        const refreshHost = () => {
+          if (stopped) return
+          if (dashboardRequestRef.current) { timer = window.setTimeout(refreshHost, 150); return }
+          void loadDashboard(namespaceRef.current, { background: true })
+        }
+        timer = window.setTimeout(refreshHost, 150)
+        return () => { stopped = true; if (timer !== null) window.clearTimeout(timer) }
+      }, [workspaceSignature, loadDashboard])
+
+      const workspaceOptions = [...(overview.namespaces || [])]
+      for (const item of hostNamespaces) if (!workspaceOptions.some((row) => row.namespace === item.namespace)) workspaceOptions.push(item)
       const selected = (overview.namespaces || []).find((item) => item.namespace === namespace)
       const runtimeState = overviewRuntimeState(selected, loading, error)
       const project = projectName(selected || namespace, workspaceTitles)
@@ -384,9 +403,10 @@
       const moreBack = () => setView({ name: 'root' })
 
       let content = null
-      if ((section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
-      else if (loading && !selected) content = h(Loading)
-      else if (view.name === 'settings') content = h(SettingsPage, { selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, eventDecayLambda: 0.015, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
+      if (selected && (section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
+      else if (loading && !selected && !namespace) content = h(Loading)
+      else if (view.name === 'settings') content = h(SettingsPage, { workspaceTitles, selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, eventDecayLambda: 0.015, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
+      else if (section === 'overview' && view.name === 'root' && !selected && !!namespace) content = h(Empty, { title: '该工作区暂无记忆', copy: '开始对话或在更多页面导入其他 AI 记忆。' })
       else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection,
         dreaming: namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
@@ -421,7 +441,7 @@
       else content = h(React.Fragment, null,
         loading ? h(Loading) : section === 'short' ? h(ShortTermPage, { key: namespace + ':' + conversationId, blockTurnSize: selected?.blockTurnSize || 6, blocks: data.blocks, blockPage: data.pagination?.blocks, openBlock: data.openBlock, conversations, activeThreadId: conversationId || data.activeThreadId || '', namespace, onConversationChange: selectConversation, refresh })
           : section === 'long' ? null
-            : h(MoreHome, { setView, selected, overview, namespace, dataDirectory: overview.dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }))
+            : h(MoreHome, { setView, selected, workspaceTitles, overview, namespace, dataDirectory: overview.dataDirectory, updateSettings, savingSettings, usePluginSettings, setStrataGateStatus, setShortTermStatus, setRetrievalStatus, setSidebarEntry, setDailyEnabled, setDailyInjectionDays }))
 
       return h('main', { className: 'sg-memory sg-unified-top' + (section === 'overview' && view.name === 'root' ? ' sg-overview-page' : '') + (view.name === 'duplicates' ? ' sg-memory-review' : '') + (view.name === 'settings' || view.name === 'display' || (section === 'more' && view.name === 'root') ? ' sg-settings-page' : ''), 'data-testid': 'stratagate-memory-ui' },
         h('style', null, css + DUPLICATE_STYLES + DAILY_NOTES_CSS + R6_STYLES),
@@ -432,7 +452,7 @@
               h('span', { className: 'sg-brand-copy' }, h('span', { className: 'sg-brand-title' }, h('span', { className: 'sg-brand-name' }, 'StrataGate'), overview.pluginVersion && overview.pluginVersion !== 'unknown' ? h('span', { className: 'sg-brand-version' }, 'v' + overview.pluginVersion) : null), onChooseSidebar ? h(SidebarPlacementPrompt, { onChooseSidebar, usePluginSettings }) : null)),
             // Workspace switcher sits right beside Star, not on its own row.
             h('div', { className: 'sg-header-end' },
-              h('div', { className: 'sg-project' }, h('i', { className: 'sg-runtime-dot', 'data-testid': 'overview-workspace-dot', 'data-state': runtimeState.state, role: 'img', 'aria-label': runtimeState.text, title: runtimeState.text }), h('span', { className: 'sg-project-label' }, '当前工作区'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, (overview.namespaces || []).map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles))))),
+              h('div', { className: 'sg-project' }, h('i', { className: 'sg-runtime-dot', 'data-testid': 'overview-workspace-dot', 'data-state': runtimeState.state, role: 'img', 'aria-label': runtimeState.text, title: runtimeState.text }), h('span', { className: 'sg-project-label' }, '当前工作区'), h('select', { className: 'sg-project-select', value: namespace, onChange: (event) => setNamespace(event.target.value), 'aria-label': '当前工作区' }, [!namespace ? h('option', { key: '', value: '' }, '选择工作区') : null, ...workspaceOptions.map((item) => h('option', { key: item.namespace, value: item.namespace }, projectName(item, workspaceTitles)))])),
               GITHUB_FEEDBACK_ENABLED ? h(HeaderStarLink) : null)),
         h('nav', { className: 'sg-tabs', 'aria-label': '记忆视图' }, [['overview', '总览'], ['profile', '常驻画像'], ['short', '会话记忆'], ['daily', '短期记忆'], ['long', '长期记忆'], ['more', '更多']].map(([id, label]) => h('button', { key: id, type: 'button', className: 'sg-tab ' + (section === id ? 'active' : ''), 'aria-current': section === id ? 'page' : undefined, onClick: () => goSection(id) }, TAB_SWATCH[id] ? h('i', { key: 'sw', className: 'sg-tab-swatch ' + TAB_SWATCH[id], 'aria-hidden': 'true' }) : null, label))),
         h('div', { className: 'sg-page-body' },
