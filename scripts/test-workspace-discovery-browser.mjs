@@ -69,7 +69,8 @@ try {
   }
   const beforeRead = tableCounts()
   await page.getByLabel('当前工作区').selectOption(nsB)
-  await page.getByText('该工作区暂无记忆').waitFor()
+  await page.getByTestId('stratagate-overview').waitFor()
+  assert.equal(await page.getByTestId('overview-answer-count').textContent(), '0')
   assert.deepEqual(await runtime.adminNamespaces(), [nsA])
   assert.deepEqual(tableCounts(), beforeRead)
   await page.getByRole('button', { name: '更多', exact: true }).click()

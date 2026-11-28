@@ -302,7 +302,27 @@
       const workspaceOptions = [...(overview.namespaces || [])]
       for (const item of hostNamespaces) if (!workspaceOptions.some((row) => row.namespace === item.namespace)) workspaceOptions.push(item)
       const selected = (overview.namespaces || []).find((item) => item.namespace === namespace)
-      const runtimeState = overviewRuntimeState(selected, loading, error)
+      const existingProfile = (overview.namespaces || []).find((item) => item?.memoryOverview?.layers?.profile)?.memoryOverview?.layers?.profile
+      const overviewSelected = selected || (namespace ? {
+        namespace,
+        failedJobs: 0,
+        processingJobs: 0,
+        memoryOverview: {
+          answeredLast7Days: 0,
+          layers: {
+            profile: existingProfile ? { ...existingProfile } : { characters: 0, updatedAt: null },
+            directory: { chapters: 0, updatedAt: null },
+            session: { blocks: 0, updatedAt: null },
+            shortTerm: { items: 0, updatedAt: null },
+            longTerm: { events: 0, answers: 0, updatedAt: null },
+          },
+          heatmap: Array.from({ length: 28 }, (_, index) => ({
+            day: new Date(Date.now() - (27 - index) * 86400000).toISOString().slice(0, 10),
+            answers: 0,
+          })),
+        },
+      } : null)
+      const runtimeState = overviewRuntimeState(overviewSelected, loading, error)
       const project = projectName(selected || namespace, workspaceTitles)
       const activeProjectKey = namespace.includes(':project:') ? namespace.split(':project:').pop() : ''
       const hostSessionIds = workspaceSessionIds[activeProjectKey] || []
@@ -406,9 +426,8 @@
       if (selected && (section === 'long' || view.name === 'support') && loadedNamespaceRef.current !== namespace) content = h(Loading)
       else if (loading && !selected && !namespace) content = h(Loading)
       else if (view.name === 'settings') content = h(SettingsPage, { workspaceTitles, selected: selected || { blockTurnSize: 6, blockDecayLambda: 0.3, eventDecayLambda: 0.015, agentMemoryRetrievalWeight: 1, currentTurn: 0, schemaVersion: 12 }, graphSettings: overview.graphSettings, vectorSettings: overview.vectorSettings, retrievalSettingsWritable: overview.settingsWritable, onRetrievalSettingsSaved, refresh, namespace, dataDirectory: overview.dataDirectory, onBack: moreBack, setView, updateSettings, savingSettings, usePluginSettings, setMemoryModel, setEffort, resetEffort, setDailyEnabled, setDailyTimeZone, setDailyInjectionDays, onDirectoryChanged: refreshDirectory, onOpenDreamingSession })
-      else if (section === 'overview' && view.name === 'root' && !selected && !!namespace) content = h(Empty, { title: '该工作区暂无记忆', copy: '开始对话或在更多页面导入其他 AI 记忆。' })
-      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected, loading, onOpenSection: goSection,
-        dreaming: namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
+      else if (section === 'overview' && view.name === 'root') content = h(OverviewPage, { key: namespace, selected: overviewSelected, loading, onOpenSection: goSection,
+        dreaming: selected && namespace ? h(DreamingPanel, { key: namespace, namespace, active: true, available: true, onDirectoryChanged: refreshDirectory, onOpenDreamingSession }) : null })
       else if (section === 'profile' && view.name === 'root') content = h(ProfilePage)
       else if (section === 'daily' && view.name === 'root') content = h(DailyNotesPage, { key: namespace, namespace, usePluginSettings, setDailyInjectionDays })
       else if (!selected && section !== 'more') content = h(Empty, { title: '还没有记忆', copy: '完成一些 DSH 对话后，会话记忆和长期记忆会出现在这里。' })
