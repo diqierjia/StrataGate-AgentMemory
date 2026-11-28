@@ -135,7 +135,7 @@ Pending: verify whether CI passes after migration.
 Next: run CI and check build and test results.
 ```
 
-New sessions include notes from the **three most recent dates with notes** by default (configurable from 1–30), pinned as a session snapshot so later writes do not repeatedly churn context. Older notes remain searchable by date or keyword.
+New sessions include notes from the **three most recent dates with notes** by default (configurable from 1–30; toggle, timezone, and day count apply immediately without restart), pinned as a session snapshot so later writes do not repeatedly churn context. Older notes remain searchable by date or keyword.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/stratagate-ui-daily-notes-dark.png" />
@@ -173,7 +173,7 @@ Long-term memory distills lasting information into Events, organizes them into a
 
 #### 3.1 Event memory & updates
 
-Important facts, decisions, preferences, requirements, and changes become Events with content, scope, source messages, and temporal fields—distinguishing **mention time** from **occurrence time** (for example, “Finish the prototype next week” said on May 6 records a planned time, not proof of completion). Routine file reads, tool calls, and task-local instructions are filtered out rather than turned into permanent Events.
+Important facts, decisions, preferences, requirements, and changes become Events with content, scope, source messages (with verbatim source quotes labeled by origin), and temporal fields—distinguishing **mention time** from **occurrence time** (for example, “Finish the prototype next week” said on May 6 records a planned time, not proof of completion). Routine file reads, tool calls, and task-local instructions are filtered out rather than turned into permanent Events.
 
 ![StrataGate Long-term memory Event timeline UI showing chronological Events, Dreaming consolidation, and adoption indicators](docs/assets/stratagate-ui-event-timeline.png)
 
@@ -199,19 +199,19 @@ When you only have a vague recollection of an earlier discussion, the Topic dire
   <img src="docs/assets/stratagate-market-topic-directory.png" alt="StrataGate book-style Topic directory UI with chapter index on the left and section overview plus source Events on the right" width="100%" />
 </picture>
 
-**Dreaming reviews historical memory.** You can start it manually from the directory page (even with no unassigned Events), or let it start automatically when new material exists, the main agent has been idle for ~30 minutes, and at least 24 hours have passed since the last automatic run. Its dedicated agent inspects cross-session history, fixes missing or erroneous derived Events, consolidates duplicates, updates daily notes, and maintains the directory and reusable experiences (`memory_search_experiences`), while keeping original conversations, historically true facts, and Profile settings intact. Runs can be viewed, paused, resumed, or stopped without losing saved changes. See [Topic directory (Chinese)](docs/MEMORY_TOPICS.zh-CN.md) and [Dreaming maintenance (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md).
+**Dreaming reviews historical memory—and Daily Letters recap each day.** Start, pause, resume, or inspect Dreaming from the **Overview**, **Topic directory**, or **More → Advanced settings** (even with no unassigned Events). Automatic runs trigger when new material exists, the main agent has been idle for ~30 minutes, and at least 24 hours have passed since the last automatic start; **More → Advanced settings** provides persistent switches for automatic Dreaming and Daily Letters plus a **daily token budget** (default 5M/day, `0` for unlimited) that stops active automatic runs across workspaces without interrupting manual runs. Dreaming inspects cross-session history, fixes or removes erroneous derived Events, consolidates duplicates, updates daily notes, and maintains the directory and reusable experiences (`memory_search_experiences`), while keeping original conversations, historically true facts, and Profile settings intact. Separately from daily notes, **Daily Letters** archive up to one handwritten-style workspace recap per day after the date rolls over (readable from Overview), with an expandable summary of Events and experiences organized that day. See [Topic directory (Chinese)](docs/MEMORY_TOPICS.zh-CN.md), [Dreaming & Daily Letters details](docs/MEMORY_DETAILS.md#dreaming-and-letters), and [Dreaming maintenance (Chinese)](docs/dreaming-agent.md).
 
 <a id="current-state-graph"></a>
 
 #### 3.3 Knowledge graph (optional)
 
-When enabled, the knowledge graph derives entities (people, projects, tools, organizations, places) and relationships from Events with source links, helping answer what is currently true and how entities connect. **The graph is off by default** because it adds model calls; Event cards, topics, ordinary retrieval, and Profile all work independently, and disabling the graph later preserves existing data. See [graph toggle and backfill details](docs/MEMORY_DETAILS.md#knowledge-graph) and [optional knowledge graph (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md).
+When enabled, the knowledge graph derives entities (people, projects, tools, organizations, places) and relationships from Events with source links, helping answer what is currently true and how entities connect. **The graph is off by default** because it adds model calls; Event cards, topics, ordinary retrieval, and Profile all work independently, and disabling the graph later preserves existing data. See [graph toggle and backfill details](docs/MEMORY_DETAILS.md#knowledge-graph) and [optional knowledge graph (Chinese)](docs/knowledge-graph.md).
 
 <a id="persistent-profile"></a>
 
 #### 3.4 Persistent Profile
 
-The persistent Profile stores user information needed in every conversation, separated from relevance-retrieved Events and single-turn requests:
+The persistent Profile stores user information needed in every conversation (total capacity configurable from **2,000–12,000 characters**, default 6,000), separated from relevance-retrieved Events and single-turn requests:
 
 | User statement | Where it belongs | When it is used |
 | --- | --- | --- |
@@ -284,6 +284,7 @@ Pinned memories have an effective weight of 1, while superseded Events receive a
 
 ![StrataGate More & Settings UI showing runtime status, duplicate review queue, external AI memory import, daily notes settings, and engine parameters](docs/assets/stratagate-ui-settings.png)
 
+- **Engine & Dreaming controls:** Adjust **Block decay (`λ_block`, 0–0.4, default 0.30)** and **Event decay (`λ_event`, 0–0.2, default 0.015; `0` disables decay)** independently under **More → Engine parameters** or **Advanced settings**, alongside automatic Dreaming, Daily Letters switches, and daily token budget controls.
 - **Import memory from another AI:** Paste a memory summary exported from another AI in the DSH UI to preview additions, merges, supersessions, and conflicts, adjust low-confidence items manually, or undo a committed batch while keeping original imported text. → [External-memory import guide (Chinese)](docs/EXTERNAL_MEMORY_IMPORT.zh-CN.md)
 - **Compatibility & local data:** Restart the corresponding DSH profile after upgrading. The current version covers DSH **0.2.x** (including prereleases) and retains older supported hosts; DSH **0.3.x** is not yet supported. Conversation sources and long-term memories live in local SQLite, daily notes in Markdown, and uninstalling does not delete your data. → [Configuration details](docs/MEMORY_DETAILS.md#configuration-and-import) · [DSH guide](docs/DSH.md)
 
@@ -325,9 +326,9 @@ npm run build
 | [Memory details, rules & formulas](docs/MEMORY_DETAILS.md) | L3/L4 pruning, decay & weight formulas, update rules, evidence gate schema, and R8 failure breakdown |
 | [Memory directory and topic overviews (Chinese)](docs/MEMORY_TOPICS.zh-CN.md) | Chapters and sections, source tracing, background organization, budgets, and recovery |
 | [Event extraction rules (Chinese)](docs/event-extractor.md) | Extraction decisions, scope, duplicates and historical relationships, and compatibility |
-| [Dreaming memory maintenance (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/dreaming-agent.md) | Scope, triggers, deletion, and recovery |
-| [Optional knowledge graph (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/knowledge-graph.md) | Defaults, enabling, pausing, disabling, and historical backfill |
-| [Manual level selection (Chinese)](https://github.com/diqierjia/StrataGate-AgentMemory/blob/main/docs/user-operation-priority.md) | Content preview, application, insufficient capacity, and recovery |
+| [Dreaming memory maintenance (Chinese)](docs/dreaming-agent.md) | Scope, triggers, deletion, and recovery |
+| [Optional knowledge graph (Chinese)](docs/knowledge-graph.md) | Defaults, enabling, pausing, disabling, and historical backfill |
+| [Manual level selection (Chinese)](docs/user-operation-priority.md) | Content preview, application, insufficient capacity, and recovery |
 | [Architecture](docs/ARCHITECTURE.md) | Layering, Events and graph, retrieval, evidence gate, weights, storage, and core APIs |
 | [External-memory import](docs/EXTERNAL_MEMORY_IMPORT.zh-CN.md) | Export format, import flow, and integration example |
 | [Full evaluation](docs/EVALUATION.md) | Protocol, version history, failure analysis, and result scope |
