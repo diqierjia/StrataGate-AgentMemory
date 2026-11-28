@@ -89,6 +89,8 @@ const TOOLS: Array<{ name: string; description: string; parameters: ParameterSch
 const V2_ONLY = new Set(['dreaming_event', 'dreaming_experience', 'dreaming_daily_write'])
 const NATIVE_WORKSPACE_READ_TOOLS = new Set(['read', 'glob', 'grep'])
 const PRIVATE_NAME = /^(?:\.git|\.hg|\.svn|\.env(?:\..*)?|\.ssh|\.aws|\.azure|\.codex|\.dsh|\.gnupg|\.kube|\.npmrc|\.netrc|secrets?(?:[._-].*)?|credentials?(?:[._-].*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?)$|\.(?:db(?:-shm|-wal)?|sqlite[\w-]*|pem|key|pfx|p12|kdbx|dpapi)$/i
+// Match fs.promises.realpath on Windows, where realpathSync() preserves 8.3 short paths (e.g. RUNNER~1).
+const canonicalRealpathSync = (path: string): string => (realpathSync.native ?? realpathSync)(path)
 
 function workspacePathAllowed(root: string, path: unknown): boolean {
   if (path === undefined) return true
@@ -104,7 +106,7 @@ function workspacePathAllowed(root: string, path: unknown): boolean {
   let current = target
   for (;;) {
     try {
-      const actual = realpathSync(current)
+      const actual = canonicalRealpathSync(current)
       return inside(actual) && !relative(root, actual).split(/[\\/]+/).some(part => PRIVATE_NAME.test(part))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false
@@ -271,7 +273,7 @@ export class DshDreamingSessions implements DreamingHost {
       if (!allowWorkspaceRead || !NATIVE_WORKSPACE_READ_TOOLS.has(exec.name)) return 'Dreaming 仅可使用授权整理工具'
       try {
         const cwd = binding.agent.session.header.cwd
-        if (!cwd || realpathSync(resolve(cwd)) !== binding.workspaceRoot) return '当前会话的工作区与所属记忆不匹配。'
+        if (!cwd || canonicalRealpathSync(resolve(cwd)) !== binding.workspaceRoot) return '当前会话的工作区与所属记忆不匹配。'
         const args = exec.arguments as Record<string, unknown> | null
         if (!workspacePathAllowed(binding.workspaceRoot!, args?.[exec.name === 'read' ? 'filePath' : 'path'])) return '该工作区路径不可读取。'
       } catch { return '当前会话的工作区与所属记忆不匹配。' }
@@ -298,7 +300,7 @@ export class DshDreamingSessions implements DreamingHost {
       execute: async (args, exec) => {
         if (exec.agent?.id !== binding.agent.id) throw new Error('Dreaming session identity mismatch')
         exec.signal.throwIfAborted()
-        if (tool.name === 'dreaming_workspace' && (!binding.workspaceRoot || !binding.agent.session.header.cwd || realpathSync(resolve(binding.agent.session.header.cwd)) !== binding.workspaceRoot)) throw new Error('当前会话的工作区与所属记忆不匹配。')
+        if (tool.name === 'dreaming_workspace' && (!binding.workspaceRoot || !binding.agent.session.header.cwd || canonicalRealpathSync(resolve(binding.agent.session.header.cwd)) !== binding.workspaceRoot)) throw new Error('当前会话的工作区与所属记忆不匹配。')
         const epoch = binding.epoch
         const cursor = binding.scope === 'memory' ? binding.cursor : undefined
         const operation = async () => {
